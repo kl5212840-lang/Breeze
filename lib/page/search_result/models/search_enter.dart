@@ -1,6 +1,6 @@
-// 这个用来更新搜索的关键词
 import 'package:equatable/equatable.dart';
 
+// 这个用来更新搜索的关键词
 class SearchEnter {
   String url; // 用来对应特殊情况
   String from; // 用来判断是从哪里进行的搜索
