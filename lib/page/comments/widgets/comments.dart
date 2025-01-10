@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_easyloading/flutter_easyloading.dart';
@@ -11,6 +12,7 @@ import '../../../config/global.dart';
 import '../../../main.dart';
 import '../../../mobx/int_select.dart';
 import '../../../network/http/http_request.dart';
+import '../../../util/router/router.gr.dart';
 import '../../../widgets/full_screen_image_view.dart';
 import '../../../widgets/picture_bloc/bloc/picture_bloc.dart';
 import '../../../widgets/picture_bloc/models/picture_info.dart';
@@ -26,7 +28,8 @@ class CommentsWidget extends StatefulWidget {
   State<CommentsWidget> createState() => _CommentsWidgetState();
 }
 
-class _CommentsWidgetState extends State<CommentsWidget> {
+class _CommentsWidgetState extends State<CommentsWidget>
+    with SingleTickerProviderStateMixin {
   Doc get commentInfo => widget.doc;
 
   int get index => widget.index;
@@ -42,136 +45,170 @@ class _CommentsWidgetState extends State<CommentsWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      // onTap: () {
-      //   AutoRouter.of(context).push(
-      //     SearchResultRoute(
-      //       searchEnterConst: SearchEnterConst(
-      //         from: "bika",
-      //         url:
-      //             "https://picaapi.picacomic.com/comics?ca=${comicInfo.creator.id}&s=ld&page=1",
-      //         type: "creator",
-      //         keyword: comicInfo.creator.name,
-      //       ),
-      //     ),
-      //   );
-      // },
-      child: Observer(
-        builder: (context) {
-          return Center(
-            child: SizedBox(
-              width: screenWidth * (48 / 50),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start, // 左对齐
-                children: <Widget>[
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    mainAxisAlignment: MainAxisAlignment.start,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: <Widget>[
-                      _ImagerWidget(
-                        pictureInfo: PictureInfo(
-                          url: commentInfo.user.avatar!.fileServer,
-                          path: commentInfo.user.avatar!.path,
-                          cartoonId: commentInfo.user.id,
-                          pictureType: "creator",
-                          chapterId: commentInfo.id,
-                          from: "bika",
-                        ),
-                        commentId: commentInfo.id,
+    return Observer(
+      builder: (context) {
+        return Center(
+          child: SizedBox(
+            width: screenWidth * (48 / 50),
+            child: Column(
+              children: [
+                InkWell(
+                  // behavior: HitTestBehavior.opaque, // 使得所有透明区域也可以响应点击
+                  onLongPress: () async {
+                    var result = await showConfirmationDialog();
+                    debugPrint(result.toString());
+                    if (result) {
+                      try {
+                        await reportComments(commentInfo.id);
+                        EasyLoading.showSuccess("举报成功");
+                      } catch (e) {
+                        EasyLoading.showError("举报失败：${e.toString()}");
+                        debugPrint(e.toString());
+                      }
+                    }
+                  },
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start, // 左对齐
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.start, // 横向居左
+                        crossAxisAlignment: CrossAxisAlignment.start, // 顶部对齐
+                        children: [
+                          _ImagerWidget(
+                            pictureInfo: PictureInfo(
+                              url: commentInfo.user.avatar!.fileServer,
+                              path: commentInfo.user.avatar!.path,
+                              cartoonId: commentInfo.user.id,
+                              pictureType: "creator",
+                              chapterId: commentInfo.id,
+                              from: "bika",
+                            ),
+                            commentId: commentInfo.id,
+                          ),
+                          SizedBox(width: 10),
+                          Flexible(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(commentInfo.user.name),
+                                Text(
+                                  "level:${commentInfo.user.level} (${commentInfo.user.title})",
+                                  style: TextStyle(
+                                    color: globalSetting.themeType
+                                        ? Colors.red
+                                        : Colors.yellow,
+                                  ),
+                                ),
+                                Text(
+                                  commentInfo.content,
+                                  style: TextStyle(
+                                    color: globalSetting.textColor,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                      Flexible(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: <Widget>[
-                            Text(commentInfo.user.name),
-                            Text(
-                              "level:${commentInfo.user.level} (${commentInfo.user.title})",
-                              style: TextStyle(
-                                color: globalSetting.themeType
-                                    ? Colors.red
-                                    : Colors.yellow,
+                      if (commentInfo.totalComments > 0) ...[
+                        SizedBox(height: 3),
+                        Row(
+                          children: [
+                            SizedBox(width: 70),
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () {
+                                  AutoRouter.of(context).push(
+                                    CommentsChildrenRoute(
+                                      fatherDoc: commentInfo,
+                                    ),
+                                  );
+                                },
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: primaryColor, // 背景颜色
+                                    borderRadius:
+                                        BorderRadius.circular(5.0), // 圆角
+                                  ),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(5),
+                                    child: Text(
+                                      "  查看全部${commentInfo.totalComments}条回复",
+                                      style: TextStyle(color: primaryTextStyle),
+                                    ),
+                                  ),
+                                ),
                               ),
                             ),
-                            Text(
-                              commentInfo.content,
-                              style: TextStyle(
-                                color: globalSetting.textColor,
+                          ],
+                        ),
+                      ],
+                      SizedBox(height: 5),
+                      Center(
+                        child: Row(
+                          children: [
+                            if (commentInfo.isTop) ...[
+                              Text(
+                                "TOP",
+                                style: TextStyle(
+                                  fontFamily: "LeckerliOne-Regular",
+                                  // fontSize: 14,
+                                ),
+                              ),
+                            ],
+                            if (!commentInfo.isTop) ...[
+                              Text(
+                                index.toString(),
+                                style: TextStyle(
+                                  fontFamily: "Courgette-Regular",
+                                  // fontStyle: FontStyle.italic,
+                                  // fontSize: 16,
+                                ),
+                              ),
+                            ],
+                            Text(" / "),
+                            Text(timeDecode(commentInfo.createdAt)),
+                            Spacer(),
+                            GestureDetector(
+                              onTap: () {
+                                _likeComment(commentInfo.id);
+                              },
+                              child: Icon(
+                                like ? Icons.favorite : Icons.favorite_border,
+                                size: 14,
+                                color:
+                                    like ? Colors.red : globalSetting.textColor,
                               ),
                             ),
+                            SizedBox(width: 5),
+                            Text(likeCountStore.date.toString()),
+                            SizedBox(width: 10),
                           ],
                         ),
                       ),
                     ],
                   ),
-                  SizedBox(height: 3),
-                  Center(
-                    child: Row(
-                      children: [
-                        if (commentInfo.isTop) ...[
-                          Text(
-                            "TOP",
-                            style: TextStyle(
-                              fontFamily: "LeckerliOne-Regular",
-                              // fontSize: 14,
-                            ),
-                          ),
-                        ],
-                        if (!commentInfo.isTop) ...[
-                          Text(
-                            index.toString(),
-                            style: TextStyle(
-                              fontFamily: "Courgette-Regular",
-                              // fontStyle: FontStyle.italic,
-                              // fontSize: 16,
-                            ),
-                          ),
-                        ],
-                        Text(" / "),
-                        Text(timeDecode(commentInfo.createdAt)),
-                        Spacer(),
-                        GestureDetector(
-                          onTap: () {
-                            _likeComment(commentInfo.id);
-                          },
-                          child: Icon(
-                            like ? Icons.favorite : Icons.favorite_border,
-                            size: 14,
-                            color: like ? Colors.red : globalSetting.textColor,
-                          ),
-                        ),
-                        SizedBox(width: 5),
-                        Text(likeCountStore.date.toString()),
-                        SizedBox(width: 10),
-                        Icon(
-                          Icons.comment_sharp,
-                          size: 14,
-                        ),
-                        SizedBox(width: 5),
-                        Text(commentInfo.totalComments.toString())
-                      ],
+                ),
+                Align(
+                  alignment: Alignment.center,
+                  child: SizedBox(
+                    width: screenWidth * (48 / 50), // 设置宽度
+                    child: Divider(
+                      color: globalSetting.themeType
+                          ? Colors.grey.withValues(alpha: 0.5)
+                          : Colors.white.withValues(alpha: 0.5),
+                      thickness: 1,
+                      height: 10,
                     ),
                   ),
-                  Align(
-                    alignment: Alignment.center,
-                    child: SizedBox(
-                      width: screenWidth * (48 / 50), // 设置宽度
-                      child: Divider(
-                        color: globalSetting.themeType
-                            ? Colors.grey.withValues(alpha: 0.5)
-                            : Colors.white.withValues(alpha: 0.5),
-                        thickness: 1,
-                        height: 10,
-                      ),
-                    ),
-                  )
-                ],
-              ),
+                ),
+              ],
             ),
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 
@@ -184,6 +221,33 @@ class _CommentsWidgetState extends State<CommentsWidget> {
         '${newDateTime.year}年${newDateTime.month}月${newDateTime.day}日 ${newDateTime.hour.toString().padLeft(2, '0')}:${newDateTime.minute.toString().padLeft(2, '0')}:${newDateTime.second.toString().padLeft(2, '0')}';
 
     return formattedTime;
+  }
+
+  Future<bool> showConfirmationDialog() async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (BuildContext context) {
+            return AlertDialog(
+              title: Text('举报评论'),
+              content: Text('你确定要举报此评论吗？\n${commentInfo.content}'),
+              actions: <Widget>[
+                TextButton(
+                  child: Text('取消'),
+                  onPressed: () {
+                    Navigator.of(context).pop(false);
+                  },
+                ),
+                TextButton(
+                  child: Text('确定'),
+                  onPressed: () {
+                    Navigator.of(context).pop(true);
+                  },
+                ),
+              ],
+            );
+          },
+        ) ??
+        false; // 如果用户直接关闭对话框，返回 false
   }
 
   void _likeComment(String commentId) async {
@@ -217,10 +281,10 @@ class _ImagerWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     var uuid = Uuid().v4();
     return SizedBox(
-      height: 75,
-      width: 75,
+      height: 60,
+      width: 60,
       child: Padding(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(2),
         child: BlocProvider(
           create: (context) => PictureBloc()
             ..add(
