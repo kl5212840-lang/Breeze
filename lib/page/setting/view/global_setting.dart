@@ -1,8 +1,4 @@
-import 'dart:convert';
-
 import 'package:auto_route/auto_route.dart';
-import 'package:crypto/crypto.dart';
-import 'package:encrypt/encrypt.dart' as encrypt;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_mobx/flutter_mobx.dart';
@@ -80,12 +76,6 @@ class _GlobalSettingPageState extends State<GlobalSettingPage> {
                   ),
                   ElevatedButton(
                     onPressed: () async {
-                      final data =
-                          r'66O7wjV20KxaDDXSNVy96w==';
-                      final ts = '1744957156';
-                      final secret = '185Hcomic3PAPP7R';
-                      final result = decodeRespData(data, ts, secret);
-                      logger.d(json.decode(result));
                       // objectbox.bikaHistoryBox.removeAll();
                       // var result = await objectbox.bikaHistoryBox.getAllAsync();
                       // var temp = result.map((e) => e.toJson()).toList();
@@ -99,23 +89,6 @@ class _GlobalSettingPageState extends State<GlobalSettingPage> {
             ),
       ),
     );
-  }
-
-  String decodeRespData(String data, String ts, [String? secret]) {
-    final actualSecret = secret ?? '185Hcomic3PAPP7R';
-
-    // 1. Base64解码
-    final dataB64 = base64.decode(data);
-
-    // 2. AES-ECB解密
-    final key = md5.convert(utf8.encode('$ts$actualSecret')).toString();
-    final encrypter = encrypt.Encrypter(
-      encrypt.AES(encrypt.Key(utf8.encode(key)), mode: encrypt.AESMode.ecb),
-    );
-    final dataAes = encrypter.decryptBytes(encrypt.Encrypted(dataB64));
-
-    // 3. 解码为字符串 (json)
-    return utf8.decode(dataAes);
   }
 
   Widget _systemTheme() {
