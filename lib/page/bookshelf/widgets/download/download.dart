@@ -60,7 +60,6 @@ class _DownloadPageState extends State<_DownloadPage>
 
   @override
   void dispose() {
-    _scrollController.dispose();
     super.dispose();
   }
 
@@ -76,6 +75,10 @@ class _DownloadPageState extends State<_DownloadPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+
+    if (bookshelfStore.topBarStore.date == 2) {
+      return const Center(child: Text('尚未支持', style: TextStyle(fontSize: 30)));
+    }
     return BlocBuilder<UserDownloadBloc, UserDownloadState>(
       builder: (context, state) {
         return RefreshIndicator(
