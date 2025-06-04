@@ -34,16 +34,12 @@ _Content _$ContentFromJson(Map<String, dynamic> json) => _Content(
   author: json['author'] as String,
   name: json['name'] as String,
   image: json['image'] as String,
-  category:
-      json['category'] == null
-          ? null
-          : Category.fromJson(json['category'] as Map<String, dynamic>),
-  categorySub:
-      json['category_sub'] == null
-          ? null
-          : CategorySub.fromJson(json['category_sub'] as Map<String, dynamic>),
-  liked: json['liked'] as bool?,
-  isFavorite: json['is_favorite'] as bool?,
+  category: Category.fromJson(json['category'] as Map<String, dynamic>),
+  categorySub: CategorySub.fromJson(
+    json['category_sub'] as Map<String, dynamic>,
+  ),
+  liked: json['liked'] as bool,
+  isFavorite: json['is_favorite'] as bool,
   updateAt: (json['update_at'] as num).toInt(),
 );
 

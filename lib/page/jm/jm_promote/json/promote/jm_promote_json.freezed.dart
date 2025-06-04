@@ -170,7 +170,7 @@ as List<Content>,
 /// @nodoc
 mixin _$Content {
 
-@JsonKey(name: "id") String get id;@JsonKey(name: "author") String get author;@JsonKey(name: "name") String get name;@JsonKey(name: "image") String get image;@JsonKey(name: "category") Category? get category;@JsonKey(name: "category_sub") CategorySub? get categorySub;@JsonKey(name: "liked") bool? get liked;@JsonKey(name: "is_favorite") bool? get isFavorite;@JsonKey(name: "update_at") int get updateAt;
+@JsonKey(name: "id") String get id;@JsonKey(name: "author") String get author;@JsonKey(name: "name") String get name;@JsonKey(name: "image") String get image;@JsonKey(name: "category") Category get category;@JsonKey(name: "category_sub") CategorySub get categorySub;@JsonKey(name: "liked") bool get liked;@JsonKey(name: "is_favorite") bool get isFavorite;@JsonKey(name: "update_at") int get updateAt;
 /// Create a copy of Content
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -203,11 +203,11 @@ abstract mixin class $ContentCopyWith<$Res>  {
   factory $ContentCopyWith(Content value, $Res Function(Content) _then) = _$ContentCopyWithImpl;
 @useResult
 $Res call({
-@JsonKey(name: "id") String id,@JsonKey(name: "author") String author,@JsonKey(name: "name") String name,@JsonKey(name: "image") String image,@JsonKey(name: "category") Category? category,@JsonKey(name: "category_sub") CategorySub? categorySub,@JsonKey(name: "liked") bool? liked,@JsonKey(name: "is_favorite") bool? isFavorite,@JsonKey(name: "update_at") int updateAt
+@JsonKey(name: "id") String id,@JsonKey(name: "author") String author,@JsonKey(name: "name") String name,@JsonKey(name: "image") String image,@JsonKey(name: "category") Category category,@JsonKey(name: "category_sub") CategorySub categorySub,@JsonKey(name: "liked") bool liked,@JsonKey(name: "is_favorite") bool isFavorite,@JsonKey(name: "update_at") int updateAt
 });
 
 
-$CategoryCopyWith<$Res>? get category;$CategorySubCopyWith<$Res>? get categorySub;
+$CategoryCopyWith<$Res> get category;$CategorySubCopyWith<$Res> get categorySub;
 
 }
 /// @nodoc
@@ -220,17 +220,17 @@ class _$ContentCopyWithImpl<$Res>
 
 /// Create a copy of Content
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? author = null,Object? name = null,Object? image = null,Object? category = freezed,Object? categorySub = freezed,Object? liked = freezed,Object? isFavorite = freezed,Object? updateAt = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? id = null,Object? author = null,Object? name = null,Object? image = null,Object? category = null,Object? categorySub = null,Object? liked = null,Object? isFavorite = null,Object? updateAt = null,}) {
   return _then(_self.copyWith(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,author: null == author ? _self.author : author // ignore: cast_nullable_to_non_nullable
 as String,name: null == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
 as String,image: null == image ? _self.image : image // ignore: cast_nullable_to_non_nullable
-as String,category: freezed == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
-as Category?,categorySub: freezed == categorySub ? _self.categorySub : categorySub // ignore: cast_nullable_to_non_nullable
-as CategorySub?,liked: freezed == liked ? _self.liked : liked // ignore: cast_nullable_to_non_nullable
-as bool?,isFavorite: freezed == isFavorite ? _self.isFavorite : isFavorite // ignore: cast_nullable_to_non_nullable
-as bool?,updateAt: null == updateAt ? _self.updateAt : updateAt // ignore: cast_nullable_to_non_nullable
+as String,category: null == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
+as Category,categorySub: null == categorySub ? _self.categorySub : categorySub // ignore: cast_nullable_to_non_nullable
+as CategorySub,liked: null == liked ? _self.liked : liked // ignore: cast_nullable_to_non_nullable
+as bool,isFavorite: null == isFavorite ? _self.isFavorite : isFavorite // ignore: cast_nullable_to_non_nullable
+as bool,updateAt: null == updateAt ? _self.updateAt : updateAt // ignore: cast_nullable_to_non_nullable
 as int,
   ));
 }
@@ -238,24 +238,18 @@ as int,
 /// with the given fields replaced by the non-null parameter values.
 @override
 @pragma('vm:prefer-inline')
-$CategoryCopyWith<$Res>? get category {
-    if (_self.category == null) {
-    return null;
-  }
-
-  return $CategoryCopyWith<$Res>(_self.category!, (value) {
+$CategoryCopyWith<$Res> get category {
+  
+  return $CategoryCopyWith<$Res>(_self.category, (value) {
     return _then(_self.copyWith(category: value));
   });
 }/// Create a copy of Content
 /// with the given fields replaced by the non-null parameter values.
 @override
 @pragma('vm:prefer-inline')
-$CategorySubCopyWith<$Res>? get categorySub {
-    if (_self.categorySub == null) {
-    return null;
-  }
-
-  return $CategorySubCopyWith<$Res>(_self.categorySub!, (value) {
+$CategorySubCopyWith<$Res> get categorySub {
+  
+  return $CategorySubCopyWith<$Res>(_self.categorySub, (value) {
     return _then(_self.copyWith(categorySub: value));
   });
 }
@@ -266,17 +260,17 @@ $CategorySubCopyWith<$Res>? get categorySub {
 @JsonSerializable()
 
 class _Content implements Content {
-  const _Content({@JsonKey(name: "id") required this.id, @JsonKey(name: "author") required this.author, @JsonKey(name: "name") required this.name, @JsonKey(name: "image") required this.image, @JsonKey(name: "category") this.category, @JsonKey(name: "category_sub") this.categorySub, @JsonKey(name: "liked") this.liked, @JsonKey(name: "is_favorite") this.isFavorite, @JsonKey(name: "update_at") required this.updateAt});
+  const _Content({@JsonKey(name: "id") required this.id, @JsonKey(name: "author") required this.author, @JsonKey(name: "name") required this.name, @JsonKey(name: "image") required this.image, @JsonKey(name: "category") required this.category, @JsonKey(name: "category_sub") required this.categorySub, @JsonKey(name: "liked") required this.liked, @JsonKey(name: "is_favorite") required this.isFavorite, @JsonKey(name: "update_at") required this.updateAt});
   factory _Content.fromJson(Map<String, dynamic> json) => _$ContentFromJson(json);
 
 @override@JsonKey(name: "id") final  String id;
 @override@JsonKey(name: "author") final  String author;
 @override@JsonKey(name: "name") final  String name;
 @override@JsonKey(name: "image") final  String image;
-@override@JsonKey(name: "category") final  Category? category;
-@override@JsonKey(name: "category_sub") final  CategorySub? categorySub;
-@override@JsonKey(name: "liked") final  bool? liked;
-@override@JsonKey(name: "is_favorite") final  bool? isFavorite;
+@override@JsonKey(name: "category") final  Category category;
+@override@JsonKey(name: "category_sub") final  CategorySub categorySub;
+@override@JsonKey(name: "liked") final  bool liked;
+@override@JsonKey(name: "is_favorite") final  bool isFavorite;
 @override@JsonKey(name: "update_at") final  int updateAt;
 
 /// Create a copy of Content
@@ -312,11 +306,11 @@ abstract mixin class _$ContentCopyWith<$Res> implements $ContentCopyWith<$Res> {
   factory _$ContentCopyWith(_Content value, $Res Function(_Content) _then) = __$ContentCopyWithImpl;
 @override @useResult
 $Res call({
-@JsonKey(name: "id") String id,@JsonKey(name: "author") String author,@JsonKey(name: "name") String name,@JsonKey(name: "image") String image,@JsonKey(name: "category") Category? category,@JsonKey(name: "category_sub") CategorySub? categorySub,@JsonKey(name: "liked") bool? liked,@JsonKey(name: "is_favorite") bool? isFavorite,@JsonKey(name: "update_at") int updateAt
+@JsonKey(name: "id") String id,@JsonKey(name: "author") String author,@JsonKey(name: "name") String name,@JsonKey(name: "image") String image,@JsonKey(name: "category") Category category,@JsonKey(name: "category_sub") CategorySub categorySub,@JsonKey(name: "liked") bool liked,@JsonKey(name: "is_favorite") bool isFavorite,@JsonKey(name: "update_at") int updateAt
 });
 
 
-@override $CategoryCopyWith<$Res>? get category;@override $CategorySubCopyWith<$Res>? get categorySub;
+@override $CategoryCopyWith<$Res> get category;@override $CategorySubCopyWith<$Res> get categorySub;
 
 }
 /// @nodoc
@@ -329,17 +323,17 @@ class __$ContentCopyWithImpl<$Res>
 
 /// Create a copy of Content
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? author = null,Object? name = null,Object? image = null,Object? category = freezed,Object? categorySub = freezed,Object? liked = freezed,Object? isFavorite = freezed,Object? updateAt = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? id = null,Object? author = null,Object? name = null,Object? image = null,Object? category = null,Object? categorySub = null,Object? liked = null,Object? isFavorite = null,Object? updateAt = null,}) {
   return _then(_Content(
 id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,author: null == author ? _self.author : author // ignore: cast_nullable_to_non_nullable
 as String,name: null == name ? _self.name : name // ignore: cast_nullable_to_non_nullable
 as String,image: null == image ? _self.image : image // ignore: cast_nullable_to_non_nullable
-as String,category: freezed == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
-as Category?,categorySub: freezed == categorySub ? _self.categorySub : categorySub // ignore: cast_nullable_to_non_nullable
-as CategorySub?,liked: freezed == liked ? _self.liked : liked // ignore: cast_nullable_to_non_nullable
-as bool?,isFavorite: freezed == isFavorite ? _self.isFavorite : isFavorite // ignore: cast_nullable_to_non_nullable
-as bool?,updateAt: null == updateAt ? _self.updateAt : updateAt // ignore: cast_nullable_to_non_nullable
+as String,category: null == category ? _self.category : category // ignore: cast_nullable_to_non_nullable
+as Category,categorySub: null == categorySub ? _self.categorySub : categorySub // ignore: cast_nullable_to_non_nullable
+as CategorySub,liked: null == liked ? _self.liked : liked // ignore: cast_nullable_to_non_nullable
+as bool,isFavorite: null == isFavorite ? _self.isFavorite : isFavorite // ignore: cast_nullable_to_non_nullable
+as bool,updateAt: null == updateAt ? _self.updateAt : updateAt // ignore: cast_nullable_to_non_nullable
 as int,
   ));
 }
@@ -348,24 +342,18 @@ as int,
 /// with the given fields replaced by the non-null parameter values.
 @override
 @pragma('vm:prefer-inline')
-$CategoryCopyWith<$Res>? get category {
-    if (_self.category == null) {
-    return null;
-  }
-
-  return $CategoryCopyWith<$Res>(_self.category!, (value) {
+$CategoryCopyWith<$Res> get category {
+  
+  return $CategoryCopyWith<$Res>(_self.category, (value) {
     return _then(_self.copyWith(category: value));
   });
 }/// Create a copy of Content
 /// with the given fields replaced by the non-null parameter values.
 @override
 @pragma('vm:prefer-inline')
-$CategorySubCopyWith<$Res>? get categorySub {
-    if (_self.categorySub == null) {
-    return null;
-  }
-
-  return $CategorySubCopyWith<$Res>(_self.categorySub!, (value) {
+$CategorySubCopyWith<$Res> get categorySub {
+  
+  return $CategorySubCopyWith<$Res>(_self.categorySub, (value) {
     return _then(_self.copyWith(categorySub: value));
   });
 }
