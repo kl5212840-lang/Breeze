@@ -38,10 +38,10 @@ abstract class Content with _$Content {
     @JsonKey(name: "author") required String author,
     @JsonKey(name: "name") required String name,
     @JsonKey(name: "image") required String image,
-    @JsonKey(name: "category") Category? category,
-    @JsonKey(name: "category_sub") CategorySub? categorySub,
-    @JsonKey(name: "liked") bool? liked,
-    @JsonKey(name: "is_favorite") bool? isFavorite,
+    @JsonKey(name: "category") required Category category,
+    @JsonKey(name: "category_sub") required CategorySub categorySub,
+    @JsonKey(name: "liked") required bool liked,
+    @JsonKey(name: "is_favorite") required bool isFavorite,
     @JsonKey(name: "update_at") required int updateAt,
   }) = _Content;
 
