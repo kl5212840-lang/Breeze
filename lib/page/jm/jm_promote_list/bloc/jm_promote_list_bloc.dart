@@ -67,6 +67,7 @@ class JmPromoteListBloc extends Bloc<JmPromoteListEvent, JmPromoteListState> {
           status: JmPromoteListStatus.success,
           list: list,
           hasReachedMax: hasReachedMax,
+          result: event.page.toString(),
         ),
       );
     } catch (e, stackTrace) {
