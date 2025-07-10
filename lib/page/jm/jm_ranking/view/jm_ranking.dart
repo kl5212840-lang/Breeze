@@ -1,5 +1,6 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
+import 'package:zephyr/page/jm/jm_ranking/widget/widget.dart';
 
 @RoutePage()
 class JmRankingPage extends StatefulWidget {
@@ -12,7 +13,7 @@ class JmRankingPage extends StatefulWidget {
 }
 
 class _JmRankingPageState extends State<JmRankingPage>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   late final TabController _tabController;
   final List<String> tabs = [
     '最新a漫',
@@ -28,6 +29,9 @@ class _JmRankingPageState extends State<JmRankingPage>
   ];
 
   @override
+  bool get wantKeepAlive => true;
+
+  @override
   void initState() {
     super.initState();
     _tabController = TabController(length: tabs.length, vsync: this);
@@ -41,6 +45,7 @@ class _JmRankingPageState extends State<JmRankingPage>
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return Column(
       children: [
         TabBar(
@@ -49,20 +54,11 @@ class _JmRankingPageState extends State<JmRankingPage>
           tabs: tabs.map((e) => Tab(text: e)).toList(),
         ),
         Expanded(
-          // 使用 .map() 方法将 tabs 列表（字符串列表）转换为 Widget 列表
           child: TabBarView(
             controller: _tabController,
-            // 为每个 tab 创建一个简单的 Text Widget 来显示其内容
             children:
                 tabs.map((String tab) {
-                  // 你可以为每个 tab 返回任何你想要的 Widget
-                  // 这里我们简单地在屏幕中央显示 tab 的名字
-                  return Center(
-                    child: Text(
-                      tab,
-                      style: Theme.of(context).textTheme.headlineMedium,
-                    ),
-                  );
+                  return Center(child: TimeRankingWidget(title: tab));
                 }).toList(),
           ),
         ),
