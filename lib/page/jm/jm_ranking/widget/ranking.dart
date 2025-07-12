@@ -10,26 +10,26 @@ import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_info.da
 import 'package:zephyr/widgets/error_view.dart';
 
 class RankingWidget extends StatelessWidget {
-  final String title;
+  final String tag;
   final String time;
 
-  const RankingWidget({super.key, required this.title, required this.time});
+  const RankingWidget({super.key, required this.tag, required this.time});
 
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
       create:
-          (_) => JmRankingBloc()..add(JmRankingEvent(type: title, order: time)),
-      child: _RankingWidget(title: title, time: time),
+          (_) => JmRankingBloc()..add(JmRankingEvent(type: tag, order: time)),
+      child: _RankingWidget(tag: tag, time: time),
     );
   }
 }
 
 class _RankingWidget extends StatefulWidget {
-  final String title;
+  final String tag;
   final String time;
 
-  const _RankingWidget({required this.title, required this.time});
+  const _RankingWidget({required this.tag, required this.time});
 
   @override
   State<_RankingWidget> createState() => _RankingWidgetState();
@@ -68,7 +68,7 @@ class _RankingWidgetState extends State<_RankingWidget>
               errorMessage: '${state.result.toString()}\n加载失败，请重试。',
               onRetry: () {
                 context.read<JmRankingBloc>().add(
-                  JmRankingEvent(type: widget.title, order: widget.time),
+                  JmRankingEvent(type: widget.tag, order: widget.time),
                 );
               },
             );
@@ -148,7 +148,7 @@ class _RankingWidgetState extends State<_RankingWidget>
               () => context.read<JmRankingBloc>().add(
                 JmRankingEvent(
                   page: page + 1,
-                  type: widget.title,
+                  type: widget.tag,
                   order: widget.time,
                   status: JmRankingStatus.loadingMore,
                 ),
@@ -164,7 +164,7 @@ class _RankingWidgetState extends State<_RankingWidget>
       context.read<JmRankingBloc>().add(
         JmRankingEvent(
           page: page + 1,
-          type: widget.title,
+          type: widget.tag,
           order: widget.time,
           status: JmRankingStatus.loadingMore,
         ),
