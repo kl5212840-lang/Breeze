@@ -39,7 +39,7 @@ class JmRankingBloc extends Bloc<JmRankingEvent, JmRankingState> {
     Emitter<JmRankingState> emit,
   ) async {
     if (event.status == JmRankingStatus.initial) {
-      emit(state.copyWith(status: JmRankingStatus.loadingMore));
+      emit(state.copyWith(status: JmRankingStatus.initial));
       list = [];
       hasReachedMax = false;
     }
