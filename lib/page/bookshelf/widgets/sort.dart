@@ -16,18 +16,11 @@ class SortWidget extends StatefulWidget {
 }
 
 class _SortWidgetState extends State<SortWidget> {
-  late final List<String> sortList = ["从新到旧", "从旧到新", "最多点赞", "最多观看"];
-  late final Map<String, String> sortMap = {
+  final Map<String, String> sortMap = {
     "dd": "从新到旧",
     "da": "从旧到新",
     "ld": "最多点赞",
     "vd": "最多观看",
-  };
-  late final Map<String, String> sortMap2 = {
-    "从新到旧": "dd",
-    "从旧到新": "da",
-    "最多点赞": "ld",
-    "最多观看": "vd",
   };
 
   late String selectedValue;
@@ -35,7 +28,9 @@ class _SortWidgetState extends State<SortWidget> {
   @override
   void initState() {
     super.initState();
-    selectedValue = sortMap[widget.initialSort]!;
+    selectedValue = sortMap.containsKey(widget.initialSort)
+        ? widget.initialSort
+        : "dd";
   }
 
   @override
@@ -43,21 +38,21 @@ class _SortWidgetState extends State<SortWidget> {
     return DropdownButtonHideUnderline(
       child: DropdownButton2<String>(
         isExpanded: true,
-        hint: Text('选择排序', style: TextStyle(fontSize: 16)),
-        items: sortList
-            .map(
-              (String item) => DropdownMenuItem<String>(
-                value: item,
-                child: Text(item, style: const TextStyle(fontSize: 16)),
-              ),
-            )
-            .toList(),
+        hint: const Text('选择排序', style: TextStyle(fontSize: 16)),
+        items: sortMap.entries.map((entry) {
+          return DropdownMenuItem<String>(
+            value: entry.key,
+            child: Text(entry.value, style: const TextStyle(fontSize: 16)),
+          );
+        }).toList(),
         value: selectedValue,
         onChanged: (String? value) {
+          if (value == null) return;
+
           setState(() {
-            selectedValue = value!;
+            selectedValue = value;
           });
-          widget.onSortChanged(sortMap2[value!]!);
+          widget.onSortChanged(value);
         },
         buttonStyleData: const ButtonStyleData(width: 100),
         menuItemStyleData: const MenuItemStyleData(height: 40),
