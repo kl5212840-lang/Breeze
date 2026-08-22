@@ -412,7 +412,7 @@ Future<List<_ExportChapterEntry>> _collectChapterEntries(
     final files = await _resolveChapterFiles(
       pluginId: download.source,
       comicId: download.comicId,
-      chapterId: chapter.id,
+      chapterId: chapter.effectiveStorageId,
       images: chapter.images,
     );
     final numberedImages = <_ExportImageEntry>[];

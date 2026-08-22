@@ -391,8 +391,16 @@ class ComicLinkService {
         .findFirst();
     if (comic == null) return;
 
+    // 先移除数据库记录，让同步调用方立即看到下载项已删除；磁盘清理
+    // 继续在下面执行，失败也不会让孤立的历史记录阻塞后续重建。
+    objectbox.unifiedDownloadBox.remove(comic.id);
+
     try {
-      await deleteComicDownloadDirectory(comic.source, comic.comicId);
+      await deleteComicDownloadDirectory(
+        comic.source,
+        comic.comicId,
+        legacyStorageRoot: comic.storageRoot,
+      );
     } catch (e, stackTrace) {
       logger.e(
         'Failed to delete download files: ${comic.storageRoot}',
@@ -400,7 +408,5 @@ class ComicLinkService {
         stackTrace: stackTrace,
       );
     }
-
-    objectbox.unifiedDownloadBox.remove(comic.id);
   }
 }

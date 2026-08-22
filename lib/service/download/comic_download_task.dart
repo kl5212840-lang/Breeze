@@ -1,7 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
-
 import 'package:path/path.dart' as p;
 import 'package:zephyr/config/global/global.dart';
 import 'package:zephyr/main.dart';
@@ -19,11 +17,15 @@ import 'package:zephyr/page/download/models/download_chapter.dart';
 import 'package:zephyr/page/download/models/unified_comic_download.dart';
 import 'package:zephyr/service/download/download_cancel_signal.dart';
 import 'package:zephyr/service/download/download_progress_reporter.dart';
+import 'package:zephyr/service/download/download_retry.dart';
+import 'package:zephyr/service/download/download_task_progress.dart';
+import 'package:zephyr/service/download/download_task_repository.dart';
 import 'package:zephyr/service/download/models/download_task_json.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/service/download/image_download.dart';
 import 'package:zephyr/network/sync/sync_device_id.dart';
 import 'package:zephyr/page/bookshelf/service/comic_link_service.dart';
+import 'package:zephyr/src/rust/api/simple.dart';
 import 'package:zephyr/util/get_path.dart';
 
 Future<void> unifiedDownloadTask(
@@ -35,36 +37,48 @@ Future<void> unifiedDownloadTask(
   final pluginId = (task.from).trim();
   final from = pluginId;
   final runtimeName = runtimeNameForPluginId(pluginId);
+  final taskKey = task.taskKey;
+  const taskRepository = DownloadTaskRepository();
   Timer? progressTimer;
   bool running = true;
 
-  final query = objectbox.downloadTaskBox
-      .query(
-        DownloadTask_.comicId
-            .equals(task.comicId)
-            .and(DownloadTask_.isDownloading.equals(true)),
-      )
-      .build();
+  DownloadTask? findCurrentTask() {
+    final current = taskRepository.findByTaskKey(taskKey);
+    if (current == null || !current.isDownloading) return null;
+    return current;
+  }
+
+  DownloadTaskJson currentPayload() {
+    final current = taskRepository.findByTaskKey(taskKey);
+    return taskRepository.readPayload(current ?? DownloadTask()) ?? task;
+  }
 
   void updateTaskStatus(String status) {
-    final dbTask = query.findFirst();
+    final dbTask = findCurrentTask();
     if (dbTask != null) {
       dbTask.status = status;
       objectbox.downloadTaskBox.put(dbTask);
     }
   }
 
+  void updateCheckpoint(
+    DownloadTaskJson Function(DownloadTaskJson payload) update, {
+    String? status,
+  }) {
+    final dbTask = taskRepository.findByTaskKey(taskKey);
+    if (dbTask == null) return;
+    final payload = taskRepository.readPayload(dbTask) ?? task;
+    taskRepository.putPayload(dbTask, update(payload), status: status);
+  }
+
   Future<void> ensureTaskRunning() async {
-    final currentTask = query.findFirst();
-    final signaled = isDownloadCancelSignaled(task.comicId);
+    final currentTask = findCurrentTask();
+    final signaled = isDownloadCancelSignaled(taskKey);
     if (signaled || currentTask == null || !currentTask.isDownloading) {
       logger.w(
-        'ensureTaskRunning 取消任务: comicId=${task.comicId}, signaled=$signaled, currentTask=${currentTask != null}, isDownloading=${currentTask?.isDownloading}',
+        'ensureTaskRunning 取消任务: taskKey=$taskKey, signaled=$signaled, currentTask=${currentTask != null}, isDownloading=${currentTask?.isDownloading}',
       );
-      await cancelTrackedQjsTasks(
-        pluginId: pluginId,
-        taskGroupKey: task.comicId,
-      );
+      await cancelTrackedQjsTasks(pluginId: pluginId, taskGroupKey: taskKey);
       throw const DownloadTaskCancelledException();
     }
   }
@@ -72,13 +86,25 @@ Future<void> unifiedDownloadTask(
   try {
     await ensureQjsRuntimeReady(pluginId: pluginId);
     await ensureTaskRunning();
+    updateCheckpoint(
+      (payload) =>
+          payload.copyWith(stateCode: 'running', phaseCode: 'preparingRuntime'),
+    );
     await preparePluginDownloadRuntime(
       from: from,
       pluginId: pluginId,
       runtimeName: runtimeName,
-      taskGroupKey: task.comicId,
+      taskGroupKey: taskKey,
     );
 
+    updateCheckpoint(
+      (payload) => payload.copyWith(
+        phaseCode: 'fetchingComicInfo',
+        lastErrorCode: '',
+        lastErrorMessage: '',
+      ),
+      status: t.download.statusFetchingComicInfo,
+    );
     updateTaskStatus(t.download.statusFetchingComicInfo);
     reporter.updateMessage(t.download.statusFetchingComicInfo);
     final detail = await getComicDetailByPlugin(
@@ -88,9 +114,22 @@ Future<void> unifiedDownloadTask(
     );
 
     final downloadInfo = UnifiedComicDownloadInfo.fromString(detail.source);
-    final selectedChapters = _resolveSelectedChapters(downloadInfo, task);
+    final selectedChapters = _resolveSelectedChapters(
+      downloadInfo,
+      currentPayload(),
+    );
+    updateCheckpoint(
+      (payload) => payload.copyWith(
+        totalChapterCount: selectedChapters.length,
+        phaseCode: 'fetchingChapterInfo',
+      ),
+    );
 
     updateTaskStatus(t.download.statusDownloadingCover);
+    updateCheckpoint(
+      (payload) => payload.copyWith(phaseCode: 'downloadingCover'),
+      status: t.download.statusDownloadingCover,
+    );
     reporter.updateMessage(t.download.statusDownloadingCover);
     final cover = detail.normalInfo.comicInfo.cover;
     final coverExtension = Map<String, dynamic>.from(cover.extern);
@@ -106,7 +145,7 @@ Future<void> unifiedDownloadTask(
         path: coverFileName,
         cartoonId: task.comicId,
         qjsName: runtimeName,
-        qjsTaskGroupKey: task.comicId,
+        qjsTaskGroupKey: taskKey,
       );
     }
 
@@ -127,97 +166,286 @@ Future<void> unifiedDownloadTask(
       );
     }
 
-    void reportChapterFetchProgress(int completed, int total) {
-      if (total <= 0) {
-        final message = t.download.statusFetchingChapterInfo;
-        updateTaskStatus(message);
-        reporter.updateMessage(message);
-        return;
-      }
-      final percent = ((completed / total) * 100).floor();
-      final message = t.download.statusFetchingChapterInfoProgress(
-        completed: completed,
-        total: total,
-        percent: percent,
-      );
-      updateTaskStatus(message);
-      reporter.updateMessage(message);
-    }
-
-    reportChapterFetchProgress(0, selectedChapters.length);
-    final chapterResponses = <UnifiedPluginChapterResponse>[];
-    for (var index = 0; index < selectedChapters.length; index++) {
-      final chapter = selectedChapters[index];
-      await ensureTaskRunning();
-      final requestChapterId = _resolveChapterRequestId(chapter);
-      final chapterExtern = _resolveChapterExtern(chapter);
-      logger.d(
-        'download getChapter plugin=$pluginId comicId=${task.comicId} chapter.id=${chapter.id} order=${chapter.order} requestChapterId=$requestChapterId storageChapterId=${chapter.effectiveStorageId} extern=$chapterExtern',
-      );
-      chapterResponses.add(
-        await _getChapterByPlugin(
-          from: from,
-          pluginId: pluginId,
-          comicId: task.comicId,
-          chapterId: requestChapterId,
-          runtimeName: runtimeName,
-          extern: {...chapterExtern, 'chapterId': requestChapterId},
-        ),
-      );
-      reportChapterFetchProgress(index + 1, selectedChapters.length);
-    }
-
-    final jobs = <DownloadImageJob>[];
-    for (
-      var chapterIndex = 0;
-      chapterIndex < chapterResponses.length;
-      chapterIndex++
-    ) {
-      final response = chapterResponses[chapterIndex];
-      final selectedChapter = selectedChapters[chapterIndex];
-      for (var index = 0; index < response.chapter.docs.length; index++) {
-        final doc = response.chapter.docs[index];
-        jobs.add(
-          DownloadImageJob(
-            url: doc.url,
-            path: doc.path,
-            cartoonId: task.comicId,
-            chapterId: response.chapter.epId,
-            storageChapterId: selectedChapter.effectiveStorageId,
-            extern: doc.extern,
-          ),
-        );
-      }
-    }
-
     progressTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (running) {
         updateTaskStatus(reporter.message);
       }
     });
 
-    await downloadImageJobs(
+    final completedChapterKeys = _restoreCompletedChapterKeys(
       from: from,
-      jobs: jobs,
-      qjsRuntimeName: runtimeName,
-      qjsTaskGroupKey: task.comicId,
-      ensureTaskRunning: ensureTaskRunning,
-      reporter: reporter,
-      concurrency: 5,
+      comicId: task.comicId,
+      selectedChapters: selectedChapters,
+      checkpointKeys: currentPayload().completedChapterKeys,
+    );
+    final checkpointPayload = currentPayload();
+    final checkpointKeys = checkpointPayload.completedChapterKeys.toSet();
+    final checkpointChanged =
+        completedChapterKeys.length != checkpointKeys.length ||
+        !completedChapterKeys.containsAll(checkpointKeys);
+    if (checkpointChanged) {
+      updateCheckpoint(
+        (payload) => payload.copyWith(
+          completedChapterKeys: completedChapterKeys.toList(),
+          completedChapterCount: completedChapterKeys.length,
+          currentChapterKey: '',
+          currentChapterCompletedImages: 0,
+          currentChapterReusedImages: 0,
+          currentChapterFailedImages: 0,
+          currentChapterTotalImages: 0,
+        ),
+      );
+      logger.i(
+        '恢复下载 checkpoint: taskKey=$taskKey, '
+        '已完成章节=${completedChapterKeys.length}/${selectedChapters.length}',
+      );
+    }
+
+    void reportChapterProgress({
+      required int completedChapters,
+      required int currentChapterCompletedImages,
+      required int currentChapterTotalImages,
+    }) {
+      final message = downloadTaskProgressMessage(
+        completedChapters: completedChapters,
+        totalChapters: selectedChapters.length,
+        currentChapterCompletedImages: currentChapterCompletedImages,
+        currentChapterTotalImages: currentChapterTotalImages,
+      );
+      if (message.isEmpty) return;
+      updateTaskStatus(message);
+      reporter.updateMessage(message);
+    }
+
+    reportChapterProgress(
+      completedChapters: completedChapterKeys.length,
+      currentChapterCompletedImages: 0,
+      currentChapterTotalImages: 0,
     );
 
-    await _saveUnifiedDownload(
-      from: from,
-      task: task,
-      normalInfo: normalInfo,
-      selectedChapters: selectedChapters,
-      chapterResponses: chapterResponses,
+    final firstIncompleteIndex = selectedChapters.indexWhere(
+      (chapter) =>
+          !completedChapterKeys.contains(_chapterCheckpointKey(chapter)),
     );
-    _markTaskCompleted(task.comicId);
+    if (firstIncompleteIndex >= 0) {
+      logger.i(
+        '开始恢复未完成章节: taskKey=$taskKey, '
+        '章节位置=${firstIncompleteIndex + 1}/${selectedChapters.length}',
+      );
+    }
+
+    for (
+      var index = firstIncompleteIndex;
+      index >= 0 && index < selectedChapters.length;
+      index++
+    ) {
+      final chapter = selectedChapters[index];
+      final chapterKey = _chapterCheckpointKey(chapter);
+      if (completedChapterKeys.contains(chapterKey)) {
+        logger.d('跳过已完成章节: taskKey=$taskKey, chapterKey=$chapterKey');
+        continue;
+      }
+
+      await ensureTaskRunning();
+      final fetchMessage = t.download.statusFetchingChapterInfoProgress(
+        completed: downloadTaskDisplayPosition(
+          completed: completedChapterKeys.length,
+          total: selectedChapters.length,
+        ),
+        total: selectedChapters.length,
+        percent: selectedChapters.isEmpty
+            ? 0
+            : ((completedChapterKeys.length / selectedChapters.length) * 100)
+                  .floor(),
+      );
+      updateTaskStatus(fetchMessage);
+      reporter.updateMessage(fetchMessage);
+      updateCheckpoint(
+        (payload) => payload.copyWith(
+          stateCode: 'running',
+          phaseCode: 'fetchingChapterInfo',
+          currentChapterKey: chapterKey,
+          currentChapterCompletedImages: 0,
+          currentChapterReusedImages: 0,
+          currentChapterFailedImages: 0,
+          currentChapterTotalImages: 0,
+        ),
+      );
+
+      final requestChapterId = _resolveChapterRequestId(chapter);
+      final chapterExtern = _resolveChapterExtern(chapter);
+      logger.d(
+        'download getChapter plugin=$pluginId comicId=${task.comicId} chapter.id=${chapter.id} order=${chapter.order} requestChapterId=$requestChapterId storageChapterId=${chapter.effectiveStorageId} extern=$chapterExtern',
+      );
+      final response =
+          await retryDownloadOperation<UnifiedPluginChapterResponse>(
+            operation: '获取章节 ${chapter.displayName}',
+            ensureTaskRunning: ensureTaskRunning,
+            action: () => _getChapterByPlugin(
+              from: from,
+              pluginId: pluginId,
+              comicId: task.comicId,
+              chapterId: requestChapterId,
+              runtimeName: runtimeName,
+              extern: {...chapterExtern, 'chapterId': requestChapterId},
+            ),
+          );
+      final jobs = <DownloadImageJob>[];
+      for (final doc in response.chapter.docs) {
+        jobs.add(
+          DownloadImageJob(
+            url: doc.url,
+            path: doc.path,
+            cartoonId: task.comicId,
+            chapterId: response.chapter.epId,
+            storageChapterId: chapter.effectiveStorageId,
+            extern: doc.extern,
+          ),
+        );
+      }
+
+      updateCheckpoint(
+        (payload) => payload.copyWith(
+          phaseCode: 'downloadingChapter',
+          currentChapterTotalImages: jobs.length,
+        ),
+      );
+      reportChapterProgress(
+        completedChapters: completedChapterKeys.length,
+        currentChapterCompletedImages: 0,
+        currentChapterTotalImages: jobs.length,
+      );
+
+      var lastPersistedImages = 0;
+      var lastPersistedAt = DateTime.now();
+      var lastReportedChapterPercent = -1;
+      await downloadImageJobs(
+        from: from,
+        jobs: jobs,
+        qjsRuntimeName: runtimeName,
+        qjsTaskGroupKey: taskKey,
+        ensureTaskRunning: ensureTaskRunning,
+        reporter: reporter,
+        concurrency: 5,
+        onProgress: (completed, downloaded, reused) async {
+          final now = DateTime.now();
+          final currentPercent = jobs.isEmpty
+              ? 100
+              : (completed / jobs.length * 100).floor();
+          if (currentPercent > lastReportedChapterPercent ||
+              completed == jobs.length) {
+            lastReportedChapterPercent = currentPercent;
+            reportChapterProgress(
+              completedChapters: completedChapterKeys.length,
+              currentChapterCompletedImages: completed,
+              currentChapterTotalImages: jobs.length,
+            );
+          }
+
+          final shouldPersist =
+              completed == jobs.length ||
+              completed - lastPersistedImages >= 5 ||
+              now.difference(lastPersistedAt) >= const Duration(seconds: 1);
+          if (!shouldPersist) return;
+          lastPersistedImages = completed;
+          lastPersistedAt = now;
+          updateCheckpoint(
+            (payload) => payload.copyWith(
+              currentChapterCompletedImages: completed,
+              currentChapterReusedImages: reused,
+              currentChapterFailedImages: 0,
+              currentChapterTotalImages: jobs.length,
+            ),
+          );
+        },
+      );
+
+      updateCheckpoint(
+        (payload) => payload.copyWith(phaseCode: 'committingChapter'),
+      );
+      await _saveUnifiedDownloadChapter(
+        from: from,
+        task: task,
+        normalInfo: normalInfo,
+        selectedChapter: chapter,
+        chapterResponse: response,
+      );
+      completedChapterKeys.add(chapterKey);
+      updateCheckpoint(
+        (payload) => payload.copyWith(
+          stateCode: 'running',
+          phaseCode: 'chapterCommitted',
+          completedChapterKeys: completedChapterKeys.toList(),
+          currentChapterKey: '',
+          completedChapterCount: completedChapterKeys.length,
+          currentChapterCompletedImages: 0,
+          currentChapterReusedImages: 0,
+          currentChapterFailedImages: 0,
+          currentChapterTotalImages: 0,
+        ),
+      );
+      reportChapterProgress(
+        completedChapters: completedChapterKeys.length,
+        currentChapterCompletedImages: 0,
+        currentChapterTotalImages: 0,
+      );
+    }
+
+    updateCheckpoint(
+      (payload) => payload.copyWith(
+        stateCode: 'completed',
+        phaseCode: 'completed',
+        completedChapterKeys: completedChapterKeys.toList(),
+        completedChapterCount: selectedChapters.length,
+        currentChapterKey: '',
+      ),
+    );
+    _markTaskCompleted(taskKey);
   } finally {
     running = false;
     progressTimer?.cancel();
   }
+}
+
+String _chapterCheckpointKey(DownloadChapter chapter) {
+  final id = chapter.id.trim();
+  if (id.isNotEmpty) return id;
+  return chapter.effectiveRequestId.trim();
+}
+
+Set<String> _restoreCompletedChapterKeys({
+  required String from,
+  required String comicId,
+  required List<DownloadChapter> selectedChapters,
+  required List<String> checkpointKeys,
+}) {
+  final completedKeys = <String>{...checkpointKeys};
+  final query = objectbox.unifiedDownloadBox
+      .query(
+        UnifiedComicDownload_.uniqueKey.equals(
+          buildDownloadTaskKey(from, comicId),
+        ),
+      )
+      .build();
+
+  UnifiedComicDownload? existing;
+  try {
+    existing = query.findFirst();
+  } finally {
+    query.close();
+  }
+  if (existing == null) return completedKeys;
+
+  final storedChapters = resolveStoredDownloadChapters(existing);
+  for (final selectedChapter in selectedChapters) {
+    if (storedChapters.any(
+      (storedChapter) =>
+          _storedChapterMatches(storedChapter, selectedChapter),
+    )) {
+      completedKeys.add(_chapterCheckpointKey(selectedChapter));
+    }
+  }
+  return completedKeys;
 }
 
 String _resolveChapterRequestId(DownloadChapter chapter) {
@@ -273,56 +501,32 @@ Future<UnifiedPluginChapterResponse> _getChapterByPlugin({
   );
 }
 
-Future<void> _saveUnifiedDownload({
+Future<void> _saveUnifiedDownloadChapter({
   required String from,
   required DownloadTaskJson task,
   required normal.NormalComicAllInfo normalInfo,
-  required List<DownloadChapter> selectedChapters,
-  required List<UnifiedPluginChapterResponse> chapterResponses,
+  required DownloadChapter selectedChapter,
+  required UnifiedPluginChapterResponse chapterResponse,
 }) async {
   final now = DateTime.now().toUtc();
-  final storedChapters = <UnifiedComicDownloadStoredChapter>[];
-  for (var index = 0; index < chapterResponses.length; index++) {
-    final response = chapterResponses[index];
-    final selectedChapter = selectedChapters[index];
-
-    logger.d(
-      '_saveUnifiedDownload: index=$index, '
-      'chapter.id=${selectedChapter.id}, '
-      'requestId=${selectedChapter.effectiveRequestId}, '
-      'storageId=${selectedChapter.effectiveStorageId}, '
-      'responseEpId=${response.chapter.epId}, '
-      'imageCount=${response.chapter.docs.length}',
-    );
-    storedChapters.add(
-      UnifiedComicDownloadStoredChapter(
-        // `id` 字段保持为本地存储 key，旧版本读取时仍按 storage key 理解。
-        id: selectedChapter.effectiveStorageId,
-        name: selectedChapter.displayName.trim().isNotEmpty
-            ? selectedChapter.displayName
-            : response.chapter.epName,
-        order: selectedChapter.order,
-        // `logicalKey` 写入宿主匹配 key，保证新版本通过适配器能还原出正确的 id。
-        logicalKey: selectedChapter.id,
-        taskChapterId: _resolveChapterRequestId(selectedChapter),
-        // 显式保存 storageChapterId，确保显式指定了 storage key 的插件能正确还原。
-        storageChapterId: selectedChapter.effectiveStorageId,
-        images: response.chapter.docs.map((doc) {
-          final imageName = _resolveImageDisplayName(doc);
-          final imagePath = normalizeStoredAssetPath(doc.path);
-          return UnifiedComicDownloadImage(
-            id: doc.id.isNotEmpty
-                ? doc.id
-                : _fallbackImageId(doc, response.chapter.epId),
-            name: imageName,
-            path: imagePath,
-            url: doc.url,
-            extern: doc.extern,
-          );
-        }).toList(),
-      ),
-    );
+  final key = buildDownloadTaskKey(from, task.comicId);
+  final existing = objectbox.unifiedDownloadBox
+      .query(UnifiedComicDownload_.uniqueKey.equals(key))
+      .build()
+      .findFirst();
+  final storedChapters = existing == null
+      ? <UnifiedComicDownloadStoredChapter>[]
+      : resolveStoredDownloadChapters(existing).toList();
+  final storedChapter = _buildStoredChapter(selectedChapter, chapterResponse);
+  final existingIndex = storedChapters.indexWhere(
+    (item) => _storedChapterMatches(item, selectedChapter),
+  );
+  if (existingIndex >= 0) {
+    storedChapters[existingIndex] = storedChapter;
+  } else {
+    storedChapters.add(storedChapter);
   }
+  storedChapters.sort((a, b) => a.order.compareTo(b.order));
 
   final eps = storedChapters
       .map(
@@ -348,10 +552,18 @@ Future<void> _saveUnifiedDownload({
       'downloadChapters': storedChapters.map((e) => e.toMap()).toList(),
     },
   );
-  final key = '$from:${task.comicId}';
-  final coverMap = _normalizeStoredImageMap(
+  var coverMap = _normalizeStoredImageMap(
     _deepCopyMap(detail.comicInfo.cover.toJson()),
   );
+  if (_isEmptyStoredImage(coverMap) && existing != null) {
+    try {
+      coverMap = _normalizeStoredImageMap(
+        Map<String, dynamic>.from(jsonDecode(existing.cover) as Map),
+      );
+    } catch (_) {
+      // 旧记录封面 JSON 损坏时继续使用当前详情的空封面。
+    }
+  }
   final creatorMap = _normalizeStoredCreatorMap(
     _deepCopyMap(detail.comicInfo.creator.toJson()),
   );
@@ -386,24 +598,94 @@ Future<void> _saveUnifiedDownload({
           .copyWith(extern: {...detail.extern, 'version': mainVersion})
           .toJson(),
     ),
-    storageRoot:
-        '${await getDownloadPath()}${Platform.pathSeparator}$from${Platform.pathSeparator}original${Platform.pathSeparator}${task.comicId}',
-    createdAt: now,
+    storageRoot: p.join(
+      await getDownloadPath(),
+      from,
+      'original',
+      encodePath(path: task.comicId),
+    ),
+    createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     downloadedAt: now,
     deleted: false,
     schemaVersion: 2,
   );
 
-  final temp = objectbox.unifiedDownloadBox
-      .query(UnifiedComicDownload_.uniqueKey.equals(key))
-      .build()
-      .find();
-  objectbox.unifiedDownloadBox.removeMany(temp.map((e) => e.id).toList());
+  if (existing != null) {
+    entity.id = existing.id;
+  }
   objectbox.unifiedDownloadBox.put(entity);
 
   // 同时建立根目录下载链接，用于新的文件夹书架视图
   ComicLinkService.addComic(key, null, ComicFolderType.download);
+}
+
+UnifiedComicDownloadStoredChapter _buildStoredChapter(
+  DownloadChapter selectedChapter,
+  UnifiedPluginChapterResponse response,
+) {
+  logger.d(
+    '_saveUnifiedDownloadChapter: '
+    'chapter.id=${selectedChapter.id}, '
+    'requestId=${selectedChapter.effectiveRequestId}, '
+    'storageId=${selectedChapter.effectiveStorageId}, '
+    'responseEpId=${response.chapter.epId}, '
+    'imageCount=${response.chapter.docs.length}',
+  );
+  return UnifiedComicDownloadStoredChapter(
+    // `id` 字段保持为本地存储 key，旧版本读取时仍按 storage key 理解。
+    id: selectedChapter.effectiveStorageId,
+    name: selectedChapter.displayName.trim().isNotEmpty
+        ? selectedChapter.displayName
+        : response.chapter.epName,
+    order: selectedChapter.order,
+    // `logicalKey` 写入宿主匹配 key，保证新版本通过适配器能还原出正确的 id。
+    logicalKey: selectedChapter.id,
+    taskChapterId: _resolveChapterRequestId(selectedChapter),
+    // 显式保存 storageChapterId，确保显式指定了 storage key 的插件能正确还原。
+    storageChapterId: selectedChapter.effectiveStorageId,
+    images: response.chapter.docs.map((doc) {
+      final imageName = _resolveImageDisplayName(doc);
+      final imagePath = normalizeStoredAssetPath(doc.path);
+      return UnifiedComicDownloadImage(
+        id: doc.id.isNotEmpty
+            ? doc.id
+            : _fallbackImageId(doc, response.chapter.epId),
+        name: imageName,
+        path: imagePath,
+        url: doc.url,
+        extern: doc.extern,
+      );
+    }).toList(),
+  );
+}
+
+bool _storedChapterMatches(
+  UnifiedComicDownloadStoredChapter stored,
+  DownloadChapter selected,
+) {
+  final storedKeys = <String>{
+    stored.id.trim(),
+    stored.logicalKey.trim(),
+    stored.taskChapterId.trim(),
+    stored.storageChapterId.trim(),
+  }..remove('');
+  final selectedKeys = <String>{
+    selected.id.trim(),
+    selected.effectiveRequestId.trim(),
+    selected.effectiveStorageId.trim(),
+  }..remove('');
+  if (storedKeys.intersection(selectedKeys).isNotEmpty) return true;
+  return stored.order > 0 &&
+      selected.order > 0 &&
+      stored.order == selected.order;
+}
+
+bool _isEmptyStoredImage(Map<String, dynamic> image) {
+  final path = image['path']?.toString().trim() ?? '';
+  final extern = Map<String, dynamic>.from(image['extern'] as Map? ?? const {});
+  final externPath = extern['path']?.toString().trim() ?? '';
+  return path.isEmpty && externPath.isEmpty;
 }
 
 Map<String, dynamic> _deepCopyMap(Object value) {
@@ -490,20 +772,22 @@ Map<String, dynamic> _normalizeStoredCreatorMap(Map<String, dynamic> creator) {
   return map;
 }
 
-void _markTaskCompleted(String comicId) {
-  final tasks = objectbox.downloadTaskBox
-      .query(DownloadTask_.comicId.equals(comicId))
-      .build()
-      .find();
-  for (final item in tasks) {
-    item
-      ..isCompleted = true
-      ..isDownloading = false
-      ..status = t.download.notificationCompleteTitle;
+void _markTaskCompleted(String taskKey) {
+  const repository = DownloadTaskRepository();
+  final task = repository.findByTaskKey(taskKey);
+  if (task == null) return;
+  final payload = repository.readPayload(task);
+  task
+    ..isCompleted = true
+    ..isDownloading = false
+    ..status = t.download.notificationCompleteTitle;
+  if (payload != null) {
+    task.taskInfo = payload.copyWith(
+      stateCode: 'completed',
+      phaseCode: 'completed',
+    );
   }
-  if (tasks.isNotEmpty) {
-    objectbox.downloadTaskBox.putMany(tasks);
-  }
+  objectbox.downloadTaskBox.put(task);
 }
 
 DownloadChapter? _findMatchingChapter(

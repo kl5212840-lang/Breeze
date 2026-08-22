@@ -6,6 +6,10 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:path/path.dart' as p;
 import 'package:zephyr/cubit/string_select.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/main.dart';
+import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart';
+import 'package:zephyr/object_box/model.dart';
+import 'package:zephyr/object_box/objectbox.g.dart';
 import 'package:zephyr/page/comic_info/comic_info.dart';
 import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart'
     show ComicInfo;
@@ -130,32 +134,85 @@ class _InfoColumnState extends State<_InfoColumn> {
   Future<void> _calculateStorageSize() async {
     try {
       final downloadPath = await getDownloadPath();
-      final storagePath = p.join(
-        downloadPath,
-        widget.from,
-        'original',
-        encodePath(path: widget.comicInfo.id),
-      );
-      final dir = Directory(storagePath);
-      if (!await dir.exists()) return;
-
       int totalSize = 0;
-      await for (final entity in dir.list(
-        recursive: true,
-        followLinks: false,
-      )) {
-        if (entity is File) {
-          try {
-            totalSize += await entity.length();
-          } on FileSystemException {
-            continue;
+      var foundDirectory = false;
+
+      for (final storagePath in await _storageRoots(downloadPath)) {
+        final dir = Directory(storagePath);
+        try {
+          if (!await dir.exists()) continue;
+          foundDirectory = true;
+          await for (final entity in dir.list(
+            recursive: true,
+            followLinks: false,
+          )) {
+            if (entity is File) {
+              try {
+                totalSize += await entity.length();
+              } on FileSystemException {
+                continue;
+              }
+            }
           }
+        } on FileSystemException {
+          // 某个历史目录不可访问时，继续统计其他兼容目录。
         }
       }
-      if (mounted) setState(() => _storageSize = totalSize);
+
+      if (foundDirectory && mounted) {
+        setState(() => _storageSize = totalSize);
+      }
     } catch (_) {
       // ignore errors
     }
+  }
+
+  Future<List<String>> _storageRoots(String downloadPath) async {
+    final roots = <String, String>{};
+    void addRoot(String path) {
+      final normalized = p.normalize(p.absolute(path));
+      final key = Platform.isWindows ? normalized.toLowerCase() : normalized;
+      roots[key] = normalized;
+    }
+
+    final comicId = widget.comicInfo.id.trim();
+    final sourceCandidates = <String>{
+      widget.from.trim(),
+      normalizePluginId(widget.from),
+    }..removeWhere((source) => source.isEmpty);
+
+    for (final source in sourceCandidates) {
+      // 新版编码目录。
+      try {
+        addRoot(
+          p.join(downloadPath, source, 'original', encodePath(path: comicId)),
+        );
+      } catch (_) {
+        // Rust 编码服务尚未就绪时，仍继续统计历史原始目录。
+      }
+
+      // 旧版未编码目录。
+      addRoot(p.join(downloadPath, source, 'original', comicId));
+    }
+
+    // 旧数据库记录可能保存了当时实际使用的绝对 storageRoot。
+    for (final source in sourceCandidates) {
+      final query = objectbox.unifiedDownloadBox
+          .query(UnifiedComicDownload_.uniqueKey.equals('$source:$comicId'))
+          .build();
+      UnifiedComicDownload? download;
+      try {
+        download = query.findFirst();
+      } finally {
+        query.close();
+      }
+      final storedRoot = download?.storageRoot.trim() ?? '';
+      if (storedRoot.isNotEmpty && p.isAbsolute(storedRoot)) {
+        addRoot(storedRoot);
+      }
+    }
+
+    return roots.values.toList();
   }
 
   String _formatFileSize(int bytes) {

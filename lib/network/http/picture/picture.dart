@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as file_path;
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart';
+import 'package:zephyr/service/download/download_asset_store.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/type/pipe.dart';
 import 'package:zephyr/service/download/download_cancel_signal.dart';
@@ -14,6 +15,9 @@ import 'package:zephyr/page/setting/real_sr/service/real_sr_super_resolution.dar
 import 'package:zephyr/src/rust/api/simple.dart';
 import 'package:zephyr/src/rust/decode/decode.dart';
 import 'package:zephyr/util/get_path.dart';
+
+export 'package:zephyr/service/download/download_asset_store.dart'
+    show normalizeStoredAssetPath;
 
 const _kQjsRuntimeCancelled = '__QJS_RUNTIME_CANCELLED__';
 const _kDownloadTaskCancelled = '__DOWNLOAD_TASK_CANCELLED__';
@@ -46,50 +50,43 @@ Future<String> getCachePicture({
     final directFile = File(directPath);
     if (await directFile.exists()) {
       try {
-        await directFile.length();
-        return directPath;
+        if (await directFile.length() > 0) return directPath;
       } catch (_) {}
     }
+    return '404';
   }
   if (directPath.isEmpty) {
     return '404';
   }
 
-  final existingFilePath = await findCachedPicturePath(
+  final assetStore = DownloadAssetStore(
     from: resolvedFrom,
-    path: path,
+    path: directPath,
     cartoonId: cartoonId,
     chapterId: chapterId,
     pictureType: pictureType,
   );
+  final existing = await assetStore.findExisting();
 
-  if (existingFilePath.isNotEmpty) {
-    // 双重检查文件确实存在且可读
-    final file = File(existingFilePath);
-    if (await file.exists()) {
+  if (existing != null) {
+    try {
+      // 超分 + WebP 转换统一封装，内部会判断分辨率并保留原文件名。
+      if (pictureType == PictureType.page) {
+        await RealSrSuperResolution.upscaleAndConvertToWebp(existing.path);
+      }
+      return existing.path;
+    } catch (e) {
+      logger.w(
+        'getCachePicture: 文件存在但无法访问，删除并重新下载: ${existing.path}',
+        error: e,
+      );
       try {
-        // 尝试读取文件大小以确保文件可访问
-        await file.length();
-        // 超分 + WebP 转换统一封装，内部会判断分辨率并保留原文件名
-        if (pictureType == PictureType.page) {
-          await RealSrSuperResolution.upscaleAndConvertToWebp(existingFilePath);
-        }
-        return existingFilePath;
-      } catch (e) {
-        // 文件存在但无法访问，删除并重新下载
-        logger.w(
-          'getCachePicture: 文件存在但无法访问，删除并重新下载: $existingFilePath',
-          error: e,
+        await File(existing.path).delete();
+      } catch (deleteError) {
+        logger.e(
+          'getCachePicture: 删除损坏文件失败: ${existing.path}',
+          error: deleteError,
         );
-        try {
-          await file.delete();
-        } catch (deleteError) {
-          logger.e(
-            'getCachePicture: 删除损坏文件失败: $existingFilePath',
-            error: deleteError,
-          );
-        }
-        // 继续下载流程
       }
     }
   }
@@ -98,14 +95,7 @@ Future<String> getCachePicture({
     throw Exception('404');
   }
 
-  // 下载落盘路径，与 findCachedPicturePath 中"新（编码）缓存路径"保持一致。
-  final newCacheFilePath = _buildStoredFilePath(
-    await getCachePath(),
-    resolvedFrom,
-    encodePath(path: directPath),
-    encodePath(path: cartoonId.trim()),
-    pictureType == PictureType.cover ? '' : encodePath(path: chapterId.trim()),
-  );
+  final newCacheFilePath = await assetStore.canonicalCachePath();
 
   extern = {...?extern};
   extern['priority'] ??= 0;
@@ -138,7 +128,8 @@ Future<String> getCachePicture({
   await saveImage(imageData, newCacheFilePath);
 
   // 验证文件已成功保存
-  if (await File(newCacheFilePath).exists()) {
+  if (await File(newCacheFilePath).exists() &&
+      await File(newCacheFilePath).length() > 0) {
     // 超分 + WebP 转换统一封装，内部会判断分辨率并保留原文件名
     if (pictureType == PictureType.page) {
       await RealSrSuperResolution.upscaleAndConvertToWebp(newCacheFilePath);
@@ -170,73 +161,48 @@ Future<String> findCachedPicturePath({
   if (directPath.isEmpty) {
     return '';
   }
-  if (file_path.isAbsolute(directPath)) {
-    return await File(directPath).exists() ? directPath : '';
-  }
-
-  final cachePath = await getCachePath();
-  final downloadPath = await getDownloadPath();
-
-  final encodePicturePath = directPath.let((path) => encodePath(path: path));
-  final encodeCartoonId = cartoonId.trim().let(
-    (path) => encodePath(path: path),
-  );
-  final encodeChapterId = chapterId.trim().let(
-    (path) => encodePath(path: path),
-  );
-
-  final newCacheFilePath = _buildStoredFilePath(
-    cachePath,
-    resolvedFrom,
-    encodePicturePath,
-    encodeCartoonId,
-    pictureType == PictureType.cover ? '' : encodeChapterId,
-  );
-
-  final newDownloadFilePath = _buildStoredFilePath(
-    downloadPath,
-    resolvedFrom,
-    encodePicturePath,
-    encodeCartoonId,
-    pictureType == PictureType.cover ? '' : encodeChapterId,
-    rootFolder: 'original',
-  );
-
-  final oldCacheFilePath = _buildStoredFilePath(
-    cachePath,
-    resolvedFrom,
-    directPath,
-    cartoonId,
-    pictureType == PictureType.cover ? '' : chapterId,
-  );
-
-  final oldDownloadFilePath = _buildStoredFilePath(
-    downloadPath,
-    resolvedFrom,
-    directPath,
-    cartoonId,
-    pictureType == PictureType.cover ? '' : chapterId,
-    rootFolder: 'original',
-  );
-
-  // 优先使用新（编码后）路径查找
-  String existingFilePath = await checkFileExists(
-    newCacheFilePath,
-    newDownloadFilePath,
-  );
-
-  if (existingFilePath.isEmpty) {
-    // 未找到，回退到旧（未编码）路径
-    existingFilePath = await checkFileExists(
-      oldCacheFilePath,
-      oldDownloadFilePath,
-    );
-  }
-
-  return existingFilePath;
+  final existing = await DownloadAssetStore(
+    from: resolvedFrom,
+    path: directPath,
+    cartoonId: cartoonId,
+    chapterId: chapterId,
+    pictureType: pictureType,
+  ).findExisting();
+  return existing?.path ?? '';
 }
 
 Future<String> downloadPicture({
+  required String from,
+  String url = '',
+  String path = '',
+  String cartoonId = '1',
+  String chapterId = '',
+  PictureType pictureType = PictureType.page,
+  String? qjsName,
+  String qjsTaskGroupKey = '',
+  bool retry = false,
+  Map<String, dynamic> extern = const <String, dynamic>{},
+}) async {
+  final result = await downloadPictureResult(
+    from: from,
+    url: url,
+    path: path,
+    cartoonId: cartoonId,
+    chapterId: chapterId,
+    pictureType: pictureType,
+    qjsName: qjsName,
+    qjsTaskGroupKey: qjsTaskGroupKey,
+    retry: retry,
+    extern: extern,
+  );
+  if (result.status == DownloadPictureResultStatus.notFound ||
+      result.status == DownloadPictureResultStatus.failed) {
+    return '404';
+  }
+  return result.path;
+}
+
+Future<DownloadPictureResult> downloadPictureResult({
   required String from,
   String url = '',
   String path = '',
@@ -253,79 +219,59 @@ Future<String> downloadPicture({
     throw StateError('downloadPicture missing pluginId');
   }
   if (url.isEmpty) {
-    return '404';
+    return const DownloadPictureResult(
+      status: DownloadPictureResultStatus.notFound,
+    );
   }
   if (url.contains("404")) {
-    return "404";
+    return const DownloadPictureResult(
+      status: DownloadPictureResultStatus.notFound,
+    );
   }
 
   if (path.trim().isEmpty) {
-    return '404';
+    return const DownloadPictureResult(
+      status: DownloadPictureResultStatus.notFound,
+    );
   }
 
-  final encodePicturePath = path
-      .let((path) => _sanitizeStoredPath(path))
-      .trim()
-      .let((path) => encodePath(path: path));
-  final encodeCartoonId = cartoonId.trim().let(
-    (path) => encodePath(path: path),
+  final assetStore = DownloadAssetStore(
+    from: resolvedFrom,
+    path: path,
+    cartoonId: cartoonId,
+    chapterId: chapterId,
+    pictureType: pictureType,
   );
-  final encodeChapterId = chapterId.trim().let(
-    (path) => encodePath(path: path),
-  );
-
-  final downloadPath = await getDownloadPath();
-  final cachePath = await getCachePath();
-  final cacheFilePath = _buildStoredFilePath(
-    cachePath,
-    resolvedFrom,
-    encodePicturePath,
-    encodeCartoonId,
-    pictureType == PictureType.cover ? '' : encodeChapterId,
-    rootFolder: 'original',
-  );
-
-  final downloadFilePath = _buildStoredFilePath(
-    downloadPath,
-    resolvedFrom,
-    encodePicturePath,
-    encodeCartoonId,
-    pictureType == PictureType.cover ? '' : encodeChapterId,
-    rootFolder: 'original',
-  );
-
-  // 检查文件是否存在
-  String existingFilePath = await checkFileExists(
-    cacheFilePath,
-    downloadFilePath,
-  );
-
-  if (existingFilePath.isNotEmpty) {
-    // 双重检查文件确实存在且可读
-    final file = File(existingFilePath);
-    if (await file.exists()) {
-      try {
-        // 尝试读取文件大小以确保文件可访问
-        await file.length();
-        if (existingFilePath != downloadFilePath) {
-          await copyFile(cacheFilePath, downloadFilePath);
-        }
-        return downloadFilePath;
-      } catch (e) {
-        // 文件存在但无法访问，删除并重新下载
-        logger.w(
-          'downloadPicture: 文件存在但无法访问，删除并重新下载: $existingFilePath',
-          error: e,
+  final existing = await assetStore.findExisting();
+  if (existing != null) {
+    try {
+      if (existing.location == DownloadAssetLocation.canonicalCache) {
+        final canonicalDownloadPath = await assetStore.canonicalDownloadPath();
+        await assetStore.copyFileAtomically(
+          sourcePath: existing.path,
+          finalPath: canonicalDownloadPath,
+          taskId: qjsTaskGroupKey,
         );
-        try {
-          await file.delete();
-        } catch (deleteError) {
-          logger.e(
-            'downloadPicture: 删除损坏文件失败: $existingFilePath',
-            error: deleteError,
-          );
-        }
-        // 继续下载流程
+        return DownloadPictureResult(
+          status: DownloadPictureResultStatus.downloaded,
+          path: canonicalDownloadPath,
+          location: DownloadAssetLocation.canonicalDownload,
+        );
+      }
+      return DownloadPictureResult(
+        status: DownloadPictureResultStatus.existing,
+        path: existing.path,
+        location: existing.location,
+      );
+    } catch (e) {
+      logger.w('downloadPicture: 已存在文件不可复用，准备重新下载: ${existing.path}', error: e);
+      try {
+        await File(existing.path).delete();
+      } catch (deleteError) {
+        logger.e(
+          'downloadPicture: 删除不可复用文件失败: ${existing.path}',
+          error: deleteError,
+        );
       }
     }
   }
@@ -345,82 +291,111 @@ Future<String> downloadPicture({
     if (_isDownloadTaskCancelledError(e) || _isQjsRuntimeCancelledError(e)) {
       rethrow;
     }
-    logger.w('downloadPicture skip source=$resolvedFrom url=$url error=$e');
-    return '404';
-  }
-
-  _throwIfDownloadCancelled(qjsTaskGroupKey);
-
-  if (resolvedFrom == _kJmPluginUuid && pictureType == PictureType.page) {
-    await decodeAndSaveImage(
-      imageData,
-      chapterId.let(toInt),
-      downloadFilePath,
-      url,
-    );
-
-    _throwIfDownloadCancelled(qjsTaskGroupKey);
-
-    // 验证文件已成功保存
-    if (await File(downloadFilePath).exists()) {
-      return downloadFilePath;
-    } else {
-      return '404';
+    if (e is DownloadPictureNotFoundException) {
+      logger.w('下载图片资源不存在: source=$resolvedFrom url=$url');
+      return DownloadPictureResult(
+        status: DownloadPictureResultStatus.notFound,
+        error: e,
+      );
     }
+    logger.w('downloadPicture failed source=$resolvedFrom url=$url', error: e);
+    return DownloadPictureResult(
+      status: DownloadPictureResultStatus.failed,
+      error: e,
+    );
   }
 
-  // 保存图片
   _throwIfDownloadCancelled(qjsTaskGroupKey);
-  await saveImage(imageData, downloadFilePath);
 
-  // 验证文件已成功保存
-  if (await File(downloadFilePath).exists()) {
-    return downloadFilePath;
-  } else {
-    return '404';
-  }
-}
+  final downloadFilePath = await assetStore.canonicalDownloadPath();
 
-String _buildStoredFilePath(
-  String basePath,
-  String from,
-  String path,
-  String cartoonId,
-  String chapterId, {
-  String? rootFolder,
-}) {
-  final fileName = _sanitizeStoredPath(path);
-  final segments = <String>[basePath, (from).trim()];
-  if (rootFolder != null && rootFolder.isNotEmpty) {
-    segments.add(rootFolder);
+  try {
+    if (resolvedFrom == _kJmPluginUuid && pictureType == PictureType.page) {
+      await decodeAndSaveImage(
+        imageData,
+        chapterId.let(toInt),
+        downloadFilePath,
+        url,
+        taskId: qjsTaskGroupKey,
+      );
+    } else {
+      await saveImage(imageData, downloadFilePath, taskId: qjsTaskGroupKey);
+    }
+  } catch (e) {
+    if (_isDownloadTaskCancelledError(e) || _isQjsRuntimeCancelledError(e)) {
+      rethrow;
+    }
+    logger.w(
+      'downloadPicture save failed source=$resolvedFrom url=$url',
+      error: e,
+    );
+    return DownloadPictureResult(
+      status: DownloadPictureResultStatus.failed,
+      error: e,
+    );
   }
-  if (cartoonId.trim().isNotEmpty) {
-    segments.add(cartoonId.trim());
-  }
-  if (chapterId.trim().isNotEmpty) {
-    segments.add(chapterId.trim());
-  }
-  segments.add(fileName);
-  return file_path.joinAll(segments);
-}
 
-String _sanitizeStoredPath(String path) {
-  return normalizeStoredAssetPath(path);
+  _throwIfDownloadCancelled(qjsTaskGroupKey);
+  final finalFile = File(downloadFilePath);
+  if (!await finalFile.exists() || await finalFile.length() <= 0) {
+    return const DownloadPictureResult(
+      status: DownloadPictureResultStatus.failed,
+    );
+  }
+  if (pictureType == PictureType.page) {
+    await RealSrSuperResolution.upscaleAndConvertToWebp(downloadFilePath);
+  }
+  return DownloadPictureResult(
+    status: DownloadPictureResultStatus.downloaded,
+    path: downloadFilePath,
+    location: DownloadAssetLocation.canonicalDownload,
+  );
 }
 
 /// 删除漫画下载根目录。
 ///
 /// 为兼容新旧下载布局，先尝试删除编码后的路径，再尝试删除原始路径。
-Future<void> deleteComicDownloadDirectory(String from, String comicId) async {
-  final encodedRoot = await _buildComicDownloadRoot(
-    from,
-    comicId,
-    encoded: true,
-  );
+Future<void> deleteComicDownloadDirectory(
+  String from,
+  String comicId, {
+  String? legacyStorageRoot,
+}) async {
+  final legacyRoot = legacyStorageRoot?.trim() ?? '';
+  if (legacyRoot.isNotEmpty && file_path.isAbsolute(legacyRoot)) {
+    try {
+      final legacyDirectory = Directory(legacyRoot);
+      if (legacyDirectory.existsSync()) {
+        legacyDirectory.deleteSync(recursive: true);
+      }
+    } catch (e) {
+      logger.w('同步删除历史下载目录失败: $legacyRoot', error: e);
+    }
+  }
+
+  final downloadRoot = await getDownloadPath();
+  String? encodedRoot;
+  try {
+    encodedRoot = await _buildComicDownloadRoot(from, comicId, encoded: true);
+  } catch (e) {
+    // 删除历史原始路径不应依赖 Rust bridge；这也让纯 Dart 测试和
+    // 尚未初始化 Rust 的早期生命周期仍能清理旧下载目录。
+    logger.d('生成编码下载目录失败，继续清理原始目录: $comicId, error=$e');
+  }
   final rawRoot = await _buildComicDownloadRoot(from, comicId, encoded: false);
 
-  await _tryDeleteDirectory(encodedRoot);
-  await _tryDeleteDirectory(rawRoot);
+  if (encodedRoot != null &&
+      DownloadAssetStore.isWithinRoot(downloadRoot, encodedRoot)) {
+    await _tryDeleteDirectory(encodedRoot);
+  }
+  if (DownloadAssetStore.isWithinRoot(downloadRoot, rawRoot)) {
+    await _tryDeleteDirectory(rawRoot);
+  } else {
+    logger.w('跳过越界的历史下载目录删除: $rawRoot');
+  }
+
+  // 旧记录可能保存了当前平台之外的绝对 storageRoot。正常读取不依赖它；
+  // 删除下载记录时，如果调用方明确传入且该目录仍存在，则兼容清理这个
+  // 历史目录，避免旧版本导入的数据留下孤立文件。
 }
 
 Future<String> _buildComicDownloadRoot(
@@ -444,53 +419,6 @@ Future<void> _tryDeleteDirectory(String path) async {
     } catch (e) {
       logger.w('删除目录失败: $path, error: $e');
     }
-  }
-}
-
-String normalizeStoredAssetPath(String rawPath, {bool allowEmpty = false}) {
-  final raw = rawPath.trim();
-  if (raw.isEmpty) {
-    if (allowEmpty) {
-      return '';
-    }
-    throw StateError('normalizeStoredAssetPath requires non-empty path');
-  }
-  final candidate = file_path.isAbsolute(raw) ? file_path.basename(raw) : raw;
-  final sanitized = candidate.replaceAll(RegExp(r'[^a-zA-Z0-9_\-.]'), '_');
-  if (sanitized.isNotEmpty) {
-    return sanitized;
-  }
-  throw StateError('normalizeStoredAssetPath received invalid path: $rawPath');
-}
-
-Future<String> checkFileExists(String cachePath, String downloadPath) async {
-  if (await fileExists(downloadPath)) {
-    return downloadPath;
-  }
-
-  if (await fileExists(cachePath)) {
-    return cachePath;
-  }
-
-  return '';
-}
-
-Future<bool> fileExists(String filePath) async {
-  try {
-    return await File(filePath).exists();
-  } catch (e) {
-    logger.e('检查文件存在性时出错: $e');
-    return false;
-  }
-}
-
-Future<void> copyFile(String sourcePath, String targetPath) async {
-  try {
-    await ensureDirectoryExists(targetPath);
-    await File(sourcePath).copy(targetPath);
-  } catch (e) {
-    logger.e('复制文件失败: $e');
-    throw Exception('复制文件失败: $e');
   }
 }
 
@@ -547,7 +475,7 @@ Future<Uint8List> downloadImageWithRetry(
       final isNotFound = errText.contains('422') || errText.contains('404');
       if (isNotFound) {
         logger.w('下载图片资源不存在，跳过: $url');
-        rethrow;
+        throw DownloadPictureNotFoundException(url, e);
       }
 
       if (e is TimeoutException) {
@@ -577,6 +505,36 @@ bool _isDownloadTaskCancelledError(Object error) {
       error.toString().contains(downloadTaskCancelledMessage);
 }
 
+enum DownloadPictureResultStatus { existing, downloaded, notFound, failed }
+
+class DownloadPictureResult {
+  const DownloadPictureResult({
+    required this.status,
+    this.path = '',
+    this.location,
+    this.error,
+  });
+
+  final DownloadPictureResultStatus status;
+  final String path;
+  final DownloadAssetLocation? location;
+  final Object? error;
+
+  bool get isSuccess =>
+      status == DownloadPictureResultStatus.existing ||
+      status == DownloadPictureResultStatus.downloaded;
+}
+
+class DownloadPictureNotFoundException implements Exception {
+  const DownloadPictureNotFoundException(this.url, [this.cause]);
+
+  final String url;
+  final Object? cause;
+
+  @override
+  String toString() => '图片资源不存在: $url';
+}
+
 Future<void> _delayWithCancel({
   required String taskGroupKey,
   required Duration duration,
@@ -588,60 +546,57 @@ Future<void> _delayWithCancel({
   await raceWithDownloadCancel(taskGroupKey, Future<void>.delayed(duration));
 }
 
-Future<void> saveImage(Uint8List imageData, String filePath) async {
-  // logger.d('开始保存图片到：$filePath');
-  final targetFile = File(filePath);
-
+Future<void> saveImage(
+  Uint8List imageData,
+  String filePath, {
+  String taskId = '',
+}) async {
   try {
-    // 验证图片数据不为空
-    if (imageData.isEmpty) {
-      throw Exception('图片数据为空');
-    }
-
-    // 确保目录存在
-    await ensureDirectoryExists(filePath);
-
-    // 直接写入目标文件
-    await targetFile.writeAsBytes(imageData);
-
-    // logger.d('图片已保存到：$filePath');
+    await DownloadAssetStore.writeBytesAtomically(
+      imageData,
+      finalPath: filePath,
+      taskId: taskId,
+    );
   } catch (e) {
-    // 如果发生异常，删除不完整的文件
-    if (await targetFile.exists()) {
-      await targetFile.delete();
-    }
-    logger.e('保存图片失败: $e');
-    throw Exception('保存图片失败: $e 404');
+    logger.e('保存图片失败: $filePath', error: e);
+    rethrow;
   }
 }
 
 Future<void> ensureDirectoryExists(String filePath) async {
-  final directory = Directory(file_path.dirname(filePath));
-  if (!await directory.exists()) {
-    await directory.create(recursive: true);
-  }
+  await DownloadAssetStore.ensureParentDirectory(filePath);
 }
 
 Future<void> decodeAndSaveImage(
   Uint8List imgData,
   int chapterId,
   String fileName,
-  String url,
-) async {
+  String url, {
+  String taskId = '',
+}) async {
   if (imgData.isEmpty) {
-    throw Exception('404');
+    throw StateError('图片数据为空');
   }
 
+  final temporaryPath = DownloadAssetStore.temporaryPathFor(
+    fileName,
+    taskId: taskId,
+  );
   final imageInfo = ImageInfo(
     imgData: imgData,
     chapterId: chapterId,
-    fileName: fileName,
+    fileName: temporaryPath,
     url: url,
   );
 
   try {
     await antiObfuscationPicture(imageInfo: imageInfo);
+    await DownloadAssetStore.commitTemporaryFile(temporaryPath, fileName);
   } catch (e, s) {
+    try {
+      final temporaryFile = File(temporaryPath);
+      if (await temporaryFile.exists()) await temporaryFile.delete();
+    } catch (_) {}
     logger.e(e, stackTrace: s);
     rethrow;
   }

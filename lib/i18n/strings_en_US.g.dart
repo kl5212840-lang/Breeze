@@ -1437,8 +1437,10 @@ class _Translations$download$en_US extends Translations$download$zh_CN {
 	@override String get statusDownloadingCover => 'Downloading cover...';
 	@override String get statusFetchingChapterInfo => 'Fetching chapter info...';
 	@override String statusFetchingChapterInfoProgress({required Object completed, required Object total, required Object percent}) => 'Fetching chapter info... (${completed}/${total}, ${percent}%)';
-	@override String statusDownloadProgress({required Object percent}) => 'Comic download progress: ${percent}%';
-	@override String get statusDownloadProgressComplete => 'Comic download progress: 100%';
+	@override String statusDownloadProgress({required Object percent}) => 'Current chapter download progress: ${percent}%';
+	@override String get statusDownloadProgressComplete => 'Current chapter download progress: 100%';
+	@override String statusComicProgress({required Object completedChapters, required Object totalChapters, required Object currentChapterCompletedImages, required Object currentChapterTotalImages}) => 'Comic progress (by chapter): ${completedChapters}/${totalChapters} chapters, current chapter: ${currentChapterCompletedImages}/${currentChapterTotalImages} pages';
+	@override String statusComicProgressChaptersOnly({required Object completedChapters, required Object totalChapters}) => 'Comic progress (by chapter): ${completedChapters}/${totalChapters} chapters';
 	@override String get statusStartDownload => 'Start downloading...';
 	@override String get statusWaiting => 'Waiting';
 	@override String get statusCancelling => 'Cancelling...';
@@ -2609,8 +2611,10 @@ extension on TranslationsEnUs {
 			'download.statusDownloadingCover' => 'Downloading cover...',
 			'download.statusFetchingChapterInfo' => 'Fetching chapter info...',
 			'download.statusFetchingChapterInfoProgress' => ({required Object completed, required Object total, required Object percent}) => 'Fetching chapter info... (${completed}/${total}, ${percent}%)',
-			'download.statusDownloadProgress' => ({required Object percent}) => 'Comic download progress: ${percent}%',
-			'download.statusDownloadProgressComplete' => 'Comic download progress: 100%',
+			'download.statusDownloadProgress' => ({required Object percent}) => 'Current chapter download progress: ${percent}%',
+			'download.statusDownloadProgressComplete' => 'Current chapter download progress: 100%',
+			'download.statusComicProgress' => ({required Object completedChapters, required Object totalChapters, required Object currentChapterCompletedImages, required Object currentChapterTotalImages}) => 'Comic progress (by chapter): ${completedChapters}/${totalChapters} chapters, current chapter: ${currentChapterCompletedImages}/${currentChapterTotalImages} pages',
+			'download.statusComicProgressChaptersOnly' => ({required Object completedChapters, required Object totalChapters}) => 'Comic progress (by chapter): ${completedChapters}/${totalChapters} chapters',
 			'download.statusStartDownload' => 'Start downloading...',
 			'download.statusWaiting' => 'Waiting',
 			'download.statusCancelling' => 'Cancelling...',

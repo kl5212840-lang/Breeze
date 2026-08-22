@@ -4,6 +4,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/donwload_task/bloc/dowload_task_bloc.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/service/download/download_queue_manager.dart';
+import 'package:zephyr/service/download/download_task_progress.dart';
 import 'package:zephyr/widgets/toast.dart';
 
 @RoutePage()
@@ -107,6 +109,11 @@ class _DownloadTaskView extends StatelessWidget {
                         return _PendingTaskTile(
                           key: ValueKey(task.id),
                           task: task,
+                          onRetry: task.taskInfo?.stateCode == 'failed'
+                              ? () => DownloadQueueManager.instance.retryTask(
+                                  task.id,
+                                )
+                              : null,
                           onDelete: () {
                             context.read<DowloadTaskBloc>().add(
                               DowloadTaskEvent.taskDeleted(task.id),
@@ -134,6 +141,17 @@ class _DownloadingTaskTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final payload = task.taskInfo;
+    final progress = payload == null
+        ? null
+        : downloadTaskPayloadProgressFraction(payload);
+    final progressMessage = payload == null
+        ? ''
+        : downloadTaskPayloadProgressMessage(payload);
+    // 任务状态和 checkpoint 进度是分开写入的。下载中只显示结构化进度，
+    // 避免两次 ObjectBox 更新之间蓝色状态文字短暂出现造成闪烁。
+    final statusMessage = progressMessage.isEmpty ? task.status : '';
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: ListTile(
@@ -144,16 +162,35 @@ class _DownloadingTaskTile extends StatelessWidget {
             height: 20,
             child: CircularProgressIndicator(
               strokeWidth: 2,
+              value: progress,
               valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
             ),
           ),
         ),
         title: Text(task.comicName),
-        subtitle: Text(
-          task.status,
-          style: const TextStyle(color: Colors.blue),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (statusMessage.isNotEmpty)
+              Text(
+                statusMessage,
+                style: const TextStyle(color: Colors.blue),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            if (progressMessage.isNotEmpty)
+              Text(
+                progressMessage,
+                style: Theme.of(context).textTheme.bodySmall,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            if (progress != null) ...[
+              const SizedBox(height: 4),
+              LinearProgressIndicator(value: progress),
+            ],
+          ],
         ),
         trailing: IconButton(
           icon: const Icon(Icons.cancel_outlined, color: Colors.blue),
@@ -196,16 +233,24 @@ class _DownloadingTaskTile extends StatelessWidget {
 
 class _PendingTaskTile extends StatelessWidget {
   final DownloadTask task;
+  final VoidCallback? onRetry;
   final VoidCallback onDelete;
 
   const _PendingTaskTile({
     required super.key,
     required this.task,
+    this.onRetry,
     required this.onDelete,
   });
 
   @override
   Widget build(BuildContext context) {
+    final payload = task.taskInfo;
+    final progressMessage = payload == null
+        ? ''
+        : downloadTaskPayloadProgressMessage(payload);
+    final statusMessage = task.status == progressMessage ? '' : task.status;
+
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: ListTile(
@@ -214,15 +259,40 @@ class _PendingTaskTile extends StatelessWidget {
           child: Icon(Icons.hourglass_empty, color: Colors.white),
         ),
         title: Text(task.comicName),
-        subtitle: Text(
-          task.status,
-          style: const TextStyle(color: Colors.grey),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (statusMessage.isNotEmpty)
+              Text(
+                statusMessage,
+                style: const TextStyle(color: Colors.grey),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            if (progressMessage.isNotEmpty)
+              Text(
+                progressMessage,
+                style: Theme.of(context).textTheme.bodySmall,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+          ],
         ),
-        trailing: IconButton(
-          icon: const Icon(Icons.delete_outline),
-          onPressed: onDelete,
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (onRetry != null)
+              IconButton(
+                tooltip: t.common.retry,
+                icon: const Icon(Icons.refresh),
+                onPressed: onRetry,
+              ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              onPressed: onDelete,
+            ),
+          ],
         ),
       ),
     );

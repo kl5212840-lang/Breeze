@@ -11,13 +11,13 @@ class DownloadTaskCancelledException implements Exception {
 
 final Map<String, Completer<void>> _downloadCancelSignals = {};
 
-void prepareDownloadCancelSignal(String comicId) {
-  _downloadCancelSignals.remove(comicId);
+void prepareDownloadCancelSignal(String taskKey) {
+  _downloadCancelSignals.remove(taskKey);
 }
 
-void triggerDownloadCancelSignal(String comicId) {
+void triggerDownloadCancelSignal(String taskKey) {
   final completer = _downloadCancelSignals.putIfAbsent(
-    comicId,
+    taskKey,
     () => Completer<void>(),
   );
   if (!completer.isCompleted) {
@@ -25,22 +25,22 @@ void triggerDownloadCancelSignal(String comicId) {
   }
 }
 
-void clearDownloadCancelSignal(String comicId) {
-  _downloadCancelSignals.remove(comicId);
+void clearDownloadCancelSignal(String taskKey) {
+  _downloadCancelSignals.remove(taskKey);
 }
 
-bool isDownloadCancelSignaled(String comicId) {
-  final completer = _downloadCancelSignals[comicId];
+bool isDownloadCancelSignaled(String taskKey) {
+  final completer = _downloadCancelSignals[taskKey];
   return completer?.isCompleted ?? false;
 }
 
-Future<T> raceWithDownloadCancel<T>(String comicId, Future<T> future) async {
-  if (isDownloadCancelSignaled(comicId)) {
+Future<T> raceWithDownloadCancel<T>(String taskKey, Future<T> future) async {
+  if (isDownloadCancelSignaled(taskKey)) {
     throw const DownloadTaskCancelledException();
   }
 
   final completer = _downloadCancelSignals.putIfAbsent(
-    comicId,
+    taskKey,
     () => Completer<void>(),
   );
   return Future.any([

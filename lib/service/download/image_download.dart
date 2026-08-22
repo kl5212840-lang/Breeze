@@ -4,6 +4,7 @@ import 'package:zephyr/type/enum.dart';
 
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/service/download/download_progress_reporter.dart';
+import 'package:zephyr/service/download/download_retry.dart';
 
 class DownloadImageJob {
   const DownloadImageJob({
@@ -21,6 +22,31 @@ class DownloadImageJob {
   final String chapterId;
   final String storageChapterId;
   final Map<String, dynamic> extern;
+}
+
+class DownloadImageJobException implements Exception {
+  const DownloadImageJobException({required this.job, required this.result});
+
+  final DownloadImageJob job;
+  final DownloadPictureResult result;
+
+  @override
+  String toString() {
+    final suffix = result.error == null ? '' : ': ${result.error}';
+    return '图片下载失败 path=${job.path} url=${job.url}$suffix';
+  }
+}
+
+class DownloadImageJobsResult {
+  const DownloadImageJobsResult({
+    required this.completed,
+    required this.downloaded,
+    required this.reused,
+  });
+
+  final int completed;
+  final int downloaded;
+  final int reused;
 }
 
 Future<String> downloadCoverAsset({
@@ -43,7 +69,7 @@ Future<String> downloadCoverAsset({
   );
 }
 
-Future<void> downloadImageJobs({
+Future<DownloadImageJobsResult> downloadImageJobs({
   required String from,
   required List<DownloadImageJob> jobs,
   int? concurrency,
@@ -52,93 +78,142 @@ Future<void> downloadImageJobs({
   required Future<void> Function() ensureTaskRunning,
   required DownloadProgressReporter reporter,
   Future<void> Function(Object error, DownloadImageJob job)? onError,
+  Future<void> Function(int completed, int downloaded, int reused)? onProgress,
 }) async {
-  void updateProgress(int progress, String message) {
+  void updateProgress(String message) {
     reporter.updateMessage(message);
   }
 
   if (jobs.isEmpty) {
-    updateProgress(100, t.download.statusDownloadProgressComplete);
-    return;
+    if (onProgress == null) {
+      updateProgress(t.download.statusDownloadProgressComplete);
+    }
+    return const DownloadImageJobsResult(
+      completed: 0,
+      downloaded: 0,
+      reused: 0,
+    );
   }
 
   final pool = Pool(concurrency ?? 5);
   final workerCount = concurrency ?? 5;
   var progress = 0;
+  var downloaded = 0;
+  var reused = 0;
   var lastReportedPercent = 0;
   var nextIndex = 0;
+  Object? firstError;
+  StackTrace? firstErrorStackTrace;
 
   Future<void> runWorker() async {
-    while (true) {
-      await ensureTaskRunning();
-      DownloadImageJob? job;
-      await pool.withResource(() async {
-        if (nextIndex >= jobs.length) {
+    try {
+      while (firstError == null) {
+        await ensureTaskRunning();
+        DownloadImageJob? job;
+        await pool.withResource(() async {
+          if (nextIndex >= jobs.length) {
+            return;
+          }
+          job = jobs[nextIndex];
+          nextIndex += 1;
+        });
+        if (job == null) {
           return;
         }
-        job = jobs[nextIndex];
-        nextIndex += 1;
-      });
-      if (job == null) {
-        return;
-      }
-      await _downloadSingleJob(
-        from: from,
-        job: job!,
-        qjsRuntimeName: qjsRuntimeName,
-        qjsTaskGroupKey: qjsTaskGroupKey,
-        onError: onError,
-        pictureType: PictureType.page,
-      );
-      progress++;
-      final currentPercent = (progress / jobs.length * 100).floor();
-      if (currentPercent > lastReportedPercent) {
-        lastReportedPercent = currentPercent;
-        updateProgress(
-          currentPercent,
-          t.download.statusDownloadProgress(percent: currentPercent),
+        final result = await _downloadSingleJob(
+          from: from,
+          job: job!,
+          qjsRuntimeName: qjsRuntimeName,
+          qjsTaskGroupKey: qjsTaskGroupKey,
+          ensureTaskRunning: ensureTaskRunning,
+          onError: onError,
+          pictureType: PictureType.page,
         );
+        progress++;
+        if (result.status == DownloadPictureResultStatus.existing) {
+          reused++;
+        } else {
+          downloaded++;
+        }
+        if (onProgress != null) {
+          await onProgress(progress, downloaded, reused);
+        }
+        final currentPercent = (progress / jobs.length * 100).floor();
+        if (onProgress == null && currentPercent > lastReportedPercent) {
+          lastReportedPercent = currentPercent;
+          updateProgress(
+            t.download.statusDownloadProgress(percent: currentPercent),
+          );
+        }
+        await ensureTaskRunning();
       }
-      await ensureTaskRunning();
+    } catch (error, stackTrace) {
+      firstError ??= error;
+      firstErrorStackTrace ??= stackTrace;
     }
   }
 
   final tasks = List.generate(workerCount, (_) => runWorker());
 
-  await Future.wait(tasks, eagerError: true);
+  await Future.wait(tasks);
+  if (firstError != null) {
+    Error.throwWithStackTrace(firstError!, firstErrorStackTrace!);
+  }
+  return DownloadImageJobsResult(
+    completed: progress,
+    downloaded: downloaded,
+    reused: reused,
+  );
 }
 
-Future<void> _downloadSingleJob({
+Future<DownloadPictureResult> _downloadSingleJob({
   required String from,
   required DownloadImageJob job,
   required String qjsRuntimeName,
   required String qjsTaskGroupKey,
+  required Future<void> Function() ensureTaskRunning,
   Future<void> Function(Object error, DownloadImageJob job)? onError,
   PictureType pictureType = PictureType.comic,
 }) async {
   try {
-    final result = await downloadPicture(
-      from: from,
-      url: job.url,
-      path: job.path,
-      cartoonId: job.cartoonId,
-      chapterId: job.storageChapterId.trim().isNotEmpty
-          ? job.storageChapterId
-          : job.chapterId,
-      pictureType: pictureType,
-      retry: true,
-      qjsName: qjsRuntimeName,
-      qjsTaskGroupKey: qjsTaskGroupKey,
-      extern: job.extern,
+    final result = await retryDownloadOperation<DownloadPictureResult>(
+      operation: '下载图片 ${job.path}',
+      ensureTaskRunning: ensureTaskRunning,
+      shouldRetry: (error) {
+        return error is! DownloadImageJobException ||
+            error.result.status != DownloadPictureResultStatus.notFound;
+      },
+      action: () async {
+        final result = await downloadPictureResult(
+          from: from,
+          url: job.url,
+          path: job.path,
+          cartoonId: job.cartoonId,
+          chapterId: job.storageChapterId.trim().isNotEmpty
+              ? job.storageChapterId
+              : job.chapterId,
+          pictureType: pictureType,
+          // 外层负责整张图片的重试，避免网络层 10 次重试后才进入
+          // 保存/解码失败的重试流程。
+          retry: false,
+          qjsName: qjsRuntimeName,
+          qjsTaskGroupKey: qjsTaskGroupKey,
+          extern: job.extern,
+        );
+        if (!result.isSuccess) {
+          throw DownloadImageJobException(job: job, result: result);
+        }
+        return result;
+      },
     );
-    if (result == '404') {
-      return;
-    }
+    return result;
   } catch (error) {
     if (onError != null) {
       await onError(error, job);
-      return;
+      return const DownloadPictureResult(
+        status: DownloadPictureResultStatus.failed,
+      );
     }
-    return;
+    rethrow;
   }
 }

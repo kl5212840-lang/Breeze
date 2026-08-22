@@ -65,7 +65,9 @@ class _NavigationBarState extends State<NavigationBar> {
       _autoSync();
       manageCacheSize(context);
       DownloadQueueManager.instance.resetStuckTasks();
-      DownloadQueueManager.instance.watchTasks();
+      DownloadQueueManager.instance.watchTasks(
+        startupResumeDelay: const Duration(minutes: 1),
+      );
       if (Platform.isAndroid) {
         await ForegroundTaskService.instance.syncOnAppStart();
       }
