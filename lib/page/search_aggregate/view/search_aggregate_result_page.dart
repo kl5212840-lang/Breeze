@@ -337,7 +337,6 @@ class _ResultList extends StatelessWidget {
                       entries: entries,
                       spacing: 10,
                       itemWidth: 112,
-                      useRandomImageKey: true,
                     ),
                   ),
                 if (entries.isEmpty)

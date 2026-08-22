@@ -36,14 +36,14 @@ class _DiscoverView extends StatelessWidget {
         title: Text(t.discover.title),
         actions: [
           IconButton(
-            tooltip: t.discover.search,
-            icon: const Icon(Icons.search),
-            onPressed: () => _search(context),
-          ),
-          IconButton(
             tooltip: t.discover.customOrder,
             icon: const Icon(Icons.reorder),
             onPressed: () => showPluginOrderDialog(context),
+          ),
+          IconButton(
+            tooltip: t.discover.search,
+            icon: const Icon(Icons.search),
+            onPressed: () => _search(context),
           ),
           const SizedBox(width: 8),
         ],
