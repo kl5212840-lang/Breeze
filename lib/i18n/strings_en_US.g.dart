@@ -1220,6 +1220,8 @@ class _Translations$discover$en_US extends Translations$discover$zh_CN {
 	@override String get search => 'Search';
 	@override String get settings => 'Settings';
 	@override String get pluginManagement => 'Plugin Management';
+	@override String get customOrder => 'Custom plugin order';
+	@override String get resetOrder => 'Reset order';
 	@override String get noPlugins => 'No plugins available. Go to the plugin store to install one~';
 	@override String get pluginStore => 'Plugin Store';
 	@override String get browseInstall => 'Browse & Install';
@@ -2482,6 +2484,8 @@ extension on TranslationsEnUs {
 			'discover.search' => 'Search',
 			'discover.settings' => 'Settings',
 			'discover.pluginManagement' => 'Plugin Management',
+			'discover.customOrder' => 'Custom plugin order',
+			'discover.resetOrder' => 'Reset order',
 			'discover.noPlugins' => 'No plugins available. Go to the plugin store to install one~',
 			'discover.pluginStore' => 'Plugin Store',
 			'discover.browseInstall' => 'Browse & Install',
@@ -2537,10 +2541,10 @@ extension on TranslationsEnUs {
 			'comicFollow.retry' => 'Retry',
 			'comicFollow.updateChannelName' => 'Comic update reminder',
 			'comicFollow.updateChannelDesc' => 'Pushed when followed comics have new chapters',
-			'comicFollow.updateTitle' => 'Follow update',
-			'comicFollow.updateBodySingle' => '1 followed comic has updates',
 			_ => null,
 		} ?? switch (path) {
+			'comicFollow.updateTitle' => 'Follow update',
+			'comicFollow.updateBodySingle' => '1 followed comic has updates',
 			'comicFollow.updateBodyMultiple' => ({required Object count}) => '${count} followed comics have updates',
 			'changelog.title' => 'Changelog',
 			'changelog.loadFailed' => 'Load failed',

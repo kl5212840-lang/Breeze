@@ -987,6 +987,9 @@ class PluginInfo {
   @Property(type: PropertyType.date)
   DateTime? deletedAt;
 
+  /// 用户自定义的插件顺序；为空时回退到 [insertedAt]。
+  int? sortOrder;
+
   bool debug = false;
 
   String? debugUrl;
@@ -1006,6 +1009,7 @@ class PluginInfo {
     this.deletedAt,
     required this.lastLoadSuccess,
     this.lastLoadError,
+    this.sortOrder,
     required this.debug,
     this.debugUrl,
     this.getInfoJson = '',

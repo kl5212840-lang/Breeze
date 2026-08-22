@@ -130,10 +130,12 @@ class DiscoverCubit extends Cubit<DiscoverState> {
 
   void _syncPluginsAndLoad() {
     final snapshot = _service.snapshot;
-    final visibleEntries =
-        snapshot.entries.where((e) => !e.value.isDeleted).toList()
-          ..sort((a, b) => a.value.insertedAt.compareTo(b.value.insertedAt));
-    final plugins = Map<String, PluginRuntimeState>.fromEntries(visibleEntries);
+    final visiblePlugins = _service.sortPlugins(
+      snapshot.values.where((plugin) => !plugin.isDeleted),
+    );
+    final plugins = <String, PluginRuntimeState>{
+      for (final plugin in visiblePlugins) plugin.uuid: plugin,
+    };
 
     final newInfoStates = Map<String, DiscoverPluginInfoState>.from(
       state.infoStates,

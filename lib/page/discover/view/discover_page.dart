@@ -11,6 +11,7 @@ import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/page/discover/cubit/discover_cubit.dart';
 import 'package:zephyr/page/discover/service/discover_router.dart';
 import 'package:zephyr/page/discover/widgets/plugin_card.dart';
+import 'package:zephyr/page/discover/view/plugin_order_dialog.dart';
 
 @RoutePage()
 class DiscoverPage extends StatelessWidget {
@@ -38,6 +39,11 @@ class _DiscoverView extends StatelessWidget {
             tooltip: t.discover.search,
             icon: const Icon(Icons.search),
             onPressed: () => _search(context),
+          ),
+          IconButton(
+            tooltip: t.discover.customOrder,
+            icon: const Icon(Icons.reorder),
+            onPressed: () => showPluginOrderDialog(context),
           ),
           const SizedBox(width: 8),
         ],

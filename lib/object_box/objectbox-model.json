@@ -942,7 +942,7 @@
     },
     {
       "id": "12:5269818584842768822",
-      "lastPropertyId": "19:7926002288333683068",
+      "lastPropertyId": "20:3570601204741301622",
       "name": "PluginInfo",
       "properties": [
         {
@@ -1017,6 +1017,11 @@
           "id": "19:7926002288333683068",
           "name": "getInfoJson",
           "type": 9
+        },
+        {
+          "id": "20:3570601204741301622",
+          "name": "sortOrder",
+          "type": 6
         }
       ],
       "relations": []

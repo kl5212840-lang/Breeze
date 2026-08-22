@@ -810,6 +810,7 @@ Future<void> _applyPluginBlockData(Map<String, dynamic> pluginBlockData) async {
           deletedAt: null,
           lastLoadSuccess: parsed.lastLoadSuccess,
           lastLoadError: parsed.lastLoadError,
+          sortOrder: parsed.sortOrder,
           debug: parsed.debug,
           debugUrl: parsed.debugUrl,
           getInfoJson: parsed.getInfoJson,
@@ -845,6 +846,7 @@ Future<void> _applyPluginBlockData(Map<String, dynamic> pluginBlockData) async {
       deletedAt: null,
       lastLoadSuccess: incoming.lastLoadSuccess,
       lastLoadError: incoming.lastLoadError,
+      sortOrder: incoming.sortOrder ?? existing?.sortOrder,
       debug: incoming.debug,
       debugUrl: incoming.debugUrl,
       getInfoJson: incoming.getInfoJson.isNotEmpty
@@ -1319,7 +1321,8 @@ bool _shouldApplyIncomingPluginInfo(PluginInfo existing, PluginInfo incoming) {
       existing.debug != incoming.debug ||
       (existing.debugUrl ?? '') != (incoming.debugUrl ?? '') ||
       existing.lastLoadSuccess != incoming.lastLoadSuccess ||
-      (existing.lastLoadError ?? '') != (incoming.lastLoadError ?? '');
+      (existing.lastLoadError ?? '') != (incoming.lastLoadError ?? '') ||
+      existing.sortOrder != incoming.sortOrder;
 }
 
 Set<String> _buildPluginConfigNameCandidatesForSync(String uuid) {

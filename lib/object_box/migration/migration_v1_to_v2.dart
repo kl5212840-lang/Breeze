@@ -336,6 +336,7 @@ PluginInfo _buildBuiltinPluginInfo(
     deletedAt: null,
     lastLoadSuccess: existing?.lastLoadSuccess ?? false,
     lastLoadError: existing?.lastLoadError,
+    sortOrder: existing?.sortOrder,
     debug: existing?.debug ?? false,
     debugUrl: existing?.debugUrl,
     getInfoJson: existing?.getInfoJson ?? '',

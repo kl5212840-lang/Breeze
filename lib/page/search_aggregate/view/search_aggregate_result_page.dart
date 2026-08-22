@@ -34,9 +34,9 @@ class SearchAggregateResultPage extends StatelessWidget
   @override
   Widget wrappedRoute(BuildContext context) {
     final pluginStates = context.read<PluginRegistryCubit>().state;
-    final visiblePlugins =
-        pluginStates.values.where((state) => !state.isDeleted).toList()
-          ..sort((a, b) => a.insertedAt.compareTo(b.insertedAt));
+    final visiblePlugins = PluginRegistryService.I.sortPlugins(
+      pluginStates.values.where((state) => !state.isDeleted),
+    );
     final initial = selectedSources.isNotEmpty
         ? {for (final entry in selectedSources.entries) entry.key: entry.value}
         : {for (final plugin in visiblePlugins) plugin.uuid: plugin.isEnabled};
@@ -223,9 +223,9 @@ class _SearchBarTrigger extends StatelessWidget {
     Iterable<String> selectedKeys,
   ) {
     final pluginStates = context.read<PluginRegistryCubit>().state;
-    final ordered =
-        pluginStates.values.where((state) => !state.isDeleted).toList()
-          ..sort((a, b) => a.insertedAt.compareTo(b.insertedAt));
+    final ordered = PluginRegistryService.I.sortPlugins(
+      pluginStates.values.where((state) => !state.isDeleted),
+    );
     final selectedSet = selectedKeys.toSet();
     final result = <({String pluginId, String title})>[];
     for (final plugin in ordered) {
@@ -293,16 +293,15 @@ class _ResultList extends StatelessWidget {
   Widget build(BuildContext context) {
     final children = <Widget>[];
     final pluginStates = context.watch<PluginRegistryCubit>().state;
-    final pluginIds = state.selectedSources.keys.toList()
-      ..sort((a, b) {
-        final aState = pluginStates[a];
-        final bState = pluginStates[b];
-        final aTime =
-            aState?.insertedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-        final bTime =
-            bState?.insertedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-        return aTime.compareTo(bTime);
-      });
+    final selectedIds = state.selectedSources.keys.toSet();
+    final pluginIds = PluginRegistryService.I
+        .sortPlugins(
+          pluginStates.values.where(
+            (plugin) => selectedIds.contains(plugin.uuid),
+          ),
+        )
+        .map((plugin) => plugin.uuid)
+        .toList();
     for (final pluginId in pluginIds) {
       final selected = state.selectedSources[pluginId] ?? false;
       if (!selected) {

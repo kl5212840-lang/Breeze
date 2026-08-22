@@ -145,6 +145,7 @@ class PluginInstallService {
       deletedAt: null,
       lastLoadSuccess: false,
       lastLoadError: null,
+      sortOrder: existingInfo?.sortOrder ?? existing?.sortOrder,
       debug: existing?.debug ?? false,
       debugUrl: existing?.debugUrl,
       getInfoJson: getInfoJson,

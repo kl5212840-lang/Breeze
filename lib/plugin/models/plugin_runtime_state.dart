@@ -9,6 +9,7 @@ class PluginRuntimeState {
     required this.debugUrl,
     required this.lastLoadSuccess,
     required this.lastLoadError,
+    required this.sortOrder,
     required this.insertedAt,
     required this.updatedAt,
     required this.deletedAt,
@@ -23,6 +24,7 @@ class PluginRuntimeState {
   final String? debugUrl;
   final bool lastLoadSuccess;
   final String? lastLoadError;
+  final int? sortOrder;
   final DateTime insertedAt;
   final DateTime updatedAt;
   final DateTime? deletedAt;
@@ -38,6 +40,7 @@ class PluginRuntimeState {
     String? debugUrl,
     bool? lastLoadSuccess,
     String? lastLoadError,
+    int? sortOrder,
     DateTime? insertedAt,
     DateTime? updatedAt,
     DateTime? deletedAt,
@@ -52,6 +55,7 @@ class PluginRuntimeState {
       debugUrl: debugUrl ?? this.debugUrl,
       lastLoadSuccess: lastLoadSuccess ?? this.lastLoadSuccess,
       lastLoadError: lastLoadError ?? this.lastLoadError,
+      sortOrder: sortOrder ?? this.sortOrder,
       insertedAt: insertedAt ?? this.insertedAt,
       updatedAt: updatedAt ?? this.updatedAt,
       deletedAt: deletedAt ?? this.deletedAt,

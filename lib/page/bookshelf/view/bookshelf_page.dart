@@ -444,11 +444,11 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent>
 
   List<_FilterSourceOption> _buildFilterSourceOptions() {
     final pluginStates = context.read<PluginRegistryCubit>().state;
-    final sourceOptions =
-        pluginStates.values
-            .where((plugin) => plugin.isEnabled && !plugin.isDeleted)
-            .toList()
-          ..sort((a, b) => a.insertedAt.compareTo(b.insertedAt));
+    final sourceOptions = PluginRegistryService.I.sortPlugins(
+      pluginStates.values.where(
+        (plugin) => plugin.isEnabled && !plugin.isDeleted,
+      ),
+    );
     return sourceOptions
         .map(
           (plugin) => _FilterSourceOption(

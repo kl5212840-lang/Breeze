@@ -373,6 +373,7 @@ class PluginCloudUpdateService {
       deletedAt: null,
       lastLoadSuccess: false,
       lastLoadError: null,
+      sortOrder: found?.sortOrder ?? local.sortOrder,
       debug: found?.debug ?? local.debug,
       debugUrl: found?.debugUrl ?? local.debugUrl,
       getInfoJson: payload.getInfoJson.isNotEmpty

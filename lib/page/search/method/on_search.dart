@@ -5,6 +5,7 @@ import 'package:zephyr/cubit/plugin_registry_cubit.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/config/router/router.gr.dart';
+import 'package:zephyr/plugin/plugin_registry_service.dart';
 
 void onSearch(
   BuildContext context,
@@ -32,8 +33,12 @@ void onSearch(
 
   if (aggregateMode) {
     final pluginStates = context.read<PluginRegistryCubit>().state;
-    final availableSources = pluginStates.values
-        .where((plugin) => plugin.isEnabled && !plugin.isDeleted)
+    final availableSources = PluginRegistryService.I
+        .sortPlugins(
+          pluginStates.values.where(
+            (plugin) => plugin.isEnabled && !plugin.isDeleted,
+          ),
+        )
         .map((plugin) => plugin.uuid)
         .toList();
     final selected = nextAggregateSources.isNotEmpty

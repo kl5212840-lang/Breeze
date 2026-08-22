@@ -1006,6 +1006,8 @@
     "search": "Search",
     "settings": "Settings",
     "pluginManagement": "Plugin Management",
+    "customOrder": "Custom plugin order",
+    "resetOrder": "Reset order",
     "noPlugins": "No plugins available. Go to the plugin store to install one~",
     "pluginStore": "Plugin Store",
     "browseInstall": "Browse & Install",

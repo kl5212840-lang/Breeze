@@ -77,11 +77,11 @@ class _AdvancedSearchDialogState extends State<AdvancedSearchDialog> {
 
   Widget _buildSourceRow() {
     final pluginStates = context.watch<PluginRegistryCubit>().state;
-    final sources =
-        pluginStates.values
-            .where((plugin) => plugin.isEnabled && !plugin.isDeleted)
-            .toList()
-          ..sort((a, b) => a.insertedAt.compareTo(b.insertedAt));
+    final sources = PluginRegistryService.I.sortPlugins(
+      pluginStates.values.where(
+        (plugin) => plugin.isEnabled && !plugin.isDeleted,
+      ),
+    );
 
     return Wrap(
       spacing: 8,

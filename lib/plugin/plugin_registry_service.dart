@@ -248,6 +248,89 @@ class PluginRegistryService {
       ..sort((a, b) => a.insertedAt.compareTo(b.insertedAt));
   }
 
+  /// 按用户自定义顺序返回插件；旧记录或新插件回退到安装时间。
+  List<PluginRuntimeState> sortPlugins(Iterable<PluginRuntimeState> plugins) {
+    final result = plugins.toList();
+    result.sort(_comparePluginOrder);
+    return result;
+  }
+
+  List<PluginRuntimeState> orderedPlugins({bool includeDeleted = false}) {
+    return sortPlugins(
+      _states.values.where((plugin) => includeDeleted || !plugin.isDeleted),
+    );
+  }
+
+  Future<void> reorderPlugins(List<String> orderedUuids) async {
+    final objectbox = _objectbox;
+    if (objectbox == null) {
+      return;
+    }
+
+    final visible = orderedPlugins();
+    final visibleByUuid = <String, PluginRuntimeState>{
+      for (final plugin in visible) plugin.uuid: plugin,
+    };
+    final normalizedUuids = <String>[];
+    final seen = <String>{};
+    for (final uuid in orderedUuids) {
+      if (visibleByUuid.containsKey(uuid) && seen.add(uuid)) {
+        normalizedUuids.add(uuid);
+      }
+    }
+    for (final plugin in visible) {
+      if (seen.add(plugin.uuid)) {
+        normalizedUuids.add(plugin.uuid);
+      }
+    }
+
+    final infos = objectbox.pluginInfoBox.getAll();
+    final infoByUuid = <String, PluginInfo>{
+      for (final info in infos)
+        if (!info.isDeleted && info.uuid.trim().isNotEmpty) info.uuid: info,
+    };
+    final now = DateTime.now().toUtc();
+    var changed = false;
+    for (var index = 0; index < normalizedUuids.length; index++) {
+      final info = infoByUuid[normalizedUuids[index]];
+      if (info == null || info.sortOrder == index) {
+        continue;
+      }
+      info.sortOrder = index;
+      info.updatedAt = now;
+      objectbox.pluginInfoBox.put(info);
+      _states[info.uuid] = _toState(info);
+      changed = true;
+    }
+    if (changed) {
+      _emit();
+    }
+  }
+
+  Future<void> resetPluginOrder() async {
+    final objectbox = _objectbox;
+    if (objectbox == null) {
+      return;
+    }
+
+    final infos = objectbox.pluginInfoBox
+        .getAll()
+        .where((info) => !info.isDeleted && info.sortOrder != null)
+        .toList();
+    if (infos.isEmpty) {
+      return;
+    }
+
+    final now = DateTime.now().toUtc();
+    for (final info in infos) {
+      info.sortOrder = null;
+      info.updatedAt = now;
+      objectbox.pluginInfoBox.put(info);
+      _states[info.uuid] = _toState(info);
+    }
+    _emit();
+  }
+
   List<PluginRuntimeState> updateCheckTargets() {
     return activePlugins();
   }
@@ -660,6 +743,7 @@ class PluginRegistryService {
       debugUrl: item.debugUrl,
       lastLoadSuccess: item.lastLoadSuccess,
       lastLoadError: item.lastLoadError,
+      sortOrder: item.sortOrder,
       insertedAt: item.insertedAt,
       updatedAt: item.updatedAt,
       deletedAt: item.deletedAt,
@@ -668,5 +752,25 @@ class PluginRegistryService {
 
   void _emit() {
     _streamController.add(snapshot);
+  }
+
+  int _comparePluginOrder(PluginRuntimeState a, PluginRuntimeState b) {
+    final aOrder = a.sortOrder;
+    final bOrder = b.sortOrder;
+    if (aOrder != null && bOrder != null && aOrder != bOrder) {
+      return aOrder.compareTo(bOrder);
+    }
+    if (aOrder != null && bOrder == null) {
+      return -1;
+    }
+    if (aOrder == null && bOrder != null) {
+      return 1;
+    }
+
+    final insertedCompare = a.insertedAt.compareTo(b.insertedAt);
+    if (insertedCompare != 0) {
+      return insertedCompare;
+    }
+    return a.uuid.compareTo(b.uuid);
   }
 }

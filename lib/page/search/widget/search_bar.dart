@@ -27,9 +27,9 @@ class _SearchBarState extends State<SearchBar> {
 
   List<({String pluginId, String title})> _sourceOptions(BuildContext context) {
     final pluginStates = context.read<PluginRegistryCubit>().state;
-    final states =
-        pluginStates.values.where((state) => !state.isDeleted).toList()
-          ..sort((a, b) => a.insertedAt.compareTo(b.insertedAt));
+    final states = PluginRegistryService.I.sortPlugins(
+      pluginStates.values.where((state) => !state.isDeleted),
+    );
     return states.map((state) {
       final info = PluginRegistryService.I.getCachedPluginInfo(state.uuid);
       final title = info?['name']?.toString().trim().isNotEmpty == true

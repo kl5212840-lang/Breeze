@@ -1140,7 +1140,7 @@ final _entities = <obx_int.ModelEntity>[
   obx_int.ModelEntity(
     id: const obx_int.IdUid(12, 5269818584842768822),
     name: 'PluginInfo',
-    lastPropertyId: const obx_int.IdUid(19, 7926002288333683068),
+    lastPropertyId: const obx_int.IdUid(20, 3570601204741301622),
     flags: 0,
     properties: <obx_int.ModelProperty>[
       obx_int.ModelProperty(
@@ -1226,6 +1226,12 @@ final _entities = <obx_int.ModelEntity>[
         id: const obx_int.IdUid(19, 7926002288333683068),
         name: 'getInfoJson',
         type: 9,
+        flags: 0,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(20, 3570601204741301622),
+        name: 'sortOrder',
+        type: 6,
         flags: 0,
       ),
     ],
@@ -3648,7 +3654,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
             : fbb.writeString(object.debugUrl!);
         final originScriptOffset = fbb.writeString(object.originScript);
         final getInfoJsonOffset = fbb.writeString(object.getInfoJson);
-        fbb.startTable(20);
+        fbb.startTable(21);
         fbb.addInt64(0, object.id);
         fbb.addOffset(4, versionOffset);
         fbb.addInt64(7, object.insertedAt.millisecondsSinceEpoch);
@@ -3663,6 +3669,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
         fbb.addOffset(16, debugUrlOffset);
         fbb.addOffset(17, originScriptOffset);
         fbb.addOffset(18, getInfoJsonOffset);
+        fbb.addInt64(19, object.sortOrder);
         fbb.finish(fbb.endTable());
         return object.id;
       },
@@ -3719,6 +3726,11 @@ obx_int.ModelDefinition getObjectBoxModel() {
         final lastLoadErrorParam = const fb.StringReader(
           asciiOptimization: true,
         ).vTableGetNullable(buffer, rootOffset, 30);
+        final sortOrderParam = const fb.Int64Reader().vTableGetNullable(
+          buffer,
+          rootOffset,
+          42,
+        );
         final debugParam = const fb.BoolReader().vTableGet(
           buffer,
           rootOffset,
@@ -3743,6 +3755,7 @@ obx_int.ModelDefinition getObjectBoxModel() {
           deletedAt: deletedAtParam,
           lastLoadSuccess: lastLoadSuccessParam,
           lastLoadError: lastLoadErrorParam,
+          sortOrder: sortOrderParam,
           debug: debugParam,
           debugUrl: debugUrlParam,
           getInfoJson: getInfoJsonParam,
@@ -5744,6 +5757,11 @@ class PluginInfo_ {
   /// See [PluginInfo.getInfoJson].
   static final getInfoJson = obx.QueryStringProperty<PluginInfo>(
     _entities[8].properties[13],
+  );
+
+  /// See [PluginInfo.sortOrder].
+  static final sortOrder = obx.QueryIntegerProperty<PluginInfo>(
+    _entities[8].properties[14],
   );
 }
 

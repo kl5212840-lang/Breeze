@@ -1007,6 +1007,8 @@
     "search": "搜索",
     "settings": "设置",
     "pluginManagement": "插件管理",
+    "customOrder": "自定义插件顺序",
+    "resetOrder": "恢复默认顺序",
     "noPlugins": "暂无可用插件，去插件商店安装一个吧~",
     "pluginStore": "插件商店",
     "browseInstall": "浏览安装",

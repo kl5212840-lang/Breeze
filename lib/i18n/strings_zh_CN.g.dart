@@ -3160,6 +3160,12 @@ class Translations$discover$zh_CN {
 	/// zh-CN: '插件管理'
 	String get pluginManagement => '插件管理';
 
+	/// zh-CN: '自定义插件顺序'
+	String get customOrder => '自定义插件顺序';
+
+	/// zh-CN: '恢复默认顺序'
+	String get resetOrder => '恢复默认顺序';
+
 	/// zh-CN: '暂无可用插件，去插件商店安装一个吧~'
 	String get noPlugins => '暂无可用插件，去插件商店安装一个吧~';
 
@@ -4736,6 +4742,8 @@ extension on Translations {
 			'discover.search' => '搜索',
 			'discover.settings' => '设置',
 			'discover.pluginManagement' => '插件管理',
+			'discover.customOrder' => '自定义插件顺序',
+			'discover.resetOrder' => '恢复默认顺序',
 			'discover.noPlugins' => '暂无可用插件，去插件商店安装一个吧~',
 			'discover.pluginStore' => '插件商店',
 			'discover.browseInstall' => '浏览安装',
@@ -4790,10 +4798,10 @@ extension on Translations {
 			'comicFollow.update' => '更新',
 			'comicFollow.retry' => '重试',
 			'comicFollow.updateChannelName' => '漫画更新提醒',
-			'comicFollow.updateChannelDesc' => '追更漫画检测到新章节时推送',
-			'comicFollow.updateTitle' => '追更更新',
 			_ => null,
 		} ?? switch (path) {
+			'comicFollow.updateChannelDesc' => '追更漫画检测到新章节时推送',
+			'comicFollow.updateTitle' => '追更更新',
 			'comicFollow.updateBodySingle' => '有 1 部追更漫画更新了',
 			'comicFollow.updateBodyMultiple' => ({required Object count}) => '有 ${count} 部追更漫画更新了',
 			'changelog.title' => '更新日志',
