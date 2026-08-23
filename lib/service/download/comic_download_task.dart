@@ -439,8 +439,7 @@ Set<String> _restoreCompletedChapterKeys({
   final storedChapters = resolveStoredDownloadChapters(existing);
   for (final selectedChapter in selectedChapters) {
     if (storedChapters.any(
-      (storedChapter) =>
-          _storedChapterMatches(storedChapter, selectedChapter),
+      (storedChapter) => _storedChapterMatches(storedChapter, selectedChapter),
     )) {
       completedKeys.add(_chapterCheckpointKey(selectedChapter));
     }

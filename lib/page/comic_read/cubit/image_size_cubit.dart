@@ -45,12 +45,11 @@ class ImageSizeCubit extends Cubit<ImageSizeState> {
     required this.defaultHeight,
     required this.sourceTag,
     required this.pageKeys,
-    required int chapterOrder,
+    required this._chapterOrder,
     required bool hydrateOnInit,
     required Map<int, Size> initialCache,
     required Set<int> initialResolved,
-  }) : _chapterOrder = chapterOrder,
-       _cacheStore = ImageSizeCacheStore(
+  }) : _cacheStore = ImageSizeCacheStore(
          sourceTag: sourceTag,
          pageKeys: pageKeys,
        ),

@@ -24,13 +24,13 @@ class ReaderInputController {
     required this.pageController,
     required this.transformationController,
     required this.onToggleMenu,
-    required Future<void> Function() onToggleDesktopFullscreen,
+    required this._onToggleDesktopFullscreen,
     required this.onRefreshState,
     required this.isScrollLockedByMultiTouch,
     required this.onUpdateScrollLock,
     required this.buildColumnMode,
     required this.buildRowMode,
-  }) : _onToggleDesktopFullscreen = onToggleDesktopFullscreen;
+  });
 
   final BuildContext context;
   final ReaderCubit readerCubit;

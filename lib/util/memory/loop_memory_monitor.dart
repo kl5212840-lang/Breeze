@@ -14,12 +14,10 @@ class LoopMemoryMonitor {
   final bool _trackRust;
 
   LoopMemoryMonitor({
-    required String operationName,
-    int logInterval = 10,
-    bool trackRust = true,
-  }) : _operationName = operationName,
-       _logInterval = logInterval,
-       _trackRust = trackRust;
+    required this._operationName,
+    this._logInterval = 10,
+    this._trackRust = true,
+  });
 
   /// 开始监控循环操作
   Future<void> startMonitoring() async {

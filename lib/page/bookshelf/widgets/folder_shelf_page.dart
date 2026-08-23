@@ -796,9 +796,7 @@ class _SelectionActionStripState extends State<_SelectionActionStrip> {
     return Stack(
       children: [
         Padding(
-          padding: EdgeInsets.only(
-            left: _hasOverflow ? _scrollHintWidth : 0,
-          ),
+          padding: EdgeInsets.only(left: _hasOverflow ? _scrollHintWidth : 0),
           child: SingleChildScrollView(
             controller: _scrollController,
             scrollDirection: Axis.horizontal,
@@ -825,9 +823,7 @@ class _SelectionActionStripState extends State<_SelectionActionStrip> {
                       colors: [surface, surface.withValues(alpha: 0)],
                     ),
                   ),
-                  child: const Center(
-                    child: Icon(Icons.swipe_left, size: 20),
-                  ),
+                  child: const Center(child: Icon(Icons.swipe_left, size: 20)),
                 ),
               ),
             ),

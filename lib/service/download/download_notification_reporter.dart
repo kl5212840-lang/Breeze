@@ -13,9 +13,7 @@ import 'package:zephyr/service/download/download_progress_reporter.dart';
 class DownloadNotificationReporter extends DownloadProgressReporter {
   final FlutterLocalNotificationsPlugin? _notificationsPlugin;
 
-  DownloadNotificationReporter({
-    FlutterLocalNotificationsPlugin? notificationsPlugin,
-  }) : _notificationsPlugin = notificationsPlugin;
+  DownloadNotificationReporter({this._notificationsPlugin});
 
   FlutterLocalNotificationsPlugin get _plugin =>
       _notificationsPlugin ?? flutterLocalNotificationsPlugin;

@@ -5,10 +5,7 @@ import 'package:zephyr/service/download/models/download_task_json.dart';
 ///
 /// 下载逻辑内部保存的是已完成数量，因此从 0 开始；展示当前正在处理的
 /// 章节或图片时，需要从 1 开始。全部完成后固定显示总数，避免出现 total + 1。
-int downloadTaskDisplayPosition({
-  required int completed,
-  required int total,
-}) {
+int downloadTaskDisplayPosition({required int completed, required int total}) {
   if (total <= 0) return 0;
 
   final safeCompleted = completed.clamp(0, total).toInt();

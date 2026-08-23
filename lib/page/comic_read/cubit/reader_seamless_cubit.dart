@@ -43,17 +43,12 @@ class SeamlessBoundaryResult {
 /// 注意：该类不直接操作 [ReaderCubit]；UI 层负责把 Cubit 的输出同步到阅读器状态。
 class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
   ReaderSeamlessCubit({
-    required String comicId,
-    required String from,
-    required ComicEntryType type,
-    required dynamic comicInfo,
-    required int initialOrder,
-  }) : _comicId = comicId,
-       _from = from,
-       _type = type,
-       _comicInfo = comicInfo,
-       _initialOrder = initialOrder,
-       super(const ReaderSeamlessState()) {
+    required this._comicId,
+    required this._from,
+    required this._type,
+    required this._comicInfo,
+    required this._initialOrder,
+  }) : super(const ReaderSeamlessState()) {
     _initChapterCatalog();
   }
 
