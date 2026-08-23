@@ -451,6 +451,7 @@ Future<List<File>> _resolveChapterFiles({
           path: image.path,
           cartoonId: comicId,
           chapterId: chapterId,
+          applyRealSr: false,
         );
         final file = File(cachedPath);
         if (await file.exists()) {

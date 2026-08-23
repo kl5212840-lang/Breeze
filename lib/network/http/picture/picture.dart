@@ -38,6 +38,7 @@ Future<String> getCachePicture({
   PictureType pictureType = PictureType.page,
   Map<String, dynamic>? extern,
   int index = 0,
+  bool applyRealSr = true,
 }) async {
   final resolvedFrom = normalizePluginId(from);
   if (resolvedFrom.isEmpty) {
@@ -71,7 +72,7 @@ Future<String> getCachePicture({
   if (existing != null) {
     try {
       // 超分 + WebP 转换统一封装，内部会判断分辨率并保留原文件名。
-      if (pictureType == PictureType.page) {
+      if (pictureType == PictureType.page && applyRealSr) {
         await RealSrSuperResolution.upscaleAndConvertToWebp(existing.path);
       }
       return existing.path;
@@ -115,7 +116,7 @@ Future<String> getCachePicture({
     );
     // 验证文件已成功保存
     if (await File(newCacheFilePath).exists()) {
-      if (pictureType == PictureType.page) {
+      if (pictureType == PictureType.page && applyRealSr) {
         await RealSrSuperResolution.upscaleAndConvertToWebp(newCacheFilePath);
       }
       return newCacheFilePath;
@@ -131,7 +132,7 @@ Future<String> getCachePicture({
   if (await File(newCacheFilePath).exists() &&
       await File(newCacheFilePath).length() > 0) {
     // 超分 + WebP 转换统一封装，内部会判断分辨率并保留原文件名
-    if (pictureType == PictureType.page) {
+    if (pictureType == PictureType.page && applyRealSr) {
       await RealSrSuperResolution.upscaleAndConvertToWebp(newCacheFilePath);
     }
     return newCacheFilePath;
