@@ -14,7 +14,7 @@ import 'dart:async' as _i53;
 import 'package:auto_route/auto_route.dart' as _i44;
 import 'package:collection/collection.dart' as _i52;
 import 'package:flutter/foundation.dart' as _i48;
-import 'package:flutter/material.dart' as _i45;
+import 'package:material_ui/material_ui.dart' as _i45;
 import 'package:zephyr/cubit/string_select.dart' as _i50;
 import 'package:zephyr/debug/coreml_upscale_debug_page.dart' as _i15;
 import 'package:zephyr/debug/qjs_runtime_debug_page.dart' as _i33;

@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:auto_route/annotations.dart';
 import 'package:coreml_upscale/coreml_upscale.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:zephyr/i18n/strings.g.dart';

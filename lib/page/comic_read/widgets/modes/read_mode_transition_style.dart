@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// 列/行模式过渡卡片的样式配置。
 class ReadModeTransitionStyle {

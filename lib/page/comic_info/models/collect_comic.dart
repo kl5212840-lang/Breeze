@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/http/plugin/favorite_workflow.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';

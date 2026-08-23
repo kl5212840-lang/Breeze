@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:desktop_webview_linux/src/message_channel.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 const _channel = ClientMessageChannel();
 

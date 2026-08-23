@@ -1,6 +1,6 @@
 import 'package:auto_route/annotations.dart';
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:path/path.dart' as path;
 import 'package:zephyr/util/font/font_profile.dart';
 import 'package:zephyr/i18n/strings.g.dart';

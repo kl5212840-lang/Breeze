@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:auto_route/annotations.dart';
 import 'package:desktop_webview_linux/desktop_webview_linux.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:zephyr/i18n/strings.g.dart';

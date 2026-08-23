@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/main.dart';
 
 import 'package:zephyr/widgets/memory_monitor_widget.dart';

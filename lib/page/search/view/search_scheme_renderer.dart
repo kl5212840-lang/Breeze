@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:flutter/material.dart' hide SearchBar;
+import 'package:material_ui/material_ui.dart' hide SearchBar;
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/page/search/widget/history.dart';
 import 'package:zephyr/page/search/widget/search_bar.dart';

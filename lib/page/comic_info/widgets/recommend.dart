@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/gestures.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
 
 import 'package:zephyr/util/debouncer.dart';

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 class PluginStoreStatusBanner extends StatelessWidget {
   const PluginStoreStatusBanner({super.key, required this.message});

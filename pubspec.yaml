@@ -4,13 +4,11 @@ publish_to: none
 version: 3.0.27+2215
 
 environment:
-  sdk: ^3.9.2
+  sdk: ^3.12.0
 
 dependencies:
   # 核心依赖
   flutter:
-    sdk: flutter
-  flutter_localizations:
     sdk: flutter
 
   # 国际化
@@ -25,7 +23,7 @@ dependencies:
   event_bus: ^2.0.1 # 事件: 全局事件总线
 
   # UI 组件与交互
-  dynamic_color: ^1.7.0 # UI: 动态取色
+  dynamic_color: ^2.1.0 # UI: 动态取色
   loading_animation_widget: ^1.2.1 # UI: 加载动画合集
   photo_view: ^0.15.0 # UI: 图片缩放预览
   persistent_bottom_nav_bar: ^6.2.1 # UI: 持久底部导航
@@ -36,6 +34,7 @@ dependencies:
   flutter_speed_dial: ^7.0.0 # UI: 速拨 FAB
   easy_refresh: ^3.4.0 # UI: 下拉刷新
   scrollview_observer: ^1.26.3 # UI: 滚动监听
+  material_ui: ^1.0.1 # UI: Flutter 官方 Material 组件
 
   # 网络通信与内容解析
   flutter_inappwebview: ^6.1.5 # 网络: 内嵌 WebView
@@ -70,7 +69,7 @@ dependencies:
   mime: ^2.0.0 # 工具: MIME 类型
 
   # 后台任务与通知
-  flutter_foreground_task: ^10.0.0 # 后台: 前台任务
+  flutter_foreground_task: ^11.0.1 # 后台: 前台任务
   flutter_local_notifications: ^22.0.0 # 通知: 本地通知
 
   # 安全、工具与运行时

@@ -9,12 +9,11 @@ import 'package:dynamic_color/dynamic_color.dart';
 import 'package:event_bus/event_bus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_socks_proxy/socks_proxy.dart';
 import 'package:logger/logger.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
@@ -766,7 +765,8 @@ class _MyAppState extends State<MyApp> with WindowListener, TrayListener {
                   if (Platform.isWindows ||
                       Platform.isLinux ||
                       Platform.isMacOS) {
-                    return ValueListenableBuilder<bool>(
+                    final desktopContent = content;
+                    content = ValueListenableBuilder<bool>(
                       valueListenable: ReaderDesktopFullscreenService
                           .instance
                           .fullscreenNotifier,
@@ -774,13 +774,16 @@ class _MyAppState extends State<MyApp> with WindowListener, TrayListener {
                         return Column(
                           children: [
                             if (!isReaderFullscreen) const CustomTitleBar(),
-                            Expanded(child: content),
+                            Expanded(child: desktopContent),
                           ],
                         );
                       },
                     );
                   }
-                  return content;
+                  // 第三方依赖仍有 legacy Material widget，需要这个桥接层提供旧主题
+                  // 与本地化上下文；待依赖迁移后可移除。
+                  // ignore: deprecated_member_use
+                  return MaterialUiCompatibilityBridge(child: content);
                 },
                 locale: TranslationProvider.of(context).flutterLocale,
                 title: appName,
