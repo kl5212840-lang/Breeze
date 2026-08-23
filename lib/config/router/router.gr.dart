@@ -228,6 +228,8 @@ class ComicInfoRoute extends _i44.PageRouteInfo<ComicInfoRouteArgs> {
     required String from,
     String pluginId = '',
     required _i46.ComicEntryType type,
+    String? collectionTargetId,
+    String? collectionTargetName,
     List<_i44.PageRouteInfo>? children,
   }) : super(
          ComicInfoRoute.name,
@@ -237,6 +239,8 @@ class ComicInfoRoute extends _i44.PageRouteInfo<ComicInfoRouteArgs> {
            from: from,
            pluginId: pluginId,
            type: type,
+           collectionTargetId: collectionTargetId,
+           collectionTargetName: collectionTargetName,
          ),
          initialChildren: children,
        );
@@ -253,6 +257,8 @@ class ComicInfoRoute extends _i44.PageRouteInfo<ComicInfoRouteArgs> {
         from: args.from,
         pluginId: args.pluginId,
         type: args.type,
+        collectionTargetId: args.collectionTargetId,
+        collectionTargetName: args.collectionTargetName,
       );
     },
   );
@@ -265,6 +271,8 @@ class ComicInfoRouteArgs {
     required this.from,
     this.pluginId = '',
     required this.type,
+    this.collectionTargetId,
+    this.collectionTargetName,
   });
 
   final _i45.Key? key;
@@ -277,9 +285,13 @@ class ComicInfoRouteArgs {
 
   final _i46.ComicEntryType type;
 
+  final String? collectionTargetId;
+
+  final String? collectionTargetName;
+
   @override
   String toString() {
-    return 'ComicInfoRouteArgs{key: $key, comicId: $comicId, from: $from, pluginId: $pluginId, type: $type}';
+    return 'ComicInfoRouteArgs{key: $key, comicId: $comicId, from: $from, pluginId: $pluginId, type: $type, collectionTargetId: $collectionTargetId, collectionTargetName: $collectionTargetName}';
   }
 
   @override
@@ -290,7 +302,9 @@ class ComicInfoRouteArgs {
         comicId == other.comicId &&
         from == other.from &&
         pluginId == other.pluginId &&
-        type == other.type;
+        type == other.type &&
+        collectionTargetId == other.collectionTargetId &&
+        collectionTargetName == other.collectionTargetName;
   }
 
   @override
@@ -299,7 +313,9 @@ class ComicInfoRouteArgs {
       comicId.hashCode ^
       from.hashCode ^
       pluginId.hashCode ^
-      type.hashCode;
+      type.hashCode ^
+      collectionTargetId.hashCode ^
+      collectionTargetName.hashCode;
 }
 
 /// generated route for

@@ -187,6 +187,8 @@ class PluginPagedComicListView extends StatelessWidget {
     required this.externBuilder,
     this.shrinkWrap = false,
     this.physics,
+    this.collectionTargetId,
+    this.collectionTargetName,
   });
 
   final String pluginId;
@@ -195,6 +197,8 @@ class PluginPagedComicListView extends StatelessWidget {
   final PluginPageExternBuilder externBuilder;
   final bool shrinkWrap;
   final ScrollPhysics? physics;
+  final String? collectionTargetId;
+  final String? collectionTargetName;
 
   @override
   Widget build(BuildContext context) {
@@ -208,6 +212,8 @@ class PluginPagedComicListView extends StatelessWidget {
       child: _PluginPagedComicListBody(
         shrinkWrap: shrinkWrap,
         physics: physics,
+        collectionTargetId: collectionTargetId,
+        collectionTargetName: collectionTargetName,
       ),
     );
   }
@@ -217,10 +223,14 @@ class _PluginPagedComicListBody extends StatefulWidget {
   const _PluginPagedComicListBody({
     required this.shrinkWrap,
     required this.physics,
+    this.collectionTargetId,
+    this.collectionTargetName,
   });
 
   final bool shrinkWrap;
   final ScrollPhysics? physics;
+  final String? collectionTargetId;
+  final String? collectionTargetName;
 
   @override
   State<_PluginPagedComicListBody> createState() =>
@@ -295,6 +305,8 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
       onLoadMore: () => context.read<PluginPagedComicListCubit>().loadMore(),
       shrinkWrap: widget.shrinkWrap,
       physics: widget.physics,
+      collectionTargetId: widget.collectionTargetId,
+      collectionTargetName: widget.collectionTargetName,
     );
   }
 

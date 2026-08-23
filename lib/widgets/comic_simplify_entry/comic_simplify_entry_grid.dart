@@ -35,6 +35,8 @@ class BaseComicGridSliver extends StatelessWidget {
   final bool selectionMode;
   final bool roundedCorner;
   final EdgeInsetsGeometry padding;
+  final String? collectionTargetId;
+  final String? collectionTargetName;
 
   const BaseComicGridSliver({
     super.key,
@@ -49,6 +51,8 @@ class BaseComicGridSliver extends StatelessWidget {
     this.selectionMode = false,
     this.roundedCorner = true,
     this.padding = const EdgeInsets.all(10),
+    this.collectionTargetId,
+    this.collectionTargetName,
   });
 
   @override
@@ -70,6 +74,8 @@ class BaseComicGridSliver extends StatelessWidget {
             isSelected: isEntrySelected?.call(entries[index]) ?? false,
             selectionMode: selectionMode,
             roundedCorner: roundedCorner,
+            collectionTargetId: collectionTargetId,
+            collectionTargetName: collectionTargetName,
           );
         }, childCount: entries.length),
       ),

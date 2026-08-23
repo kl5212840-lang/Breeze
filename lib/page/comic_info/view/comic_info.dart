@@ -12,6 +12,7 @@ import 'package:zephyr/config/router/router.dart';
 import 'package:zephyr/cubit/string_select.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
+import 'package:zephyr/network/http/plugin/favorite_workflow.dart';
 import 'package:zephyr/page/comic_follow/cubit/comic_follow_cubit.dart';
 import 'package:zephyr/page/comic_info/comic_info.dart';
 import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart';
@@ -36,6 +37,8 @@ class ComicInfoPage extends StatelessWidget {
   final String from;
   final String pluginId;
   final ComicEntryType type;
+  final String? collectionTargetId;
+  final String? collectionTargetName;
 
   const ComicInfoPage({
     super.key,
@@ -43,6 +46,8 @@ class ComicInfoPage extends StatelessWidget {
     required this.from,
     this.pluginId = '',
     required this.type,
+    this.collectionTargetId,
+    this.collectionTargetName,
   });
 
   @override
@@ -69,6 +74,8 @@ class ComicInfoPage extends StatelessWidget {
         type: type,
         from: from,
         pluginId: resolvedPluginId,
+        collectionTargetId: collectionTargetId,
+        collectionTargetName: collectionTargetName,
       ),
     );
   }
@@ -79,12 +86,16 @@ class _ComicInfo extends StatefulWidget {
   final ComicEntryType type;
   final String from;
   final String pluginId;
+  final String? collectionTargetId;
+  final String? collectionTargetName;
 
   const _ComicInfo({
     required this.comicId,
     required this.type,
     required this.from,
     required this.pluginId,
+    this.collectionTargetId,
+    this.collectionTargetName,
   });
 
   @override
@@ -105,6 +116,7 @@ class _ComicInfoState extends State<_ComicInfo>
   String _title = "";
   NormalComicAllInfo? _currentInfo;
   bool _isCloudCollected = false;
+  bool _cloudFavoriteStateOverridden = false;
   bool _isLocalCollected = false;
   String _localCollectSyncedFor = '';
   bool _followSyncedForCurrentInfo = false;
@@ -219,11 +231,9 @@ class _ComicInfoState extends State<_ComicInfo>
                         ? (_isLocalCollected
                               ? t.comicInfo.removeLocalCollection
                               : t.comicInfo.collectToLocal)
-                        : ((_currentInfo?.allowCollected ?? false)
-                              ? (_isCloudCollected
-                                    ? t.comicInfo.removeCloudCollection
-                                    : t.comicInfo.collectToCloud)
-                              : t.comicInfo.cloudCollectDisabled),
+                        : (_isCloudCollected
+                              ? t.comicInfo.removeCloudCollection
+                              : t.comicInfo.collectToCloud),
                   ),
                 ),
               );
@@ -237,6 +247,7 @@ class _ComicInfoState extends State<_ComicInfo>
         builder: (context, state) {
           switch (state.status) {
             case GetComicInfoStatus.initial:
+              _cloudFavoriteStateOverridden = false;
               return Center(child: CircularProgressIndicator());
             case GetComicInfoStatus.failure:
               if (state.result.contains("under review") &&
@@ -276,7 +287,9 @@ class _ComicInfoState extends State<_ComicInfo>
             case GetComicInfoStatus.success:
               comicInfoDyn = state.comicInfo;
               _currentInfo = state.allInfo;
-              _isCloudCollected = state.allInfo?.isFavourite ?? false;
+              if (!_cloudFavoriteStateOverridden) {
+                _isCloudCollected = state.allInfo?.isFavourite ?? false;
+              }
               _syncLocalCollectStatus(state.allInfo!);
               initHistory(
                 context,
@@ -392,6 +405,8 @@ class _ComicInfoState extends State<_ComicInfo>
                       normalInfo: normalComicAllInfo,
                       from: widget.from,
                       pluginId: widget.pluginId,
+                      collectionTargetId: widget.collectionTargetId,
+                      collectionTargetName: widget.collectionTargetName,
                       comicInfo: comicInfoDyn,
                     ),
                     if (comicInfo.metadata.isNotEmpty ||
@@ -866,10 +881,6 @@ class _ComicInfoState extends State<_ComicInfo>
       showErrorToast(t.comicInfo.detailsNotLoaded);
       return;
     }
-    if (!info.allowCollected) {
-      showInfoToast(t.comicInfo.cloudCollectDisabled);
-      return;
-    }
     try {
       showInfoToast(
         _isCloudCollected
@@ -879,14 +890,19 @@ class _ComicInfoState extends State<_ComicInfo>
       final next = await toggleCloudComicFavorite(
         context: context,
         from: widget.from,
+        pluginId: widget.pluginId,
         comicId: info.comicInfo.id,
         currentStatus: _isCloudCollected,
+        legacyAllowCollected: info.allowCollected,
+        collectionTargetId: widget.collectionTargetId,
+        collectionTargetName: widget.collectionTargetName,
       );
       if (!mounted) {
         return;
       }
       setState(() {
         _isCloudCollected = next;
+        _cloudFavoriteStateOverridden = true;
       });
       if (next) {
         await _autoFollowIfEnabled();
@@ -896,6 +912,14 @@ class _ComicInfoState extends State<_ComicInfo>
             ? t.comicInfo.cloudCollectSuccess
             : t.comicInfo.cloudUncollectSuccess,
       );
+    } on FavoriteWorkflowUnsupportedException {
+      if (mounted) {
+        showInfoToast(t.comicInfo.cloudCollectDisabled);
+      }
+    } on FavoriteWorkflowIncompleteException catch (error) {
+      if (mounted) {
+        showInfoToast(error.result.message ?? '云端收藏操作未完成');
+      }
     } catch (e) {
       showErrorToast(t.error.operationFailed);
     }

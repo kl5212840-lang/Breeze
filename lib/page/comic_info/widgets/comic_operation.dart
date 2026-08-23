@@ -2,6 +2,7 @@ import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/config/global/global_setting.dart';
+import 'package:zephyr/network/http/plugin/favorite_workflow.dart';
 import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart';
 import 'package:zephyr/page/comic_info/models/collect_comic.dart';
 import 'package:zephyr/page/comic_follow/cubit/comic_follow_cubit.dart';
@@ -18,6 +19,8 @@ class ComicOperationWidget extends StatefulWidget {
   final NormalComicAllInfo normalInfo;
   final String from;
   final String pluginId;
+  final String? collectionTargetId;
+  final String? collectionTargetName;
   final dynamic comicInfo;
 
   const ComicOperationWidget({
@@ -25,6 +28,8 @@ class ComicOperationWidget extends StatefulWidget {
     required this.normalInfo,
     required this.from,
     required this.pluginId,
+    this.collectionTargetId,
+    this.collectionTargetName,
     required this.comicInfo,
   });
 
@@ -95,7 +100,7 @@ class _ComicOperationWidgetState extends State<ComicOperationWidget> {
                 : t.comicInfo.collectToCloud,
             highlighted: isCloudCollected,
             accentColor: const Color(0xFFE6A700),
-            enabled: normalInfo.allowCollected,
+            enabled: true,
             onTap: _toggleCloudFavorite,
           )
         : _OperationItemData(
@@ -231,11 +236,6 @@ class _ComicOperationWidgetState extends State<ComicOperationWidget> {
   }
 
   Future<void> _toggleCloudFavorite() async {
-    // 云端收藏被图源关闭时，沿用菜单的禁用提示
-    if (!normalInfo.allowCollected) {
-      showInfoToast(t.comicInfo.cloudCollectDisabled);
-      return;
-    }
     try {
       showInfoToast(
         isCloudCollected
@@ -245,8 +245,12 @@ class _ComicOperationWidgetState extends State<ComicOperationWidget> {
       final next = await toggleCloudComicFavorite(
         context: context,
         from: widget.from,
+        pluginId: widget.pluginId,
         comicId: comicInfoView.id,
         currentStatus: isCloudCollected,
+        legacyAllowCollected: normalInfo.allowCollected,
+        collectionTargetId: widget.collectionTargetId,
+        collectionTargetName: widget.collectionTargetName,
       );
       if (!mounted) {
         return;
@@ -262,6 +266,14 @@ class _ComicOperationWidgetState extends State<ComicOperationWidget> {
             ? t.comicInfo.cloudCollectSuccess
             : t.comicInfo.cloudUncollectSuccess,
       );
+    } on FavoriteWorkflowUnsupportedException {
+      if (mounted) {
+        showInfoToast(t.comicInfo.cloudCollectDisabled);
+      }
+    } on FavoriteWorkflowIncompleteException catch (error) {
+      if (mounted) {
+        showInfoToast(error.result.message ?? '云端收藏操作未完成');
+      }
     } catch (error) {
       if (!mounted) {
         return;

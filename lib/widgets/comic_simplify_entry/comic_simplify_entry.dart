@@ -181,6 +181,8 @@ class ComicSimplifyEntry extends StatelessWidget {
   final bool selectionMode;
   final bool topPadding;
   final bool roundedCorner;
+  final String? collectionTargetId;
+  final String? collectionTargetName;
 
   const ComicSimplifyEntry({
     super.key,
@@ -195,6 +197,8 @@ class ComicSimplifyEntry extends StatelessWidget {
     this.selectionMode = false,
     this.topPadding = true,
     this.roundedCorner = true,
+    this.collectionTargetId,
+    this.collectionTargetName,
   });
 
   @override
@@ -353,6 +357,8 @@ class ComicSimplifyEntry extends StatelessWidget {
         type: type,
         from: pluginId,
         pluginId: pluginId,
+        collectionTargetId: collectionTargetId,
+        collectionTargetName: collectionTargetName,
       ),
     );
   }

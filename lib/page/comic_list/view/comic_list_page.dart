@@ -142,6 +142,11 @@ class _ComicListViewState extends State<_ComicListView>
     final filterExtern = state.resolvedFilterExtern;
     final listCore = <String, dynamic>{...request.core, ...filterCore};
     final listExtern = <String, dynamic>{...request.extern, ...filterExtern};
+    final collectionTargetId = _resolveCollectionTargetId(
+      request: request,
+      core: listCore,
+      extern: listExtern,
+    );
 
     return PluginPagedComicListView(
       key: ValueKey('${request.fnPath}_${listCore}_$listExtern'),
@@ -149,7 +154,24 @@ class _ComicListViewState extends State<_ComicListView>
       fnPath: request.fnPath,
       coreBuilder: (page) => {'page': page, ...listCore},
       externBuilder: (_) => listExtern,
+      collectionTargetId: collectionTargetId,
     );
+  }
+
+  String? _resolveCollectionTargetId({
+    required ComicListRequestConfig request,
+    required Map<String, dynamic> core,
+    required Map<String, dynamic> extern,
+  }) {
+    final isCloudFavoriteScene =
+        request.fnPath == 'getCloudFavoriteData' ||
+        extern['source']?.toString() == 'cloudFavorite';
+    if (!isCloudFavoriteScene) {
+      return null;
+    }
+    final targetId = core['folderId'] ?? extern['folderId'];
+    final normalized = targetId?.toString().trim() ?? '';
+    return normalized.isEmpty ? null : normalized;
   }
 
   Future<void> _openFilterDialog(BuildContext context) async {
