@@ -157,6 +157,7 @@ AltStore 是目前最稳定且对新手友好的 iOS 侧载工具，支持通过
 - **使用教程**：
 - [AltStore 官方图文指南（英文）](https://faq.altstore.io/)
 - [知乎：基于 AltStore 的越狱工具自签教程](https://zhuanlan.zhihu.com/p/143936759)
+- [哔哩哔哩：iOS无限自签IPA玩法](https://b23.tv/UbuuJTZ)
 
 #### 🔧 其他自签/免签备选方案
 
