@@ -32,3 +32,11 @@
 - 已通过 `dart analyze lib test/source_shell test/login`、插件 `pnpm typecheck`/`pnpm build`、完整 `flutter test`（124 项）、iOS Simulator Debug 与 iOS Device Release（未签名）构建。
 - 本地交付物位于 `build/ios/ipa/`：`Breeze-custom-unsigned.ipa` 与 `breeze-plugin-copy-comic-0.0.15.bundle.cjs.br`。IPA 仍需由 SideStore 等工具签名；插件包需另行导入，二者不能互相替代。
 - 尚未在真机上安装和测试新 IPA，也未核实第三方站点当前注册流程或登录成功后的云端收藏。不要在备份前覆盖手机上现有的同 Bundle ID 应用。
+
+## iOS 27.0 模拟器联网验证（2026-10-19）
+
+- 已在 iPhone 17 Pro Max / iOS 27.0 模拟器构建并运行集成测试。未安装到真机。
+- 本机系统代理当前监听 `127.0.0.1:7897`，但调试资源 `.env.proxy` 保存的是已失效的 `127.0.0.1:8000`；调试版自动探测失败后没有启用该代理。该资源只用于本地调试，不应把本机回环地址写入真机配置。
+- 同一图源的 `getHomeRecommend` 请求在模拟器不指定代理时以 `Request timed out: GET` 失败；测试启动时指定 `--dart-define=SIM_PROXY_URL=http://127.0.0.1:7897` 后返回 18 条。推荐与全新上架两个页面均在 Flutter 组件树中渲染出 18 条条目。
+- 集成测试可用 `--dart-define=SIM_ASSERT_PLUGIN_CONTENT=true` 验证页面内容；`SIM_PROBE_PLUGIN_NETWORK=true` 则单独打印图源请求条目数。代理地址由测试参数传入，不写入生产配置。
+- 当前模拟器系统截图接口在后续运行中捕获到启动图，虽组件树测试通过，仍不能把这些截图当作已加载内容的视觉验收。先前未指定代理的截图停在加载中。真机网络、登录及阅读仍需单独验证。
