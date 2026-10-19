@@ -1010,6 +1010,7 @@
   "search": {
     "title": "Search",
     "searchHint": "Search...",
+    "enterKeyword": "Enter a search term",
     "selectSource": "Select Source",
     "advancedSearchNotSupported": "Current plugin does not support advanced search",
     "advancedSearchOptions": "Advanced Search Options",

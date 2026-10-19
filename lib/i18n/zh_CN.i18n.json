@@ -1012,6 +1012,7 @@
   "search": {
     "title": "搜索",
     "searchHint": "搜索...",
+    "enterKeyword": "请输入搜索关键词",
     "selectSource": "选择漫画源",
     "advancedSearchNotSupported": "当前插件不支持高级搜索",
     "advancedSearchOptions": "高级搜索选项",

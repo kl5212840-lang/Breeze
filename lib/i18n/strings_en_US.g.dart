@@ -1218,6 +1218,7 @@ class _Translations$search$en_US extends Translations$search$zh_CN {
 	// Translations
 	@override String get title => 'Search';
 	@override String get searchHint => 'Search...';
+	@override String get enterKeyword => 'Enter a search term';
 	@override String get selectSource => 'Select Source';
 	@override String get advancedSearchNotSupported => 'Current plugin does not support advanced search';
 	@override String get advancedSearchOptions => 'Advanced Search Options';
@@ -2586,6 +2587,7 @@ extension on TranslationsEnUs {
 			'more.changelog' => 'Changelog',
 			'search.title' => 'Search',
 			'search.searchHint' => 'Search...',
+			'search.enterKeyword' => 'Enter a search term',
 			'search.selectSource' => 'Select Source',
 			'search.advancedSearchNotSupported' => 'Current plugin does not support advanced search',
 			'search.advancedSearchOptions' => 'Advanced Search Options',
@@ -2636,9 +2638,9 @@ extension on TranslationsEnUs {
 			'discover.disabled' => 'Disabled',
 			'discover.unnamed' => 'Unnamed',
 			'discover.pluginEnableFailed' => ({required Object error}) => 'Failed to enable plugin: ${error}',
-			'discover.pluginCloseFailed' => ({required Object error}) => 'Failed to disable plugin: ${error}',
 			_ => null,
 		} ?? switch (path) {
+			'discover.pluginCloseFailed' => ({required Object error}) => 'Failed to disable plugin: ${error}',
 			'discover.pluginDebugLoadFailed' => ({required Object error}) => 'Plugin debug load failed, reverted to database: ${error}',
 			'sourceShell.enter' => 'Open',
 			'sourceShell.noSections' => 'This source has no browse sections',

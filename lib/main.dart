@@ -371,7 +371,10 @@ Future<(GlobalSettingCubit, PluginRegistryCubit)> _initServices() async {
 Future<void> _tryApplyHttpProxyFromEnv() async {
   if (!kDebugMode) return;
 
-  final rawProxy = await _readProxyFromEnvAsset();
+  const debugProxy = String.fromEnvironment('SIM_PROXY_URL');
+  final rawProxy = debugProxy.trim().isNotEmpty
+      ? debugProxy.trim()
+      : await _readProxyFromEnvAsset();
   if (rawProxy == null || rawProxy.isEmpty) return;
 
   final proxyUrl =

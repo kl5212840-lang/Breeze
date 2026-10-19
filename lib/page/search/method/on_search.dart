@@ -6,6 +6,8 @@ import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
+import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/widgets/toast.dart';
 
 void onSearch(
   BuildContext context,
@@ -14,6 +16,12 @@ void onSearch(
   bool aggregateMode = true,
   Map<String, bool>? aggregateSources,
 }) async {
+  final trimmedKeyword = keyword.trim();
+  if (trimmedKeyword.isEmpty) {
+    showWarningToast(t.search.enterKeyword);
+    return;
+  }
+
   final searchCubit = context.read<SearchCubit>();
   final nextExtern = pluginExtern == null
       ? Map<String, dynamic>.from(searchCubit.state.pluginExtern)
@@ -23,7 +31,7 @@ void onSearch(
       : Map<String, bool>.from(aggregateSources);
   searchCubit.update(
     searchCubit.state.copyWith(
-      searchKeyword: keyword,
+      searchKeyword: trimmedKeyword,
       pluginExtern: nextExtern,
       aggregateSources: nextAggregateSources,
     ),

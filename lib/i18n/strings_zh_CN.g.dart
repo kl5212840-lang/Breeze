@@ -3174,6 +3174,9 @@ class Translations$search$zh_CN {
 	/// zh-CN: '搜索...'
 	String get searchHint => '搜索...';
 
+	/// zh-CN: '请输入搜索关键词'
+	String get enterKeyword => '请输入搜索关键词';
+
 	/// zh-CN: '选择漫画源'
 	String get selectSource => '选择漫画源';
 
@@ -5021,6 +5024,7 @@ extension on Translations {
 			'more.changelog' => '更新日志',
 			'search.title' => '搜索',
 			'search.searchHint' => '搜索...',
+			'search.enterKeyword' => '请输入搜索关键词',
 			'search.selectSource' => '选择漫画源',
 			'search.advancedSearchNotSupported' => '当前插件不支持高级搜索',
 			'search.advancedSearchOptions' => '高级搜索选项',
@@ -5069,9 +5073,9 @@ extension on Translations {
 			'discover.pluginInfoLoadFailed' => ({required Object error}) => '插件信息加载失败: ${error}',
 			'discover.pluginCapability' => '插件能力',
 			'discover.disabled' => '已关闭',
-			'discover.unnamed' => '未命名',
 			_ => null,
 		} ?? switch (path) {
+			'discover.unnamed' => '未命名',
 			'discover.pluginEnableFailed' => ({required Object error}) => '插件启用失败: ${error}',
 			'discover.pluginCloseFailed' => ({required Object error}) => '插件关闭失败: ${error}',
 			'discover.pluginDebugLoadFailed' => ({required Object error}) => '插件调试加载失败，已回退数据库: ${error}',
