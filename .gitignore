@@ -48,6 +48,8 @@ app.*.map.json
 
 # ObjectBox native library downloaded for Windows unit tests
 lib/objectbox.dll
+# ObjectBox native library downloaded for macOS unit tests
+lib/libobjectbox.dylib
 objectbox-windows-x64.zip
 objectbox_temp/
 

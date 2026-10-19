@@ -2,8 +2,6 @@ PODS:
   - coreml_upscale (0.0.1):
     - Flutter
   - Flutter (1.0.0)
-  - flutter_foreground_task (0.0.1):
-    - Flutter
   - flutter_inappwebview_ios (0.0.1):
     - Flutter
     - flutter_inappwebview_ios/Core (= 0.0.1)
@@ -20,7 +18,6 @@ PODS:
 DEPENDENCIES:
   - coreml_upscale (from `.symlinks/plugins/coreml_upscale/ios`)
   - Flutter (from `Flutter`)
-  - flutter_foreground_task (from `.symlinks/plugins/flutter_foreground_task/ios`)
   - flutter_inappwebview_ios (from `.symlinks/plugins/flutter_inappwebview_ios/ios`)
   - objectbox_flutter_libs (from `.symlinks/plugins/objectbox_flutter_libs/ios`)
 
@@ -34,8 +31,6 @@ EXTERNAL SOURCES:
     :path: ".symlinks/plugins/coreml_upscale/ios"
   Flutter:
     :path: Flutter
-  flutter_foreground_task:
-    :path: ".symlinks/plugins/flutter_foreground_task/ios"
   flutter_inappwebview_ios:
     :path: ".symlinks/plugins/flutter_inappwebview_ios/ios"
   objectbox_flutter_libs:
@@ -43,8 +38,7 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   coreml_upscale: 9718b89b26b4bbd10fae9124791d5b082d572691
-  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
-  flutter_foreground_task: a159d2c2173b33699ddb3e6c2a067045d7cebb89
+  Flutter: 71a624a5bc0c04062bf19101d501e466baf2fb47
   flutter_inappwebview_ios: b89ba3482b96fb25e00c967aae065701b66e9b99
   ObjectBox: 2aae8ad350012cb53c6e7848064307cf68617f73
   objectbox_flutter_libs: 42b57158b8c4869b731487f220e07d6edc6616e0
@@ -52,4 +46,4 @@ SPEC CHECKSUMS:
 
 PODFILE CHECKSUM: 53a6aebc29ccee84c41f92f409fc20cd4ca011f1
 
-COCOAPODS: 1.16.2
+COCOAPODS: 1.17.0

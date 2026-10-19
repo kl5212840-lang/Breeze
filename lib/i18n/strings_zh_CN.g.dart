@@ -65,6 +65,7 @@ class Translations with BaseTranslations<AppLocale, Translations> {
 	late final Translations$more$zh_CN more = Translations$more$zh_CN.internal(_root);
 	late final Translations$search$zh_CN search = Translations$search$zh_CN.internal(_root);
 	late final Translations$discover$zh_CN discover = Translations$discover$zh_CN.internal(_root);
+	late final Translations$sourceShell$zh_CN sourceShell = Translations$sourceShell$zh_CN.internal(_root);
 	late final Translations$searchResult$zh_CN searchResult = Translations$searchResult$zh_CN.internal(_root);
 	late final Translations$comicList$zh_CN comicList = Translations$comicList$zh_CN.internal(_root);
 	late final Translations$comicEntry$zh_CN comicEntry = Translations$comicEntry$zh_CN.internal(_root);
@@ -3339,6 +3340,30 @@ class Translations$discover$zh_CN {
 	String pluginDebugLoadFailed({required Object error}) => '插件调试加载失败，已回退数据库: ${error}';
 }
 
+// Path: sourceShell
+class Translations$sourceShell$zh_CN {
+	Translations$sourceShell$zh_CN.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// zh-CN: '启动'
+	String get enter => '启动';
+
+	/// zh-CN: '此图源暂无可浏览的栏目'
+	String get noSections => '此图源暂无可浏览的栏目';
+
+	/// zh-CN: '搜索此图源'
+	String get search => '搜索此图源';
+
+	/// zh-CN: '图源账号'
+	String get account => '图源账号';
+
+	/// zh-CN: '图源设置'
+	String get settings => '图源设置';
+}
+
 // Path: searchResult
 class Translations$searchResult$zh_CN {
 	Translations$searchResult$zh_CN.internal(this._root);
@@ -3736,6 +3761,18 @@ class Translations$login$zh_CN {
 
 	/// zh-CN: '登录'
 	String get loginButton => '登录';
+
+	/// zh-CN: '注册账号'
+	String get registerAccount => '注册账号';
+
+	/// zh-CN: '将在系统浏览器打开 $host 的注册页面。请核对域名，在网页中完成注册后返回这里登录。'
+	String registrationExternalPrompt({required Object host}) => '将在系统浏览器打开 ${host} 的注册页面。请核对域名，在网页中完成注册后返回这里登录。';
+
+	/// zh-CN: '打开网页'
+	String get openRegistration => '打开网页';
+
+	/// zh-CN: '无法打开注册页面'
+	String get registrationOpenFailed => '无法打开注册页面';
 
 	/// zh-CN: '重试'
 	String get retry => '重试';
@@ -5038,6 +5075,11 @@ extension on Translations {
 			'discover.pluginEnableFailed' => ({required Object error}) => '插件启用失败: ${error}',
 			'discover.pluginCloseFailed' => ({required Object error}) => '插件关闭失败: ${error}',
 			'discover.pluginDebugLoadFailed' => ({required Object error}) => '插件调试加载失败，已回退数据库: ${error}',
+			'sourceShell.enter' => '启动',
+			'sourceShell.noSections' => '此图源暂无可浏览的栏目',
+			'sourceShell.search' => '搜索此图源',
+			'sourceShell.account' => '图源账号',
+			'sourceShell.settings' => '图源设置',
 			'searchResult.enterPageNumber' => '输入页数',
 			'searchResult.pleaseEnterNumber' => '请输入数字',
 			'searchResult.returnToTop' => '返回顶部',
@@ -5147,6 +5189,10 @@ extension on Translations {
 			'login.loginSuccess' => '登录成功',
 			'login.loginFailed' => '登录失败',
 			'login.loginButton' => '登录',
+			'login.registerAccount' => '注册账号',
+			'login.registrationExternalPrompt' => ({required Object host}) => '将在系统浏览器打开 ${host} 的注册页面。请核对域名，在网页中完成注册后返回这里登录。',
+			'login.openRegistration' => '打开网页',
+			'login.registrationOpenFailed' => '无法打开注册页面',
 			'login.retry' => '重试',
 			'login.requiredFieldEmpty' => ({required Object label}) => '请填写 ${label}',
 			'login.loginNotSupported' => '该插件暂未适配新版登录页，请前往插件设置中填写账号信息',

@@ -9,6 +9,7 @@ import 'package:zephyr/page/discover/service/discover_router.dart';
 import 'package:zephyr/page/discover/view/plugin_order_dialog.dart';
 import 'package:zephyr/page/discover/widgets/plugin_card.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
+import 'package:zephyr/page/source_shell/models/source_shell_section.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/widgets/toast.dart';
 
@@ -113,6 +114,10 @@ class _DiscoverView extends StatelessWidget {
     final infoState =
         state.infoStates[plugin.uuid] ??
         const DiscoverPluginInfoState(loading: true);
+    final info = infoState.data;
+    final sections = info == null
+        ? const <SourceShellSection>[]
+        : SourceShellSection.fromPluginInfo(info, plugin.uuid);
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
@@ -126,6 +131,18 @@ class _DiscoverView extends StatelessWidget {
         infoState: infoState,
         isToggling: state.togglingUuids.contains(plugin.uuid),
         onSearch: () => _openPluginSearch(context, plugin.uuid),
+        onOpen: sections.isEmpty || !plugin.isEnabled
+            ? null
+            : () => context.pushRoute(
+                SourceShellRoute(
+                  source: plugin.uuid,
+                  sourceName:
+                      info?['name']?.toString().trim().isNotEmpty == true
+                      ? info!['name'].toString().trim()
+                      : t.discover.pluginCapability,
+                  sections: sections,
+                ),
+              ),
         onSettings: (title) => _openPluginSettings(context, plugin.uuid, title),
         onToggleEnabled: (enabled) => cubit.toggleEnabled(plugin.uuid, enabled),
         onRetry: () => cubit.retryLoadInfo(plugin.uuid),

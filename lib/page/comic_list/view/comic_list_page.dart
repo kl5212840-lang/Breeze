@@ -16,6 +16,7 @@ class ComicListPage extends StatelessWidget {
     this.sceneSource,
     this.sceneBundleFnPath,
     this.sceneBundleFnPathFallback,
+    this.embedded = false,
   });
 
   final String? title;
@@ -23,6 +24,9 @@ class ComicListPage extends StatelessWidget {
   final String? sceneSource;
   final String? sceneBundleFnPath;
   final String? sceneBundleFnPathFallback;
+
+  /// Render inside a source shell without a second navigation scaffold.
+  final bool embedded;
 
   @override
   Widget build(BuildContext context) {
@@ -33,15 +37,16 @@ class ComicListPage extends StatelessWidget {
         sceneBundleFnPath: sceneBundleFnPath,
         sceneBundleFnPathFallback: sceneBundleFnPathFallback,
       ),
-      child: _ComicListView(title: title),
+      child: _ComicListView(title: title, embedded: embedded),
     );
   }
 }
 
 class _ComicListView extends StatefulWidget {
-  const _ComicListView({this.title});
+  const _ComicListView({this.title, required this.embedded});
 
   final String? title;
+  final bool embedded;
 
   @override
   State<_ComicListView> createState() => _ComicListViewState();
@@ -59,6 +64,33 @@ class _ComicListViewState extends State<_ComicListView>
       builder: (context, state) {
         final title =
             widget.title ?? (state.scene?.title ?? t.comicList.defaultTitle);
+
+        if (widget.embedded) {
+          return Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+                    if (state.requiresFilter)
+                      IconButton(
+                        tooltip: t.comicList.filter,
+                        icon: const Icon(Icons.filter_alt_outlined),
+                        onPressed: () => _openFilterDialog(context),
+                      ),
+                  ],
+                ),
+              ),
+              Expanded(child: _buildBody(context, state)),
+            ],
+          );
+        }
 
         return Scaffold(
           appBar: AppBar(

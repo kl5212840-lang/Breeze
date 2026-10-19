@@ -60,6 +60,7 @@ class TranslationsEnUs extends Translations with BaseTranslations<AppLocale, Tra
 	@override late final _Translations$more$en_US more = _Translations$more$en_US._(_root);
 	@override late final _Translations$search$en_US search = _Translations$search$en_US._(_root);
 	@override late final _Translations$discover$en_US discover = _Translations$discover$en_US._(_root);
+	@override late final _Translations$sourceShell$en_US sourceShell = _Translations$sourceShell$en_US._(_root);
 	@override late final _Translations$searchResult$en_US searchResult = _Translations$searchResult$en_US._(_root);
 	@override late final _Translations$comicList$en_US comicList = _Translations$comicList$en_US._(_root);
 	@override late final _Translations$comicEntry$en_US comicEntry = _Translations$comicEntry$en_US._(_root);
@@ -1280,6 +1281,20 @@ class _Translations$discover$en_US extends Translations$discover$zh_CN {
 	@override String pluginDebugLoadFailed({required Object error}) => 'Plugin debug load failed, reverted to database: ${error}';
 }
 
+// Path: sourceShell
+class _Translations$sourceShell$en_US extends Translations$sourceShell$zh_CN {
+	_Translations$sourceShell$en_US._(TranslationsEnUs root) : this._root = root, super.internal(root);
+
+	final TranslationsEnUs _root; // ignore: unused_field
+
+	// Translations
+	@override String get enter => 'Open';
+	@override String get noSections => 'This source has no browse sections';
+	@override String get search => 'Search this source';
+	@override String get account => 'Source account';
+	@override String get settings => 'Source settings';
+}
+
 // Path: searchResult
 class _Translations$searchResult$en_US extends Translations$searchResult$zh_CN {
 	_Translations$searchResult$en_US._(TranslationsEnUs root) : this._root = root, super.internal(root);
@@ -1459,6 +1474,10 @@ class _Translations$login$en_US extends Translations$login$zh_CN {
 	@override String get loginSuccess => 'Login successful';
 	@override String get loginFailed => 'Login failed';
 	@override String get loginButton => 'Login';
+	@override String get registerAccount => 'Create an account';
+	@override String registrationExternalPrompt({required Object host}) => 'This opens the registration page at ${host} in your system browser. Check the domain, then return here to log in after registering.';
+	@override String get openRegistration => 'Open website';
+	@override String get registrationOpenFailed => 'Could not open the registration page';
 	@override String get retry => 'Retry';
 	@override String requiredFieldEmpty({required Object label}) => 'Please fill in ${label}';
 	@override String get loginNotSupported => 'This plugin doesn\'t support the new login page yet. Please fill in your account in plugin settings.';
@@ -2621,6 +2640,11 @@ extension on TranslationsEnUs {
 			_ => null,
 		} ?? switch (path) {
 			'discover.pluginDebugLoadFailed' => ({required Object error}) => 'Plugin debug load failed, reverted to database: ${error}',
+			'sourceShell.enter' => 'Open',
+			'sourceShell.noSections' => 'This source has no browse sections',
+			'sourceShell.search' => 'Search this source',
+			'sourceShell.account' => 'Source account',
+			'sourceShell.settings' => 'Source settings',
 			'searchResult.enterPageNumber' => 'Enter page number',
 			'searchResult.pleaseEnterNumber' => 'Please enter a number',
 			'searchResult.returnToTop' => 'Return to top',
@@ -2730,6 +2754,10 @@ extension on TranslationsEnUs {
 			'login.loginSuccess' => 'Login successful',
 			'login.loginFailed' => 'Login failed',
 			'login.loginButton' => 'Login',
+			'login.registerAccount' => 'Create an account',
+			'login.registrationExternalPrompt' => ({required Object host}) => 'This opens the registration page at ${host} in your system browser. Check the domain, then return here to log in after registering.',
+			'login.openRegistration' => 'Open website',
+			'login.registrationOpenFailed' => 'Could not open the registration page',
 			'login.retry' => 'Retry',
 			'login.requiredFieldEmpty' => ({required Object label}) => 'Please fill in ${label}',
 			'login.loginNotSupported' => 'This plugin doesn\'t support the new login page yet. Please fill in your account in plugin settings.',

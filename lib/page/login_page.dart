@@ -7,10 +7,13 @@ import 'package:zephyr/main.dart';
 import 'package:zephyr/network/http/plugin/unified_plugin_envelope.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/login/registration_link.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/util/error_filter.dart';
+import 'package:zephyr/util/event/event.dart';
 import 'package:zephyr/util/json/json_value.dart';
 
 @RoutePage()
@@ -67,6 +70,7 @@ class _LoginPageState extends State<LoginPage> {
   List<_LoginFieldSpec> _fields = const [];
   String _submitFnPath = '';
   String _submitLabel = '';
+  Uri? _registrationUri;
   bool _loadingScheme = true;
   bool _submitting = false;
   String? _schemeError;
@@ -193,6 +197,7 @@ class _LoginPageState extends State<LoginPage> {
                 ?.toString()
                 .trim() ??
             '';
+        _registrationUri = validatedRegistrationUri(data?['registerUrl']);
         _schemeError = null;
         _loadingScheme = false;
         _captchaImages.clear();
@@ -339,6 +344,7 @@ class _LoginPageState extends State<LoginPage> {
         extern: const <String, dynamic>{},
       );
       showSuccessToast(_resolveLoginSuccessMessage(result));
+      eventBus.fire(PluginLoginSucceeded(from));
 
       if (!mounted) return;
       context.maybePop();
@@ -355,6 +361,37 @@ class _LoginPageState extends State<LoginPage> {
           _submitting = false;
         });
       }
+    }
+  }
+
+  Future<void> _openRegistration() async {
+    final uri = _registrationUri;
+    if (uri == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(t.login.registerAccount),
+        content: Text(t.login.registrationExternalPrompt(host: uri.host)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(t.common.cancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(t.login.openRegistration),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      if (await launchUrl(uri, mode: LaunchMode.externalApplication)) return;
+    } catch (e) {
+      logger.e(e);
+    }
+    if (mounted) {
+      showErrorToast(t.login.registrationOpenFailed);
     }
   }
 
@@ -428,6 +465,22 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                   ],
                 ),
+                if (_registrationUri != null) ...[
+                  const SizedBox(height: 4),
+                  Center(
+                    child: TextButton.icon(
+                      onPressed: _openRegistration,
+                      icon: const Icon(Icons.open_in_new),
+                      label: Text(t.login.registerAccount),
+                    ),
+                  ),
+                  Center(
+                    child: Text(
+                      _registrationUri!.host,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
