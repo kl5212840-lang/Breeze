@@ -12,6 +12,43 @@ import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 /// didChangeDependencies 对无 RouterScope 的裸 pump 做了容错，
 /// 所以这里不需要搭整页路由，直接 pump 输入框即可。
 void main() {
+  testWidgets('keeps the expanded search field usable near the right edge', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1320, 2868);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Stack(
+            children: [
+              Positioned(
+                left: 340,
+                top: 100,
+                child: SizedBox(
+                  width: 250,
+                  child: SearchQueryField(
+                    query: '',
+                    autoExpand: true,
+                    onSubmitted: (_) {},
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TextField), findsOneWidget);
+    expect(tester.getSize(find.byType(TextField)).width, greaterThan(100));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('shows multiple lines and submits on search action', (
     tester,
   ) async {
