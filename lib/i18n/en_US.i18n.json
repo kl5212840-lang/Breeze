@@ -1065,6 +1065,13 @@
     "pluginCloseFailed": "Failed to disable plugin: $error",
     "pluginDebugLoadFailed": "Plugin debug load failed, reverted to database: $error"
   },
+  "sourceShell": {
+    "enter": "Open",
+    "noSections": "This source has no browse sections",
+    "search": "Search this source",
+    "account": "Source account",
+    "settings": "Source settings"
+  },
   "searchResult": {
     "enterPageNumber": "Enter page number",
     "pleaseEnterNumber": "Please enter a number",
@@ -1189,6 +1196,10 @@
     "loginSuccess": "Login successful",
     "loginFailed": "Login failed",
     "loginButton": "Login",
+    "registerAccount": "Create an account",
+    "registrationExternalPrompt": "This opens the registration page at $host in your system browser. Check the domain, then return here to log in after registering.",
+    "openRegistration": "Open website",
+    "registrationOpenFailed": "Could not open the registration page",
     "retry": "Retry",
     "requiredFieldEmpty": "Please fill in $label",
     "loginNotSupported": "This plugin doesn't support the new login page yet. Please fill in your account in plugin settings.",

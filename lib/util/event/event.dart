@@ -11,6 +11,14 @@ class NeedLogin {
   NeedLogin({required this.from, this.message});
 }
 
+/// Raised after a plugin login succeeds so an open source view can reload
+/// content that previously failed authentication.
+class PluginLoginSucceeded {
+  const PluginLoginSucceeded(this.from);
+
+  final String from;
+}
+
 class WebViewCookieSnapshot {
   final String name;
   final String value;

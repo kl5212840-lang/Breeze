@@ -36,6 +36,7 @@ class AppRouter extends RootStackRouter {
     AutoRoute(page: NavigationBar.page),
     AutoRoute(page: LoginRoute.page),
     AutoRoute(page: ComicListRoute.page),
+    AutoRoute(page: SourceShellRoute.page),
     AutoRoute(page: DiscoverRoute.page),
     AutoRoute(page: SearchResultRoute.page),
     AutoRoute(page: SearchAggregateResultRoute.page),

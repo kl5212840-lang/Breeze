@@ -1,5 +1,7 @@
 [toolchain]
-channel = "1.96.1"
+# Rust 1.96.1 can emit proc-macro dylibs rejected by macOS 27 dyld.
+# https://github.com/rust-lang/rust/issues/157750
+channel = "1.98.1"
 profile = "default"
 
 targets = [

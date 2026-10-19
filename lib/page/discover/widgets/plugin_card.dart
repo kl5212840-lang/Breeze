@@ -16,6 +16,7 @@ class PluginCard extends StatelessWidget {
     required this.infoState,
     required this.isToggling,
     required this.onSearch,
+    required this.onOpen,
     required this.onSettings,
     required this.onToggleEnabled,
     required this.onRetry,
@@ -27,6 +28,7 @@ class PluginCard extends StatelessWidget {
   final DiscoverPluginInfoState infoState;
   final bool isToggling;
   final VoidCallback onSearch;
+  final VoidCallback? onOpen;
   final void Function(String title) onSettings;
   final ValueChanged<bool> onToggleEnabled;
   final VoidCallback onRetry;
@@ -105,6 +107,14 @@ class PluginCard extends StatelessWidget {
     final rawFunctions = asJsonList(
       info['functions'] ?? info['function'] ?? const <dynamic>[],
     ).map((item) => asJsonMap(item)).toList();
+    // List sections already live in the persistent source shell. Keep only
+    // unrelated actions as shortcuts so Discover remains a clean launcher.
+    final shortcutFunctions = onOpen == null
+        ? rawFunctions
+        : rawFunctions.where((function) {
+            final action = asJsonMap(function['action']);
+            return action['type']?.toString() != 'openComicList';
+          }).toList();
     final pluginName = info['name']?.toString().trim() ?? '';
     final title = pluginName.isNotEmpty
         ? pluginName
@@ -133,6 +143,7 @@ class PluginCard extends StatelessWidget {
               vertical: 6,
             ),
             leading: SizedBox(width: 48, height: 48, child: iconWidget),
+            onTap: isEnabled ? onOpen : null,
             title: Text(
               title,
               maxLines: 1,
@@ -181,7 +192,19 @@ class PluginCard extends StatelessWidget {
               ],
             ),
           ),
-          if (rawFunctions.isNotEmpty && isEnabled)
+          if (onOpen != null && isEnabled)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+              child: SizedBox(
+                width: double.infinity,
+                child: FilledButton.tonalIcon(
+                  onPressed: onOpen,
+                  icon: const Icon(Icons.arrow_forward_rounded),
+                  label: Text(t.sourceShell.enter),
+                ),
+              ),
+            ),
+          if (shortcutFunctions.isNotEmpty && isEnabled)
             Padding(
               padding: const EdgeInsets.only(
                 left: 20,
@@ -189,7 +212,11 @@ class PluginCard extends StatelessWidget {
                 right: 20,
                 bottom: 12,
               ),
-              child: _buildFunctionButtons(context, rawFunctions, colorScheme),
+              child: _buildFunctionButtons(
+                context,
+                shortcutFunctions,
+                colorScheme,
+              ),
             ),
         ],
       ),
