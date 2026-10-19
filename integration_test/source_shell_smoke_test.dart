@@ -5,6 +5,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:zephyr/main.dart' as app;
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/page/comic_list/view/plugin_comic_grid_sliver.dart';
+import 'package:zephyr/page/source_shell/view/source_shell_page.dart';
 import 'package:zephyr/plugin/plugin_install_service.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/src/rust/api/qjs.dart';
@@ -19,6 +20,7 @@ const _captureWaitSeconds = int.fromEnvironment(
 );
 const _probePluginNetwork = bool.fromEnvironment('SIM_PROBE_PLUGIN_NETWORK');
 const _assertPluginContent = bool.fromEnvironment('SIM_ASSERT_PLUGIN_CONTENT');
+const _skipScreenshots = bool.fromEnvironment('SIM_SKIP_SCREENSHOTS');
 
 void main() {
   final binding = IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -67,10 +69,20 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     await tester.tap(find.text('发现').last);
     await waitFor(tester, find.text('启动'));
-    await binding.takeScreenshot('source-launcher');
+    if (!_skipScreenshots) {
+      await binding.takeScreenshot('source-launcher');
+    }
 
     await tester.tap(find.text('启动').first);
-    await waitFor(tester, find.text('漫画推荐'));
+    await waitFor(tester, find.byType(SourceShellPage));
+    final shell = tester.widget<SourceShellPage>(find.byType(SourceShellPage));
+    expect(shell.sections.map((section) => section.title), <String>[
+      '漫画推荐',
+      '全新上架',
+      '发现',
+      '排行榜',
+      '云端收藏',
+    ]);
     if (_assertPluginContent) {
       await waitFor(tester, find.byType(PluginComicGridSliver));
       final grid = tester.widget<PluginComicGridSliver>(
@@ -80,11 +92,14 @@ void main() {
       expect(grid.entries, isNotEmpty);
     }
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(seconds: _captureWaitSeconds)),
-    );
-    await tester.pump();
-    await binding.takeScreenshot('source-home');
+    if (!_skipScreenshots) {
+      await tester.runAsync(
+        () =>
+            Future<void>.delayed(const Duration(seconds: _captureWaitSeconds)),
+      );
+      await tester.pump();
+      await binding.takeScreenshot('source-home');
+    }
 
     await tester.tap(find.text('全新上架').last);
     await waitFor(tester, find.text('全新上架'));
@@ -97,10 +112,13 @@ void main() {
       expect(grid.entries, isNotEmpty);
     }
     await tester.pump(const Duration(milliseconds: 400));
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(seconds: _captureWaitSeconds)),
-    );
-    await tester.pump();
-    await binding.takeScreenshot('source-newest');
+    if (!_skipScreenshots) {
+      await tester.runAsync(
+        () =>
+            Future<void>.delayed(const Duration(seconds: _captureWaitSeconds)),
+      );
+      await tester.pump();
+      await binding.takeScreenshot('source-newest');
+    }
   });
 }

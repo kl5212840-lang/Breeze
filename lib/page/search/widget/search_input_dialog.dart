@@ -363,12 +363,15 @@ class _SearchQueryFieldState extends State<SearchQueryField>
         target.localToGlobal(Offset.zero) -
         overlayRenderObject.localToGlobal(Offset.zero);
     final overlaySize = overlayRenderObject.size;
-    final maxLeft = math.max(8.0, overlaySize.width - 8.0);
-    final left = targetOffset.dx.clamp(8.0, maxLeft).toDouble();
+    // Keep the expanded field at its intended width. During a route/keyboard
+    // transition the target can briefly report a position near the right edge;
+    // shrinking to the remaining space made its row overflow on iPhone.
     final width = math.max(
       1.0,
-      math.min(target.size.width, overlaySize.width - left - 8.0),
+      math.min(target.size.width, overlaySize.width - 16.0),
     );
+    final maxLeft = math.max(8.0, overlaySize.width - width - 8.0);
+    final left = targetOffset.dx.clamp(8.0, maxLeft).toDouble();
     final top = targetOffset.dy.clamp(0.0, overlaySize.height).toDouble();
     final maxHeight = math.max(1.0, overlaySize.height - top - 8.0);
 
