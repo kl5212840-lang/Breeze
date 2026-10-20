@@ -25,6 +25,23 @@ void main() {
     expect((merged.single as Map)['manifest']['version'], '1');
   });
 
+  test(
+    'personal 禁漫 update replaces only its matching original catalog entry',
+    () {
+      const jm = '6886291b-f524-441c-844b-c2efae9899a9';
+      const official =
+          '[{"manifest":{"uuid":"$jm","version":"0.2.1"}},'
+          '{"manifest":{"uuid":"other","version":"1"}}]';
+      const personal = '[{"manifest":{"uuid":"$jm","version":"0.3.0"}}]';
+      final merged =
+          jsonDecode(mergeCloudPluginCatalogPayloads(official, personal))
+              as List<dynamic>;
+      expect(merged, hasLength(2));
+      expect((merged.first as Map)['manifest']['version'], '0.3.0');
+      expect((merged.last as Map)['manifest']['uuid'], 'other');
+    },
+  );
+
   test('keeps official entries when the personal catalog is unavailable', () {
     const official = '[{"manifest":{"uuid":"official"}}]';
     expect(mergeCloudPluginCatalogPayloads(official, null), official);

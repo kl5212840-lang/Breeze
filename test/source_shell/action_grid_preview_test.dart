@@ -62,4 +62,45 @@ void main() {
     expect(selected?['type'], 'openSearch');
     await tester.pump(const Duration(milliseconds: 150));
   });
+
+  testWidgets('禁漫分类卡片保留文字、图标与列表动作', (tester) async {
+    Map<String, dynamic>? selected;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => const DiscoverSchemeRenderer().buildPage(
+              context,
+              from: 'jm-source',
+              scheme: {
+                'body': {'type': 'source-category-grid', 'key': 'categories'},
+              },
+              data: {
+                'categories': [
+                  {
+                    'title': '同人',
+                    'subtitle': '系列与角色同人',
+                    'icon': 'people',
+                    'action': {
+                      'type': 'openComicList',
+                      'payload': {'scene': {}},
+                    },
+                  },
+                ],
+              },
+              onReachBottom: () async {},
+              onAction: (action) async => selected = action,
+              isLoadingMore: false,
+              showLoadMoreRetry: false,
+              onRetryLoadMore: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.text('同人'), findsOneWidget);
+    expect(find.text('系列与角色同人'), findsOneWidget);
+    await tester.tap(find.text('同人'));
+    expect(selected?['type'], 'openComicList');
+  });
 }

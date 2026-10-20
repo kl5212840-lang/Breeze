@@ -32,6 +32,9 @@ class SourceProfileContent extends StatelessWidget {
     this.legacySources = const [],
     this.avatarUploadFunction = '',
     this.bioUpdateFunction = '',
+    this.profileKind = '',
+    this.checkinFunction = '',
+    this.notificationsFunction = '',
     required this.onLogin,
     required this.onSettings,
     required this.onBreezeSettings,
@@ -42,6 +45,9 @@ class SourceProfileContent extends StatelessWidget {
   final List<String> legacySources;
   final String avatarUploadFunction;
   final String bioUpdateFunction;
+  final String profileKind;
+  final String checkinFunction;
+  final String notificationsFunction;
   final Future<void> Function() onLogin;
   final Future<void> Function() onSettings;
   final Future<void> Function() onBreezeSettings;
@@ -63,6 +69,9 @@ class SourceProfileContent extends StatelessWidget {
         sources: search.sources,
         avatarUploadFunction: avatarUploadFunction,
         bioUpdateFunction: bioUpdateFunction,
+        profileKind: profileKind,
+        checkinFunction: checkinFunction,
+        notificationsFunction: notificationsFunction,
         onLogin: onLogin,
         onSettings: onSettings,
         onBreezeSettings: onBreezeSettings,
@@ -80,6 +89,9 @@ class _Account {
     this.slogan,
     this.avatarUrl,
     this.avatarPath,
+    this.coin,
+    this.experience,
+    this.nextLevelExperience,
   );
   final String name;
   final int level;
@@ -87,6 +99,9 @@ class _Account {
   final String slogan;
   final String avatarUrl;
   final String avatarPath;
+  final String coin;
+  final String experience;
+  final String nextLevelExperience;
 
   factory _Account.fromResponse(Map<String, dynamic> response) {
     final data = asJsonMap(response['data']);
@@ -103,8 +118,38 @@ class _Account {
       (extern['slogan']?.toString() ?? '').trim(),
       (avatar['url']?.toString() ?? '').trim(),
       (avatar['path']?.toString() ?? '').trim(),
+      (extern['coin']?.toString() ?? '').trim(),
+      (extern['experience']?.toString() ?? '').trim(),
+      (extern['nextLevelExperience']?.toString() ?? '').trim(),
     );
   }
+}
+
+class _SourceNotice {
+  const _SourceNotice({
+    required this.title,
+    required this.content,
+    required this.time,
+    required this.type,
+    required this.read,
+  });
+
+  final String title;
+  final String content;
+  final String time;
+  final String type;
+  final bool read;
+
+  factory _SourceNotice.fromMap(Map<String, dynamic> data) => _SourceNotice(
+    title: data['title']?.toString() ?? '通知',
+    content: data['content']?.toString() ?? '',
+    time: data['time']?.toString() ?? '',
+    type: data['type']?.toString() ?? '',
+    read: data['read'] == true,
+  );
+
+  bool get isTracking =>
+      type.contains('track') || type.contains('comic_follow');
 }
 
 class _ProfileBody extends StatefulWidget {
@@ -113,6 +158,9 @@ class _ProfileBody extends StatefulWidget {
     required this.sources,
     required this.avatarUploadFunction,
     required this.bioUpdateFunction,
+    required this.profileKind,
+    required this.checkinFunction,
+    required this.notificationsFunction,
     required this.onLogin,
     required this.onSettings,
     required this.onBreezeSettings,
@@ -122,6 +170,9 @@ class _ProfileBody extends StatefulWidget {
   final List<String> sources;
   final String avatarUploadFunction;
   final String bioUpdateFunction;
+  final String profileKind;
+  final String checkinFunction;
+  final String notificationsFunction;
   final Future<void> Function() onLogin;
   final Future<void> Function() onSettings;
   final Future<void> Function() onBreezeSettings;
@@ -145,6 +196,12 @@ class _ProfileBodyState extends State<_ProfileBody> {
   String? _cloudError;
   bool _loading = true;
   bool _editing = false;
+  bool _checkingIn = false;
+  bool _showNotifications = false;
+  bool _noticeLoading = false;
+  String? _noticeError;
+  int _noticeFilter = 0;
+  List<_SourceNotice> _notices = const [];
   bool _loadFailed = false;
   int _avatarRevision = 0;
   bool get _canEdit =>
@@ -156,6 +213,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
     super.initState();
     _loadAccount();
     _loadCloudFavorites();
+    if (widget.notificationsFunction.isNotEmpty) _loadNotifications();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _refreshRecords();
     });
@@ -179,13 +237,20 @@ class _ProfileBodyState extends State<_ProfileBody> {
 
   Future<void> _refreshPage() async {
     _refreshRecords();
-    await Future.wait([_loadAccount(), _loadCloudFavorites()]);
+    await Future.wait([
+      _loadAccount(),
+      _loadCloudFavorites(),
+      if (widget.notificationsFunction.isNotEmpty) _loadNotifications(),
+    ]);
   }
 
   Future<void> _loadCloudFavorites() async {
     if (mounted) setState(() => _cloudLoading = true);
     try {
-      final items = await loadSourceCloudFavoritePreview(widget.source);
+      final items = await loadSourceCloudFavoritePreview(
+        widget.source,
+        jmProfile: widget.profileKind == 'jm',
+      );
       if (!mounted) return;
       setState(() {
         _cloudFavorites = items;
@@ -225,7 +290,32 @@ class _ProfileBodyState extends State<_ProfileBody> {
 
   Future<void> _loginAndReload() async {
     await widget.onLogin();
-    if (mounted) await Future.wait([_loadAccount(), _loadCloudFavorites()]);
+    if (mounted) await _refreshPage();
+  }
+
+  Future<void> _loadNotifications() async {
+    if (mounted) setState(() => _noticeLoading = true);
+    try {
+      final response = await callUnifiedComicPlugin(
+        from: widget.source,
+        fnPath: widget.notificationsFunction,
+        core: const <String, dynamic>{},
+      );
+      if (!mounted) return;
+      final data = asJsonMap(response['data']);
+      setState(() {
+        _notices = asJsonList(
+          data['items'],
+        ).map((item) => _SourceNotice.fromMap(asJsonMap(item))).toList();
+        _noticeError = null;
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() => _noticeError = userFacingErrorMessage(error));
+      }
+    } finally {
+      if (mounted) setState(() => _noticeLoading = false);
+    }
   }
 
   Future<void> _openCloudFavorites() async {
@@ -233,18 +323,61 @@ class _ProfileBodyState extends State<_ProfileBody> {
     if (mounted) await _loadCloudFavorites();
   }
 
+  Future<void> _checkIn() async {
+    if (_checkingIn) return;
+    setState(() => _checkingIn = true);
+    try {
+      final result = await callUnifiedComicPlugin(
+        from: widget.source,
+        fnPath: widget.checkinFunction,
+        core: const <String, dynamic>{},
+      );
+      final data = asJsonMap(result['data']);
+      if (data['ok'] != true) {
+        throw StateError(data['message']?.toString() ?? '签到失败，请稍后重试');
+      }
+      showSuccessToast(data['message']?.toString() ?? '今日已签到');
+      await _loadAccount();
+    } catch (error) {
+      if (mounted) showErrorToast(userFacingErrorMessage(error));
+    } finally {
+      if (mounted) setState(() => _checkingIn = false);
+    }
+  }
+
+  Widget _cloudPreview() => SourceProfileComicPreviewCard(
+    previewKey: const ValueKey('profile-preview-cloud'),
+    title: '云端收藏',
+    icon: Icons.cloud_outlined,
+    entries: _cloudFavorites,
+    type: ComicEntryType.normal,
+    emptyMessage: '云端还没有收藏的漫画',
+    loading: _cloudLoading,
+    error: _cloudError,
+    onRetry: _loadCloudFavorites,
+    onViewAll: _openCloudFavorites,
+    onReturned: _loadCloudFavorites,
+  );
+
   @override
   Widget build(BuildContext context) {
     if (_mode != null) return _localRecords();
+    if (_showNotifications) return _notificationsView();
     final colors = Theme.of(context).colorScheme;
     return RefreshIndicator(
       onRefresh: _refreshPage,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
-          _hero(colors),
+          widget.profileKind == 'jm' ? _jmHero(colors) : _hero(colors),
+          if (widget.notificationsFunction.isNotEmpty)
+            _notificationsEntry(colors),
           const SizedBox(height: 18),
-          _sectionLabel('我的记录'),
+          if (widget.profileKind == 'jm') ...[
+            _sectionLabel('云端与本地'),
+            _cloudPreview(),
+          ] else
+            _sectionLabel('我的记录'),
           if (_recordsError != null)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -267,23 +400,16 @@ class _ProfileBodyState extends State<_ProfileBody> {
                 onReturned: _refreshRecords,
               ),
           ],
-          SourceProfileComicPreviewCard(
-            previewKey: const ValueKey('profile-preview-cloud'),
-            title: '云端收藏',
-            icon: Icons.cloud_outlined,
-            entries: _cloudFavorites,
-            type: ComicEntryType.normal,
-            emptyMessage: '云端还没有收藏的漫画',
-            loading: _cloudLoading,
-            error: _cloudError,
-            onRetry: _loadCloudFavorites,
-            onViewAll: _openCloudFavorites,
-            onReturned: _loadCloudFavorites,
-          ),
+          if (widget.profileKind != 'jm') _cloudPreview(),
           const SizedBox(height: 20),
           _sectionLabel('设置'),
           _group(colors, [
-            _entry(Icons.tune_outlined, '哔咔设置', '账号与线路', widget.onSettings),
+            _entry(
+              Icons.tune_outlined,
+              widget.profileKind == 'jm' ? '禁漫设置' : '哔咔设置',
+              '账号与线路',
+              widget.onSettings,
+            ),
             _entry(
               Icons.settings_outlined,
               'Breeze 设置',
@@ -292,6 +418,256 @@ class _ProfileBodyState extends State<_ProfileBody> {
             ),
           ]),
           const SizedBox(height: 28),
+        ],
+      ),
+    );
+  }
+
+  Widget _notificationsEntry(ColorScheme colors) {
+    final unread = _notices.where((item) => !item.read).length;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+      child: Material(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          leading: Icon(Icons.notifications_outlined, color: colors.primary),
+          title: const Text('站内消息与追漫通知'),
+          subtitle: Text(
+            _noticeLoading
+                ? '正在同步消息…'
+                : _noticeError != null
+                ? '消息暂不可用 · 点此重试'
+                : unread > 0
+                ? '$unread 条未读'
+                : '查看站内与追漫更新',
+          ),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () {
+            if (_account == null) {
+              _loginAndReload();
+              return;
+            }
+            setState(() => _showNotifications = true);
+            if (_noticeError != null) _loadNotifications();
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _notificationsView() {
+    final colors = Theme.of(context).colorScheme;
+    final visible = _notices
+        .where(
+          (notice) => switch (_noticeFilter) {
+            1 => notice.isTracking,
+            2 => !notice.isTracking,
+            _ => true,
+          },
+        )
+        .toList();
+    return Column(
+      children: [
+        ListTile(
+          leading: const Icon(Icons.arrow_back),
+          title: const Text('站内消息'),
+          trailing: IconButton(
+            tooltip: '刷新消息',
+            onPressed: _noticeLoading ? null : _loadNotifications,
+            icon: const Icon(Icons.refresh),
+          ),
+          onTap: () => setState(() => _showNotifications = false),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Row(
+            children: [
+              for (final (index, label) in [
+                (0, '全部'),
+                (1, '追漫'),
+                (2, '站内'),
+              ]) ...[
+                if (index > 0) const SizedBox(width: 8),
+                ChoiceChip(
+                  label: Text(label),
+                  selected: _noticeFilter == index,
+                  onSelected: (_) => setState(() => _noticeFilter = index),
+                ),
+              ],
+            ],
+          ),
+        ),
+        Expanded(
+          child: _noticeLoading && _notices.isEmpty
+              ? const Center(child: CircularProgressIndicator())
+              : _noticeError != null && _notices.isEmpty
+              ? Center(
+                  child: TextButton.icon(
+                    onPressed: _loadNotifications,
+                    icon: const Icon(Icons.refresh),
+                    label: Text('$_noticeError · 重试'),
+                  ),
+                )
+              : visible.isEmpty
+              ? Center(
+                  child: Text(
+                    '暂无消息',
+                    style: TextStyle(color: colors.onSurfaceVariant),
+                  ),
+                )
+              : RefreshIndicator(
+                  onRefresh: _loadNotifications,
+                  child: ListView.separated(
+                    itemCount: visible.length,
+                    separatorBuilder: (_, _) =>
+                        const Divider(height: 1, indent: 16, endIndent: 16),
+                    itemBuilder: (context, index) {
+                      final notice = visible[index];
+                      return ListTile(
+                        leading: Icon(
+                          notice.isTracking
+                              ? Icons.bookmark_added_outlined
+                              : Icons.notifications_none_outlined,
+                          color: notice.read
+                              ? colors.onSurfaceVariant
+                              : colors.primary,
+                        ),
+                        title: Text(
+                          notice.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (notice.content.isNotEmpty)
+                              Text(
+                                notice.content,
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            if (notice.time.isNotEmpty)
+                              Text(
+                                notice.time,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: colors.onSurfaceVariant,
+                                ),
+                              ),
+                          ],
+                        ),
+                        isThreeLine: notice.content.isNotEmpty,
+                      );
+                    },
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _jmHero(ColorScheme colors) {
+    final account = _account;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(14, 12, 14, 0),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              ClipOval(
+                child: SizedBox(
+                  width: 68,
+                  height: 68,
+                  child: _avatar(account, colors.primary),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      account?.name.isNotEmpty == true ? account!.name : '禁漫账号',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      account == null
+                          ? (_loading ? '正在读取账号…' : '登录后同步收藏与签到')
+                          : 'Lv.${account.level}'
+                                '${account.title.isEmpty ? '' : ' · ${account.title}'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: colors.onSurfaceVariant),
+                    ),
+                    if (account != null && account.coin.isNotEmpty)
+                      Text(
+                        '硬币 ${account.coin}'
+                        '${account.experience.isEmpty ? '' : '  ·  经验 ${account.experience}${account.nextLevelExperience.isEmpty ? '' : '/${account.nextLevelExperience}'}'}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: account == null
+                      ? _loginAndReload
+                      : widget.checkinFunction.isEmpty || _checkingIn
+                      ? null
+                      : _checkIn,
+                  icon: _checkingIn
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Icon(
+                          account == null
+                              ? Icons.login
+                              : Icons.event_available_outlined,
+                        ),
+                  label: Text(account == null ? '登录账号' : '今日签到'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: widget.onSettings,
+                  icon: const Icon(Icons.tune_outlined),
+                  label: const Text('账号与线路'),
+                ),
+              ),
+            ],
+          ),
+          if (_loadFailed) ...[
+            const SizedBox(height: 6),
+            TextButton(
+              onPressed: _loadAccount,
+              child: const Text('资料暂不可用 · 重试'),
+            ),
+          ],
         ],
       ),
     );
@@ -477,21 +853,21 @@ class _ProfileBodyState extends State<_ProfileBody> {
     ),
   );
 
-  Widget _group(ColorScheme colors, List<Widget> children) => Container(
-    margin: const EdgeInsets.symmetric(horizontal: 14),
-    decoration: BoxDecoration(
+  Widget _group(ColorScheme colors, List<Widget> children) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 14),
+    child: Material(
       color: colors.surface,
       borderRadius: BorderRadius.circular(15),
-    ),
-    clipBehavior: Clip.antiAlias,
-    child: Column(
-      children: [
-        for (var i = 0; i < children.length; i++) ...[
-          if (i > 0)
-            Divider(height: 1, indent: 54, color: colors.outlineVariant),
-          children[i],
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          for (var i = 0; i < children.length; i++) ...[
+            if (i > 0)
+              Divider(height: 1, indent: 54, color: colors.outlineVariant),
+            children[i],
+          ],
         ],
-      ],
+      ),
     ),
   );
 

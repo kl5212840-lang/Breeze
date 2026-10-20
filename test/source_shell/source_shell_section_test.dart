@@ -206,6 +206,34 @@ void main() {
     expect(sections.last.actions.single.title, '标签推荐');
   });
 
+  test('禁漫收藏进入个人页，分类与消息功能仍可被发现', () {
+    final sections = SourceShellSection.fromPluginInfo({
+      'breezeExperience': {
+        'profileTab': true,
+        'profileKind': 'jm',
+        'profileCheckinFunction': 'checkInToday',
+        'profileNotificationsFunction': 'getNotifications',
+      },
+      'function': [
+        {'id': 'recommend', 'title': '推荐'},
+        {'id': 'categories', 'title': '分类'},
+        listFunction('latest', '最新', 'getLatestData'),
+        listFunction('ranking', '排行榜', 'getRankingData'),
+      ],
+    }, 'jm-source');
+
+    expect(sections.map((section) => section.id), [
+      'recommend',
+      'categories',
+      'latest',
+      'ranking',
+      'profile',
+    ]);
+    expect(sections.last.profileKind, 'jm');
+    expect(sections.last.profileCheckinFunction, 'checkInToday');
+    expect(sections.last.profileNotificationsFunction, 'getNotifications');
+  });
+
   test('allows search-first launch only when no functions were declared', () {
     expect(SourceShellSection.canLaunch(null, const []), isFalse);
     expect(SourceShellSection.canLaunch({'function': []}, const []), isTrue);

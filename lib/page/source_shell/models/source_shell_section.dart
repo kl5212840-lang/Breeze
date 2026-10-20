@@ -15,6 +15,9 @@ class SourceShellSection {
        legacySources = const [],
        profileAvatarFunction = '',
        profileBioFunction = '',
+       profileKind = '',
+       profileCheckinFunction = '',
+       profileNotificationsFunction = '',
        actions = const [];
 
   const SourceShellSection.function({
@@ -27,6 +30,9 @@ class SourceShellSection {
        legacySources = const [],
        profileAvatarFunction = '',
        profileBioFunction = '',
+       profileKind = '',
+       profileCheckinFunction = '',
+       profileNotificationsFunction = '',
        actions = const [];
 
   const SourceShellSection.cloudFavorite({
@@ -39,12 +45,18 @@ class SourceShellSection {
        legacySources = const [],
        profileAvatarFunction = '',
        profileBioFunction = '',
+       profileKind = '',
+       profileCheckinFunction = '',
+       profileNotificationsFunction = '',
        actions = const [];
 
   const SourceShellSection.profile({
     this.legacySources = const [],
     this.profileAvatarFunction = '',
     this.profileBioFunction = '',
+    this.profileKind = '',
+    this.profileCheckinFunction = '',
+    this.profileNotificationsFunction = '',
   }) : id = 'profile',
        title = '我的',
        scene = null,
@@ -61,7 +73,10 @@ class SourceShellSection {
       profile = false,
       legacySources = const [],
       profileAvatarFunction = '',
-      profileBioFunction = '';
+      profileBioFunction = '',
+      profileKind = '',
+      profileCheckinFunction = '',
+      profileNotificationsFunction = '';
 
   final String id;
   final String title;
@@ -72,6 +87,9 @@ class SourceShellSection {
   final List<String> legacySources;
   final String profileAvatarFunction;
   final String profileBioFunction;
+  final String profileKind;
+  final String profileCheckinFunction;
+  final String profileNotificationsFunction;
   final List<SourceShellAction> actions;
 
   IconData get icon => switch (id) {
@@ -196,6 +214,12 @@ class SourceShellSection {
               experience['profileAvatarFunction']?.toString().trim() ?? '',
           profileBioFunction:
               experience['profileBioFunction']?.toString().trim() ?? '',
+          profileKind: experience['profileKind']?.toString().trim() ?? '',
+          profileCheckinFunction:
+              experience['profileCheckinFunction']?.toString().trim() ?? '',
+          profileNotificationsFunction:
+              experience['profileNotificationsFunction']?.toString().trim() ??
+              '',
         ),
       );
     }

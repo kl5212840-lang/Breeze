@@ -246,6 +246,10 @@ class _SourceShellPageState extends State<SourceShellPage> {
                         avatarUploadFunction:
                             sections[index].profileAvatarFunction,
                         bioUpdateFunction: sections[index].profileBioFunction,
+                        profileKind: sections[index].profileKind,
+                        checkinFunction: sections[index].profileCheckinFunction,
+                        notificationsFunction:
+                            sections[index].profileNotificationsFunction,
                         onLogin: _openLogin,
                         onSettings: _openSettings,
                         onBreezeSettings: () => context.pushRoute(

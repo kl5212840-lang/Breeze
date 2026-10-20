@@ -130,9 +130,98 @@ class DiscoverSchemeRenderer {
           action: asJsonMap(node['action']),
           onAction: onAction,
         );
+      case 'source-category-grid':
+        return _buildSourceCategoryGrid(
+          context,
+          _resolveItems(node, data),
+          onAction,
+        );
       default:
         return const SizedBox.shrink();
     }
+  }
+
+  Widget _buildSourceCategoryGrid(
+    BuildContext context,
+    List<Map<String, dynamic>> items,
+    Future<void> Function(Map<String, dynamic> action) onAction,
+  ) {
+    final colors = Theme.of(context).colorScheme;
+    const categoryIcons = <String, IconData>{
+      'people': Icons.people_outline,
+      'menu_book': Icons.menu_book_outlined,
+      'auto_stories': Icons.auto_stories_outlined,
+      'view_day': Icons.view_day_outlined,
+      'collections': Icons.collections_outlined,
+      'view_in_ar': Icons.view_in_ar_outlined,
+      'theater_comedy': Icons.theater_comedy_outlined,
+      'translate': Icons.translate_outlined,
+    };
+    return GridView.builder(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 24),
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: items.length,
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 220,
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        childAspectRatio: 1.55,
+      ),
+      itemBuilder: (context, index) {
+        final item = items[index];
+        final title = convertChineseForDisplay(item['title']?.toString() ?? '');
+        final subtitle = convertChineseForDisplay(
+          item['subtitle']?.toString() ?? '',
+        );
+        return Material(
+          color: colors.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: () => onAction(asJsonMap(item['action'])),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Icon(
+                    categoryIcons[item['icon']?.toString()] ??
+                        Icons.grid_view_outlined,
+                    color: colors.primary,
+                    size: 25,
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (subtitle.isNotEmpty)
+                        Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: colors.onSurfaceVariant,
+                            fontSize: 12,
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildChipList(
@@ -256,6 +345,7 @@ class DiscoverSchemeRenderer {
           section['items'],
         ).map((item) => asJsonMap(item)).toList();
         final entries = mapToUnifiedComicSimplifyEntryInfoList(items);
+        final titleBelow = asJsonMap(section['body'])['titleBelow'] == true;
 
         return Padding(
           padding: const EdgeInsets.only(bottom: 10),
@@ -274,7 +364,10 @@ class DiscoverSchemeRenderer {
                 child: ComicFixedSizeHorizontalList(
                   entries: entries,
                   spacing: 10,
-                  itemWidth: (isTabletWithOutContext() ? 200 : 150) * 0.75,
+                  itemWidth: titleBelow
+                      ? (isTabletWithOutContext() ? 160 : 126)
+                      : (isTabletWithOutContext() ? 200 : 150) * 0.75,
+                  titleBelow: titleBelow,
                 ),
               ),
             ],
