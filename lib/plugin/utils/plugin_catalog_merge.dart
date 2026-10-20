@@ -31,12 +31,19 @@ String mergeCloudPluginCatalogPayloads(
     return manifest['uuid']?.toString().trim() ?? '';
   }
 
+  const jmPersonalUuid = '6886291b-f524-441c-844b-c2efae9899a9';
   final uuids = official.map(uuidOf).where((uuid) => uuid.isNotEmpty).toSet();
+  final seenPersonal = <String>{};
   final independent = <dynamic>[];
   for (final entry in extra) {
     final uuid = uuidOf(entry);
-    if (uuid.isEmpty || !uuids.add(uuid)) continue;
+    if (uuid.isEmpty || !seenPersonal.add(uuid)) continue;
+    if (uuids.contains(uuid) && uuid != jmPersonalUuid) continue;
     independent.add(entry);
   }
-  return jsonEncode(<dynamic>[...independent, ...official]);
+  final overridden = independent.map(uuidOf).toSet();
+  return jsonEncode(<dynamic>[
+    ...independent,
+    ...official.where((entry) => !overridden.contains(uuidOf(entry))),
+  ]);
 }

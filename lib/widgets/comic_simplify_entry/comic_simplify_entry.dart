@@ -22,6 +22,7 @@ class ComicFixedSizeHorizontalList extends StatelessWidget {
   final double itemWidth; // 卡片固定宽度
   final bool roundedCorner; // 是否有圆角
   final bool useRandomImageKey;
+  final bool titleBelow;
 
   const ComicFixedSizeHorizontalList({
     super.key,
@@ -30,6 +31,7 @@ class ComicFixedSizeHorizontalList extends StatelessWidget {
     this.itemWidth = 200, // 固定宽度，不随窗口宽高比变化
     this.roundedCorner = true,
     this.useRandomImageKey = false,
+    this.titleBelow = false,
   });
 
   @override
@@ -44,7 +46,7 @@ class ComicFixedSizeHorizontalList extends StatelessWidget {
 
     // 最外层需要限制高度，否则横向 ListView 会报错
     return SizedBox(
-      height: itemHeight,
+      height: itemHeight + (titleBelow ? 42 : 0),
       child: ListView.builder(
         scrollDirection: Axis.horizontal,
         itemCount: entries.length,
@@ -63,15 +65,45 @@ class ComicFixedSizeHorizontalList extends StatelessWidget {
               onTap: () => _navigateToComicInfo(context, info),
               child: SizedBox(
                 width: itemWidth,
-                height: itemHeight,
-                child: _buildCoverWithTitle(
-                  info,
-                  itemWidth,
-                  itemHeight,
-                  useRandomImageKey
-                      ? ValueKey('cover-${const Uuid().v4()}')
-                      : ValueKey('cover-${info.from}:${info.id}:${info.path}'),
-                ),
+                height: itemHeight + (titleBelow ? 42 : 0),
+                child: titleBelow
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          CoverWidget(
+                            key: useRandomImageKey
+                                ? ValueKey('cover-${const Uuid().v4()}')
+                                : ValueKey(
+                                    'cover-${info.from}:${info.id}:${info.path}',
+                                  ),
+                            fileServer: info.fileServer,
+                            path: info.path,
+                            id: info.id,
+                            pictureType: info.pictureType,
+                            from: info.from,
+                            roundedCorner: roundedCorner,
+                            width: itemWidth,
+                            height: itemHeight,
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            info.title.let(convertChineseForDisplay),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      )
+                    : _buildCoverWithTitle(
+                        info,
+                        itemWidth,
+                        itemHeight,
+                        useRandomImageKey
+                            ? ValueKey('cover-${const Uuid().v4()}')
+                            : ValueKey(
+                                'cover-${info.from}:${info.id}:${info.path}',
+                              ),
+                      ),
               ),
             ),
           );

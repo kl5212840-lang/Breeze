@@ -5,13 +5,20 @@ import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
 
 Future<List<UnifiedComicListItem>> loadSourceCloudFavoritePreview(
-  String source,
-) async {
+  String source, {
+  bool jmProfile = false,
+}) async {
   final response = await callUnifiedComicPlugin(
     from: source,
-    fnPath: 'getFavoriteData',
+    fnPath: jmProfile ? 'getCloudFavoriteData' : 'getFavoriteData',
     core: const <String, dynamic>{'page': 1},
-    extern: const <String, dynamic>{'source': 'cloudFavorite', 'sort': 'dd'},
+    extern: jmProfile
+        ? const <String, dynamic>{
+            'source': 'cloudFavorite',
+            'order': 'mr',
+            'folderId': '',
+          }
+        : const <String, dynamic>{'source': 'cloudFavorite', 'sort': 'dd'},
   );
   return parseSourceCloudFavoritePreview(response, fallbackSource: source);
 }

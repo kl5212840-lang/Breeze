@@ -58,6 +58,7 @@ class _AllChipWidgetState extends State<AllChipWidget> {
           ),
         )
         .toList();
+    final canCollapse = isTagGroup || chips.length > 4;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -68,7 +69,7 @@ class _AllChipWidgetState extends State<AllChipWidget> {
             _LabelChip(label: processedTitle),
             const SizedBox(width: 10),
             Expanded(
-              child: isTagGroup && !_expanded
+              child: canCollapse && !_expanded
                   ? SizedBox(
                       height: 48,
                       child: ListView.separated(
@@ -80,7 +81,7 @@ class _AllChipWidgetState extends State<AllChipWidget> {
                     )
                   : Wrap(spacing: 10, runSpacing: runSpacings, children: chips),
             ),
-            if (isTagGroup && chips.length > 1)
+            if (canCollapse && chips.length > 1)
               TextButton(
                 onPressed: () => setState(() => _expanded = !_expanded),
                 child: Text(_expanded ? '收起' : '展开'),
