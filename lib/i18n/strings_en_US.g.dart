@@ -808,6 +808,8 @@ class _Translations$plugin$en_US extends Translations$plugin$zh_CN {
 	@override String get githubRepo => 'GitHub Repo';
 	@override String get download => 'Download';
 	@override String get downloadUpdate => 'Download update';
+	@override String get alreadyLatest => 'Already up to date';
+	@override String get localVersionNewer => 'Local version is newer';
 	@override String get noCloudPlugins => 'No cloud components';
 	@override String get noMatchingPlugins => 'No matching plugins';
 	@override String get networkInstallHint => 'Enter plugin script URL';
@@ -854,7 +856,6 @@ class _Translations$plugin$en_US extends Translations$plugin$zh_CN {
 	@override String updateFailed({required Object error}) => 'Update failed: ${error}';
 	@override String get uuidMismatch => 'Plugin id mismatch, install rejected';
 	@override String currentVersion({required Object version}) => 'Current version ${version}';
-	@override String get alreadyLatest => 'Already up to date';
 }
 
 // Path: gestureLock
@@ -1267,6 +1268,11 @@ class _Translations$discover$en_US extends Translations$discover$zh_CN {
 	@override String get search => 'Search';
 	@override String get settings => 'Settings';
 	@override String get pluginManagement => 'Plugin Management';
+	@override String get listLayout => 'List';
+	@override String get gridLayout => 'Grid';
+	@override String moreActions({required Object title}) => '${title} · More actions';
+	@override String get enablePlugin => 'Enable plugin';
+	@override String get disablePlugin => 'Disable plugin';
 	@override String get customOrder => 'Custom plugin order';
 	@override String get resetOrder => 'Reset order';
 	@override String get noPlugins => 'No plugins available. Go to the plugin store to install one~';
@@ -1290,7 +1296,8 @@ class _Translations$sourceShell$en_US extends Translations$sourceShell$zh_CN {
 
 	// Translations
 	@override String get enter => 'Open';
-	@override String get noSections => 'This source has no browse sections';
+	@override String get noSections => 'This source has no home sections. Search for comics instead';
+	@override String get requestTimedOut => 'The request timed out. Check your connection and try again';
 	@override String get search => 'Search this source';
 	@override String get account => 'Source account';
 	@override String get settings => 'Source settings';
@@ -2276,6 +2283,8 @@ extension on TranslationsEnUs {
 			'plugin.githubRepo' => 'GitHub Repo',
 			'plugin.download' => 'Download',
 			'plugin.downloadUpdate' => 'Download update',
+			'plugin.alreadyLatest' => 'Already up to date',
+			'plugin.localVersionNewer' => 'Local version is newer',
 			'plugin.noCloudPlugins' => 'No cloud components',
 			'plugin.noMatchingPlugins' => 'No matching plugins',
 			'plugin.networkInstallHint' => 'Enter plugin script URL',
@@ -2322,7 +2331,6 @@ extension on TranslationsEnUs {
 			'plugin.updateFailed' => ({required Object error}) => 'Update failed: ${error}',
 			'plugin.uuidMismatch' => 'Plugin id mismatch, install rejected',
 			'plugin.currentVersion' => ({required Object version}) => 'Current version ${version}',
-			'plugin.alreadyLatest' => 'Already up to date',
 			'gestureLock.gestureTitle' => 'Gesture unlock',
 			'gestureLock.gestureHint' => 'Draw gesture password',
 			'gestureLock.pinTitle' => 'Enter PIN',
@@ -2627,23 +2635,29 @@ extension on TranslationsEnUs {
 			'discover.search' => 'Search',
 			'discover.settings' => 'Settings',
 			'discover.pluginManagement' => 'Plugin Management',
+			'discover.listLayout' => 'List',
+			'discover.gridLayout' => 'Grid',
+			'discover.moreActions' => ({required Object title}) => '${title} · More actions',
+			'discover.enablePlugin' => 'Enable plugin',
+			'discover.disablePlugin' => 'Disable plugin',
 			'discover.customOrder' => 'Custom plugin order',
 			'discover.resetOrder' => 'Reset order',
 			'discover.noPlugins' => 'No plugins available. Go to the plugin store to install one~',
 			'discover.pluginStore' => 'Plugin Store',
 			'discover.browseInstall' => 'Browse & Install',
+			_ => null,
+		} ?? switch (path) {
 			'discover.noPluginForSearch' => 'No plugins available, cannot search',
 			'discover.pluginInfoLoadFailed' => ({required Object error}) => 'Failed to load plugin info: ${error}',
 			'discover.pluginCapability' => 'Plugin Capability',
 			'discover.disabled' => 'Disabled',
 			'discover.unnamed' => 'Unnamed',
 			'discover.pluginEnableFailed' => ({required Object error}) => 'Failed to enable plugin: ${error}',
-			_ => null,
-		} ?? switch (path) {
 			'discover.pluginCloseFailed' => ({required Object error}) => 'Failed to disable plugin: ${error}',
 			'discover.pluginDebugLoadFailed' => ({required Object error}) => 'Plugin debug load failed, reverted to database: ${error}',
 			'sourceShell.enter' => 'Open',
-			'sourceShell.noSections' => 'This source has no browse sections',
+			'sourceShell.noSections' => 'This source has no home sections. Search for comics instead',
+			'sourceShell.requestTimedOut' => 'The request timed out. Check your connection and try again',
 			'sourceShell.search' => 'Search this source',
 			'sourceShell.account' => 'Source account',
 			'sourceShell.settings' => 'Source settings',

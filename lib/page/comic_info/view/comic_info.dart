@@ -30,7 +30,7 @@ import 'package:zephyr/widgets/error_view.dart';
 import 'package:zephyr/widgets/fluent_dropdown.dart';
 import 'package:zephyr/widgets/toast.dart';
 
-enum MenuOption { export, cloudCollect, follow }
+enum MenuOption { export }
 
 @RoutePage()
 class ComicInfoPage extends StatelessWidget {
@@ -178,11 +178,6 @@ class _ComicInfoState extends State<_ComicInfo>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    // 开启「优先云端收藏」后，页面收藏按钮与菜单项的本地/云端收藏行为互换
-    final cloudFavoritePreferred = context
-        .watch<GlobalSettingCubit>()
-        .state
-        .cloudFavoritePreferred;
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -196,93 +191,24 @@ class _ComicInfoState extends State<_ComicInfo>
             onPressed: () => popToRoot(context),
           ),
           Expanded(child: Container()),
-          BlocSelector<ComicFollowCubit, ComicFollowState, bool>(
-            selector: (state) => state.isFollowing(widget.from, _comicId),
-            builder: (context, isFollowing) {
-              return IconButton(
-                icon: Icon(
-                  isFollowing
-                      ? Icons.notifications_active
-                      : Icons.notifications_none,
-                ),
-                tooltip: isFollowing
-                    ? t.comicInfo.unfollow
-                    : t.comicInfo.follow,
-                onPressed: () => _toggleFollow(isFollowing),
-              );
-            },
-          ),
-          FluentPopupMenuButton<MenuOption>(
-            icon: const Icon(Icons.more_vert),
-            onSelected: (MenuOption item) {
-              switch (item) {
-                case MenuOption.export:
-                  _handleExport();
-                  break;
-                case MenuOption.cloudCollect:
-                  if (cloudFavoritePreferred) {
-                    _toggleLocalCollectFromMenu();
-                  } else {
-                    _toggleCloudCollectFromMenu();
-                  }
-                  break;
-                case MenuOption.follow:
-                  _toggleFollowFromMenu();
-                  break;
-              }
-            },
-            itemBuilder: (BuildContext context) {
-              final isFollowing = context.read<ComicFollowCubit>().isFollowing(
-                widget.from,
-                _comicId,
-              );
-              final menuItems = <FluentPopupMenuItem<MenuOption>>[
+          if (_type == ComicEntryType.download)
+            FluentPopupMenuButton<MenuOption>(
+              icon: const Icon(Icons.more_vert),
+              onSelected: (MenuOption item) {
+                switch (item) {
+                  case MenuOption.export:
+                    _handleExport();
+                    break;
+                }
+              },
+              itemBuilder: (BuildContext context) => [
                 FluentPopupMenuItem<MenuOption>(
-                  value: MenuOption.follow,
-                  leading: Icon(
-                    isFollowing
-                        ? Icons.notifications_off
-                        : Icons.notifications_active,
-                  ),
-                  title: Text(
-                    isFollowing ? t.comicInfo.unfollow : t.comicInfo.follow,
-                  ),
+                  value: MenuOption.export,
+                  leading: const Icon(Icons.save_alt),
+                  title: Text(t.comicInfo.exportComic),
                 ),
-              ];
-
-              if (_type == ComicEntryType.download) {
-                menuItems.add(
-                  FluentPopupMenuItem<MenuOption>(
-                    value: MenuOption.export,
-                    leading: const Icon(Icons.save_alt),
-                    title: Text(t.comicInfo.exportComic),
-                  ),
-                );
-              }
-
-              menuItems.add(
-                FluentPopupMenuItem<MenuOption>(
-                  value: MenuOption.cloudCollect,
-                  leading: Icon(
-                    cloudFavoritePreferred
-                        ? (_isLocalCollected ? Icons.star : Icons.star_border)
-                        : (_isCloudCollected ? Icons.star : Icons.star_border),
-                  ),
-                  title: Text(
-                    cloudFavoritePreferred
-                        ? (_isLocalCollected
-                              ? t.comicInfo.removeLocalCollection
-                              : t.comicInfo.collectToLocal)
-                        : (_isCloudCollected
-                              ? t.comicInfo.removeCloudCollection
-                              : t.comicInfo.collectToCloud),
-                  ),
-                ),
-              );
-
-              return menuItems;
-            },
-          ),
+              ],
+            ),
         ],
       ),
       body: Stack(
@@ -314,9 +240,7 @@ class _ComicInfoState extends State<_ComicInfo>
                     );
                   }
                   return ErrorView(
-                    errorMessage: t.comicInfo.loadFailedWithError(
-                      error: state.result.toString(),
-                    ),
+                    errorMessage: userFacingErrorMessage(state.result),
                     onRetry: () {
                       context.read<GetComicInfoBloc>().add(
                         GetComicInfoEvent(
@@ -359,11 +283,7 @@ class _ComicInfoState extends State<_ComicInfo>
           ),
         ],
       ),
-      floatingActionButtonLocation:
-          context.watch<GlobalSettingCubit>().state.leftHandModeEnabled
-          ? FloatingActionButtonLocation.startFloat
-          : FloatingActionButtonLocation.endFloat,
-      floatingActionButton: BlocBuilder<EpisodeSelectionCubit, int>(
+      bottomNavigationBar: BlocBuilder<EpisodeSelectionCubit, int>(
         bloc: _dlController.selectionCubit,
         builder: (context, _) {
           if (_dlController.selectionMode) {
@@ -372,7 +292,26 @@ class _ComicInfoState extends State<_ComicInfo>
           return _loadingComplete
               ? BlocBuilder<StringSelectCubit, String>(
                   builder: (context, stringSelectDate) {
-                    return _ReadActionButton(
+                    final leftHanded = context
+                        .watch<GlobalSettingCubit>()
+                        .state
+                        .leftHandModeEnabled;
+                    final handModeButton = TextButton.icon(
+                      onPressed: () {
+                        context.read<GlobalSettingCubit>().updateState(
+                          (current) => current.copyWith(
+                            leftHandModeEnabled: !leftHanded,
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.swap_horiz_rounded, size: 18),
+                      label: Text(
+                        leftHanded
+                            ? t.reader.rightHandMode
+                            : t.reader.leftHandMode,
+                      ),
+                    );
+                    final readButton = _ReadActionButton(
                       hasHistory: stringSelectDate.isNotEmpty,
                       onPressed: () => goToComicRead(
                         context,
@@ -380,6 +319,30 @@ class _ComicInfoState extends State<_ComicInfo>
                         widget.type,
                         comicInfoDyn,
                         widget.from,
+                      ),
+                    );
+                    return Material(
+                      color: Theme.of(context).colorScheme.surface,
+                      child: SafeArea(
+                        top: false,
+                        child: Container(
+                          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                          decoration: BoxDecoration(
+                            border: Border(
+                              top: BorderSide(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.outlineVariant,
+                              ),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: leftHanded
+                                ? [readButton, handModeButton]
+                                : [handModeButton, readButton],
+                          ),
+                        ),
                       ),
                     );
                   },
@@ -480,6 +443,7 @@ class _ComicInfoState extends State<_ComicInfo>
                                   widget.from,
                                 )
                               : null,
+                          sideActions: _buildLibraryActions(),
                         ),
                         _buildDivider(context),
                         ComicOperationWidget(
@@ -488,9 +452,9 @@ class _ComicInfoState extends State<_ComicInfo>
                           collectionTargetId: widget.collectionTargetId,
                           collectionTargetName: widget.collectionTargetName,
                           comicInfo: comicInfoDyn,
+                          showCollectAction: false,
                         ),
-                        if (comicInfo.metadata.isNotEmpty ||
-                            comicInfo.description.trim().isNotEmpty) ...[
+                        if (comicInfo.metadata.isNotEmpty) ...[
                           _buildDivider(context),
                           _SectionCard(
                             child: Column(
@@ -504,32 +468,7 @@ class _ComicInfoState extends State<_ComicInfo>
                                   ),
                                   const SizedBox(height: 6),
                                 ],
-                                if (comicInfo.description.trim().isNotEmpty)
-                                  _DescriptionCard(
-                                    description: comicInfo.description.let(
-                                      convertChineseForDisplay,
-                                    ),
-                                  ),
                               ],
-                            ),
-                          ),
-                        ],
-                        if (comicInfo.creator.name.trim().isNotEmpty ||
-                            comicInfo.creator.avatar.url.trim().isNotEmpty) ...[
-                          _buildDivider(context),
-                          _SectionCard(
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: ConstrainedBox(
-                                constraints: const BoxConstraints(
-                                  maxWidth: 460,
-                                ),
-                                child: CreatorInfoWidget(
-                                  creator: comicInfo.creator,
-                                  from: widget.from,
-                                  imageKey: comicInfo.id,
-                                ),
-                              ),
                             ),
                           ),
                         ],
@@ -566,6 +505,47 @@ class _ComicInfoState extends State<_ComicInfo>
                 epsLength: normalComicAllInfo.eps.length,
                 downloadDisabledReason: normalComicAllInfo.allowDownloadReason,
               ),
+              if (comicInfo.description.trim().isNotEmpty)
+                _constrainedSliver(
+                  SliverToBoxAdapter(
+                    child: Column(
+                      children: [
+                        _buildDivider(context),
+                        _SectionCard(
+                          child: _DescriptionCard(
+                            description: comicInfo.description.let(
+                              convertChineseForDisplay,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (comicInfo.creator.name.trim().isNotEmpty ||
+                  comicInfo.creator.avatar.url.trim().isNotEmpty)
+                _constrainedSliver(
+                  SliverToBoxAdapter(
+                    child: Column(
+                      children: [
+                        _buildDivider(context),
+                        _SectionCard(
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 460),
+                              child: CreatorInfoWidget(
+                                creator: comicInfo.creator,
+                                from: widget.from,
+                                imageKey: comicInfo.id,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               if (normalComicAllInfo.recommend.isNotEmpty &&
                   _resolveRecommendItems(
                     normalComicAllInfo.recommend,
@@ -649,6 +629,69 @@ class _ComicInfoState extends State<_ComicInfo>
         thickness: 0.5,
         color: context.theme.colorScheme.outlineVariant.withValues(alpha: 0.4),
       ),
+    );
+  }
+
+  Widget _buildLibraryActions() {
+    return BlocSelector<ComicFollowCubit, ComicFollowState, bool>(
+      selector: (state) => state.isFollowing(widget.from, _comicId),
+      builder: (context, isFollowing) {
+        final colors = Theme.of(context).colorScheme;
+        Widget action({
+          required IconData icon,
+          required String label,
+          required bool selected,
+          required VoidCallback onPressed,
+        }) {
+          return SizedBox(
+            width: double.infinity,
+            height: 46,
+            child: OutlinedButton.icon(
+              onPressed: onPressed,
+              style: OutlinedButton.styleFrom(
+                backgroundColor: selected ? colors.primaryContainer : null,
+                foregroundColor: selected
+                    ? colors.onPrimaryContainer
+                    : colors.onSurface,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                visualDensity: VisualDensity.compact,
+              ),
+              icon: Icon(icon, size: 17),
+              label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            action(
+              icon: isFollowing
+                  ? Icons.notifications_active_outlined
+                  : Icons.notifications_none_outlined,
+              label: isFollowing ? '已追更' : '追更',
+              selected: isFollowing,
+              onPressed: () => _toggleFollow(isFollowing),
+            ),
+            const SizedBox(height: 8),
+            action(
+              icon: _isLocalCollected ? Icons.bookmark : Icons.bookmark_outline,
+              label: _isLocalCollected ? '已存本地' : '本地收藏',
+              selected: _isLocalCollected,
+              onPressed: _toggleLocalCollectFromMenu,
+            ),
+            const SizedBox(height: 8),
+            action(
+              icon: _isCloudCollected
+                  ? Icons.cloud_done_outlined
+                  : Icons.cloud_outlined,
+              label: _isCloudCollected ? '已存云端' : '云端收藏',
+              selected: _isCloudCollected,
+              onPressed: _toggleCloudCollectFromMenu,
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -800,11 +843,9 @@ class _ComicInfoState extends State<_ComicInfo>
       _showExportDirectory(exportedPath, exportType);
       _logExportPath(exportedPath);
     } catch (e) {
-      final errorMessage = e is StateError
-          ? e.message.toString()
-          : t.comicInfo.exportFailedWithError(
-              error: normalizeSearchErrorMessage(e),
-            );
+      final errorMessage = t.comicInfo.exportFailedWithError(
+        error: userFacingErrorMessage(e),
+      );
       showErrorToast(errorMessage, duration: const Duration(seconds: 5));
     }
   }
@@ -839,19 +880,6 @@ class _ComicInfoState extends State<_ComicInfo>
     if (mounted) {
       showSuccessToast(t.comicInfo.followed);
     }
-  }
-
-  Future<void> _toggleFollowFromMenu() async {
-    final info = _currentInfo;
-    if (info == null) {
-      showErrorToast(t.comicInfo.detailsNotLoaded);
-      return;
-    }
-    final isFollowing = context.read<ComicFollowCubit>().isFollowing(
-      widget.from,
-      _comicId,
-    );
-    await _toggleFollow(isFollowing);
   }
 
   Future<void> _autoFollowIfEnabled() async {
@@ -999,7 +1027,7 @@ class _ComicInfoState extends State<_ComicInfo>
         return;
       }
       showErrorToast(
-        t.comicInfo.localCollectFailed(error: normalizeSearchErrorMessage(e)),
+        t.comicInfo.localCollectFailed(error: userFacingErrorMessage(e)),
         duration: const Duration(seconds: 5),
       );
     }
@@ -1078,7 +1106,7 @@ class _ComicInfoState extends State<_ComicInfo>
       }
     } catch (e) {
       showErrorToast(
-        normalizeSearchErrorMessage(e),
+        userFacingErrorMessage(e),
         duration: const Duration(seconds: 5),
       );
     }
@@ -1247,10 +1275,9 @@ class _ComicInfoState extends State<_ComicInfo>
             countLabel: t.comicInfo.groupEpisodeCount(count: indices.length),
             // 下载列表点击时才按下标收集，不在每次 build 预分配 O(N) List。
             onDownloadGroup: showDownloadUi
-                ? () => _downloadGroup(
-                    context,
-                    [for (final i in indices) chapters[i]],
-                  )
+                ? () => _downloadGroup(context, [
+                    for (final i in indices) chapters[i],
+                  ])
                 : null,
             onToggle: () => _toggleGroup(groupKey),
             expanded: expanded,
@@ -1300,7 +1327,9 @@ class _ComicInfoState extends State<_ComicInfo>
     if (identical(displayEps, cachedRef)) return _indexGroups;
     final groups = groupIndicesByTitle(
       displayEps.length,
-      (i) => resolveChapterGroupTitle(groupTitle: (displayEps[i] as Ep).groupTitle),
+      (i) => resolveChapterGroupTitle(
+        groupTitle: (displayEps[i] as Ep).groupTitle,
+      ),
     );
     _groupedEpsRef = displayEps;
     _indexGroups = groups;
@@ -1592,9 +1621,9 @@ class _DescriptionCardState extends State<_DescriptionCard> {
           SelectableText(
             widget.description,
             style: descriptionStyle,
-            maxLines: _expanded ? null : 5,
+            maxLines: _expanded ? null : 2,
           ),
-          if (widget.description.length > 90) ...[
+          if (widget.description.length > 45) ...[
             const SizedBox(height: 10),
             TextButton.icon(
               onPressed: () => setState(() => _expanded = !_expanded),
@@ -1614,7 +1643,6 @@ class _DescriptionCardState extends State<_DescriptionCard> {
 /// 章节 sliver 自带 SliverLayoutBuilder，用它算出内容宽度后再选单列/网格。
 double _constrainedHorizontalPadding(double crossAxisExtent) =>
     ((crossAxisExtent - 1120) / 2).clamp(20.0, double.infinity).toDouble();
-
 
 /// 章节列表头（标题 + 计数/倒序 badge），与 _SectionCard 的标题区同样式，
 /// 虚拟化后作为独立 sliver，列表本体是下面的 _EpisodeBoard。
@@ -1880,12 +1908,12 @@ class _ReadActionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return FloatingActionButton.extended(
-      // 禁用 Hero 动画：详情页从带 FAB 的页面（发现页/书架历史等）push 进来时，
-      // 路由过渡收集期新旧路由的默认 FAB tag 会撞车（全库默认 tag 共享同一对象）。
-      heroTag: null,
+    return FilledButton.icon(
       onPressed: onPressed,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(168, 52),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      ),
       icon: Icon(
         hasHistory ? Icons.history_rounded : Icons.menu_book_rounded,
         size: 18,

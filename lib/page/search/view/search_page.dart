@@ -4,6 +4,9 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
 
 import 'package:zephyr/page/search/view/search_scheme_renderer.dart';
+import 'package:zephyr/page/search/view/source_search_landing.dart';
+import 'package:zephyr/plugin/plugin_registry_service.dart';
+import 'package:zephyr/util/json/json_value.dart';
 
 @RoutePage()
 class SearchPage extends StatelessWidget {
@@ -58,10 +61,22 @@ class _SearchPageState extends State<_SearchPageContent> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final info = PluginRegistryService.I.getCachedPluginInfo(
+      widget.searchState.from,
+    );
+    final experience = asJsonMap(info?['breezeExperience']);
+    final hotSearchFunction = experience['searchHotFunction']?.toString() ?? '';
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
-      body: SafeArea(child: _renderer.build()),
+      body: SafeArea(
+        child: hotSearchFunction.isNotEmpty && !widget.aggregateMode
+            ? SourceSearchLanding(
+                source: widget.searchState.from,
+                hotSearchFunction: hotSearchFunction,
+              )
+            : _renderer.build(),
+      ),
     );
   }
 }

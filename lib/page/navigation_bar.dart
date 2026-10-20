@@ -13,6 +13,7 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/service/download/download_queue_manager.dart';
 import 'package:zephyr/page/comic_follow/cubit/comic_follow_cubit.dart';
+import 'package:zephyr/page/navigation/welcome_page_destination.dart';
 import 'package:zephyr/service/lifecycle/foreground_task/foreground_task_service.dart';
 import 'package:zephyr/service/lifecycle/notification_service.dart';
 import 'package:zephyr/service/update/check_update.dart';
@@ -46,6 +47,7 @@ class _NavigationBarState extends State<NavigationBar> {
   late PersistentTabController _controller;
   // _selectedIndex 用于控制平板侧边导航栏和页面切换
   int _selectedIndex = 0;
+  late bool _lastOldPageRollbackEnabled;
   final debouncer = Debouncer(milliseconds: 100);
   DateTime? _lastLoginNavigateAt;
   String? _lastLoginPluginId;
@@ -74,9 +76,13 @@ class _NavigationBarState extends State<NavigationBar> {
     });
     final globalSetting = objectbox.userSettingBox.get(1)!.globalSetting;
     final configuredIndex = globalSetting.welcomePageNum;
-    final initialIndex = _normalizeWelcomePageIndex(
-      configuredIndex,
-      _buildPageList(globalSetting.oldPageRollbackEnabled).length,
+    _lastOldPageRollbackEnabled = globalSetting.oldPageRollbackEnabled;
+    final initialIndex = welcomePageTabIndex(
+      resolveWelcomePageDestination(
+        configuredIndex,
+        oldPageRollbackEnabled: _lastOldPageRollbackEnabled,
+      ),
+      oldPageRollbackEnabled: _lastOldPageRollbackEnabled,
     );
     _controller = PersistentTabController(initialIndex: initialIndex);
     _selectedIndex = initialIndex;
@@ -97,7 +103,7 @@ class _NavigationBarState extends State<NavigationBar> {
     });
 
     eventBus.on<NeedLogin>().listen((event) {
-      _goToLoginPage(event.from, message: event.message);
+      _goToLoginPage(event.from);
     });
 
     eventBus.on<ToastEvent>().listen((event) {
@@ -118,6 +124,19 @@ class _NavigationBarState extends State<NavigationBar> {
     final backPressExitEnabled =
         Platform.isAndroid && globalSettingState.backPressExitEnabled;
     final pageList = _buildPageList(globalSettingState.oldPageRollbackEnabled);
+    if (_lastOldPageRollbackEnabled !=
+        globalSettingState.oldPageRollbackEnabled) {
+      final destination = destinationForTabIndex(
+        _selectedIndex,
+        oldPageRollbackEnabled: _lastOldPageRollbackEnabled,
+      );
+      _lastOldPageRollbackEnabled = globalSettingState.oldPageRollbackEnabled;
+      _selectedIndex = welcomePageTabIndex(
+        destination,
+        oldPageRollbackEnabled: _lastOldPageRollbackEnabled,
+      );
+      _controller.index = _selectedIndex;
+    }
     final navBarItems = _navBarItems(globalSettingState.oldPageRollbackEnabled);
     final navRailDestinations = _navRailDestinations(
       globalSettingState.oldPageRollbackEnabled,
@@ -256,14 +275,14 @@ class _NavigationBarState extends State<NavigationBar> {
 
     final items = <PersistentBottomNavBarItem>[
       PersistentBottomNavBarItem(
-        icon: Icon(Icons.menu_book_sharp),
-        title: t.navigation.bookshelf,
+        icon: Icon(Icons.explore_outlined),
+        title: t.navigation.discover,
         activeColorPrimary: activeColor,
         inactiveColorPrimary: inactiveColor,
       ),
       PersistentBottomNavBarItem(
-        icon: Icon(Icons.explore_outlined),
-        title: t.navigation.discover,
+        icon: Icon(Icons.menu_book_sharp),
+        title: t.navigation.bookshelf,
         activeColorPrimary: activeColor,
         inactiveColorPrimary: inactiveColor,
       ),
@@ -291,7 +310,9 @@ class _NavigationBarState extends State<NavigationBar> {
         activeColorPrimary: activeColor,
         inactiveColorPrimary: inactiveColor,
       ),
-      ...items,
+      items[1],
+      items[0],
+      items[2],
     ];
   }
 
@@ -308,14 +329,14 @@ class _NavigationBarState extends State<NavigationBar> {
   ) {
     final destinations = <NavigationRailDestination>[
       NavigationRailDestination(
-        icon: Icon(Icons.menu_book_outlined),
-        selectedIcon: Icon(Icons.menu_book_sharp),
-        label: Text(t.navigation.bookshelf),
-      ),
-      NavigationRailDestination(
         icon: Icon(Icons.explore_outlined),
         selectedIcon: Icon(Icons.explore),
         label: Text(t.navigation.discover),
+      ),
+      NavigationRailDestination(
+        icon: Icon(Icons.menu_book_outlined),
+        selectedIcon: Icon(Icons.menu_book_sharp),
+        label: Text(t.navigation.bookshelf),
       ),
       NavigationRailDestination(
         icon: Icon(Icons.apps_outlined),
@@ -337,20 +358,28 @@ class _NavigationBarState extends State<NavigationBar> {
         selectedIcon: Icon(Icons.leaderboard),
         label: Text(t.navigation.rank),
       ),
-      ...destinations,
+      destinations[1],
+      destinations[0],
+      destinations[2],
     ];
   }
 
   List<Widget> _buildPageList(bool oldPageRollbackEnabled) {
     final pages = <Widget>[
-      const BookshelfPage(),
       const DiscoverPage(),
+      const BookshelfPage(),
       const MorePage(),
     ];
     if (!oldPageRollbackEnabled) {
       return pages;
     }
-    return [const OldHomePage(), const OldRankingPage(), ...pages];
+    return [
+      const OldHomePage(),
+      const OldRankingPage(),
+      pages[1],
+      pages[0],
+      pages[2],
+    ];
   }
 
   Future<void> _autoSync({bool force = false}) async {
@@ -385,7 +414,7 @@ class _NavigationBarState extends State<NavigationBar> {
     }
   }
 
-  void _goToLoginPage(String from, {String? message}) {
+  void _goToLoginPage(String from) {
     try {
       final pluginId = from.trim();
       if (pluginId.isEmpty) {
@@ -419,16 +448,23 @@ class _NavigationBarState extends State<NavigationBar> {
         if (hasLoginRoute) {
           return;
         }
+        // The source shell shows an inline login action for the failed tab.
+        // Do not cover that state with a second, global login dialog.
+        if (navigator.widget.pages.isNotEmpty &&
+            (navigator.widget.pages.last.name == SourceShellRoute.name ||
+                navigator.widget.pages.last.name == PluginFunctionRoute.name)) {
+          return;
+        }
         _lastLoginNavigateAt = now;
         _lastLoginPluginId = pluginId;
-        unawaited(_confirmAndGoToLogin(pluginId, message: message));
+        unawaited(_confirmAndGoToLogin(pluginId));
       });
     } catch (e, stackTrace) {
       logger.e('Failed to navigate to login', error: e, stackTrace: stackTrace);
     }
   }
 
-  Future<void> _confirmAndGoToLogin(String pluginId, {String? message}) async {
+  Future<void> _confirmAndGoToLogin(String pluginId) async {
     if (!mounted) {
       return;
     }
@@ -436,7 +472,6 @@ class _NavigationBarState extends State<NavigationBar> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: Text(t.navigation.needLoginTitle),
-        content: Text(message ?? t.navigation.loginExpired),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),

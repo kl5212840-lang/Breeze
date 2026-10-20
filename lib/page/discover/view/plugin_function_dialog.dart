@@ -11,6 +11,7 @@ class PluginFunctionDialog extends StatelessWidget {
     required this.functionId,
     required this.title,
     required this.onAction,
+    required this.onLogin,
     required this.dialogWidth,
   });
 
@@ -18,6 +19,7 @@ class PluginFunctionDialog extends StatelessWidget {
   final String functionId;
   final String title;
   final Future<void> Function(Map<String, dynamic> action) onAction;
+  final VoidCallback onLogin;
   final double dialogWidth;
 
   @override
@@ -28,50 +30,70 @@ class PluginFunctionDialog extends StatelessWidget {
       child: AlertDialog(
         title: Text(title),
         contentPadding: const EdgeInsets.only(top: 8),
-        content: SizedBox(
-          width: dialogWidth,
-          height: 320,
-          child: BlocBuilder<PluginFunctionCubit, PluginFunctionState>(
-            builder: (context, state) {
-              if (state.loading) {
-                return const Center(child: CircularProgressIndicator());
-              }
-
-              if (state.error.isNotEmpty) {
-                return Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(state.error, textAlign: TextAlign.center),
-                        const SizedBox(height: 8),
-                        TextButton(
-                          onPressed: () => context
-                              .read<PluginFunctionCubit>()
-                              .load(from: from, functionId: functionId),
-                          child: Text(t.common.retry),
-                        ),
-                      ],
-                    ),
+        content: BlocBuilder<PluginFunctionCubit, PluginFunctionState>(
+          builder: (context, state) {
+            if (state.loginRequired) {
+              return SizedBox(
+                width: dialogWidth,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(t.navigation.needLoginTitle),
+                      const SizedBox(height: 16),
+                      FilledButton(
+                        onPressed: () {
+                          Navigator.of(context).pop();
+                          onLogin();
+                        },
+                        child: Text(t.navigation.goLogin),
+                      ),
+                    ],
                   ),
-                );
-              }
-
-              final renderer = const DiscoverSchemeRenderer();
-              return renderer.buildPage(
-                context,
-                from: from,
-                scheme: state.scheme,
-                data: state.data,
-                onReachBottom: () async {},
-                onAction: onAction,
-                isLoadingMore: false,
-                showLoadMoreRetry: false,
-                onRetryLoadMore: () {},
+                ),
               );
-            },
-          ),
+            }
+            if (state.error.isNotEmpty) {
+              return SizedBox(
+                width: dialogWidth,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(state.error, textAlign: TextAlign.center),
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: () => context
+                            .read<PluginFunctionCubit>()
+                            .load(from: from, functionId: functionId),
+                        child: Text(t.common.retry),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+            final renderer = const DiscoverSchemeRenderer();
+            return SizedBox(
+              width: dialogWidth,
+              height: 320,
+              child: state.loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : renderer.buildPage(
+                      context,
+                      from: from,
+                      scheme: state.scheme,
+                      data: state.data,
+                      onReachBottom: () async {},
+                      onAction: onAction,
+                      isLoadingMore: false,
+                      showLoadMoreRetry: false,
+                      onRetryLoadMore: () {},
+                    ),
+            );
+          },
         ),
         actions: [
           TextButton(

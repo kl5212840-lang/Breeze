@@ -27,6 +27,7 @@ class AllChipWidget extends StatefulWidget {
 }
 
 class _AllChipWidgetState extends State<AllChipWidget> {
+  bool _expanded = false;
   List<ComicInfoActionItem> get items => widget.metadata.value;
   String get title => widget.metadata.name;
 
@@ -34,6 +35,29 @@ class _AllChipWidgetState extends State<AllChipWidget> {
   Widget build(BuildContext context) {
     final runSpacings = isDesktop ? 5.0 : 8.0;
     final processedTitle = processText(title).let(convertChineseForDisplay);
+    final isTagGroup =
+        widget.metadata.type == 'tags' ||
+        processedTitle.contains('标签') ||
+        processedTitle.contains('標籤');
+    final chips = items
+        .map(
+          (item) => _ClickableChip(
+            label: processText(item.name).let(convertChineseForDisplay),
+            onTap: () => _onTap(item),
+            onLongPress: () {
+              final copyText = item.onLongPress?.trim().isNotEmpty == true
+                  ? item.onLongPress!.trim()
+                  : processText(item.name);
+              Clipboard.setData(ClipboardData(text: copyText));
+              showSuccessToast(
+                t.comicInfo.copiedToClipboard(
+                  name: item.name.let(convertChineseForDisplay),
+                ),
+              );
+            },
+          ),
+        )
+        .toList();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -44,33 +68,23 @@ class _AllChipWidgetState extends State<AllChipWidget> {
             _LabelChip(label: processedTitle),
             const SizedBox(width: 10),
             Expanded(
-              child: Wrap(
-                spacing: 10,
-                runSpacing: runSpacings,
-                children: items
-                    .map(
-                      (item) => _ClickableChip(
-                        label: processText(
-                          item.name,
-                        ).let(convertChineseForDisplay),
-                        onTap: () => _onTap(item),
-                        onLongPress: () {
-                          final copyText =
-                              item.onLongPress?.trim().isNotEmpty == true
-                              ? item.onLongPress!.trim()
-                              : processText(item.name);
-                          Clipboard.setData(ClipboardData(text: copyText));
-                          showSuccessToast(
-                            t.comicInfo.copiedToClipboard(
-                              name: item.name.let(convertChineseForDisplay),
-                            ),
-                          );
-                        },
+              child: isTagGroup && !_expanded
+                  ? SizedBox(
+                      height: 48,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: chips.length,
+                        separatorBuilder: (_, _) => const SizedBox(width: 8),
+                        itemBuilder: (_, index) => Center(child: chips[index]),
                       ),
                     )
-                    .toList(),
-              ),
+                  : Wrap(spacing: 10, runSpacing: runSpacings, children: chips),
             ),
+            if (isTagGroup && chips.length > 1)
+              TextButton(
+                onPressed: () => setState(() => _expanded = !_expanded),
+                child: Text(_expanded ? '收起' : '展开'),
+              ),
           ],
         ),
       ],
@@ -78,15 +92,7 @@ class _AllChipWidgetState extends State<AllChipWidget> {
   }
 
   String processText(String text) {
-    if (text.contains('\r')) {
-      text = text.replaceAll('\r', '');
-    }
-
-    if (text.contains(' ')) {
-      text = text.replaceAll(' ', '');
-    }
-
-    return text;
+    return text.replaceAll('\r', '').trim();
   }
 
   void _onTap(ComicInfoActionItem item) {
@@ -140,37 +146,43 @@ class _ClickableChipState extends State<_ClickableChip> {
     final primary = context.theme.colorScheme.primary;
     final background = context.backgroundColor;
 
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hovering = true),
-      onExit: (_) => setState(() => _hovering = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        onLongPress: widget.onLongPress,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 140),
-          curve: Curves.easeOut,
-          decoration: BoxDecoration(
-            color: _hovering ? primary.withValues(alpha: 0.08) : background,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: primary.withValues(alpha: _hovering ? 0.9 : 0.55),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: context.textColor.withValues(
-                  alpha: _hovering ? 0.28 : 0.18,
-                ),
-                blurRadius: _hovering ? 10 : 6,
-                offset: Offset(0, _hovering ? 3 : 2),
-                spreadRadius: _hovering ? 0.5 : 0,
+    return Semantics(
+      button: true,
+      label: widget.label,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovering = true),
+        onExit: (_) => setState(() => _hovering = false),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          onLongPress: widget.onLongPress,
+          child: AnimatedContainer(
+            constraints: const BoxConstraints(minHeight: 44),
+            alignment: Alignment.center,
+            duration: const Duration(milliseconds: 140),
+            curve: Curves.easeOut,
+            decoration: BoxDecoration(
+              color: _hovering ? primary.withValues(alpha: 0.08) : background,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: primary.withValues(alpha: _hovering ? 0.9 : 0.55),
               ),
-            ],
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Text(
-            widget.label,
-            style: TextStyle(fontSize: 12, color: primary),
+              boxShadow: [
+                BoxShadow(
+                  color: context.textColor.withValues(
+                    alpha: _hovering ? 0.28 : 0.18,
+                  ),
+                  blurRadius: _hovering ? 10 : 6,
+                  offset: Offset(0, _hovering ? 3 : 2),
+                  spreadRadius: _hovering ? 0.5 : 0,
+                ),
+              ],
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            child: Text(
+              widget.label,
+              style: TextStyle(fontSize: 12, color: primary),
+            ),
           ),
         ),
       ),

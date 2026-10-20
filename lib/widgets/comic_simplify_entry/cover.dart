@@ -57,6 +57,9 @@ class CoverWidget extends StatelessWidget {
           builder: (context, state) {
             switch (state.status) {
               case PictureLoadStatus.initial:
+                if (pictureType == PictureType.category) {
+                  return const _CategoryCoverFallback();
+                }
                 return Container(
                   width: width,
                   height: height,
@@ -99,6 +102,9 @@ class CoverWidget extends StatelessWidget {
                   ),
                 );
               case PictureLoadStatus.failure:
+                if (pictureType == PictureType.category) {
+                  return const _CategoryCoverFallback();
+                }
                 if (state.result.toString().contains('404')) {
                   return ClipRRect(
                     borderRadius: BorderRadius.circular(kComicCardBorderRadius),
@@ -117,6 +123,28 @@ class CoverWidget extends StatelessWidget {
                 }
             }
           },
+        ),
+      ),
+    );
+  }
+}
+
+class _CategoryCoverFallback extends StatelessWidget {
+  const _CategoryCoverFallback();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.primaryContainer,
+        borderRadius: BorderRadius.circular(kComicCardBorderRadius),
+      ),
+      child: Center(
+        child: Icon(
+          Icons.auto_stories_outlined,
+          size: 36,
+          color: colors.onPrimaryContainer,
         ),
       ),
     );

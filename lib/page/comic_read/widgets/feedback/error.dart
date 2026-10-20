@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/page/comic_read/bloc/page_bloc.dart';
+import 'package:zephyr/util/error_filter.dart';
 
 class ComicErrorWidget extends StatelessWidget {
   final PageState state;
@@ -13,52 +14,66 @@ class ComicErrorWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    logger.d(state.errorMessage);
-    if (state.errorMessage.toLowerCase().contains("no element")) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(t.reader.chapterNotDownloaded, style: TextStyle(fontSize: 20)),
-            SizedBox(height: 10),
-            ElevatedButton(
-              onPressed: () => context.pop(),
-              child: Text(t.common.back),
-            ),
-          ],
-        ),
-      );
-    } else {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              t.reader.loadFailedWithResult(
-                result: state.errorMessage.toString(),
+    logger.w('Reader load failed: ${state.errorMessage}');
+    final localMissing = state.errorMessage.toLowerCase().contains(
+      'no element',
+    );
+    final message = localMissing
+        ? t.reader.chapterNotDownloaded
+        : userFacingErrorMessage(state.errorMessage);
+    return SafeArea(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          IconButton(
+            tooltip: t.common.back,
+            onPressed: () => context.pop(),
+            icon: const Icon(Icons.arrow_back),
+          ),
+          Expanded(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 360),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.wifi_off_outlined, size: 42),
+                      const SizedBox(height: 16),
+                      Text(
+                        message,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          OutlinedButton(
+                            onPressed: () => context.pop(),
+                            child: Text(t.common.back),
+                          ),
+                          if (!localMissing) ...[
+                            const SizedBox(width: 12),
+                            FilledButton(
+                              onPressed: () =>
+                                  context.read<PageBloc>().add(event),
+                              child: Text(t.common.retry),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              style: TextStyle(fontSize: 20),
             ),
-            SizedBox(height: 10),
-            // 阅读页是全屏路由，eink 设备上没有可靠的手势返回；
-            // 错误页必须自带退出键，否则会被困在这里。
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                ElevatedButton(
-                  onPressed: () => context.pop(),
-                  child: Text(t.common.back),
-                ),
-                SizedBox(width: 12),
-                ElevatedButton(
-                  onPressed: () => context.read<PageBloc>().add(event),
-                  child: Text(t.common.retry),
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
-    }
+          ),
+        ],
+      ),
+    );
   }
 }

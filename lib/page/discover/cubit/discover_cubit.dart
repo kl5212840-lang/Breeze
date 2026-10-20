@@ -148,18 +148,26 @@ class DiscoverCubit extends Cubit<DiscoverState> {
       final cacheKey = _pluginInfoCacheKey(pluginState);
       final previousCacheKey = _cacheKeys[uuid];
 
-      if (previousCacheKey != null && previousCacheKey != cacheKey) {
+      final bundleChanged =
+          previousCacheKey != null && previousCacheKey != cacheKey;
+      if (bundleChanged) {
         newInfoStates.remove(uuid);
       }
       newCacheKeys[uuid] = cacheKey;
 
       if (!newInfoStates.containsKey(uuid) && !_loadingUuids.contains(uuid)) {
-        final cached = _service.getCachedPluginInfo(uuid);
+        // Persisted getInfo belongs to the previous bundle after an update.
+        final cached = bundleChanged
+            ? null
+            : _service.getCachedPluginInfo(uuid);
         if (cached != null) {
           newInfoStates[uuid] = DiscoverPluginInfoState(
             loading: false,
             data: cached,
           );
+          // Show the persisted title immediately, then verify it against the
+          // installed bundle. A prior app session may have stored an old name.
+          if (previousCacheKey == null) _loadPluginInfo(uuid);
         } else {
           newInfoStates[uuid] = const DiscoverPluginInfoState(loading: true);
           _loadPluginInfo(uuid);
@@ -218,7 +226,8 @@ class DiscoverCubit extends Cubit<DiscoverState> {
   }
 
   String _pluginInfoCacheKey(PluginRuntimeState state) {
-    return '${state.isDeleted}|${state.debug}|${state.debugUrl ?? ''}';
+    return '${state.isDeleted}|${state.debug}|${state.debugUrl ?? ''}|'
+        '${state.version}|${state.originScript.hashCode}';
   }
 
   @override

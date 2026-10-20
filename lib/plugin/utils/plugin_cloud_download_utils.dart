@@ -7,12 +7,15 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/utils/github_proxy.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
+import 'package:zephyr/plugin/utils/plugin_catalog_merge.dart';
 import 'package:zephyr/src/rust/api/qjs.dart';
 import 'package:zephyr/src/rust/api/simple.dart';
 import 'package:zephyr/util/json/json_value.dart';
 
 const _cloudPluginListDirectUrl =
     'https://raw.githubusercontent.com/deretame/Breeze-plugin-list/main/plugins_data.json';
+const _personalPluginListUrl =
+    'https://raw.githubusercontent.com/kl5212840-lang/Breeze-plugin-bika-personal/main/catalog/plugins_data.json';
 
 const cloudPluginListApi = 'https://api.windy-78.site/plugin-list';
 
@@ -33,6 +36,35 @@ const _ghCdnMirrors = [
 ];
 
 Future<String> fetchCloudPluginListWithCdnFallback() async {
+  final personalCatalog = _fetchPersonalPluginList();
+  final officialCatalog = await _fetchOfficialCloudPluginList();
+  return mergeCloudPluginCatalogPayloads(
+    officialCatalog,
+    await personalCatalog,
+  );
+}
+
+Future<String?> _fetchPersonalPluginList() async {
+  final client = WindHttp(
+    connectTimeout: const Duration(seconds: 5),
+    receiveTimeout: const Duration(seconds: 8),
+  );
+  try {
+    final response = await client.fetch(
+      _personalPluginListUrl,
+      headers: {'Accept': 'application/json'},
+    );
+    if (response.ok && response.text.trim().isNotEmpty) {
+      return response.text.trim();
+    }
+    logger.w('个人插件目录不可用: HTTP ${response.status}');
+  } catch (e, stackTrace) {
+    logger.w('个人插件目录不可用', error: e, stackTrace: stackTrace);
+  }
+  return null;
+}
+
+Future<String> _fetchOfficialCloudPluginList() async {
   final client = WindHttp(
     connectTimeout: const Duration(seconds: 8),
     receiveTimeout: const Duration(seconds: 15),

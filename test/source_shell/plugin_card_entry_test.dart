@@ -78,7 +78,7 @@ void main() {
 
     expect(find.text(t.sourceShell.enter), findsOneWidget);
     expect(find.text('推荐栏目'), findsNothing);
-    expect(find.text('独立工具'), findsOneWidget);
+    expect(find.text('独立工具'), findsNothing);
     await tester.tap(find.text(t.sourceShell.enter));
     expect(opened, 1);
   });
@@ -96,5 +96,17 @@ void main() {
 
     expect(find.text('推荐栏目'), findsOneWidget);
     expect(find.text('独立工具'), findsOneWidget);
+  });
+
+  testWidgets('list actions fit a narrow phone without crowding the title', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(card(enabled: true, onOpen: () {}));
+
+    expect(find.text('测试图源'), findsOneWidget);
+    expect(find.text(t.sourceShell.enter), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

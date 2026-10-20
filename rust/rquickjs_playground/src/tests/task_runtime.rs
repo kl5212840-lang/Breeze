@@ -397,13 +397,17 @@ fn bundle_call_once_error_contains_context_and_source_url() {
     let err = rt
         .block_on(async {
             runtime
-                .bundle_call_once(bundle_source, "boom", &json!([]))
+                .bundle_call_once(
+                    bundle_source,
+                    "boom",
+                    &json!([{"password": "secret-in-args"}]),
+                )
                 .await
         })
         .expect_err(&crate::tr!("call-should-have-failed"));
 
     assert!(
-        err.contains("[bundle:__once__ fn:boom args:[] source:__bundle_once__.cjs]"),
+        err.contains("[bundle:__once__ fn:boom source:__bundle_once__.cjs]"),
         "{}",
         crate::tr!("missing-call-context", err = err)
     );
@@ -411,6 +415,10 @@ fn bundle_call_once_error_contains_context_and_source_url() {
         err.contains("source:__bundle_once__.cjs"),
         "{}",
         crate::tr!("missing-logic-source-name", err = err)
+    );
+    assert!(
+        !err.contains("secret-in-args"),
+        "sensitive call arguments leaked: {err}"
     );
 }
 

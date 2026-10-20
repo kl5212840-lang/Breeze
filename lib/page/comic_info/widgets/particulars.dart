@@ -29,6 +29,7 @@ class ComicParticularsWidget extends StatelessWidget {
   final ComicEntryType type;
   final VoidCallback? onContinueRead;
   final VoidCallback? onCoverTap;
+  final Widget? sideActions;
 
   const ComicParticularsWidget({
     super.key,
@@ -37,6 +38,7 @@ class ComicParticularsWidget extends StatelessWidget {
     required this.type,
     this.onContinueRead,
     this.onCoverTap,
+    this.sideActions,
   });
 
   @override
@@ -66,15 +68,22 @@ class ComicParticularsWidget extends StatelessWidget {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Align(
-                  child: Cover(
-                    pictureInfo: pictureInfo,
-                    height: 220,
-                    borderRadius: 14,
-                    onTap: onCoverTap,
-                  ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Cover(
+                      pictureInfo: pictureInfo,
+                      height: 176,
+                      borderRadius: 14,
+                      onTap: onCoverTap,
+                    ),
+                    if (sideActions != null) ...[
+                      const SizedBox(width: 14),
+                      Expanded(child: sideActions!),
+                    ],
+                  ],
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
                 info,
               ],
             );
@@ -91,6 +100,10 @@ class ComicParticularsWidget extends StatelessWidget {
               ),
               const SizedBox(width: 16),
               Expanded(child: info),
+              if (sideActions != null) ...[
+                const SizedBox(width: 16),
+                SizedBox(width: 170, child: sideActions!),
+              ],
             ],
           );
         },

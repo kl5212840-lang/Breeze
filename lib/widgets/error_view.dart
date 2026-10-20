@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/util/error_filter.dart';
 
 class ErrorView extends StatelessWidget {
   final String errorMessage;
@@ -18,7 +19,7 @@ class ErrorView extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: <Widget>[
           Text(
-            errorMessage,
+            userFacingErrorMessage(errorMessage),
             maxLines: 5,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(fontSize: 20),

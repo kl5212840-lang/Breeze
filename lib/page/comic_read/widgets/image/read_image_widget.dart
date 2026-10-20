@@ -8,6 +8,7 @@ import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/context/context_extensions.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/widgets/picture_bloc/bloc/picture_bloc.dart';
 import 'package:zephyr/widgets/picture_bloc/models/picture_info.dart';
 
@@ -100,8 +101,10 @@ class _ReadImageWidgetState extends State<ReadImageWidget> {
                       child: Center(
                         child: Text(
                           t.reader.imageLoadFailedRetry(
-                            error: state.result.toString(),
+                            error: userFacingErrorMessage(state.result ?? ''),
                           ),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 20,
                             color: foregroundColor,

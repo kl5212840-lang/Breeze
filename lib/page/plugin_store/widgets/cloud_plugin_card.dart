@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/plugin_store/models/cloud_plugin_item.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
+import 'package:zephyr/plugin/utils/plugin_version_utils.dart';
 import 'package:zephyr/widgets/plugin_icon.dart';
 
 class CloudPluginCard extends StatelessWidget {
@@ -27,6 +28,17 @@ class CloudPluginCard extends StatelessWidget {
         : null;
     final isInstalled = localState != null && !localState.isDeleted;
     final localVersion = localState?.version.trim() ?? '';
+    final versionDifference = isInstalled
+        ? compareVersion(manifest.version, localVersion)
+        : 1;
+    final canDownload = !isInstalled || versionDifference > 0;
+    final downloadLabel = !isInstalled
+        ? t.plugin.download
+        : versionDifference > 0
+        ? t.plugin.downloadUpdate
+        : versionDifference < 0
+        ? t.plugin.localVersionNewer
+        : t.plugin.alreadyLatest;
     final creatorText = manifest.authorOf(item.repo);
     final title = manifest.name.trim().isNotEmpty
         ? manifest.name.trim()
@@ -124,10 +136,8 @@ class CloudPluginCard extends StatelessWidget {
                       : () => onOpenHome(item.githubRepositoryUrl),
                 ),
               _CloudTextAction(
-                label: isInstalled
-                    ? t.plugin.downloadUpdate
-                    : t.plugin.download,
-                onTap: installing ? null : onInstall,
+                label: downloadLabel,
+                onTap: installing || !canDownload ? null : onInstall,
               ),
             ],
           ),
@@ -171,6 +181,7 @@ class _CloudTextActionState extends State<_CloudTextAction> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 140),
           curve: Curves.easeOut,
+          constraints: const BoxConstraints(minHeight: 44),
           decoration: BoxDecoration(
             color: activeHover
                 ? primary.withValues(alpha: 0.08)

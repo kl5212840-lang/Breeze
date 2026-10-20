@@ -1,5 +1,15 @@
 # Breeze
 
+> 本仓库是 [deretame/Breeze](https://github.com/deretame/Breeze) 的独立 fork，以下「本分支发布」仅代表本仓库维护的构建，不是上游官方发布。上游项目及其插件仍归原作者维护。
+
+## 本分支发布
+
+当前先提供 **iOS / iPadOS 未签名 IPA**。请到[本仓库 Releases](https://github.com/kl5212840-lang/Breeze/releases)下载 `Breeze-iOS-v3.0.36.ipa`，使用自己的签名工具侧载；它不是 App Store 安装包，也不能直接点开安装。安装前建议备份应用数据。
+
+本分支的「哔咔漫画+」是[单独维护的插件](https://github.com/kl5212840-lang/Breeze-plugin-bika-personal)，在配套 Breeze 的插件商城安装或更新，**不覆盖上游哔咔插件**。应用 IPA 与插件是两个不同的发布包：更新应用需安装新版 IPA，更新插件则走插件商城。拷贝漫画 fork 目前尚未建立独立 Release 和更新目录，本轮不作为独立插件发布。
+
+下方 Android、Windows、macOS、Linux 等跨平台安装说明沿用上游项目的发布渠道；本 fork 暂未提供这些平台的安装包。
+
 ## 💖 鸣谢与赞助
 
 感谢以下组织对开源社区的支持：
@@ -174,7 +184,7 @@ brew uninstall --zap breeze
 
 ### 📱 iOS / iPadOS
 
-由于 iOS 系统的封闭性，未上架 App Store 的应用需要通过“侧载 (Sideloading)”并自行签名才能安装。请前往 [Releases 页面](https://github.com/deretame/Breeze/releases) 下载无签名的 `Breeze-iOS.ipa` 文件，并使用以下工具之一进行安装：
+由于 iOS 系统的封闭性，未上架 App Store 的应用需要通过“侧载 (Sideloading)”并自行签名才能安装。本分支请前往[本仓库 Releases](https://github.com/kl5212840-lang/Breeze/releases)下载 `Breeze-iOS-v3.0.36.ipa`；若需要上游版本，请前往[上游 Releases](https://github.com/deretame/Breeze/releases)。可使用以下工具之一安装：
 
 #### 🌟 推荐方案：AltStore
 

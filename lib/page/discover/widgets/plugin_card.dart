@@ -5,6 +5,7 @@ import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/type/pipe.dart';
 import 'package:zephyr/util/json/json_value.dart';
+import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
 import 'package:zephyr/widgets/plugin_icon.dart';
 
@@ -90,7 +91,11 @@ class PluginCard extends StatelessWidget {
           const SizedBox(width: 16),
           Expanded(
             child: Text(
-              t.discover.pluginInfoLoadFailed(error: error ?? ''),
+              t.discover.pluginInfoLoadFailed(
+                error: userFacingErrorMessage(error ?? ''),
+              ),
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ),
@@ -107,14 +112,10 @@ class PluginCard extends StatelessWidget {
     final rawFunctions = asJsonList(
       info['functions'] ?? info['function'] ?? const <dynamic>[],
     ).map((item) => asJsonMap(item)).toList();
-    // List sections already live in the persistent source shell. Keep only
-    // unrelated actions as shortcuts so Discover remains a clean launcher.
+    // Every plugin function lives inside the source shell when it is available.
     final shortcutFunctions = onOpen == null
         ? rawFunctions
-        : rawFunctions.where((function) {
-            final action = asJsonMap(function['action']);
-            return action['type']?.toString() != 'openComicList';
-          }).toList();
+        : const <Map<String, dynamic>>[];
     final pluginName = info['name']?.toString().trim() ?? '';
     final title = pluginName.isNotEmpty
         ? pluginName
@@ -131,95 +132,96 @@ class PluginCard extends StatelessWidget {
       ),
     );
 
-    return Opacity(
-      opacity: isEnabled ? 1.0 : 0.6,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ListTile(
-            isThreeLine: false,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 20,
-              vertical: 6,
-            ),
-            leading: SizedBox(width: 48, height: 48, child: iconWidget),
-            onTap: isEnabled ? onOpen : null,
-            title: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
-            ),
-            subtitle: isEnabled
-                ? null
-                : Text(
-                    t.discover.disabled,
-                    style: TextStyle(
-                      color: colorScheme.onSurfaceVariant,
-                      fontSize: 13,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ListTile(
+          isThreeLine: false,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 6,
+          ),
+          leading: SizedBox(width: 48, height: 48, child: iconWidget),
+          onTap: isEnabled ? onOpen : null,
+          title: Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+          ),
+          subtitle: isEnabled
+              ? null
+              : Text(
+                  t.discover.disabled,
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 13,
+                  ),
+                ),
+          trailing: isToggling
+              ? const SizedBox(
+                  width: 52,
+                  height: 44,
+                  child: Center(
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                   ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  tooltip: t.common.search,
+                )
+              : Switch(
+                  value: isEnabled,
+                  thumbIcon: kSettingSwitchThumbIcon,
+                  onChanged: onToggleEnabled,
+                ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+          child: Row(
+            children: [
+              if (onOpen != null && isEnabled)
+                Expanded(
+                  child: FilledButton.tonalIcon(
+                    onPressed: onOpen,
+                    icon: const Icon(Icons.arrow_forward_rounded),
+                    label: Text(t.sourceShell.enter),
+                  ),
+                )
+              else
+                const Spacer(),
+              if (isEnabled) ...[
+                const SizedBox(width: 8),
+                IconButton.outlined(
+                  tooltip: t.sourceShell.search,
+                  onPressed: onSearch,
                   icon: const Icon(Icons.search, size: 20),
-                  onPressed: isEnabled ? onSearch : null,
                 ),
-                IconButton(
-                  tooltip: t.discover.settings,
-                  icon: const Icon(Icons.settings_outlined, size: 20),
-                  onPressed: () => onSettings(title),
-                ),
-                isToggling
-                    ? const SizedBox(
-                        width: 48,
-                        height: 24,
-                        child: Center(
-                          child: SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        ),
-                      )
-                    : Switch(
-                        value: isEnabled,
-                        thumbIcon: kSettingSwitchThumbIcon,
-                        onChanged: onToggleEnabled,
-                      ),
               ],
+              const SizedBox(width: 8),
+              IconButton.outlined(
+                tooltip: t.discover.settings,
+                onPressed: () => onSettings(title),
+                icon: const Icon(Icons.settings_outlined, size: 20),
+              ),
+            ],
+          ),
+        ),
+        if (shortcutFunctions.isNotEmpty && isEnabled)
+          Padding(
+            padding: const EdgeInsets.only(
+              left: 20,
+              top: 2,
+              right: 20,
+              bottom: 12,
+            ),
+            child: _buildFunctionButtons(
+              context,
+              shortcutFunctions,
+              colorScheme,
             ),
           ),
-          if (onOpen != null && isEnabled)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton.tonalIcon(
-                  onPressed: onOpen,
-                  icon: const Icon(Icons.arrow_forward_rounded),
-                  label: Text(t.sourceShell.enter),
-                ),
-              ),
-            ),
-          if (shortcutFunctions.isNotEmpty && isEnabled)
-            Padding(
-              padding: const EdgeInsets.only(
-                left: 20,
-                top: 2,
-                right: 20,
-                bottom: 12,
-              ),
-              child: _buildFunctionButtons(
-                context,
-                shortcutFunctions,
-                colorScheme,
-              ),
-            ),
-        ],
-      ),
+      ],
     );
   }
 

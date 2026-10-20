@@ -6,6 +6,10 @@ import 'package:zephyr/page/comic_list/models/comic_list_scene.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/comic_list/scene_filter/plugin_list_filter_dialog.dart';
 import 'package:zephyr/page/comic_list/view/plugin_paged_comic_list_view.dart';
+import 'package:zephyr/page/search_result/view/source_list_categories.dart';
+import 'package:zephyr/page/search_result/view/source_list_filter_bar.dart';
+import 'package:zephyr/util/error_filter.dart';
+import 'package:zephyr/util/text/chinese_convert.dart';
 
 @RoutePage()
 class ComicListPage extends StatelessWidget {
@@ -37,16 +41,27 @@ class ComicListPage extends StatelessWidget {
         sceneBundleFnPath: sceneBundleFnPath,
         sceneBundleFnPathFallback: sceneBundleFnPathFallback,
       ),
-      child: _ComicListView(title: title, embedded: embedded),
+      child: _ComicListView(
+        title: title,
+        embedded: embedded,
+        cloudFavoriteEntryPoint:
+            sceneBundleFnPath == 'getCloudFavoriteSceneBundle' ||
+            sceneBundleFnPath == 'get_cloud_favorite_scene_bundle',
+      ),
     );
   }
 }
 
 class _ComicListView extends StatefulWidget {
-  const _ComicListView({this.title, required this.embedded});
+  const _ComicListView({
+    this.title,
+    required this.embedded,
+    required this.cloudFavoriteEntryPoint,
+  });
 
   final String? title;
   final bool embedded;
+  final bool cloudFavoriteEntryPoint;
 
   @override
   State<_ComicListView> createState() => _ComicListViewState();
@@ -54,14 +69,69 @@ class _ComicListView extends StatefulWidget {
 
 class _ComicListViewState extends State<_ComicListView>
     with AutomaticKeepAliveClientMixin {
+  bool _cloudDetailedView = true;
+  final Set<String> _blockedCategories = {};
+
   @override
   bool get wantKeepAlive => true;
+
+  bool _isCloudFavoriteScene(ComicListScene scene) {
+    final request = scene.body.request;
+    return request != null &&
+        (request.fnPath == 'getCloudFavoriteData' ||
+            request.extern['source']?.toString() == 'cloudFavorite');
+  }
+
+  void _toggleCategory(String category) {
+    final wasBlocked = _blockedCategories.contains(category);
+    setState(() {
+      if (wasBlocked) {
+        _blockedCategories.remove(category);
+      } else {
+        _blockedCategories.add(category);
+      }
+    });
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          wasBlocked
+              ? '已恢复「${convertChineseForDisplay(category)}」'
+              : '已屏蔽「${convertChineseForDisplay(category)}」· 再点恢复',
+        ),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  Widget _cloudToolbar(ComicListState state) => SourceListFilterBar(
+    categories: sourceQuickCategories(state.currentFrom),
+    blockedCategories: _blockedCategories,
+    onCategoryTap: _toggleCategory,
+    onClearBlockedCategories: () => setState(_blockedCategories.clear),
+    sortValue: state.filterSelections['order'] ?? 'dd',
+    sortOptions: const {'dd': '收藏最新', 'da': '收藏最早'},
+    onSortChanged: (value) => context
+        .read<ComicListCubit>()
+        .applyFilterSelections({...state.filterSelections, 'order': value}),
+    detailedView: _cloudDetailedView,
+    onViewChanged: (value) => setState(() => _cloudDetailedView = value),
+    viewToggleKey: const ValueKey('cloud-favorite-view-toggle'),
+  );
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
     return BlocBuilder<ComicListCubit, ComicListState>(
       builder: (context, state) {
+        final isBikaRanking =
+            state.currentFrom == 'e9f18928-3ba8-4d86-a12e-b53a62f47933' &&
+            state.scene?.body.request?.fnPath == 'getRankingData';
+        final isCloudFavorite =
+            widget.cloudFavoriteEntryPoint ||
+            (state.scene != null && _isCloudFavoriteScene(state.scene!));
         final title =
             widget.title ?? (state.scene?.title ?? t.comicList.defaultTitle);
 
@@ -78,7 +148,9 @@ class _ComicListViewState extends State<_ComicListView>
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                     ),
-                    if (state.requiresFilter)
+                    if (state.requiresFilter &&
+                        !isBikaRanking &&
+                        !isCloudFavorite)
                       IconButton(
                         tooltip: t.comicList.filter,
                         icon: const Icon(Icons.filter_alt_outlined),
@@ -87,6 +159,8 @@ class _ComicListViewState extends State<_ComicListView>
                   ],
                 ),
               ),
+              if (isCloudFavorite) _cloudToolbar(state),
+              if (isBikaRanking) _rankingPeriodBar(context, state),
               Expanded(child: _buildBody(context, state)),
             ],
           );
@@ -96,16 +170,88 @@ class _ComicListViewState extends State<_ComicListView>
           appBar: AppBar(
             title: Text(title),
             actions: [
-              if (state.requiresFilter)
+              if (state.requiresFilter && !isBikaRanking && !isCloudFavorite)
                 IconButton(
                   icon: const Icon(Icons.filter_alt),
                   onPressed: () => _openFilterDialog(context),
                 ),
             ],
           ),
-          body: _buildBody(context, state),
+          body: Column(
+            children: [
+              if (isCloudFavorite) _cloudToolbar(state),
+              if (isBikaRanking) _rankingPeriodBar(context, state),
+              Expanded(child: _buildBody(context, state)),
+            ],
+          ),
         );
       },
+    );
+  }
+
+  Widget _rankingPeriodBar(BuildContext context, ComicListState state) {
+    final selected = state.filterSelections['ranking'] ?? 'day';
+    final selectedType = state.filterSelections['rankingType'] ?? 'comic';
+    const periods = <String, String>{
+      'day': '过去 24 小时',
+      'week': '过去 7 天',
+      'month': '过去 30 天',
+    };
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              for (final type in const <String, String>{
+                'comic': '最热门',
+                'creator': '骑士榜',
+              }.entries)
+                Expanded(
+                  child: TextButton(
+                    onPressed: state.hasResolvedFilter
+                        ? () => context
+                              .read<ComicListCubit>()
+                              .applyFilterSelections({
+                                ...state.filterSelections,
+                                'rankingType': type.key,
+                              })
+                        : null,
+                    child: Text(
+                      type.value,
+                      style: TextStyle(
+                        fontWeight: selectedType == type.key
+                            ? FontWeight.w700
+                            : FontWeight.w400,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          if (selectedType == 'comic')
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final period in periods.entries)
+                  ChoiceChip(
+                    label: Text(period.value),
+                    selected: selected == period.key,
+                    onSelected: state.hasResolvedFilter
+                        ? (_) => context
+                              .read<ComicListCubit>()
+                              .applyFilterSelections({
+                                ...state.filterSelections,
+                                'ranking': period.key,
+                              })
+                        : null,
+                  ),
+              ],
+            ),
+        ],
+      ),
     );
   }
 
@@ -125,7 +271,15 @@ class _ComicListViewState extends State<_ComicListView>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(state.sceneError!),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                userFacingErrorMessage(state.sceneError!),
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+              ),
+            ),
             const SizedBox(height: 12),
             ElevatedButton(
               onPressed: () => context.read<ComicListCubit>().reload(),
@@ -149,7 +303,15 @@ class _ComicListViewState extends State<_ComicListView>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(state.filterError!),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                userFacingErrorMessage(state.filterError!),
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+              ),
+            ),
             const SizedBox(height: 12),
             ElevatedButton(
               onPressed: () => context.read<ComicListCubit>().loadFilter(),
@@ -187,6 +349,13 @@ class _ComicListViewState extends State<_ComicListView>
       coreBuilder: (page) => {'page': page, ...listCore},
       externBuilder: (_) => listExtern,
       collectionTargetId: collectionTargetId,
+      rankingLayout:
+          state.currentFrom == 'e9f18928-3ba8-4d86-a12e-b53a62f47933' &&
+          request.fnPath == 'getRankingData',
+      cloudFavorite:
+          widget.cloudFavoriteEntryPoint || _isCloudFavoriteScene(scene),
+      detailedView: _cloudDetailedView,
+      blockedCategories: _blockedCategories,
     );
   }
 

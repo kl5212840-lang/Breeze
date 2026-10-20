@@ -170,11 +170,16 @@ class DiscoverRouter {
 
     await showDialog<void>(
       context: context,
-      builder: (context) => PluginFunctionDialog(
+      builder: (dialogContext) => PluginFunctionDialog(
         from: source,
         functionId: functionId,
         title: title,
         onAction: onAction,
+        onLogin: () {
+          if (context.mounted) {
+            context.pushRoute(LoginRoute(from: source));
+          }
+        },
         dialogWidth: dialogWidth,
       ),
     );
@@ -199,7 +204,7 @@ class DiscoverRouter {
     if (!context.mounted) {
       return;
     }
-    context.pushRoute(
+    await context.pushRoute(
       ComicListRoute(
         title: title ?? t.oldHome.cloudFavorite,
         sceneSource: source,
