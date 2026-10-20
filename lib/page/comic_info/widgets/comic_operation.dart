@@ -20,6 +20,7 @@ class ComicOperationWidget extends StatefulWidget {
   final String? collectionTargetId;
   final String? collectionTargetName;
   final dynamic comicInfo;
+  final bool showCollectAction;
 
   const ComicOperationWidget({
     super.key,
@@ -28,6 +29,7 @@ class ComicOperationWidget extends StatefulWidget {
     this.collectionTargetId,
     this.collectionTargetName,
     required this.comicInfo,
+    this.showCollectAction = true,
   });
 
   @override
@@ -123,7 +125,7 @@ class _ComicOperationWidgetState extends State<ComicOperationWidget> {
         enabled: normalInfo.allowComments,
         onTap: _openComments,
       ),
-      collectItem,
+      if (widget.showCollectAction) collectItem,
     ];
 
     return SizedBox(
@@ -211,9 +213,7 @@ class _ComicOperationWidgetState extends State<ComicOperationWidget> {
         return;
       }
       showErrorToast(
-        t.comicInfo.localCollectFailed(
-          error: normalizeSearchErrorMessage(error),
-        ),
+        t.comicInfo.localCollectFailed(error: userFacingErrorMessage(error)),
         duration: const Duration(seconds: 5),
       );
     }
@@ -266,7 +266,7 @@ class _ComicOperationWidgetState extends State<ComicOperationWidget> {
         return;
       }
       showErrorToast(
-        normalizeSearchErrorMessage(error),
+        userFacingErrorMessage(error),
         duration: const Duration(seconds: 5),
       );
     }
@@ -322,7 +322,7 @@ class _ComicOperationWidgetState extends State<ComicOperationWidget> {
         return;
       }
       showErrorToast(
-        t.comicInfo.likeFailed(error: normalizeSearchErrorMessage(error)),
+        t.comicInfo.likeFailed(error: userFacingErrorMessage(error)),
         duration: const Duration(seconds: 5),
       );
     }

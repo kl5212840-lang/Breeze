@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/navigation/welcome_page_destination.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/platform/desktop/window_logic.dart';
 import 'package:zephyr/service/lifecycle/foreground_task/foreground_task_service.dart';
@@ -33,7 +34,7 @@ class _AppBehaviorSettingPageState extends State<AppBehaviorSettingPage> {
         t.navigation.more,
       ];
     }
-    return [t.navigation.bookshelf, t.navigation.discover, t.navigation.more];
+    return [t.navigation.discover, t.navigation.bookshelf, t.navigation.more];
   }
 
   Map<String, int> _splashPageMap(bool oldPageRollbackEnabled) {
@@ -47,9 +48,18 @@ class _AppBehaviorSettingPageState extends State<AppBehaviorSettingPage> {
       };
     }
     return {
-      t.navigation.bookshelf: 0,
-      t.navigation.discover: 1,
-      t.navigation.more: 2,
+      t.navigation.discover: storedWelcomePageValue(
+        WelcomePageDestination.discover,
+        oldPageRollbackEnabled: false,
+      ),
+      t.navigation.bookshelf: storedWelcomePageValue(
+        WelcomePageDestination.bookshelf,
+        oldPageRollbackEnabled: false,
+      ),
+      t.navigation.more: storedWelcomePageValue(
+        WelcomePageDestination.more,
+        oldPageRollbackEnabled: false,
+      ),
     };
   }
 
@@ -99,9 +109,13 @@ class _AppBehaviorSettingPageState extends State<AppBehaviorSettingPage> {
   Widget _splashPage(GlobalSettingState state, GlobalSettingCubit cubit) {
     final splashPageList = _splashPageList(state.oldPageRollbackEnabled);
     final splashPage = _splashPageMap(state.oldPageRollbackEnabled);
-    final selectedIndex = splashPageList.isEmpty
-        ? 0
-        : state.welcomePageNum.clamp(0, splashPageList.length - 1);
+    final selectedIndex = welcomePageTabIndex(
+      resolveWelcomePageDestination(
+        state.welcomePageNum,
+        oldPageRollbackEnabled: state.oldPageRollbackEnabled,
+      ),
+      oldPageRollbackEnabled: state.oldPageRollbackEnabled,
+    );
 
     final splashPageItems = {for (final page in splashPageList) page: page};
 
@@ -132,8 +146,18 @@ class _AppBehaviorSettingPageState extends State<AppBehaviorSettingPage> {
       thumbIcon: kSettingSwitchThumbIcon,
       value: state.oldPageRollbackEnabled,
       onChanged: (bool value) {
+        final destination = resolveWelcomePageDestination(
+          state.welcomePageNum,
+          oldPageRollbackEnabled: state.oldPageRollbackEnabled,
+        );
         cubit.updateState(
-          (current) => current.copyWith(oldPageRollbackEnabled: value),
+          (current) => current.copyWith(
+            oldPageRollbackEnabled: value,
+            welcomePageNum: storedWelcomePageValue(
+              destination,
+              oldPageRollbackEnabled: value,
+            ),
+          ),
         );
         showSuccessToast(t.common.restartToTakeEffect);
       },

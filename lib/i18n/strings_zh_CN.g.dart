@@ -2142,6 +2142,12 @@ class Translations$plugin$zh_CN {
 	/// zh-CN: '下载更新'
 	String get downloadUpdate => '下载更新';
 
+	/// zh-CN: '已是最新版本'
+	String get alreadyLatest => '已是最新版本';
+
+	/// zh-CN: '本地版本较新'
+	String get localVersionNewer => '本地版本较新';
+
 	/// zh-CN: '暂无云端组件'
 	String get noCloudPlugins => '暂无云端组件';
 
@@ -2279,9 +2285,6 @@ class Translations$plugin$zh_CN {
 
 	/// zh-CN: '当前版本 $version'
 	String currentVersion({required Object version}) => '当前版本 ${version}';
-
-	/// zh-CN: '已是最新版本'
-	String get alreadyLatest => '已是最新版本';
 }
 
 // Path: gestureLock
@@ -3303,6 +3306,21 @@ class Translations$discover$zh_CN {
 	/// zh-CN: '插件管理'
 	String get pluginManagement => '插件管理';
 
+	/// zh-CN: '列表'
+	String get listLayout => '列表';
+
+	/// zh-CN: '网格'
+	String get gridLayout => '网格';
+
+	/// zh-CN: '$title · 更多操作'
+	String moreActions({required Object title}) => '${title} · 更多操作';
+
+	/// zh-CN: '启用插件'
+	String get enablePlugin => '启用插件';
+
+	/// zh-CN: '停用插件'
+	String get disablePlugin => '停用插件';
+
 	/// zh-CN: '自定义插件顺序'
 	String get customOrder => '自定义插件顺序';
 
@@ -3354,8 +3372,11 @@ class Translations$sourceShell$zh_CN {
 	/// zh-CN: '启动'
 	String get enter => '启动';
 
-	/// zh-CN: '此图源暂无可浏览的栏目'
-	String get noSections => '此图源暂无可浏览的栏目';
+	/// zh-CN: '此图源没有首页栏目，可以直接搜索漫画'
+	String get noSections => '此图源没有首页栏目，可以直接搜索漫画';
+
+	/// zh-CN: '连接超时，请检查网络后重试'
+	String get requestTimedOut => '连接超时，请检查网络后重试';
 
 	/// zh-CN: '搜索此图源'
 	String get search => '搜索此图源';
@@ -4713,6 +4734,8 @@ extension on Translations {
 			'plugin.githubRepo' => 'GitHub 仓库',
 			'plugin.download' => '下载',
 			'plugin.downloadUpdate' => '下载更新',
+			'plugin.alreadyLatest' => '已是最新版本',
+			'plugin.localVersionNewer' => '本地版本较新',
 			'plugin.noCloudPlugins' => '暂无云端组件',
 			'plugin.noMatchingPlugins' => '没有匹配的插件',
 			'plugin.networkInstallHint' => '请输入插件脚本 URL',
@@ -4759,7 +4782,6 @@ extension on Translations {
 			'plugin.updateFailed' => ({required Object error}) => '更新失败: ${error}',
 			'plugin.uuidMismatch' => '插件 id 不一致，无法安装',
 			'plugin.currentVersion' => ({required Object version}) => '当前版本 ${version}',
-			'plugin.alreadyLatest' => '已是最新版本',
 			'gestureLock.gestureTitle' => '手势解锁',
 			'gestureLock.gestureHint' => '请绘制手势密码',
 			'gestureLock.pinTitle' => '输入 PIN',
@@ -5064,23 +5086,29 @@ extension on Translations {
 			'discover.search' => '搜索',
 			'discover.settings' => '设置',
 			'discover.pluginManagement' => '插件管理',
+			'discover.listLayout' => '列表',
+			'discover.gridLayout' => '网格',
+			'discover.moreActions' => ({required Object title}) => '${title} · 更多操作',
+			'discover.enablePlugin' => '启用插件',
+			'discover.disablePlugin' => '停用插件',
 			'discover.customOrder' => '自定义插件顺序',
 			'discover.resetOrder' => '恢复默认顺序',
 			'discover.noPlugins' => '暂无可用插件，去插件商店安装一个吧~',
+			_ => null,
+		} ?? switch (path) {
 			'discover.pluginStore' => '插件商店',
 			'discover.browseInstall' => '浏览安装',
 			'discover.noPluginForSearch' => '暂无可用插件，无法搜索',
 			'discover.pluginInfoLoadFailed' => ({required Object error}) => '插件信息加载失败: ${error}',
 			'discover.pluginCapability' => '插件能力',
 			'discover.disabled' => '已关闭',
-			_ => null,
-		} ?? switch (path) {
 			'discover.unnamed' => '未命名',
 			'discover.pluginEnableFailed' => ({required Object error}) => '插件启用失败: ${error}',
 			'discover.pluginCloseFailed' => ({required Object error}) => '插件关闭失败: ${error}',
 			'discover.pluginDebugLoadFailed' => ({required Object error}) => '插件调试加载失败，已回退数据库: ${error}',
 			'sourceShell.enter' => '启动',
-			'sourceShell.noSections' => '此图源暂无可浏览的栏目',
+			'sourceShell.noSections' => '此图源没有首页栏目，可以直接搜索漫画',
+			'sourceShell.requestTimedOut' => '连接超时，请检查网络后重试',
 			'sourceShell.search' => '搜索此图源',
 			'sourceShell.account' => '图源账号',
 			'sourceShell.settings' => '图源设置',

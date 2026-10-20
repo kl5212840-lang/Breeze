@@ -267,7 +267,21 @@ class _ComicReadPageState extends State<_ComicReadPage>
         builder: (context, state) {
           switch (state.status) {
             case PageStatus.initial:
-              return const Center(child: CircularProgressIndicator());
+              return SafeArea(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    IconButton(
+                      tooltip: t.common.back,
+                      onPressed: () => context.pop(),
+                      icon: const Icon(Icons.arrow_back),
+                    ),
+                    const Expanded(
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                  ],
+                ),
+              );
             case PageStatus.failure:
               return ComicErrorWidget(
                 state: state,

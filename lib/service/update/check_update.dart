@@ -32,7 +32,19 @@ Future<String> getAppVersion() async {
   return version;
 }
 
-Future<GithubReleaseJson> getCloudVersion() async {
+Future<GithubReleaseJson?> getCloudVersion() async {
+  if (Platform.isIOS) {
+    try {
+      final release = await fetchReleaseData(
+        'https://api.github.com/repos/kl5212840-lang/Breeze/releases/latest',
+      );
+      return GithubReleaseJson.fromJson(release);
+    } catch (e, stackTrace) {
+      logger.w('无法获取本分支 iOS 更新信息', error: e, stackTrace: stackTrace);
+      return null;
+    }
+  }
+
   const releasesApi =
       "https://api.github.com/repos/deretame/Breeze/releases/latest";
 
@@ -180,10 +192,11 @@ bool _isGithubReleaseDownloadUrl(String url) {
 Future<void> checkUpdate(BuildContext context) async {
   if (!context.mounted) return;
   final temp = await getCloudVersion();
+  if (temp == null) return;
   final cloudVersion = temp.tagName;
   final releaseInfo = temp.body;
   final String localVersion = await getAppVersion();
-  final url = 'https://github.com/deretame/Breeze/releases/tag/$cloudVersion';
+  final url = temp.htmlUrl;
   DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
   String arch = t.update.unknownArch;
   try {

@@ -8,8 +8,25 @@ import 'package:zephyr/cubit/string_select.dart';
 import 'package:zephyr/page/comic_list/view/plugin_comic_grid_sliver.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search_result/search_result.dart';
+import 'package:zephyr/page/search_result/view/source_quick_category_bar.dart';
+import 'package:zephyr/page/search_result/view/source_search_detail_list.dart';
+import 'package:zephyr/page/search_result/view/source_list_categories.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_mapper.dart';
+
+SearchEvent searchRetryEvent(
+  SearchEvent lastSuccessful,
+  SearchState current,
+  SearchStatus targetStatus,
+) {
+  final source =
+      targetStatus == SearchStatus.loadingMore &&
+          current.status == SearchStatus.getMoreFailure
+      ? current.searchEvent
+      : lastSuccessful;
+  return source.copyWith(status: targetStatus);
+}
 
 @RoutePage()
 class SearchResultPage extends StatelessWidget implements AutoRouteWrapper {
@@ -58,6 +75,7 @@ class _SearchResultPageState extends State<_SearchResultPage>
   late SearchEvent searchEvent;
   final _scrollController = ScrollController();
   int pagesCount = 0;
+  bool _detailedView = true;
   late AnimationController _animationController;
   late Animation<Offset> _slideAnimation;
 
@@ -109,9 +127,27 @@ class _SearchResultPageState extends State<_SearchResultPage>
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final source = context.read<SearchCubit>().state.from;
+    final quickCategories = sourceQuickCategories(source);
     return Scaffold(
       appBar: SearchResultBar(searchEvent: searchEvent),
-      body: _bloc(),
+      body: quickCategories.isEmpty
+          ? _bloc()
+          : Column(
+              children: [
+                SourceQuickCategoryBar(
+                  categories: quickCategories,
+                  detailedView: _detailedView,
+                  onViewChanged: (value) {
+                    setState(() => _detailedView = value);
+                    if (_scrollController.hasClients) {
+                      _scrollController.jumpTo(0);
+                    }
+                  },
+                ),
+                Expanded(child: _bloc()),
+              ],
+            ),
       floatingActionButtonLocation:
           context.watch<GlobalSettingCubit>().state.leftHandModeEnabled
           ? FloatingActionButtonLocation.startFloat
@@ -190,7 +226,16 @@ class _SearchResultPageState extends State<_SearchResultPage>
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text(state.result, style: TextStyle(fontSize: 20)),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Text(
+                    userFacingErrorMessage(state.result),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                ),
                 SizedBox(height: 10), // 添加间距
                 ElevatedButton(
                   onPressed: () {
@@ -205,11 +250,14 @@ class _SearchResultPageState extends State<_SearchResultPage>
         case SearchStatus.loadingMore:
         case SearchStatus.getMoreFailure:
           if (state.status == SearchStatus.success) {
-            searchEvent = state.searchEvent;
             final searchCubit = context.read<SearchCubit>();
-            if (searchCubit.state != state.searchEvent.searchStates) {
+            // A category tap can happen while an older request is still
+            // running. Do not let that older response undo the user's choice.
+            if (searchCubit.state == searchEvent.searchStates &&
+                searchCubit.state != state.searchEvent.searchStates) {
               searchCubit.update(state.searchEvent.searchStates);
             }
+            searchEvent = state.searchEvent;
           }
           return _comicList(state);
       }
@@ -221,6 +269,24 @@ class _SearchResultPageState extends State<_SearchResultPage>
   }
 
   Widget _comicList(SearchState state) {
+    final source = context.read<SearchCubit>().state.from;
+    if (_detailedView && sourceQuickCategories(source).isNotEmpty) {
+      if (state.status == SearchStatus.success &&
+          state.comics.isEmpty &&
+          state.hasReachedMax) {
+        return Center(child: Text(t.comicList.nothingHere));
+      }
+      return SourceSearchDetailList(
+        controller: _scrollController,
+        entries: state.comics.map((item) => item.comic).toList(),
+        hasReachedMax:
+            state.hasReachedMax && state.status == SearchStatus.success,
+        isLoadingMore: state.status == SearchStatus.loadingMore,
+        loadMoreFailed: state.status == SearchStatus.getMoreFailure,
+        onRetryLoadMore: () => _refresh(SearchStatus.loadingMore),
+        onLoadMore: _fetchSearchResult,
+      );
+    }
     return _genericList(state);
   }
 
@@ -253,11 +319,13 @@ class _SearchResultPageState extends State<_SearchResultPage>
   }
 
   void _refresh(SearchStatus status) {
-    // 使用原本输入参数进行重新搜索
-    context.read<SearchBloc>().add(searchEvent.copyWith(status: status));
+    final bloc = context.read<SearchBloc>();
+    bloc.add(searchRetryEvent(searchEvent, bloc.state, status));
   }
 
   void _fetchSearchResult() {
+    final state = context.read<SearchBloc>().state;
+    if (state.status != SearchStatus.success || state.hasReachedMax) return;
     context.read<SearchBloc>().add(
       searchEvent.copyWith(
         page: searchEvent.page + 1,
@@ -288,6 +356,7 @@ class _SearchResultPageState extends State<_SearchResultPage>
   bool get _isBottom {
     if (!_scrollController.hasClients) return false;
     final maxScroll = _scrollController.position.maxScrollExtent;
+    if (maxScroll <= 0) return false;
     final currentScroll = _scrollController.offset;
     return currentScroll >= (maxScroll * 0.9);
   }

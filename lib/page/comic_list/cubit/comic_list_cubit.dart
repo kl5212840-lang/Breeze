@@ -80,7 +80,10 @@ class ComicListCubit extends Cubit<ComicListState> {
           core: const <String, dynamic>{},
           extern: const <String, dynamic>{},
         );
-      } catch (_) {
+      } catch (error) {
+        // A second function name cannot repair a failed connection; avoid
+        // doubling the wait on an unstable Bika route.
+        if (isTransientNetworkError(error)) rethrow;
         final fallback = sceneBundleFnPathFallback?.trim() ?? '';
         if (fallback.isEmpty || fallback == sceneFnPath) {
           rethrow;

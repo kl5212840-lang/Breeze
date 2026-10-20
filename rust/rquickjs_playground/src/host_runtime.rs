@@ -70,7 +70,7 @@ const BUNDLE_DISPATCHER_JS: &str = r#"(async () => {
       return target;
     };
     const withInvokeContextError = (err, ctx) => {
-      const scope = `bundle:${ctx?.name || "?"} fn:${ctx?.fnPath || "?"} args:${ctx?.args || "[]"} source:${ctx?.sourceName || "?"}`;
+      const scope = `bundle:${ctx?.name || "?"} fn:${ctx?.fnPath || "?"} source:${ctx?.sourceName || "?"}`;
 
       if (err instanceof Error) {
         attachHttpResponseMetadata(err, err);
@@ -156,7 +156,7 @@ const BUNDLE_DISPATCHER_JS: &str = r#"(async () => {
           const { owner, fn } = resolveCallable(api, fnPath);
           return await fn.apply(owner, args);
         } catch (err) {
-          throw withInvokeContextError(err, { name, fnPath, args: JSON.stringify(args), sourceName: `${sanitizeSourceName(name)}.cjs` });
+          throw withInvokeContextError(err, { name, fnPath, sourceName: `${sanitizeSourceName(name)}.cjs` });
         }
       },
       async invokeOnceLoaded(payload) {
@@ -176,7 +176,7 @@ const BUNDLE_DISPATCHER_JS: &str = r#"(async () => {
           const { owner, fn } = resolveCallable(api, fnPath);
           return await fn.apply(owner, args);
         } catch (err) {
-          throw withInvokeContextError(err, { name: debugName, fnPath, args: JSON.stringify(args), sourceName });
+          throw withInvokeContextError(err, { name: debugName, fnPath, sourceName });
         }
       },
       unloadBundle(name) {

@@ -66,3 +66,63 @@ String normalizeSearchErrorMessage(Object error) {
   }
   return t.error.executionFailed;
 }
+
+/// Keep plugin/runtime diagnostics in logs, never in an end-user error view.
+bool isTransientNetworkError(Object error) {
+  final text = error.toString().toLowerCase();
+  return text.contains('tls handshake') ||
+      text.contains('connection reset') ||
+      text.contains('connection refused') ||
+      text.contains('connection closed') ||
+      text.contains('socketexception') ||
+      text.contains('failed host lookup') ||
+      text.contains('network error') ||
+      text.contains('network request failed') ||
+      text.contains('timed out') ||
+      text.contains('timeout') ||
+      text.contains('connectexception');
+}
+
+String userFacingErrorMessage(Object error) {
+  if (error is FormatException &&
+      error.message.isNotEmpty &&
+      error.message.length <= 80 &&
+      !error.message.contains('\n') &&
+      !error.message.contains('://')) {
+    return error.message;
+  }
+  final text = normalizeSearchErrorMessage(error);
+  final lower = text.toLowerCase();
+  if (isTransientNetworkError(text)) {
+    return '连接暂时中断，请检查网络或切换插件线路后重试';
+  }
+  if (lower.contains('401') ||
+      lower.contains('unauthorized') ||
+      lower.contains('登录已失效') ||
+      lower.contains('请先登录')) {
+    return '登录状态可能已失效，请重新登录后重试';
+  }
+  if (lower.contains('404') || lower.contains('not found')) {
+    return '内容暂时无法访问，请稍后重试';
+  }
+  // Runtime traces and wrapped request payloads can be enormous and may
+  // contain URLs or other internal details. Never pass them to Text widgets.
+  if (text.length > 160 ||
+      text.contains('\n') ||
+      lower.contains('[bundle:') ||
+      lower.contains('[stack-hook]') ||
+      lower.contains('webpack:') ||
+      lower.contains('http://') ||
+      lower.contains('https://') ||
+      lower.contains('typeerror:') ||
+      lower.contains('referenceerror:') ||
+      lower.contains('platformexception') ||
+      lower.contains('formatexception') ||
+      lower.contains('node_modules') ||
+      lower.contains('args:') ||
+      lower.contains(' at ') ||
+      lower.contains('http 请求失败')) {
+    return '加载失败，请稍后重试';
+  }
+  return text;
+}

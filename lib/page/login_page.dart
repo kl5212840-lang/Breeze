@@ -349,8 +349,7 @@ class _LoginPageState extends State<LoginPage> {
       if (!mounted) return;
       context.maybePop();
     } catch (e) {
-      logger.e(e);
-      final message = normalizeSearchErrorMessage(e);
+      final message = userFacingErrorMessage(e);
       _showDialog(t.login.loginFailed, message);
       // 失败自动刷新：验证码一次一码，旧码提交后即作废；
       // 无论失败原因是码错还是账密错，都换一张新图 + 清空输入。
