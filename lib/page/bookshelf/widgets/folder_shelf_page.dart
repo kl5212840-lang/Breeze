@@ -33,17 +33,52 @@ import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_info.da
 import 'package:zephyr/widgets/fluent_dropdown.dart';
 import 'package:zephyr/widgets/toast.dart';
 
+class FolderShelfBackController extends ChangeNotifier {
+  bool _isRoot = true;
+  bool _disposed = false;
+  VoidCallback? _onBack;
+
+  bool get canGoBack => !_isRoot && _onBack != null;
+
+  void attach(VoidCallback onBack) => _onBack = onBack;
+
+  void updateIsRoot(bool isRoot) {
+    if (_isRoot == isRoot) return;
+    _isRoot = isRoot;
+    scheduleMicrotask(() {
+      if (!_disposed) notifyListeners();
+    });
+  }
+
+  void goBack() => _onBack?.call();
+
+  void detach() {
+    _onBack = null;
+    _isRoot = true;
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+}
+
 class FolderShelfPage extends StatelessWidget {
   const FolderShelfPage({
     super.key,
     required this.mode,
     this.refreshSignal = 0,
     this.isActive = true,
+    this.backController,
+    this.handleRouteBack = true,
   });
 
   final ShelfPageMode mode;
   final int refreshSignal;
   final bool isActive;
+  final FolderShelfBackController? backController;
+  final bool handleRouteBack;
 
   @override
   Widget build(BuildContext context) {
@@ -56,6 +91,8 @@ class FolderShelfPage extends StatelessWidget {
         refreshSignal: refreshSignal,
         search: search,
         isActive: isActive,
+        backController: backController,
+        handleRouteBack: handleRouteBack,
       ),
     );
   }
@@ -66,11 +103,15 @@ class _FolderShelfPageContent extends StatefulWidget {
     required this.refreshSignal,
     required this.search,
     required this.isActive,
+    required this.backController,
+    required this.handleRouteBack,
   });
 
   final int refreshSignal;
   final SearchStatusState search;
   final bool isActive;
+  final FolderShelfBackController? backController;
+  final bool handleRouteBack;
 
   @override
   State<_FolderShelfPageContent> createState() =>
@@ -85,6 +126,9 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
   @override
   void initState() {
     super.initState();
+    widget.backController?.attach(
+      () => context.read<FolderShelfBloc>().add(const FolderShelfGoBack()),
+    );
     if (_isDesktop) {
       HardwareKeyboard.instance.addHandler(_handleKeyEvent);
     }
@@ -92,6 +136,7 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
 
   @override
   void dispose() {
+    widget.backController?.detach();
     if (_isDesktop) {
       HardwareKeyboard.instance.removeHandler(_handleKeyEvent);
     }
@@ -140,6 +185,18 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
         }
       },
       builder: (context, state) {
+        widget.backController?.updateIsRoot(state.isRoot);
+        final content = NotificationListener<ScrollNotification>(
+          onNotification: _onGridScroll,
+          child: Stack(
+            children: [
+              Positioned.fill(child: _buildBody(context)),
+              // 顶部悬浮导航：选择模式下隐藏，由底部悬浮操作条接管。
+              if (!state.selectionMode) ..._buildFloatingNav(context, state),
+            ],
+          ),
+        );
+        if (!widget.handleRouteBack) return content;
         return PopScope(
           canPop: state.isRoot,
           onPopInvokedWithResult: (didPop, result) {
@@ -147,16 +204,7 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
               context.read<FolderShelfBloc>().add(const FolderShelfGoBack());
             }
           },
-          child: NotificationListener<ScrollNotification>(
-            onNotification: _onGridScroll,
-            child: Stack(
-              children: [
-                Positioned.fill(child: _buildBody(context)),
-                // 顶部悬浮导航：选择模式下隐藏，由底部悬浮操作条接管。
-                if (!state.selectionMode) ..._buildFloatingNav(context, state),
-              ],
-            ),
-          ),
+          child: content,
         );
       },
     );

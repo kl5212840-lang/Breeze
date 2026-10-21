@@ -1301,6 +1301,8 @@ class _Translations$sourceShell$en_US extends Translations$sourceShell$zh_CN {
 	@override String get search => 'Search this source';
 	@override String get account => 'Source account';
 	@override String get settings => 'Source settings';
+	@override String get exitSource => 'Exit';
+	@override String get exitSourceHint => 'Exit this source and return to Discover';
 }
 
 // Path: searchResult
@@ -2661,6 +2663,8 @@ extension on TranslationsEnUs {
 			'sourceShell.search' => 'Search this source',
 			'sourceShell.account' => 'Source account',
 			'sourceShell.settings' => 'Source settings',
+			'sourceShell.exitSource' => 'Exit',
+			'sourceShell.exitSourceHint' => 'Exit this source and return to Discover',
 			'searchResult.enterPageNumber' => 'Enter page number',
 			'searchResult.pleaseEnterNumber' => 'Please enter a number',
 			'searchResult.returnToTop' => 'Return to top',

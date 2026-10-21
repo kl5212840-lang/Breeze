@@ -3386,6 +3386,12 @@ class Translations$sourceShell$zh_CN {
 
 	/// zh-CN: '图源设置'
 	String get settings => '图源设置';
+
+	/// zh-CN: '退出'
+	String get exitSource => '退出';
+
+	/// zh-CN: '退出图源，返回发现'
+	String get exitSourceHint => '退出图源，返回发现';
 }
 
 // Path: searchResult
@@ -5112,6 +5118,8 @@ extension on Translations {
 			'sourceShell.search' => '搜索此图源',
 			'sourceShell.account' => '图源账号',
 			'sourceShell.settings' => '图源设置',
+			'sourceShell.exitSource' => '退出',
+			'sourceShell.exitSourceHint' => '退出图源，返回发现',
 			'searchResult.enterPageNumber' => '输入页数',
 			'searchResult.pleaseEnterNumber' => '请输入数字',
 			'searchResult.returnToTop' => '返回顶部',

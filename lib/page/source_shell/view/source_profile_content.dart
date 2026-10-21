@@ -25,6 +25,23 @@ import 'package:zephyr/widgets/toast.dart';
 
 enum _ProfileEditAction { avatar, bio }
 
+/// Lets the source shell treat profile subviews as navigation destinations.
+class SourceProfileBackController extends ChangeNotifier {
+  String? _backLabel;
+  VoidCallback? _onBack;
+
+  String? get backLabel => _backLabel;
+  bool get canGoBack => _onBack != null;
+
+  void update({String? backLabel, VoidCallback? onBack}) {
+    _backLabel = backLabel;
+    _onBack = onBack;
+    notifyListeners();
+  }
+
+  void goBack() => _onBack?.call();
+}
+
 class SourceProfileContent extends StatelessWidget {
   const SourceProfileContent({
     super.key,
@@ -35,6 +52,7 @@ class SourceProfileContent extends StatelessWidget {
     this.profileKind = '',
     this.checkinFunction = '',
     this.notificationsFunction = '',
+    this.backController,
     required this.onLogin,
     required this.onSettings,
     required this.onBreezeSettings,
@@ -48,6 +66,7 @@ class SourceProfileContent extends StatelessWidget {
   final String profileKind;
   final String checkinFunction;
   final String notificationsFunction;
+  final SourceProfileBackController? backController;
   final Future<void> Function() onLogin;
   final Future<void> Function() onSettings;
   final Future<void> Function() onBreezeSettings;
@@ -72,6 +91,7 @@ class SourceProfileContent extends StatelessWidget {
         profileKind: profileKind,
         checkinFunction: checkinFunction,
         notificationsFunction: notificationsFunction,
+        backController: backController,
         onLogin: onLogin,
         onSettings: onSettings,
         onBreezeSettings: onBreezeSettings,
@@ -163,6 +183,7 @@ class _ProfileBody extends StatefulWidget {
     required this.profileKind,
     required this.checkinFunction,
     required this.notificationsFunction,
+    required this.backController,
     required this.onLogin,
     required this.onSettings,
     required this.onBreezeSettings,
@@ -175,6 +196,7 @@ class _ProfileBody extends StatefulWidget {
   final String profileKind;
   final String checkinFunction;
   final String notificationsFunction;
+  final SourceProfileBackController? backController;
   final Future<void> Function() onLogin;
   final Future<void> Function() onSettings;
   final Future<void> Function() onBreezeSettings;
@@ -184,6 +206,8 @@ class _ProfileBody extends StatefulWidget {
 }
 
 class _ProfileBodyState extends State<_ProfileBody> {
+  final FolderShelfBackController _folderBackController =
+      FolderShelfBackController();
   _Account? _account;
   ShelfPageMode? _mode;
   bool _managingFolders = false;
@@ -213,12 +237,64 @@ class _ProfileBodyState extends State<_ProfileBody> {
   @override
   void initState() {
     super.initState();
+    _folderBackController.addListener(_syncBackController);
+    _syncBackController();
     _loadAccount();
     _loadCloudFavorites();
     if (widget.notificationsFunction.isNotEmpty) _loadNotifications();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _refreshRecords();
     });
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProfileBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.backController != widget.backController) {
+      oldWidget.backController?.update();
+      _syncBackController();
+    }
+  }
+
+  @override
+  void dispose() {
+    _folderBackController.removeListener(_syncBackController);
+    _folderBackController.dispose();
+    widget.backController?.update();
+    super.dispose();
+  }
+
+  void _syncBackController() {
+    if (_managingFolders) {
+      widget.backController?.update(
+        backLabel: _folderBackController.canGoBack ? '返回上级文件夹' : '返回记录列表',
+        onBack: _goBackInProfile,
+      );
+    } else if (_mode != null || _showNotifications) {
+      widget.backController?.update(
+        backLabel: '返回我的',
+        onBack: _goBackInProfile,
+      );
+    } else {
+      widget.backController?.update();
+    }
+  }
+
+  void _goBackInProfile() {
+    if (_managingFolders) {
+      if (_folderBackController.canGoBack) {
+        _folderBackController.goBack();
+        return;
+      }
+      _refreshRecords();
+      setState(() => _managingFolders = false);
+    } else if (_mode != null) {
+      _refreshRecords();
+      setState(() => _mode = null);
+    } else if (_showNotifications) {
+      setState(() => _showNotifications = false);
+    }
+    _syncBackController();
   }
 
   void _refreshRecords() {
@@ -452,6 +528,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
               return;
             }
             setState(() => _showNotifications = true);
+            _syncBackController();
             if (_noticeError != null) _loadNotifications();
           },
         ),
@@ -473,14 +550,16 @@ class _ProfileBodyState extends State<_ProfileBody> {
     return Column(
       children: [
         ListTile(
-          leading: const Icon(Icons.arrow_back),
+          leading: widget.backController == null
+              ? const Icon(Icons.arrow_back)
+              : null,
           title: const Text('站内消息'),
           trailing: IconButton(
             tooltip: '刷新消息',
             onPressed: _noticeLoading ? null : _loadNotifications,
             icon: const Icon(Icons.refresh),
           ),
-          onTap: () => setState(() => _showNotifications = false),
+          onTap: widget.backController == null ? _goBackInProfile : null,
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -950,6 +1029,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
       _mode = mode;
       _managingFolders = false;
     });
+    _syncBackController();
   }
 
   Widget _localRecords() {
@@ -959,30 +1039,35 @@ class _ProfileBodyState extends State<_ProfileBody> {
         key: ValueKey(mode),
         mode: mode,
         entries: _records.of(mode),
-        onBack: () {
-          _refreshRecords();
-          setState(() => _mode = null);
-        },
+        onBack: _goBackInProfile,
         onRefresh: _refreshRecords,
         source: widget.source,
+        showBackButton: widget.backController == null,
         onManageFolders: mode == ShelfPageMode.history
             ? null
-            : () => setState(() => _managingFolders = true),
+            : () {
+                setState(() => _managingFolders = true);
+                _syncBackController();
+              },
       );
     }
     return Column(
       children: [
         ListTile(
-          leading: const Icon(Icons.arrow_back),
+          leading: widget.backController == null
+              ? const Icon(Icons.arrow_back)
+              : null,
           title: Text('${sourceProfileRecordLabel(mode)} · 文件夹'),
-          onTap: () {
-            _refreshRecords();
-            setState(() => _managingFolders = false);
-          },
+          onTap: widget.backController == null ? _goBackInProfile : null,
         ),
         const Divider(height: 1),
         Expanded(
-          child: FolderShelfPage(key: ValueKey(mode), mode: mode),
+          child: FolderShelfPage(
+            key: ValueKey(mode),
+            mode: mode,
+            backController: _folderBackController,
+            handleRouteBack: false,
+          ),
         ),
       ],
     );
