@@ -256,6 +256,7 @@ class SourceProfileRecordsView extends StatefulWidget {
     required this.onRefresh,
     this.onManageFolders,
     this.source,
+    this.showBackButton = true,
   });
 
   final ShelfPageMode mode;
@@ -264,6 +265,7 @@ class SourceProfileRecordsView extends StatefulWidget {
   final VoidCallback onRefresh;
   final VoidCallback? onManageFolders;
   final String? source;
+  final bool showBackButton;
 
   @override
   State<SourceProfileRecordsView> createState() =>
@@ -326,14 +328,15 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(4, 6, 8, 6),
+          padding: EdgeInsets.fromLTRB(widget.showBackButton ? 4 : 16, 6, 8, 6),
           child: Row(
             children: [
-              IconButton(
-                tooltip: '返回我的',
-                onPressed: widget.onBack,
-                icon: const Icon(Icons.arrow_back),
-              ),
+              if (widget.showBackButton)
+                IconButton(
+                  tooltip: '返回我的',
+                  onPressed: widget.onBack,
+                  icon: const Icon(Icons.arrow_back),
+                ),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,

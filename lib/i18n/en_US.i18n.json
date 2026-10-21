@@ -1079,7 +1079,9 @@
     "requestTimedOut": "The request timed out. Check your connection and try again",
     "search": "Search this source",
     "account": "Source account",
-    "settings": "Source settings"
+    "settings": "Source settings",
+    "exitSource": "Exit",
+    "exitSourceHint": "Exit this source and return to Discover"
   },
   "searchResult": {
     "enterPageNumber": "Enter page number",

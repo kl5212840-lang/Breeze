@@ -35,6 +35,9 @@ class SourceShellPage extends StatefulWidget {
 
 class _SourceShellPageState extends State<SourceShellPage> {
   int _selectedIndex = 0;
+  final List<int> _tabHistory = [];
+  final SourceProfileBackController _profileBackController =
+      SourceProfileBackController();
   final Set<int> _visitedIndexes = {0};
   final Map<int, int> _tabRevisions = {};
   final Set<int> _loginRequiredIndexes = {};
@@ -47,6 +50,7 @@ class _SourceShellPageState extends State<SourceShellPage> {
   @override
   void initState() {
     super.initState();
+    _profileBackController.addListener(_onProfileBackChanged);
     _sourceName = widget.sourceName;
     final plugin = PluginRegistryService.I.getByUuid(widget.source);
     _bundleKey = plugin == null
@@ -83,10 +87,19 @@ class _SourceShellPageState extends State<SourceShellPage> {
 
   @override
   void dispose() {
+    _profileBackController.removeListener(_onProfileBackChanged);
+    _profileBackController.dispose();
     _pluginSubscription?.cancel();
     _loginSubscription?.cancel();
     _needLoginSubscription?.cancel();
     super.dispose();
+  }
+
+  void _onProfileBackChanged() {
+    // A profile child can attach/detach while this shell is being rebuilt.
+    scheduleMicrotask(() {
+      if (mounted) setState(() {});
+    });
   }
 
   Future<void> _openLogin() async {
@@ -154,10 +167,31 @@ class _SourceShellPageState extends State<SourceShellPage> {
   void _select(int index) {
     if (index == _selectedIndex) return;
     setState(() {
+      final historyIndex = _tabHistory.indexOf(index);
+      if (historyIndex >= 0) {
+        _tabHistory.removeRange(historyIndex, _tabHistory.length);
+      } else {
+        _tabHistory.add(_selectedIndex);
+      }
       _selectedIndex = index;
       _visitedIndexes.add(index);
     });
   }
+
+  bool get _profileCanGoBack =>
+      widget.sections.isNotEmpty &&
+      widget.sections[_selectedIndex].profile &&
+      _profileBackController.canGoBack;
+
+  void _goBack() {
+    if (_profileCanGoBack) {
+      _profileBackController.goBack();
+    } else if (_tabHistory.isNotEmpty) {
+      setState(() => _selectedIndex = _tabHistory.removeLast());
+    }
+  }
+
+  void _exitSource() => Navigator.of(context).maybePop();
 
   Future<void> _routeSourceAction(Map<String, dynamic> action) =>
       DiscoverRouter.route(
@@ -171,120 +205,167 @@ class _SourceShellPageState extends State<SourceShellPage> {
     final sections = widget.sections;
     final showingProfile =
         sections.isNotEmpty && sections[_selectedIndex].profile;
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(showingProfile ? '我的' : _sourceName),
-        actions: [
-          if (!showingProfile)
-            IconButton(
-              tooltip: t.sourceShell.search,
-              icon: const Icon(Icons.search),
-              onPressed: _openSearch,
-            ),
-          if (!showingProfile)
-            IconButton(
-              tooltip: t.sourceShell.account,
-              icon: const Icon(Icons.person_outline),
-              onPressed: _openAccount,
-            ),
-          if (!showingProfile)
-            IconButton(
-              tooltip: t.sourceShell.settings,
-              icon: const Icon(Icons.settings_outlined),
-              onPressed: _openSettings,
-            ),
-        ],
-      ),
-      body: sections.isEmpty
-          ? _loginRequiredIndexes.contains(0)
-                ? _buildLoginRequired()
-                : _buildSearchOnly()
-          : IndexedStack(
-              index: _selectedIndex,
-              children: [
-                for (var index = 0; index < sections.length; index++)
-                  if (_loginRequiredIndexes.contains(index))
-                    _buildLoginRequired()
-                  else if (_visitedIndexes.contains(index))
-                    if (sections[index].scene case final scene?)
-                      ComicListPage(
-                        key: ValueKey(
-                          '${sections[index].id}-${_tabRevisions[index] ?? 0}',
+    final canGoBack = _profileCanGoBack || _tabHistory.isNotEmpty;
+    final backLabel = _profileCanGoBack
+        ? _profileBackController.backLabel!
+        : _tabHistory.isNotEmpty
+        ? '${t.common.back} · ${sections[_tabHistory.last].title}'
+        : null;
+    final colors = Theme.of(context).colorScheme;
+    return PopScope(
+      canPop: !canGoBack,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _goBack();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          automaticallyImplyLeading: false,
+          leadingWidth: canGoBack ? 56 : 90,
+          leading: canGoBack
+              ? IconButton(
+                  tooltip: backLabel,
+                  icon: const Icon(Icons.arrow_back),
+                  onPressed: _goBack,
+                )
+              : Padding(
+                  padding: const EdgeInsets.only(left: 8),
+                  child: Center(
+                    child: Tooltip(
+                      message: t.sourceShell.exitSourceHint,
+                      child: TextButton.icon(
+                        onPressed: _exitSource,
+                        style: TextButton.styleFrom(
+                          foregroundColor: colors.onTertiaryContainer,
+                          backgroundColor: colors.tertiaryContainer,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: const Size(72, 36),
+                          visualDensity: VisualDensity.compact,
                         ),
-                        title: sections[index].title,
-                        scene: scene,
-                        embedded: true,
-                      )
-                    else if (sections[index].functionId case final functionId?)
-                      PluginFunctionContent(
-                        key: ValueKey(
-                          '${sections[index].id}-${_tabRevisions[index] ?? 0}',
-                        ),
-                        from: widget.source,
-                        functionId: functionId,
-                        onAction: _routeSourceAction,
-                      )
-                    else if (sections[index].cloudFavorite)
-                      ComicListPage(
-                        key: ValueKey(
-                          '${sections[index].id}-${_tabRevisions[index] ?? 0}',
-                        ),
-                        title: sections[index].title,
-                        sceneSource: widget.source,
-                        sceneBundleFnPath: 'getCloudFavoriteSceneBundle',
-                        sceneBundleFnPathFallback:
-                            'get_cloud_favorite_scene_bundle',
-                        embedded: true,
-                      )
-                    else if (sections[index].profile)
-                      SourceProfileContent(
-                        key: ValueKey(
-                          '${sections[index].id}-${_tabRevisions[index] ?? 0}',
-                        ),
-                        source: widget.source,
-                        legacySources: sections[index].legacySources,
-                        avatarUploadFunction:
-                            sections[index].profileAvatarFunction,
-                        bioUpdateFunction: sections[index].profileBioFunction,
-                        profileKind: sections[index].profileKind,
-                        checkinFunction: sections[index].profileCheckinFunction,
-                        notificationsFunction:
-                            sections[index].profileNotificationsFunction,
-                        onLogin: _openLogin,
-                        onSettings: _openSettings,
-                        onBreezeSettings: () => context.pushRoute(
-                          const app_routes.GlobalSettingRoute(),
-                        ),
-                        onCloudFavorite: () => _routeSourceAction({
-                          'type': 'openCloudFavorite',
-                          'payload': {'title': '云端收藏'},
-                        }),
-                      )
-                    else
-                      _buildMoreActions(sections[index].actions)
-                  else
-                    const SizedBox.shrink(),
-              ],
-            ),
-      bottomNavigationBar: sections.length > 1
-          ? NavigationBar(
-              selectedIndex: _selectedIndex,
-              labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-              onDestinationSelected: _select,
-              destinations: [
-                for (final section in sections)
-                  NavigationDestination(
-                    icon: Icon(section.icon),
-                    label: section.id == 'more'
-                        ? t.navigation.more
-                        : section.title,
-                    tooltip: section.id == 'more'
-                        ? t.navigation.more
-                        : section.title,
+                        icon: const Icon(Icons.exit_to_app, size: 18),
+                        label: Text(t.sourceShell.exitSource),
+                      ),
+                    ),
                   ),
-              ],
-            )
-          : null,
+                ),
+          title: Text(
+            showingProfile ? '我的' : _sourceName,
+            overflow: TextOverflow.ellipsis,
+          ),
+          actions: [
+            if (!showingProfile)
+              IconButton(
+                tooltip: t.sourceShell.search,
+                icon: const Icon(Icons.search),
+                onPressed: _openSearch,
+              ),
+            if (!showingProfile)
+              IconButton(
+                tooltip: t.sourceShell.account,
+                icon: const Icon(Icons.person_outline),
+                onPressed: _openAccount,
+              ),
+            if (!showingProfile)
+              IconButton(
+                tooltip: t.sourceShell.settings,
+                icon: const Icon(Icons.settings_outlined),
+                onPressed: _openSettings,
+              ),
+          ],
+        ),
+        body: sections.isEmpty
+            ? _loginRequiredIndexes.contains(0)
+                  ? _buildLoginRequired()
+                  : _buildSearchOnly()
+            : IndexedStack(
+                index: _selectedIndex,
+                children: [
+                  for (var index = 0; index < sections.length; index++)
+                    if (_loginRequiredIndexes.contains(index))
+                      _buildLoginRequired()
+                    else if (_visitedIndexes.contains(index))
+                      if (sections[index].scene case final scene?)
+                        ComicListPage(
+                          key: ValueKey(
+                            '${sections[index].id}-${_tabRevisions[index] ?? 0}',
+                          ),
+                          title: sections[index].title,
+                          scene: scene,
+                          embedded: true,
+                        )
+                      else if (sections[index].functionId
+                          case final functionId?)
+                        PluginFunctionContent(
+                          key: ValueKey(
+                            '${sections[index].id}-${_tabRevisions[index] ?? 0}',
+                          ),
+                          from: widget.source,
+                          functionId: functionId,
+                          onAction: _routeSourceAction,
+                        )
+                      else if (sections[index].cloudFavorite)
+                        ComicListPage(
+                          key: ValueKey(
+                            '${sections[index].id}-${_tabRevisions[index] ?? 0}',
+                          ),
+                          title: sections[index].title,
+                          sceneSource: widget.source,
+                          sceneBundleFnPath: 'getCloudFavoriteSceneBundle',
+                          sceneBundleFnPathFallback:
+                              'get_cloud_favorite_scene_bundle',
+                          embedded: true,
+                        )
+                      else if (sections[index].profile)
+                        SourceProfileContent(
+                          key: ValueKey(
+                            '${sections[index].id}-${_tabRevisions[index] ?? 0}',
+                          ),
+                          source: widget.source,
+                          legacySources: sections[index].legacySources,
+                          avatarUploadFunction:
+                              sections[index].profileAvatarFunction,
+                          bioUpdateFunction: sections[index].profileBioFunction,
+                          profileKind: sections[index].profileKind,
+                          checkinFunction:
+                              sections[index].profileCheckinFunction,
+                          notificationsFunction:
+                              sections[index].profileNotificationsFunction,
+                          backController: _profileBackController,
+                          onLogin: _openLogin,
+                          onSettings: _openSettings,
+                          onBreezeSettings: () => context.pushRoute(
+                            const app_routes.GlobalSettingRoute(),
+                          ),
+                          onCloudFavorite: () => _routeSourceAction({
+                            'type': 'openCloudFavorite',
+                            'payload': {'title': '云端收藏'},
+                          }),
+                        )
+                      else
+                        _buildMoreActions(sections[index].actions)
+                    else
+                      const SizedBox.shrink(),
+                ],
+              ),
+        bottomNavigationBar: sections.length > 1
+            ? NavigationBar(
+                selectedIndex: _selectedIndex,
+                labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+                onDestinationSelected: _select,
+                destinations: [
+                  for (final section in sections)
+                    NavigationDestination(
+                      icon: Icon(section.icon),
+                      label: section.id == 'more'
+                          ? t.navigation.more
+                          : section.title,
+                      tooltip: section.id == 'more'
+                          ? t.navigation.more
+                          : section.title,
+                    ),
+                ],
+              )
+            : null,
+      ),
     );
   }
 
