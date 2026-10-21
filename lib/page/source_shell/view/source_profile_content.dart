@@ -142,7 +142,9 @@ class _SourceNotice {
 
   factory _SourceNotice.fromMap(Map<String, dynamic> data) => _SourceNotice(
     title: data['title']?.toString() ?? '通知',
-    content: data['content']?.toString() ?? '',
+    content: (data['content']?.toString() ?? '')
+        .replaceAll(RegExp(r'\n\s*\n+'), '\n')
+        .trim(),
     time: data['time']?.toString() ?? '',
     type: data['type']?.toString() ?? '',
     read: data['read'] == true,
@@ -526,6 +528,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
                     itemBuilder: (context, index) {
                       final notice = visible[index];
                       return ListTile(
+                        onTap: () => _showNoticeDetail(notice),
                         leading: Icon(
                           notice.isTracking
                               ? Icons.bookmark_added_outlined
@@ -567,6 +570,61 @@ class _ProfileBodyState extends State<_ProfileBody> {
       ],
     );
   }
+
+  Future<void> _showNoticeDetail(_SourceNotice notice) =>
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        showDragHandle: true,
+        builder: (sheetContext) => SafeArea(
+          child: SizedBox(
+            height: MediaQuery.sizeOf(sheetContext).height * 0.72,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 12, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          notice.title,
+                          style: Theme.of(sheetContext).textTheme.titleMedium,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: '关闭消息',
+                        onPressed: () => Navigator.pop(sheetContext),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                ),
+                if (notice.time.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+                    child: Text(
+                      notice.time,
+                      style: Theme.of(sheetContext).textTheme.bodySmall,
+                    ),
+                  ),
+                const Divider(height: 1),
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(20),
+                    child: SelectionArea(
+                      child: Text(
+                        notice.content.isEmpty ? '暂无内容' : notice.content,
+                        style: Theme.of(sheetContext).textTheme.bodyLarge,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
 
   Widget _jmHero(ColorScheme colors) {
     final account = _account;
