@@ -46,7 +46,9 @@ class PluginGridTile extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
 
     return Material(
-      color: Colors.transparent,
+      color: colorScheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: infoState.error != null
@@ -58,18 +60,35 @@ class PluginGridTile extends StatelessWidget {
                       : null)
             : null,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 8, 8, 2),
+          padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
           child: Column(
             children: [
               SizedBox(
                 width: 64,
                 height: 64,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(15),
-                  child: ColoredBox(
-                    color: colorScheme.surfaceContainerHighest,
-                    child: _buildIcon(context, info),
-                  ),
+                child: Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(15),
+                      child: ColoredBox(
+                        color: colorScheme.surfaceContainerHighest,
+                        child: _buildIcon(context, info),
+                      ),
+                    ),
+                    if (!enabled)
+                      Positioned(
+                        right: 2,
+                        bottom: 2,
+                        child: Tooltip(
+                          message: t.discover.disabled,
+                          child: Icon(
+                            Icons.pause_circle_filled_rounded,
+                            size: 18,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
               const SizedBox(height: 8),
@@ -86,71 +105,75 @@ class PluginGridTile extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      infoState.error != null
-                          ? t.common.retry
-                          : enabled
-                          ? ''
-                          : t.discover.disabled,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
+              if (isToggling)
+                const SizedBox(
+                  height: 34,
+                  child: Center(
+                    child: SizedBox(
+                      width: 17,
+                      height: 17,
+                      child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                   ),
-                  if (isToggling)
-                    const SizedBox(
-                      width: 40,
-                      height: 40,
-                      child: Center(
-                        child: SizedBox(
-                          width: 17,
-                          height: 17,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                PopupMenuButton<_PluginGridAction>(
+                  tooltip: t.discover.moreActions(title: title),
+                  padding: EdgeInsets.zero,
+                  child: Container(
+                    height: 34,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.tune_rounded,
+                          size: 15,
+                          color: colorScheme.onSurfaceVariant,
                         ),
-                      ),
-                    )
-                  else
-                    PopupMenuButton<_PluginGridAction>(
-                      tooltip: t.discover.moreActions(title: title),
-                      icon: const Icon(Icons.more_horiz, size: 20),
-                      padding: EdgeInsets.zero,
-                      onSelected: (action) {
-                        switch (action) {
-                          case _PluginGridAction.search:
-                            onSearch();
-                          case _PluginGridAction.settings:
-                            onSettings(title);
-                          case _PluginGridAction.toggle:
-                            onToggleEnabled(!enabled);
-                        }
-                      },
-                      itemBuilder: (_) => [
-                        PopupMenuItem(
-                          value: _PluginGridAction.search,
-                          enabled: enabled,
-                          child: Text(t.sourceShell.search),
-                        ),
-                        PopupMenuItem(
-                          value: _PluginGridAction.settings,
-                          child: Text(t.discover.settings),
-                        ),
-                        PopupMenuItem(
-                          value: _PluginGridAction.toggle,
-                          child: Text(
-                            enabled
-                                ? t.discover.disablePlugin
-                                : t.discover.enablePlugin,
-                          ),
+                        const SizedBox(width: 5),
+                        Text(
+                          t.discover.manage,
+                          style: Theme.of(context).textTheme.labelSmall,
                         ),
                       ],
                     ),
-                ],
-              ),
+                  ),
+                  onSelected: (action) {
+                    switch (action) {
+                      case _PluginGridAction.search:
+                        onSearch();
+                      case _PluginGridAction.settings:
+                        onSettings(title);
+                      case _PluginGridAction.toggle:
+                        onToggleEnabled(!enabled);
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    PopupMenuItem(
+                      value: _PluginGridAction.search,
+                      enabled: enabled,
+                      child: Text(t.sourceShell.search),
+                    ),
+                    PopupMenuItem(
+                      value: _PluginGridAction.settings,
+                      child: Text(t.discover.settings),
+                    ),
+                    PopupMenuItem(
+                      value: _PluginGridAction.toggle,
+                      child: Text(
+                        enabled
+                            ? t.discover.disablePlugin
+                            : t.discover.enablePlugin,
+                      ),
+                    ),
+                  ],
+                ),
             ],
           ),
         ),

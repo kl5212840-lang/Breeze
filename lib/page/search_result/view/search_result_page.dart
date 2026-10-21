@@ -14,6 +14,7 @@ import 'package:zephyr/page/search_result/view/source_list_categories.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_mapper.dart';
+import 'package:zephyr/widgets/comic_entry/models/models.dart';
 
 SearchEvent searchRetryEvent(
   SearchEvent lastSuccessful,
@@ -74,7 +75,6 @@ class _SearchResultPageState extends State<_SearchResultPage>
     with SingleTickerProviderStateMixin {
   late SearchEvent searchEvent;
   final _scrollController = ScrollController();
-  int pagesCount = 0;
   bool _detailedView = true;
   late AnimationController _animationController;
   late Animation<Offset> _slideAnimation;
@@ -129,15 +129,32 @@ class _SearchResultPageState extends State<_SearchResultPage>
     final colorScheme = Theme.of(context).colorScheme;
     final source = context.read<SearchCubit>().state.from;
     final quickCategories = sourceQuickCategories(source);
+    final resultState = context.watch<SearchBloc>().state;
+    final pageLabel = _pageLabel(resultState);
     return Scaffold(
       appBar: SearchResultBar(searchEvent: searchEvent),
       body: quickCategories.isEmpty
-          ? _bloc()
+          ? Column(
+              children: [
+                if (pageLabel != null)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: _jumpToPage,
+                      icon: const Icon(Icons.layers_outlined, size: 18),
+                      label: Text(pageLabel),
+                    ),
+                  ),
+                Expanded(child: _bloc()),
+              ],
+            )
           : Column(
               children: [
                 SourceQuickCategoryBar(
                   categories: quickCategories,
                   detailedView: _detailedView,
+                  pageLabel: pageLabel,
+                  onPageTap: _jumpToPage,
                   onViewChanged: (value) {
                     setState(() => _detailedView = value);
                     if (_scrollController.hasClients) {
@@ -193,27 +210,53 @@ class _SearchResultPageState extends State<_SearchResultPage>
               ),
               backgroundColor: colorScheme.secondaryContainer,
               foregroundColor: colorScheme.onSecondaryContainer,
-              onTap: () async {
-                final int? targetPage = await showNumberInputDialog(
-                  context: context,
-                  title: t.searchResult.jump,
-                  initialValue: searchEvent.page,
-                );
-
-                if (targetPage != null && context.mounted) {
-                  context.read<SearchBloc>().add(
-                    searchEvent.copyWith(
-                      page: targetPage,
-                      status: SearchStatus.initial,
-                    ),
-                  );
-                }
-              },
+              onTap: _jumpToPage,
             ),
           ],
         ),
       ),
     );
+  }
+
+  String? _pageLabel(SearchState state) {
+    if (state.currentPage < 1 || state.status == SearchStatus.initial) {
+      return null;
+    }
+    return state.totalPages > 0
+        ? t.searchResult.pageProgress(
+            page: state.currentPage,
+            pages: state.totalPages,
+          )
+        : t.searchResult.pageOnly(page: state.currentPage);
+  }
+
+  Future<void> _jumpToPage() async {
+    final state = context.read<SearchBloc>().state;
+    final targetPage = await showNumberInputDialog(
+      context: context,
+      title: t.searchResult.jump,
+      initialValue: state.currentPage > 0 ? state.currentPage : 1,
+      hintText: state.totalPages > 0 ? '1–${state.totalPages}' : null,
+    );
+    if (!mounted || targetPage == null) return;
+    if (targetPage < 1 ||
+        (state.totalPages > 0 && targetPage > state.totalPages)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            state.totalPages > 0
+                ? t.searchResult.pageOutOfRange(pages: state.totalPages)
+                : t.searchResult.pageMustBePositive,
+          ),
+        ),
+      );
+      return;
+    }
+    if (targetPage == state.currentPage) return;
+    context.read<SearchBloc>().add(
+      searchEvent.copyWith(page: targetPage, status: SearchStatus.initial),
+    );
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
   }
 
   Widget _bloc() => BlocBuilder<SearchBloc, SearchState>(
@@ -259,7 +302,7 @@ class _SearchResultPageState extends State<_SearchResultPage>
             }
             searchEvent = state.searchEvent;
           }
-          return _comicList(state);
+          return _comicList(context, state);
       }
     },
   );
@@ -268,17 +311,25 @@ class _SearchResultPageState extends State<_SearchResultPage>
     return event.searchStates.searchKeyword.trim();
   }
 
-  Widget _comicList(SearchState state) {
-    final source = context.read<SearchCubit>().state.from;
+  Widget _comicList(BuildContext context, SearchState state) {
+    final search = context.watch<SearchCubit>().state;
+    final source = search.from;
+    final blocked = blockedCategoryNames(
+      search.pluginExtern['blockedCategories'],
+    );
+    final entries = filterEntriesByBlockedCategories(
+      state.comics.map((item) => item.comic),
+      blocked,
+    );
     if (_detailedView && sourceQuickCategories(source).isNotEmpty) {
       if (state.status == SearchStatus.success &&
-          state.comics.isEmpty &&
+          entries.isEmpty &&
           state.hasReachedMax) {
         return Center(child: Text(t.comicList.nothingHere));
       }
       return SourceSearchDetailList(
         controller: _scrollController,
-        entries: state.comics.map((item) => item.comic).toList(),
+        entries: entries,
         hasReachedMax:
             state.hasReachedMax && state.status == SearchStatus.success,
         isLoadingMore: state.status == SearchStatus.loadingMore,
@@ -287,12 +338,12 @@ class _SearchResultPageState extends State<_SearchResultPage>
         onLoadMore: _fetchSearchResult,
       );
     }
-    return _genericList(state);
+    return _genericList(state, entries);
   }
 
-  Widget _genericList(SearchState state) {
+  Widget _genericList(SearchState state, List<UnifiedComicListItem> entries) {
     if (state.status == SearchStatus.success) {
-      if (state.comics.isEmpty && state.hasReachedMax) {
+      if (entries.isEmpty && state.hasReachedMax) {
         return Center(
           child: Text(
             t.comicList.nothingHere,
@@ -302,9 +353,7 @@ class _SearchResultPageState extends State<_SearchResultPage>
       }
     }
 
-    final list = mapToUnifiedComicSimplifyEntryInfoList(
-      state.comics.map((item) => item.comic),
-    );
+    final list = mapToUnifiedComicSimplifyEntryInfoList(entries);
 
     return PluginComicGridSliver(
       controller: _scrollController,

@@ -669,11 +669,17 @@ class Translations$settings$zh_CN {
 	/// zh-CN: '开启后收藏漫画时将自动加入追更列表'
 	String get autoFollowOnCollectSubtitle => '开启后收藏漫画时将自动加入追更列表';
 
-	/// zh-CN: '左手优化'
-	String get leftHandMode => '左手优化';
+	/// zh-CN: '操作按钮靠左'
+	String get leftHandMode => '操作按钮靠左';
 
-	/// zh-CN: '开启后将悬浮按钮等操作按钮移到屏幕左侧'
-	String get leftHandModeSubtitle => '开启后将悬浮按钮等操作按钮移到屏幕左侧';
+	/// zh-CN: '调整详情页和悬浮按钮的位置；阅读时点按翻页请在「阅读设置 > 手势」单独设置'
+	String get leftHandModeSubtitle => '调整详情页和悬浮按钮的位置；阅读时点按翻页请在「阅读设置 > 手势」单独设置';
+
+	/// zh-CN: '操作靠左'
+	String get actionsOnLeft => '操作靠左';
+
+	/// zh-CN: '操作靠右'
+	String get actionsOnRight => '操作靠右';
 
 	/// zh-CN: '点击封面开始阅读'
 	String get clickCoverToStartReading => '点击封面开始阅读';
@@ -1611,11 +1617,17 @@ class Translations$reader$zh_CN {
 	/// zh-CN: '全屏模式'
 	String get fullscreen => '全屏模式';
 
-	/// zh-CN: '左手模式'
-	String get leftHandMode => '左手模式';
+	/// zh-CN: '左侧点按翻页'
+	String get leftHandMode => '左侧点按翻页';
 
-	/// zh-CN: '右手模式'
-	String get rightHandMode => '右手模式';
+	/// zh-CN: '右侧点按翻页'
+	String get rightHandMode => '右侧点按翻页';
+
+	/// zh-CN: '点上半屏翻页'
+	String get topHalfNext => '点上半屏翻页';
+
+	/// zh-CN: '点下半屏翻页'
+	String get bottomHalfNext => '点下半屏翻页';
 
 	/// zh-CN: '反转左右方向键'
 	String get reverseHorizontalPageTurn => '反转左右方向键';
@@ -2970,14 +2982,23 @@ class Translations$about$zh_CN {
 	/// zh-CN: '网络错误'
 	String get networkError => '网络错误';
 
-	/// zh-CN: '项目地址'
-	String get projectAddress => '项目地址';
+	/// zh-CN: '当前版本'
+	String get projectAddress => '当前版本';
 
-	/// zh-CN: '喜欢这个项目吗？点个star支持一下吧！'
-	String get projectAddressDesc => '喜欢这个项目吗？点个star支持一下吧！';
+	/// zh-CN: '此版本基于 Breeze 开源项目，包含本分支的插件与 iOS 体验改进。'
+	String get projectAddressDesc => '此版本基于 Breeze 开源项目，包含本分支的插件与 iOS 体验改进。';
 
-	/// zh-CN: '前往 GitHub 仓库 (deretame/Breeze) ⭐'
-	String get projectLink => '前往 GitHub 仓库 (deretame/Breeze) ⭐';
+	/// zh-CN: '查看本分支 · kl5212840-lang/Breeze'
+	String get projectLink => '查看本分支 · kl5212840-lang/Breeze';
+
+	/// zh-CN: '原项目与致谢'
+	String get upstreamAddress => '原项目与致谢';
+
+	/// zh-CN: '感谢 Breeze 原项目及所有贡献者。本分支并非原项目的官方发行版。'
+	String get upstreamAddressDesc => '感谢 Breeze 原项目及所有贡献者。本分支并非原项目的官方发行版。';
+
+	/// zh-CN: '查看原项目 · deretame/Breeze'
+	String get upstreamProjectLink => '查看原项目 · deretame/Breeze';
 
 	/// zh-CN: '联系方式'
 	String get contact => '联系方式';
@@ -2994,8 +3015,8 @@ class Translations$about$zh_CN {
 	/// zh-CN: '在 GitHub Issues 中提出'
 	String get feedbackLink => '在 GitHub Issues 中提出';
 
-	/// zh-CN: '贡献者'
-	String get contributors => '贡献者';
+	/// zh-CN: '原项目贡献者'
+	String get contributors => '原项目贡献者';
 
 	/// zh-CN: '$count人'
 	String contributorsCount({required Object count}) => '${count}人';
@@ -3012,8 +3033,8 @@ class Translations$about$zh_CN {
 	/// zh-CN: '1. 项目性质与声明'
 	String get disclaimerItem1Title => '1. 项目性质与声明';
 
-	/// zh-CN: '本项目为开源软件，由本人独立开发并维护。项目以"原样"形式提供，开发者不对项目的功能完整性、稳定性、安全性或适用性作出任何明示或暗示的担保。'
-	String get disclaimerItem1Content => '本项目为开源软件，由本人独立开发并维护。项目以"原样"形式提供，开发者不对项目的功能完整性、稳定性、安全性或适用性作出任何明示或暗示的担保。';
+	/// zh-CN: '此版本基于 Breeze 开源项目开发，以"原样"形式提供。项目维护者不对功能完整性、稳定性、安全性或适用性作出任何明示或暗示的担保。'
+	String get disclaimerItem1Content => '此版本基于 Breeze 开源项目开发，以"原样"形式提供。项目维护者不对功能完整性、稳定性、安全性或适用性作出任何明示或暗示的担保。';
 
 	/// zh-CN: '2. 责任限制'
 	String get disclaimerItem2Title => '2. 责任限制';
@@ -3201,6 +3222,9 @@ class Translations$search$zh_CN {
 	/// zh-CN: '清空历史'
 	String get clearHistory => '清空历史';
 
+	/// zh-CN: '将清空所有漫画来源共用的搜索记录，此操作无法撤销。'
+	String get clearHistoryConfirm => '将清空所有漫画来源共用的搜索记录，此操作无法撤销。';
+
 	/// zh-CN: '当前：最近搜索在前'
 	String get newestFirst => '当前：最近搜索在前';
 
@@ -3305,6 +3329,9 @@ class Translations$discover$zh_CN {
 
 	/// zh-CN: '插件管理'
 	String get pluginManagement => '插件管理';
+
+	/// zh-CN: '管理'
+	String get manage => '管理';
 
 	/// zh-CN: '列表'
 	String get listLayout => '列表';
@@ -3416,6 +3443,21 @@ class Translations$searchResult$zh_CN {
 
 	/// zh-CN: '跳转'
 	String get jump => '跳转';
+
+	/// zh-CN: '第$page / $pages页'
+	String pageProgress({required Object page, required Object pages}) => '第${page} / ${pages}页';
+
+	/// zh-CN: '第$page页'
+	String pageOnly({required Object page}) => '第${page}页';
+
+	/// zh-CN: '请输入 1 至 $pages 之间的页码'
+	String pageOutOfRange({required Object pages}) => '请输入 1 至 ${pages} 之间的页码';
+
+	/// zh-CN: '请输入大于 0 的页码'
+	String get pageMustBePositive => '请输入大于 0 的页码';
+
+	/// zh-CN: '$count 页'
+	String itemPageCount({required Object count}) => '${count} 页';
 
 	/// zh-CN: '点击重试'
 	String get retry => '点击重试';
@@ -3680,6 +3722,12 @@ class Translations$changelog$zh_CN {
 
 	/// zh-CN: '发布于 $date'
 	String publishedAt({required Object date}) => '发布于 ${date}';
+
+	/// zh-CN: '本分支'
+	String get thisFork => '本分支';
+
+	/// zh-CN: '上游历史'
+	String get upstreamHistory => '上游历史';
 
 	/// zh-CN: '在浏览器中查看'
 	String get viewInBrowser => '在浏览器中查看';
@@ -4259,8 +4307,10 @@ extension on Translations {
 			'settings.cloudFavoritePreferredSubtitle' => '开启后漫画信息页的收藏按钮将执行云端收藏，原云端收藏菜单项切换为本地收藏',
 			'settings.autoFollowOnCollect' => '收藏自动追更',
 			'settings.autoFollowOnCollectSubtitle' => '开启后收藏漫画时将自动加入追更列表',
-			'settings.leftHandMode' => '左手优化',
-			'settings.leftHandModeSubtitle' => '开启后将悬浮按钮等操作按钮移到屏幕左侧',
+			'settings.leftHandMode' => '操作按钮靠左',
+			'settings.leftHandModeSubtitle' => '调整详情页和悬浮按钮的位置；阅读时点按翻页请在「阅读设置 > 手势」单独设置',
+			'settings.actionsOnLeft' => '操作靠左',
+			'settings.actionsOnRight' => '操作靠右',
 			'settings.clickCoverToStartReading' => '点击封面开始阅读',
 			'settings.clickCoverToStartReadingSubtitle' => '在漫画详情页点击封面直接开始阅读',
 			'settings.androidKeepAlive' => '后台保活',
@@ -4564,8 +4614,10 @@ extension on Translations {
 			'comicInfo.resolveEpsCountFailed' => ({required Object type}) => '无法解析阅读章节数: ${type}',
 			'reader.pageMode' => '翻页模式',
 			'reader.fullscreen' => '全屏模式',
-			'reader.leftHandMode' => '左手模式',
-			'reader.rightHandMode' => '右手模式',
+			'reader.leftHandMode' => '左侧点按翻页',
+			'reader.rightHandMode' => '右侧点按翻页',
+			'reader.topHalfNext' => '点上半屏翻页',
+			'reader.bottomHalfNext' => '点下半屏翻页',
 			'reader.reverseHorizontalPageTurn' => '反转左右方向键',
 			'reader.reverseHorizontalPageTurnSubtitle' => '交换左右方向键的翻页方向，适合从右到左的日漫',
 			'reader.webtoonTapPageTurn' => '条漫点击翻动',
@@ -4582,12 +4634,12 @@ extension on Translations {
 			'reader.pageNumberSubtitle' => '显示当前页/总页数',
 			'reader.networkStatus' => '网络状态',
 			'reader.networkStatusSubtitle' => 'Linux 下可能不准确',
+			_ => null,
+		} ?? switch (path) {
 			'reader.battery' => '电量',
 			'reader.time' => '时间',
 			'reader.verticalPositionTop' => '顶部',
 			'reader.verticalPositionBottom' => '底部',
-			_ => null,
-		} ?? switch (path) {
 			'reader.horizontalPositionLeft' => '左侧',
 			'reader.horizontalPositionCenter' => '居中',
 			'reader.horizontalPositionRight' => '右侧',
@@ -4992,21 +5044,24 @@ extension on Translations {
 			'about.loading' => '加载中...',
 			'about.fetchFailed' => '获取失败',
 			'about.networkError' => '网络错误',
-			'about.projectAddress' => '项目地址',
-			'about.projectAddressDesc' => '喜欢这个项目吗？点个star支持一下吧！',
-			'about.projectLink' => '前往 GitHub 仓库 (deretame/Breeze) ⭐',
+			'about.projectAddress' => '当前版本',
+			'about.projectAddressDesc' => '此版本基于 Breeze 开源项目，包含本分支的插件与 iOS 体验改进。',
+			'about.projectLink' => '查看本分支 · kl5212840-lang/Breeze',
+			'about.upstreamAddress' => '原项目与致谢',
+			'about.upstreamAddressDesc' => '感谢 Breeze 原项目及所有贡献者。本分支并非原项目的官方发行版。',
+			'about.upstreamProjectLink' => '查看原项目 · deretame/Breeze',
 			'about.contact' => '联系方式',
 			'about.contactDesc' => '有任何想法或问题，欢迎来找我聊聊~',
 			'about.feedback' => '反馈与建议',
 			'about.feedbackDesc' => '发现BUG或者有新的点子？',
 			'about.feedbackLink' => '在 GitHub Issues 中提出',
-			'about.contributors' => '贡献者',
+			'about.contributors' => '原项目贡献者',
 			'about.contributorsCount' => ({required Object count}) => '${count}人',
 			'about.contributionsTooltip' => ({required Object login, required Object count}) => '${login} (${count} 次提交)',
 			'about.disclaimer' => '免责声明',
 			'about.disclaimerTitle' => '开源项目免责声明',
 			'about.disclaimerItem1Title' => '1. 项目性质与声明',
-			'about.disclaimerItem1Content' => '本项目为开源软件，由本人独立开发并维护。项目以"原样"形式提供，开发者不对项目的功能完整性、稳定性、安全性或适用性作出任何明示或暗示的担保。',
+			'about.disclaimerItem1Content' => '此版本基于 Breeze 开源项目开发，以"原样"形式提供。项目维护者不对功能完整性、稳定性、安全性或适用性作出任何明示或暗示的担保。',
 			'about.disclaimerItem2Title' => '2. 责任限制',
 			'about.disclaimerItem2Content' => '开发者对因使用、修改或分发本项目（包括但不限于直接使用、二次开发或集成至其他项目）而导致的任何直接、间接、特殊、附带或后果性损害不承担任何责任。这些损害可能包括但不限于数据丢失、设备损坏、业务中断、利润损失或其他经济损失。',
 			'about.disclaimerItem3Title' => '3. 用户责任',
@@ -5060,6 +5115,7 @@ extension on Translations {
 			'search.selectedCount' => ({required Object count}) => '已选择 ${count} 项',
 			'search.history' => '搜索历史',
 			'search.clearHistory' => '清空历史',
+			'search.clearHistoryConfirm' => '将清空所有漫画来源共用的搜索记录，此操作无法撤销。',
 			'search.newestFirst' => '当前：最近搜索在前',
 			'search.oldestFirst' => '当前：最早搜索在前',
 			'search.descending' => '时间倒序',
@@ -5092,6 +5148,9 @@ extension on Translations {
 			'discover.search' => '搜索',
 			'discover.settings' => '设置',
 			'discover.pluginManagement' => '插件管理',
+			_ => null,
+		} ?? switch (path) {
+			'discover.manage' => '管理',
 			'discover.listLayout' => '列表',
 			'discover.gridLayout' => '网格',
 			'discover.moreActions' => ({required Object title}) => '${title} · 更多操作',
@@ -5100,8 +5159,6 @@ extension on Translations {
 			'discover.customOrder' => '自定义插件顺序',
 			'discover.resetOrder' => '恢复默认顺序',
 			'discover.noPlugins' => '暂无可用插件，去插件商店安装一个吧~',
-			_ => null,
-		} ?? switch (path) {
 			'discover.pluginStore' => '插件商店',
 			'discover.browseInstall' => '浏览安装',
 			'discover.noPluginForSearch' => '暂无可用插件，无法搜索',
@@ -5125,6 +5182,11 @@ extension on Translations {
 			'searchResult.returnToTop' => '返回顶部',
 			'searchResult.jumpToPage' => '跳转页面',
 			'searchResult.jump' => '跳转',
+			'searchResult.pageProgress' => ({required Object page, required Object pages}) => '第${page} / ${pages}页',
+			'searchResult.pageOnly' => ({required Object page}) => '第${page}页',
+			'searchResult.pageOutOfRange' => ({required Object pages}) => '请输入 1 至 ${pages} 之间的页码',
+			'searchResult.pageMustBePositive' => '请输入大于 0 的页码',
+			'searchResult.itemPageCount' => ({required Object count}) => '${count} 页',
 			'searchResult.retry' => '点击重试',
 			'comicList.defaultTitle' => '漫画列表',
 			'comicList.missingSource' => '缺少插件来源，无法加载列表',
@@ -5201,6 +5263,8 @@ extension on Translations {
 			'changelog.retry' => '重试',
 			'changelog.empty' => '暂无更新日志',
 			'changelog.publishedAt' => ({required Object date}) => '发布于 ${date}',
+			'changelog.thisFork' => '本分支',
+			'changelog.upstreamHistory' => '上游历史',
 			'changelog.viewInBrowser' => '在浏览器中查看',
 			'changelog.attachments' => '附件下载',
 			'webview.title' => '网页',

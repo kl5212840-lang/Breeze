@@ -8,12 +8,11 @@ import 'package:zephyr/network/utils/github_proxy.dart';
 import 'package:zephyr/service/update/check_update.dart';
 
 // --- 风格常量 ---
-const Color kBgColor = Color(0xFF12121C); // --bg-color
-const Color kCardBgColor = Color(0xCC232332); // --card-bg-color (80% opacity)
-const Color kPrimaryText = Color(0xFFE0E0E0); // --primary-text-color
-const Color kSecondaryText = Color(0xFFA0A0C0); // --secondary-text-color
-const Color kAccentColor = Color(0xFF00FFFF); // --accent-color
-const Color kAccentHover = Color(0xFF00E6E6);
+const Color kBgColor = Color(0xFF0C1115);
+const Color kCardBgColor = Color(0xFF1B232A);
+const Color kPrimaryText = Color(0xFFE5EAF0);
+const Color kSecondaryText = Color(0xFFB3C0CC);
+const Color kAccentColor = Color(0xFF91CEF2);
 const double kBorderRadius = 15.0;
 
 @RoutePage()
@@ -38,13 +37,12 @@ class _AboutPageState extends State<AboutPage> {
 
   Future<void> _initData() async {
     final version = await getAppVersion();
-    await _fetchContributors();
-
     if (mounted) {
       setState(() {
         _appVersion = version;
       });
     }
+    await _fetchContributors();
   }
 
   Future<void> _fetchContributors() async {
@@ -106,110 +104,87 @@ class _AboutPageState extends State<AboutPage> {
       ),
       body: Container(
         decoration: const BoxDecoration(
-          // CSS: background: linear-gradient(135deg, #1a1a2e 0%, #12121c 100%);
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF1A1A2E), Color(0xFF12121C)],
+            colors: [Color(0xFF101A21), kBgColor],
           ),
         ),
-        child: Stack(
-          children: [
-            SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(
-                20,
-                80,
-                20,
-                60,
-              ), // Top padding for AppBar
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    maxWidth: 600,
-                  ), // container max-width
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      // --- Header ---
-                      _buildHeader(),
-                      const SizedBox(height: 30),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(
+            20,
+            80,
+            20,
+            60,
+          ), // Top padding for AppBar
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: 600,
+              ), // container max-width
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  // --- Header ---
+                  _buildHeader(),
+                  const SizedBox(height: 30),
 
-                      // --- Sections ---
-                      _buildSection(
-                        icon: "🚀",
-                        title: t.about.projectAddress,
-                        desc: t.about.projectAddressDesc,
-                        linkText: t.about.projectLink,
-                        url: "https://github.com/deretame/Breeze",
-                        delay: 200,
-                      ),
-
-                      // --- Contributors Section ---
-                      _buildContributorsSection(),
-
-                      _buildSection(
-                        icon: "💬",
-                        title: t.about.contact,
-                        desc: t.about.contactDesc,
-                        linkText: "Telegram: @breeze_zh_cn",
-                        url: "https://t.me/breeze_zh_cn",
-                        delay: 400,
-                      ),
-                      _buildSection(
-                        icon: "🛠️",
-                        title: t.about.feedback,
-                        desc: t.about.feedbackDesc,
-                        linkText: t.about.feedbackLink,
-                        url: "https://github.com/deretame/Breeze/issues",
-                        delay: 600,
-                      ),
-
-                      const SizedBox(height: 30),
-
-                      // --- Disclaimer Button ---
-                      OutlinedButton(
-                        onPressed: _showDisclaimerDialog,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: kAccentColor,
-                          side: const BorderSide(color: kAccentColor, width: 2),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 30,
-                            vertical: 15,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(kBorderRadius),
-                          ),
-                          textStyle: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1,
-                          ),
-                        ),
-                        child: Text(t.about.disclaimer),
-                      ),
-                      const SizedBox(height: 50),
-                    ],
+                  // --- Sections ---
+                  _buildSection(
+                    icon: Icons.fork_right_rounded,
+                    title: t.about.projectAddress,
+                    desc: t.about.projectAddressDesc,
+                    linkText: t.about.projectLink,
+                    url: "https://github.com/kl5212840-lang/Breeze",
                   ),
-                ),
-              ),
-            ),
 
-            // --- Bottom Version Bar ---
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                color: const Color(0xE612121C), // slightly transparent
-                alignment: Alignment.center,
-                child: Text(
-                  t.about.version(version: _appVersion),
-                  style: const TextStyle(color: kSecondaryText, fontSize: 14),
-                ),
+                  _buildSection(
+                    icon: Icons.auto_stories_outlined,
+                    title: t.about.upstreamAddress,
+                    desc: t.about.upstreamAddressDesc,
+                    linkText: t.about.upstreamProjectLink,
+                    url: "https://github.com/deretame/Breeze",
+                  ),
+
+                  // --- Contributors Section ---
+                  _buildContributorsSection(),
+
+                  _buildSection(
+                    icon: Icons.bug_report_outlined,
+                    title: t.about.feedback,
+                    desc: t.about.feedbackDesc,
+                    linkText: t.about.feedbackLink,
+                    url: "https://github.com/kl5212840-lang/Breeze/issues",
+                  ),
+
+                  const SizedBox(height: 30),
+
+                  // --- Disclaimer Button ---
+                  OutlinedButton(
+                    onPressed: _showDisclaimerDialog,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: kAccentColor,
+                      side: const BorderSide(color: kAccentColor, width: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 30,
+                        vertical: 15,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(kBorderRadius),
+                      ),
+                      textStyle: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                    child: Text(t.about.disclaimer),
+                  ),
+                  const SizedBox(height: 50),
+                ],
               ),
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -220,60 +195,38 @@ class _AboutPageState extends State<AboutPage> {
   Widget _buildHeader() {
     return Column(
       children: [
-        // Avatar with glow
-        Container(
-          width: 120,
-          height: 120,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: kAccentColor, width: 4),
-            boxShadow: [
-              BoxShadow(
-                color: kAccentColor.withValues(alpha: 0.7),
-                blurRadius: 20,
-              ),
-            ],
-            image: const DecorationImage(
-              // 如果网络图片加载慢，可以换成 asset/image/app-icon.png
-              image: NetworkImage(
-                "https://avatars.githubusercontent.com/u/81013544",
-              ),
-              fit: BoxFit.cover,
-            ),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(26),
+          child: Image.asset(
+            'asset/image/app-icon.png',
+            width: 104,
+            height: 104,
           ),
         ),
         const SizedBox(height: 20),
-        // Name
         const Text(
-          "windy",
+          "Breeze",
           style: TextStyle(
-            fontSize: 40,
+            fontSize: 32,
             fontWeight: FontWeight.bold,
             color: Colors.white,
-            shadows: [Shadow(color: kAccentColor, blurRadius: 10)],
           ),
         ),
         const SizedBox(height: 5),
-        const Text(
-          "BREEZE PROJECT",
-          style: TextStyle(
-            fontSize: 18,
-            color: kAccentColor,
-            letterSpacing: 2,
-            fontWeight: FontWeight.w400,
-          ),
+        Text(
+          t.about.version(version: _appVersion),
+          style: const TextStyle(fontSize: 14, color: kAccentColor),
         ),
       ],
     );
   }
 
   Widget _buildSection({
-    required String icon,
+    required IconData icon,
     required String title,
     required String desc,
     required String linkText,
     required String url,
-    required int delay,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 25),
@@ -302,7 +255,7 @@ class _AboutPageState extends State<AboutPage> {
               children: [
                 Row(
                   children: [
-                    Text(icon, style: const TextStyle(fontSize: 20)),
+                    Icon(icon, size: 22, color: kAccentColor),
                     const SizedBox(width: 10),
                     Text(
                       title,
@@ -360,7 +313,11 @@ class _AboutPageState extends State<AboutPage> {
           children: [
             Row(
               children: [
-                const Text("❤️", style: TextStyle(fontSize: 20)),
+                const Icon(
+                  Icons.favorite_outline_rounded,
+                  size: 22,
+                  color: kAccentColor,
+                ),
                 const SizedBox(width: 10),
                 Text(
                   t.about.contributors,
@@ -370,11 +327,13 @@ class _AboutPageState extends State<AboutPage> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                const Spacer(),
-                Text(
-                  t.about.contributorsCount(count: _contributors.length),
-                  style: const TextStyle(color: kSecondaryText, fontSize: 14),
-                ),
+                if (!_contributorsLoading && _contributorsError == null) ...[
+                  const Spacer(),
+                  Text(
+                    t.about.contributorsCount(count: _contributors.length),
+                    style: const TextStyle(color: kSecondaryText, fontSize: 14),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 10),

@@ -8,6 +8,7 @@ import 'package:zephyr/page/search/method/on_search.dart';
 import 'package:zephyr/page/search/widget/history.dart';
 import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 import 'package:zephyr/page/search/widget/source_select_dialog.dart';
+import 'package:zephyr/page/search_result/view/source_search_capabilities.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/util/debouncer.dart';
@@ -109,13 +110,12 @@ class _SearchBarState extends State<SearchBar> {
                 },
               ),
             ),
-            IconButton(
-              icon: const Icon(Icons.tune),
-              onPressed: () async {
-                // dialog 回写前丢弃残留输入同步，避免旧防抖把 dialog 回写盖掉。
-                _keywordDebouncer.cancel();
-                final searchCubit = context.read<SearchCubit>();
-                if (widget.aggregateMode) {
+            if (widget.aggregateMode)
+              IconButton(
+                icon: const Icon(Icons.tune),
+                onPressed: () async {
+                  _keywordDebouncer.cancel();
+                  final searchCubit = context.read<SearchCubit>();
                   final options = _sourceOptions(context);
                   if (_aggregateSources.isEmpty) {
                     _aggregateSources = {
@@ -133,15 +133,24 @@ class _SearchBarState extends State<SearchBar> {
                         aggregateSources: Map<String, bool>.from(selected),
                       ),
                     );
-                    setState(() {
-                      _aggregateSources = selected;
-                    });
+                    setState(() => _aggregateSources = selected);
                   }
-                  return;
-                }
-                await _showSingleSourceAdvancedSearch(context);
-              },
-            ),
+                },
+              )
+            else
+              FutureBuilder<bool>(
+                future: hasUniqueAdvancedFields(state.from),
+                builder: (context, snapshot) => snapshot.data == true
+                    ? IconButton(
+                        tooltip: t.search.advancedSearchOptions,
+                        icon: const Icon(Icons.tune),
+                        onPressed: () async {
+                          _keywordDebouncer.cancel();
+                          await _showSingleSourceAdvancedSearch(context);
+                        },
+                      )
+                    : const SizedBox.shrink(),
+              ),
           ],
         ),
       ),
@@ -194,10 +203,13 @@ class _SearchBarState extends State<SearchBar> {
       final data = Map<String, dynamic>.from(
         (response['data'] as Map?) ?? const <String, dynamic>{},
       );
-      final fields = ((scheme['fields'] as List?) ?? const [])
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
+      final fields = uniqueAdvancedFields(
+        source,
+        ((scheme['fields'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList(),
+      );
 
       if (fields.isEmpty) {
         return null;

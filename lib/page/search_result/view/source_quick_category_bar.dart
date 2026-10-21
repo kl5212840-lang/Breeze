@@ -5,6 +5,8 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/page/search_result/view/source_list_filter_bar.dart';
+import 'package:zephyr/page/search_result/view/source_list_categories.dart';
+import 'package:zephyr/page/search_result/view/source_search_capabilities.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
 
 /// Source-provided categories are a blocklist, not an inclusive search filter.
@@ -14,11 +16,15 @@ class SourceQuickCategoryBar extends StatefulWidget {
     required this.categories,
     required this.detailedView,
     required this.onViewChanged,
+    this.pageLabel,
+    this.onPageTap,
   });
 
   final List<String> categories;
   final bool detailedView;
   final ValueChanged<bool> onViewChanged;
+  final String? pageLabel;
+  final VoidCallback? onPageTap;
 
   @override
   State<SourceQuickCategoryBar> createState() => _SourceQuickCategoryBarState();
@@ -31,19 +37,6 @@ class _SourceQuickCategoryBarState extends State<SourceQuickCategoryBar> {
   void dispose() {
     _searchTimer?.cancel();
     super.dispose();
-  }
-
-  List<String> _selected(Object? value) {
-    if (value is List) {
-      return value.map((item) => item.toString()).toList();
-    }
-    if (value is Map) {
-      return value.entries
-          .where((entry) => entry.value == true)
-          .map((entry) => entry.key.toString())
-          .toList();
-    }
-    return const [];
   }
 
   void _scheduleSearch() {
@@ -66,7 +59,7 @@ class _SourceQuickCategoryBarState extends State<SourceQuickCategoryBar> {
     final cubit = context.read<SearchCubit>();
     final current = cubit.state;
     final extern = <String, dynamic>{...current.pluginExtern};
-    final blocked = _selected(extern['blockedCategories']).toSet();
+    final blocked = blockedCategoryNames(extern['blockedCategories']);
     final isBlocking = blocked.add(category);
     if (!isBlocking) blocked.remove(category);
     extern['blockedCategories'] = blocked.toList();
@@ -110,19 +103,24 @@ class _SourceQuickCategoryBarState extends State<SourceQuickCategoryBar> {
   Widget build(BuildContext context) {
     return BlocBuilder<SearchCubit, SearchStates>(
       builder: (context, state) {
-        final blocked = _selected(
+        final blocked = blockedCategoryNames(
           state.pluginExtern['blockedCategories'],
-        ).toSet();
-        return SourceListFilterBar(
-          categories: widget.categories,
-          blockedCategories: blocked,
-          onCategoryTap: (category) => _toggleCategory(context, category),
-          onClearBlockedCategories: _clearBlockedCategories,
-          sortValue: state.sortBy.toString(),
-          sortOptions: const {'1': '最新', '2': '最早', '3': '最多喜欢', '4': '最多观看'},
-          onSortChanged: (value) => _changeSort(context, int.parse(value)),
-          detailedView: widget.detailedView,
-          onViewChanged: widget.onViewChanged,
+        );
+        return FutureBuilder<List<Map<String, dynamic>>>(
+          future: sourceAdvancedFields(state.from),
+          builder: (context, snapshot) => SourceListFilterBar(
+            categories: widget.categories,
+            blockedCategories: blocked,
+            onCategoryTap: (category) => _toggleCategory(context, category),
+            onClearBlockedCategories: _clearBlockedCategories,
+            sortValue: state.sortBy.toString(),
+            sortOptions: sourceSortOptions(snapshot.data ?? const []),
+            onSortChanged: (value) => _changeSort(context, int.parse(value)),
+            detailedView: widget.detailedView,
+            onViewChanged: widget.onViewChanged,
+            pageLabel: widget.pageLabel,
+            onPageTap: widget.onPageTap,
+          ),
         );
       },
     );

@@ -1,6 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart' hide SearchBar;
 import 'package:zephyr/config/global/global_setting.dart';
+import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/plugin_function/cubit/plugin_function_cubit.dart';
 import 'package:zephyr/page/search/method/on_search.dart';
 import 'package:zephyr/page/search/widget/history.dart';
@@ -51,16 +52,16 @@ class _SourceSearchLandingBody extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('清空搜索历史？'),
-        content: const Text('搜索历史由所有漫画来源共用。清空后无法恢复。'),
+        title: Text(t.search.clearHistory),
+        content: Text(t.search.clearHistoryConfirm),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('取消'),
+            child: Text(t.common.cancel),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('清空'),
+            child: Text(t.search.clearHistory),
           ),
         ],
       ),

@@ -7,6 +7,7 @@ import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
+import 'package:zephyr/page/search_result/view/source_search_capabilities.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/widgets/multi_choice_list_dialog.dart';
 import 'package:zephyr/widgets/toast.dart';
@@ -50,11 +51,17 @@ class SearchResultBar extends StatelessWidget implements PreferredSizeWidget {
             ),
 
             // 右侧高级搜索按钮
-            IconButton(
-              icon: const Icon(Icons.tune),
-              onPressed: () {
-                _search(context);
-              },
+            FutureBuilder<bool>(
+              future: hasUniqueAdvancedFields(
+                context.read<SearchCubit>().state.from,
+              ),
+              builder: (context, snapshot) => snapshot.data == true
+                  ? IconButton(
+                      tooltip: t.search.advancedSearchOptions,
+                      icon: const Icon(Icons.tune),
+                      onPressed: () => _search(context),
+                    )
+                  : const SizedBox.shrink(),
             ),
             const SizedBox(width: 8),
           ],
@@ -148,10 +155,13 @@ class SearchResultBar extends StatelessWidget implements PreferredSizeWidget {
       final data = Map<String, dynamic>.from(
         (response['data'] as Map?) ?? const <String, dynamic>{},
       );
-      final fields = ((scheme['fields'] as List?) ?? const [])
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
+      final fields = uniqueAdvancedFields(
+        from,
+        ((scheme['fields'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList(),
+      );
 
       if (fields.isEmpty) {
         return null;

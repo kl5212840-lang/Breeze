@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -5,15 +7,21 @@ import 'package:intl/intl.dart';
 import 'package:loading_animation_widget/loading_animation_widget.dart';
 import 'package:markdown_widget/markdown_widget.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:zephyr/page/change_log/release_history.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/network/http/wind_http.dart';
 import 'package:zephyr/network/utils/github_proxy.dart';
 import 'package:zephyr/service/update/json/github_release_json.dart';
 import 'package:zephyr/util/error_filter.dart';
 
-const _proxyReleasesApiUrl = '$breezeGithubApi/repos/deretame/Breeze/releases';
-const _githubReleasesApiUrl =
+const _upstreamProxyReleasesApiUrl =
+    '$breezeGithubApi/repos/deretame/Breeze/releases';
+const _upstreamGithubReleasesApiUrl =
     'https://api.github.com/repos/deretame/Breeze/releases';
+const _forkReleasesApiUrl =
+    'https://api.github.com/repos/kl5212840-lang/Breeze/releases';
+
+enum _ReleaseHistorySource { fork, upstream }
 
 @RoutePage()
 class ChangelogPage extends StatefulWidget {
@@ -35,6 +43,9 @@ class _ChangelogPageState extends State<ChangelogPage> {
   static const int _perPage = 20; // 每次请求多少条
   bool _hasMore = true; // 是否还有更多数据
   bool _isFetching = false;
+  _ReleaseHistorySource _source = Platform.isIOS
+      ? _ReleaseHistorySource.fork
+      : _ReleaseHistorySource.upstream;
 
   @override
   void initState() {
@@ -73,48 +84,57 @@ class _ChangelogPageState extends State<ChangelogPage> {
     }
 
     try {
-      final requestPage = refresh ? 1 : _page;
+      var source = refresh
+          ? (Platform.isIOS
+                ? _ReleaseHistorySource.fork
+                : _ReleaseHistorySource.upstream)
+          : _source;
+      var requestPage = refresh ? 1 : _page;
+      List<GithubReleaseJson> releases;
+      bool hasMore;
 
-      List<GithubReleaseJson>? newData;
-      for (final url in [_proxyReleasesApiUrl, _githubReleasesApiUrl]) {
-        try {
-          final response = await fetch(
-            url,
-            query: {'page': requestPage, 'per_page': _perPage},
-            headers: {'Accept': 'application/vnd.github.v3+json'},
-          );
-
-          if (response.ok) {
-            newData = githubReleaseJsonFromJson(response.text);
-            break;
+      // fork 的记录结束后，继续展示 v3.0.35 及以前的上游历史。
+      // 如果上游后来新增版本，跳过它们而不打乱本分支的版本顺序。
+      while (true) {
+        final fetched = await _fetchReleasePage(source, requestPage);
+        if (source == _ReleaseHistorySource.fork && fetched.length < _perPage) {
+          hasMore = true;
+          if (fetched.isEmpty) {
+            source = _ReleaseHistorySource.upstream;
+            requestPage = 1;
+            continue;
           }
-        } catch (_) {
-          // 当前请求失败时继续尝试下一个地址。
+          releases = fetched;
+          source = _ReleaseHistorySource.upstream;
+          requestPage = 0;
+        } else {
+          hasMore = fetched.length >= _perPage;
+          releases = source == _ReleaseHistorySource.upstream && Platform.isIOS
+              ? fetched
+                    .where((item) => isUpstreamHistoryVersion(item.tagName))
+                    .toList()
+              : fetched;
         }
+        if (releases.isNotEmpty || !hasMore) break;
+        requestPage++;
       }
 
-      final releases = newData;
-      if (releases != null) {
-        if (mounted) {
-          setState(() {
-            if (refresh) {
-              _releases = releases;
-              _errorMsg = null; // 刷新成功清除错误
-            } else {
-              _releases.addAll(releases);
-            }
-
-            // 更新页码和是否还有更多数据
-            _page = requestPage + 1;
-            // 如果返回的数据条数少于每页最大条数，说明没有下一页了
-            _hasMore = releases.length >= _perPage;
-
-            // 首次加载完成
-            _isLoading = false;
-          });
-        }
-      } else {
-        throw Exception('所有更新日志请求地址均失败');
+      if (mounted) {
+        setState(() {
+          if (refresh) {
+            _releases = releases;
+            _errorMsg = null;
+          } else {
+            final knownTags = _releases.map((item) => item.tagName).toSet();
+            _releases.addAll(
+              releases.where((item) => knownTags.add(item.tagName)),
+            );
+          }
+          _source = source;
+          _page = requestPage + 1;
+          _hasMore = hasMore;
+          _isLoading = false;
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -122,12 +142,18 @@ class _ChangelogPageState extends State<ChangelogPage> {
         if (_releases.isEmpty && refresh) {
           setState(() {
             _isLoading = false;
-            _errorMsg = normalizeSearchErrorMessage(e);
+            _errorMsg = userFacingErrorMessage(e);
           });
         } else {
           // 如果是加载更多时出错，提示 Toast 或在底部显示失败
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(t.changelog.loadFailedWithError(error: e))),
+            SnackBar(
+              content: Text(
+                t.changelog.loadFailedWithError(
+                  error: userFacingErrorMessage(e),
+                ),
+              ),
+            ),
           );
         }
       }
@@ -137,6 +163,34 @@ class _ChangelogPageState extends State<ChangelogPage> {
         setState(() {});
       }
     }
+  }
+
+  Future<List<GithubReleaseJson>> _fetchReleasePage(
+    _ReleaseHistorySource source,
+    int page,
+  ) async {
+    final urls = source == _ReleaseHistorySource.fork
+        ? [
+            ...mirrorBaseUrls.map((base) => '$base$_forkReleasesApiUrl'),
+            _forkReleasesApiUrl,
+          ]
+        : const [_upstreamProxyReleasesApiUrl, _upstreamGithubReleasesApiUrl];
+    for (final url in urls) {
+      try {
+        final response = await fetch(
+          url,
+          query: {'page': page, 'per_page': _perPage},
+          headers: const {
+            'Accept': 'application/vnd.github+json',
+            'User-Agent': 'Breeze',
+          },
+        );
+        if (response.ok) return githubReleaseJsonFromJson(response.text);
+      } catch (_) {
+        // 当前地址不可用时尝试下一个镜像或 GitHub 官方接口。
+      }
+    }
+    throw Exception('所有更新日志请求地址均失败');
   }
 
   Future<void> _launchUrl(String urlString) async {
@@ -240,10 +294,17 @@ class _ChangelogPageState extends State<ChangelogPage> {
               final release = _releases[index];
               return Container(
                 key: ValueKey(release.id), // 添加 Key 提高性能
-                child: _ReleaseCard(release: release, onLinkTap: _launchUrl)
-                    .animate()
-                    .fade(duration: 400.ms)
-                    .slideY(begin: 0.1, end: 0, curve: Curves.easeOutQuad),
+                child:
+                    _ReleaseCard(
+                          release: release,
+                          isHistorical:
+                              Platform.isIOS &&
+                              isUpstreamHistoryVersion(release.tagName),
+                          onLinkTap: _launchUrl,
+                        )
+                        .animate()
+                        .fade(duration: 400.ms)
+                        .slideY(begin: 0.1, end: 0, curve: Curves.easeOutQuad),
               );
             },
           ),
@@ -255,9 +316,14 @@ class _ChangelogPageState extends State<ChangelogPage> {
 
 class _ReleaseCard extends StatelessWidget {
   final GithubReleaseJson release;
+  final bool isHistorical;
   final Function(String) onLinkTap;
 
-  const _ReleaseCard({required this.release, required this.onLinkTap});
+  const _ReleaseCard({
+    required this.release,
+    required this.isHistorical,
+    required this.onLinkTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -308,6 +374,15 @@ class _ReleaseCard extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 8),
+                        if (Platform.isIOS)
+                          _TagChip(
+                            text: isHistorical
+                                ? t.changelog.upstreamHistory
+                                : t.changelog.thisFork,
+                            color: isHistorical
+                                ? colorScheme.onSurfaceVariant
+                                : colorScheme.primary,
+                          ),
                         if (release.prerelease)
                           _TagChip(text: 'Pre', color: Colors.orange),
                         if (release.draft) ...[
