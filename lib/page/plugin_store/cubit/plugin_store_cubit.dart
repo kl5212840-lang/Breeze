@@ -7,6 +7,7 @@ import 'package:zephyr/plugin/plugin_install_service.dart';
 import 'package:zephyr/plugin/utils/plugin_cloud_download_utils.dart';
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/widgets/toast.dart';
 
 class PluginStoreState {
@@ -67,7 +68,9 @@ class PluginStoreCubit extends Cubit<PluginStoreState> {
       emit(
         state.copyWith(
           cloudLoading: false,
-          cloudError: t.plugin.cloudPluginsLoadFailed(error: e),
+          cloudError: t.plugin.cloudPluginsLoadFailed(
+            error: userFacingErrorMessage(e),
+          ),
         ),
       );
     }

@@ -185,7 +185,25 @@ class _HistoryWidgetState extends State<HistoryWidget> {
     );
   }
 
-  void _resetHistory() {
+  Future<void> _resetHistory() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(t.search.clearHistory),
+        content: Text(t.search.clearHistoryConfirm),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(t.common.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(t.search.clearHistory),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
     final globalSettingCubit = context.read<GlobalSettingCubit>();
     globalSettingCubit.resetState(
       (current, defaults) =>

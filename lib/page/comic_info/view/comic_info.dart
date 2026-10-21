@@ -117,6 +117,7 @@ class _ComicInfoState extends State<_ComicInfo>
   String _title = "";
   late final EpisodeDownloadController _dlController =
       EpisodeDownloadController();
+  final ScrollController _episodeScrollController = ScrollController();
   // 已折叠的章节组（存组标题 key）。默认全展开；漫画切换时清空。
   final Set<String> _collapsedGroups = {};
   String _collapsedForComic = '';
@@ -171,6 +172,7 @@ class _ComicInfoState extends State<_ComicInfo>
 
   @override
   void dispose() {
+    _episodeScrollController.dispose();
     _dlController.dispose();
     super.dispose();
   }
@@ -307,8 +309,8 @@ class _ComicInfoState extends State<_ComicInfo>
                       icon: const Icon(Icons.swap_horiz_rounded, size: 18),
                       label: Text(
                         leftHanded
-                            ? t.reader.rightHandMode
-                            : t.reader.leftHandMode,
+                            ? t.settings.actionsOnRight
+                            : t.settings.actionsOnLeft,
                       ),
                     );
                     final readButton = _ReadActionButton(
@@ -472,6 +474,16 @@ class _ComicInfoState extends State<_ComicInfo>
                             ),
                           ),
                         ],
+                        if (comicInfo.description.trim().isNotEmpty) ...[
+                          _buildDivider(context),
+                          _SectionCard(
+                            child: _DescriptionCard(
+                              description: comicInfo.description.let(
+                                convertChineseForDisplay,
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -497,30 +509,44 @@ class _ComicInfoState extends State<_ComicInfo>
               ),
               // 章节列表：单组走扁平 Sliver，多组直接展开为多个顶层 sliver
               // （组头 pinned + 组内容），后组吸顶时自然顶掉前组。
-              ..._buildEpisodeSlivers(
-                context: context,
-                displayEps: displayEps,
-                showDownloadUi: showDownloadUi,
-                allInfo: comicInfoDyn,
-                epsLength: normalComicAllInfo.eps.length,
-                downloadDisabledReason: normalComicAllInfo.allowDownloadReason,
-              ),
-              if (comicInfo.description.trim().isNotEmpty)
-                _constrainedSliver(
-                  SliverToBoxAdapter(
-                    child: Column(
-                      children: [
-                        _buildDivider(context),
-                        _SectionCard(
-                          child: _DescriptionCard(
-                            description: comicInfo.description.let(
-                              convertChineseForDisplay,
-                            ),
-                          ),
+              if (displayEps.length > 8)
+                SliverToBoxAdapter(
+                  child: SizedBox(
+                    height: (MediaQuery.sizeOf(context).height * 0.48).clamp(
+                      280.0,
+                      460.0,
+                    ),
+                    child: Scrollbar(
+                      controller: _episodeScrollController,
+                      thumbVisibility: true,
+                      thickness: 3,
+                      child: CustomScrollView(
+                        key: PageStorageKey(
+                          'chapters:${widget.from}:$_comicId',
                         ),
-                      ],
+                        controller: _episodeScrollController,
+                        slivers: _buildEpisodeSlivers(
+                          context: context,
+                          displayEps: displayEps,
+                          showDownloadUi: showDownloadUi,
+                          allInfo: comicInfoDyn,
+                          epsLength: normalComicAllInfo.eps.length,
+                          downloadDisabledReason:
+                              normalComicAllInfo.allowDownloadReason,
+                        ),
+                      ),
                     ),
                   ),
+                )
+              else
+                ..._buildEpisodeSlivers(
+                  context: context,
+                  displayEps: displayEps,
+                  showDownloadUi: showDownloadUi,
+                  allInfo: comicInfoDyn,
+                  epsLength: normalComicAllInfo.eps.length,
+                  downloadDisabledReason:
+                      normalComicAllInfo.allowDownloadReason,
                 ),
               if (comicInfo.creator.name.trim().isNotEmpty ||
                   comicInfo.creator.avatar.url.trim().isNotEmpty)
@@ -851,7 +877,12 @@ class _ComicInfoState extends State<_ComicInfo>
   }
 
   // 切换章节列表的倒序/正序显示
-  void _toggleOrder() => setState(() => _isReversed = !_isReversed);
+  void _toggleOrder() {
+    if (_episodeScrollController.hasClients) {
+      _episodeScrollController.jumpTo(0);
+    }
+    setState(() => _isReversed = !_isReversed);
+  }
 
   /// 章节计数文案：只显示总数 `N 话`。各组明细已在组头上（`组名 · N 话`），
   /// 头部 badge 不再重复，窄屏下省位置。
@@ -1624,8 +1655,14 @@ class _DescriptionCardState extends State<_DescriptionCard> {
             maxLines: _expanded ? null : 2,
           ),
           if (widget.description.length > 45) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 2),
             TextButton.icon(
+              style: TextButton.styleFrom(
+                alignment: Alignment.centerLeft,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                minimumSize: const Size(0, 40),
+                visualDensity: VisualDensity.compact,
+              ),
               onPressed: () => setState(() => _expanded = !_expanded),
               icon: Icon(_expanded ? Icons.expand_less : Icons.expand_more),
               label: Text(

@@ -15,6 +15,8 @@ class SourceListFilterBar extends StatelessWidget {
     required this.detailedView,
     required this.onViewChanged,
     this.viewToggleKey,
+    this.pageLabel,
+    this.onPageTap,
   });
 
   final List<String> categories;
@@ -27,6 +29,8 @@ class SourceListFilterBar extends StatelessWidget {
   final bool detailedView;
   final ValueChanged<bool> onViewChanged;
   final Key? viewToggleKey;
+  final String? pageLabel;
+  final VoidCallback? onPageTap;
 
   static const _categoryColors = <Color>[
     Color(0xFFF4B546),
@@ -88,13 +92,20 @@ class SourceListFilterBar extends StatelessWidget {
           height: 44,
           child: Row(
             children: [
-              const SizedBox(width: 16),
+              const SizedBox(width: 12),
               if (blockedCategories.isNotEmpty &&
                   onClearBlockedCategories != null)
-                TextButton(
-                  onPressed: onClearBlockedCategories,
-                  child: Text('清除屏蔽 (${blockedCategories.length})'),
-                )
+                if (pageLabel != null)
+                  IconButton(
+                    tooltip: '清除屏蔽 (${blockedCategories.length})',
+                    onPressed: onClearBlockedCategories,
+                    icon: const Icon(Icons.filter_alt_off_outlined),
+                  )
+                else
+                  TextButton(
+                    onPressed: onClearBlockedCategories,
+                    child: Text('清除屏蔽 (${blockedCategories.length})'),
+                  )
               else if (categories.isNotEmpty)
                 Text(
                   '点标签可屏蔽',
@@ -103,26 +114,42 @@ class SourceListFilterBar extends StatelessWidget {
                     color: scheme.onSurfaceVariant,
                   ),
                 ),
+              if (pageLabel != null && onPageTap != null)
+                TextButton(
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 5),
+                    minimumSize: const Size(0, 40),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onPressed: onPageTap,
+                  child: Text(pageLabel!),
+                ),
               const Spacer(),
-              PopupMenuButton<String>(
-                tooltip: '排序',
-                initialValue: sortValue,
-                onSelected: onSortChanged,
-                itemBuilder: (context) => [
-                  for (final option in sortOptions.entries)
-                    PopupMenuItem(value: option.key, child: Text(option.value)),
-                ],
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(sortOptions[sortValue] ?? sortOptions.values.first),
-                      const Icon(Icons.arrow_drop_down),
-                    ],
+              if (sortOptions.isNotEmpty)
+                PopupMenuButton<String>(
+                  tooltip: '排序',
+                  initialValue: sortValue,
+                  onSelected: onSortChanged,
+                  itemBuilder: (context) => [
+                    for (final option in sortOptions.entries)
+                      PopupMenuItem(
+                        value: option.key,
+                        child: Text(option.value),
+                      ),
+                  ],
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          sortOptions[sortValue] ?? sortOptions.values.first,
+                        ),
+                        const Icon(Icons.arrow_drop_down),
+                      ],
+                    ),
                   ),
                 ),
-              ),
               IconButton(
                 key: viewToggleKey,
                 tooltip: detailedView ? '切换网格' : '切换列表',

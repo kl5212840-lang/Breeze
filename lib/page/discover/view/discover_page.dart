@@ -154,7 +154,7 @@ class _DiscoverViewState extends State<_DiscoverView> {
                   itemCount: plugins.length,
                   gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
                     maxCrossAxisExtent: 140,
-                    mainAxisExtent: MediaQuery.textScalerOf(context).scale(178),
+                    mainAxisExtent: MediaQuery.textScalerOf(context).scale(160),
                     mainAxisSpacing: 12,
                     crossAxisSpacing: 12,
                   ),

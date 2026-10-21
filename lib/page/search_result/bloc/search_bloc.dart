@@ -168,6 +168,9 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
           status: SearchStatus.success,
           comics: blocState.visibleComics,
           hasReachedMax: blocState.hasReachedMax,
+          currentPage: blocState.pagesCount,
+          totalPages: blocState.totalPages,
+          totalResults: blocState.totalResults,
           searchEvent: event.copyWith(
             page: blocState.pagesCount,
             searchStates: event.searchStates.copyWith(

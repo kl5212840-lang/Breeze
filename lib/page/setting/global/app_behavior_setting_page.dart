@@ -204,7 +204,7 @@ class _AppBehaviorSettingPageState extends State<AppBehaviorSettingPage> {
 
   Widget _leftHandMode(GlobalSettingState state, GlobalSettingCubit cubit) {
     return SwitchListTile(
-      secondary: const Icon(Icons.back_hand_outlined),
+      secondary: const Icon(Icons.space_bar_rounded),
       title: Text(t.settings.leftHandMode),
       subtitle: Text(t.settings.leftHandModeSubtitle),
       thumbIcon: kSettingSwitchThumbIcon,

@@ -310,7 +310,7 @@ $SearchStatesCopyWith<$Res> get searchStates {
 /// @nodoc
 mixin _$SearchState {
 
- SearchStatus get status; List<ComicNumber> get comics; bool get hasReachedMax; String get result; SearchEvent get searchEvent;
+ SearchStatus get status; List<ComicNumber> get comics; bool get hasReachedMax; int get currentPage; int get totalPages; int get totalResults; String get result; SearchEvent get searchEvent;
 /// Create a copy of SearchState
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -324,20 +324,20 @@ $SearchStateCopyWith<SearchState> get copyWith => _$SearchStateCopyWithImpl<Sear
 @override
 bool operator ==(Object other) {
   final _this = this as SearchState;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is SearchState&&(identical(other.status, _this.status) || other.status == _this.status)&&const DeepCollectionEquality().equals(other.comics, _this.comics)&&(identical(other.hasReachedMax, _this.hasReachedMax) || other.hasReachedMax == _this.hasReachedMax)&&(identical(other.result, _this.result) || other.result == _this.result)&&(identical(other.searchEvent, _this.searchEvent) || other.searchEvent == _this.searchEvent));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SearchState&&(identical(other.status, _this.status) || other.status == _this.status)&&const DeepCollectionEquality().equals(other.comics, _this.comics)&&(identical(other.hasReachedMax, _this.hasReachedMax) || other.hasReachedMax == _this.hasReachedMax)&&(identical(other.currentPage, _this.currentPage) || other.currentPage == _this.currentPage)&&(identical(other.totalPages, _this.totalPages) || other.totalPages == _this.totalPages)&&(identical(other.totalResults, _this.totalResults) || other.totalResults == _this.totalResults)&&(identical(other.result, _this.result) || other.result == _this.result)&&(identical(other.searchEvent, _this.searchEvent) || other.searchEvent == _this.searchEvent));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
   final _this = this as SearchState;
-  return Object.hash(runtimeType,_this.status,const DeepCollectionEquality().hash(_this.comics),_this.hasReachedMax,_this.result,_this.searchEvent);
+  return Object.hash(runtimeType,_this.status,const DeepCollectionEquality().hash(_this.comics),_this.hasReachedMax,_this.currentPage,_this.totalPages,_this.totalResults,_this.result,_this.searchEvent);
 }
 
 @override
 String toString() {
   final _this = this as SearchState;
-  return 'SearchState(status: ${_this.status}, comics: ${_this.comics}, hasReachedMax: ${_this.hasReachedMax}, result: ${_this.result}, searchEvent: ${_this.searchEvent})';
+  return 'SearchState(status: ${_this.status}, comics: ${_this.comics}, hasReachedMax: ${_this.hasReachedMax}, currentPage: ${_this.currentPage}, totalPages: ${_this.totalPages}, totalResults: ${_this.totalResults}, result: ${_this.result}, searchEvent: ${_this.searchEvent})';
 }
 
 
@@ -348,7 +348,7 @@ abstract mixin class $SearchStateCopyWith<$Res>  {
   factory $SearchStateCopyWith(SearchState value, $Res Function(SearchState) _then) = _$SearchStateCopyWithImpl;
 @useResult
 $Res call({
- SearchStatus status, List<ComicNumber> comics, bool hasReachedMax, String result, SearchEvent searchEvent
+ SearchStatus status, List<ComicNumber> comics, bool hasReachedMax, int currentPage, int totalPages, int totalResults, String result, SearchEvent searchEvent
 });
 
 
@@ -365,12 +365,15 @@ class _$SearchStateCopyWithImpl<$Res>
 
 /// Create a copy of SearchState
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? status = null,Object? comics = null,Object? hasReachedMax = null,Object? result = null,Object? searchEvent = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? status = null,Object? comics = null,Object? hasReachedMax = null,Object? currentPage = null,Object? totalPages = null,Object? totalResults = null,Object? result = null,Object? searchEvent = null,}) {
   return _then(SearchState(
 status: null == status ? _self.status : status // ignore: cast_nullable_to_non_nullable
 as SearchStatus,comics: null == comics ? _self.comics : comics // ignore: cast_nullable_to_non_nullable
 as List<ComicNumber>,hasReachedMax: null == hasReachedMax ? _self.hasReachedMax : hasReachedMax // ignore: cast_nullable_to_non_nullable
-as bool,result: null == result ? _self.result : result // ignore: cast_nullable_to_non_nullable
+as bool,currentPage: null == currentPage ? _self.currentPage : currentPage // ignore: cast_nullable_to_non_nullable
+as int,totalPages: null == totalPages ? _self.totalPages : totalPages // ignore: cast_nullable_to_non_nullable
+as int,totalResults: null == totalResults ? _self.totalResults : totalResults // ignore: cast_nullable_to_non_nullable
+as int,result: null == result ? _self.result : result // ignore: cast_nullable_to_non_nullable
 as String,searchEvent: null == searchEvent ? _self.searchEvent : searchEvent // ignore: cast_nullable_to_non_nullable
 as SearchEvent,
   ));
@@ -466,10 +469,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( SearchStatus status,  List<ComicNumber> comics,  bool hasReachedMax,  String result,  SearchEvent searchEvent)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( SearchStatus status,  List<ComicNumber> comics,  bool hasReachedMax,  int currentPage,  int totalPages,  int totalResults,  String result,  SearchEvent searchEvent)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _SearchState() when $default != null:
-return $default(_that.status,_that.comics,_that.hasReachedMax,_that.result,_that.searchEvent);case _:
+return $default(_that.status,_that.comics,_that.hasReachedMax,_that.currentPage,_that.totalPages,_that.totalResults,_that.result,_that.searchEvent);case _:
   return orElse();
 
 }
@@ -487,10 +490,10 @@ return $default(_that.status,_that.comics,_that.hasReachedMax,_that.result,_that
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( SearchStatus status,  List<ComicNumber> comics,  bool hasReachedMax,  String result,  SearchEvent searchEvent)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( SearchStatus status,  List<ComicNumber> comics,  bool hasReachedMax,  int currentPage,  int totalPages,  int totalResults,  String result,  SearchEvent searchEvent)  $default,) {final _that = this;
 switch (_that) {
 case _SearchState():
-return $default(_that.status,_that.comics,_that.hasReachedMax,_that.result,_that.searchEvent);case _:
+return $default(_that.status,_that.comics,_that.hasReachedMax,_that.currentPage,_that.totalPages,_that.totalResults,_that.result,_that.searchEvent);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -507,10 +510,10 @@ return $default(_that.status,_that.comics,_that.hasReachedMax,_that.result,_that
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( SearchStatus status,  List<ComicNumber> comics,  bool hasReachedMax,  String result,  SearchEvent searchEvent)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( SearchStatus status,  List<ComicNumber> comics,  bool hasReachedMax,  int currentPage,  int totalPages,  int totalResults,  String result,  SearchEvent searchEvent)?  $default,) {final _that = this;
 switch (_that) {
 case _SearchState() when $default != null:
-return $default(_that.status,_that.comics,_that.hasReachedMax,_that.result,_that.searchEvent);case _:
+return $default(_that.status,_that.comics,_that.hasReachedMax,_that.currentPage,_that.totalPages,_that.totalResults,_that.result,_that.searchEvent);case _:
   return null;
 
 }
@@ -522,7 +525,7 @@ return $default(_that.status,_that.comics,_that.hasReachedMax,_that.result,_that
 @JsonSerializable()
 
 class _SearchState implements SearchState {
-  const _SearchState({this.status = SearchStatus.initial,  List<ComicNumber> comics = const [], this.hasReachedMax = false, this.result = '', this.searchEvent = const SearchEvent()}): _comics = comics;
+  const _SearchState({this.status = SearchStatus.initial,  List<ComicNumber> comics = const [], this.hasReachedMax = false, this.currentPage = 0, this.totalPages = 0, this.totalResults = 0, this.result = '', this.searchEvent = const SearchEvent()}): _comics = comics;
   factory _SearchState.fromJson(Map<String, dynamic> json) => _$SearchStateFromJson(json);
 
 @override@JsonKey() final  SearchStatus status;
@@ -534,6 +537,9 @@ class _SearchState implements SearchState {
 }
 
 @override@JsonKey() final  bool hasReachedMax;
+@override@JsonKey() final  int currentPage;
+@override@JsonKey() final  int totalPages;
+@override@JsonKey() final  int totalResults;
 @override@JsonKey() final  String result;
 @override@JsonKey() final  SearchEvent searchEvent;
 
@@ -550,18 +556,18 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _SearchState&&(identical(other.status, status) || other.status == status)&&const DeepCollectionEquality().equals(other.comics, _comics)&&(identical(other.hasReachedMax, hasReachedMax) || other.hasReachedMax == hasReachedMax)&&(identical(other.result, result) || other.result == result)&&(identical(other.searchEvent, searchEvent) || other.searchEvent == searchEvent));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _SearchState&&(identical(other.status, status) || other.status == status)&&const DeepCollectionEquality().equals(other.comics, _comics)&&(identical(other.hasReachedMax, hasReachedMax) || other.hasReachedMax == hasReachedMax)&&(identical(other.currentPage, currentPage) || other.currentPage == currentPage)&&(identical(other.totalPages, totalPages) || other.totalPages == totalPages)&&(identical(other.totalResults, totalResults) || other.totalResults == totalResults)&&(identical(other.result, result) || other.result == result)&&(identical(other.searchEvent, searchEvent) || other.searchEvent == searchEvent));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
-    return Object.hash(runtimeType,status,const DeepCollectionEquality().hash(_comics),hasReachedMax,result,searchEvent);
+    return Object.hash(runtimeType,status,const DeepCollectionEquality().hash(_comics),hasReachedMax,currentPage,totalPages,totalResults,result,searchEvent);
 }
 
 @override
 String toString() {
-    return 'SearchState(status: $status, comics: $comics, hasReachedMax: $hasReachedMax, result: $result, searchEvent: $searchEvent)';
+    return 'SearchState(status: $status, comics: $comics, hasReachedMax: $hasReachedMax, currentPage: $currentPage, totalPages: $totalPages, totalResults: $totalResults, result: $result, searchEvent: $searchEvent)';
 }
 
 
@@ -572,7 +578,7 @@ abstract mixin class _$SearchStateCopyWith<$Res> implements $SearchStateCopyWith
   factory _$SearchStateCopyWith(_SearchState value, $Res Function(_SearchState) _then) = __$SearchStateCopyWithImpl;
 @override @useResult
 $Res call({
- SearchStatus status, List<ComicNumber> comics, bool hasReachedMax, String result, SearchEvent searchEvent
+ SearchStatus status, List<ComicNumber> comics, bool hasReachedMax, int currentPage, int totalPages, int totalResults, String result, SearchEvent searchEvent
 });
 
 
@@ -589,12 +595,15 @@ class __$SearchStateCopyWithImpl<$Res>
 
 /// Create a copy of SearchState
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? status = null,Object? comics = null,Object? hasReachedMax = null,Object? result = null,Object? searchEvent = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? status = null,Object? comics = null,Object? hasReachedMax = null,Object? currentPage = null,Object? totalPages = null,Object? totalResults = null,Object? result = null,Object? searchEvent = null,}) {
   return _then(_SearchState(
 status: null == status ? _self.status : status // ignore: cast_nullable_to_non_nullable
 as SearchStatus,comics: null == comics ? _self._comics : comics // ignore: cast_nullable_to_non_nullable
 as List<ComicNumber>,hasReachedMax: null == hasReachedMax ? _self.hasReachedMax : hasReachedMax // ignore: cast_nullable_to_non_nullable
-as bool,result: null == result ? _self.result : result // ignore: cast_nullable_to_non_nullable
+as bool,currentPage: null == currentPage ? _self.currentPage : currentPage // ignore: cast_nullable_to_non_nullable
+as int,totalPages: null == totalPages ? _self.totalPages : totalPages // ignore: cast_nullable_to_non_nullable
+as int,totalResults: null == totalResults ? _self.totalResults : totalResults // ignore: cast_nullable_to_non_nullable
+as int,result: null == result ? _self.result : result // ignore: cast_nullable_to_non_nullable
 as String,searchEvent: null == searchEvent ? _self.searchEvent : searchEvent // ignore: cast_nullable_to_non_nullable
 as SearchEvent,
   ));

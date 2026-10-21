@@ -99,6 +99,7 @@ class SourceSearchDetailTile extends StatelessWidget {
     final categories = _metadata('categories');
     final tags = _metadata('tags');
     final description = (entry.raw['description'] ?? '').toString().trim();
+    final pageCount = int.tryParse('${entry.raw['pagesCount'] ?? ''}') ?? 0;
 
     return InkWell(
       key: ValueKey('detail-${entry.id}'),
@@ -198,27 +199,34 @@ class SourceSearchDetailTile extends StatelessWidget {
                       ),
                     ),
                   ],
-                  if (entry.likesCount > 0 || entry.finished) ...[
+                  if (entry.likesCount > 0 ||
+                      entry.finished ||
+                      pageCount > 0) ...[
                     const SizedBox(height: 5),
-                    Row(
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 2,
                       children: [
-                        if (entry.likesCount > 0) ...[
-                          Icon(
-                            Icons.favorite_border,
-                            size: 15,
-                            color: colors.primary,
+                        if (entry.likesCount > 0)
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.favorite_border,
+                                size: 15,
+                                color: colors.primary,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '${entry.likesCount}',
+                                style: TextStyle(
+                                  color: colors.onSurfaceVariant,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 4),
-                          Text(
-                            '${entry.likesCount}',
-                            style: TextStyle(
-                              color: colors.onSurfaceVariant,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                        if (entry.finished) ...[
-                          const SizedBox(width: 10),
+                        if (entry.finished)
                           Text(
                             '完结',
                             style: TextStyle(
@@ -226,7 +234,14 @@ class SourceSearchDetailTile extends StatelessWidget {
                               fontSize: 12,
                             ),
                           ),
-                        ],
+                        if (pageCount > 0)
+                          Text(
+                            t.searchResult.itemPageCount(count: pageCount),
+                            style: TextStyle(
+                              color: colors.onSurfaceVariant,
+                              fontSize: 12,
+                            ),
+                          ),
                       ],
                     ),
                   ],

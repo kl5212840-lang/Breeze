@@ -41,6 +41,9 @@ _SearchState _$SearchStateFromJson(Map<String, dynamic> json) => _SearchState(
           .toList() ??
       const [],
   hasReachedMax: json['hasReachedMax'] as bool? ?? false,
+  currentPage: (json['currentPage'] as num?)?.toInt() ?? 0,
+  totalPages: (json['totalPages'] as num?)?.toInt() ?? 0,
+  totalResults: (json['totalResults'] as num?)?.toInt() ?? 0,
   result: json['result'] as String? ?? '',
   searchEvent: json['searchEvent'] == null
       ? const SearchEvent()
@@ -52,6 +55,9 @@ Map<String, dynamic> _$SearchStateToJson(_SearchState instance) =>
       'status': _$SearchStatusEnumMap[instance.status]!,
       'comics': instance.comics.map((e) => e.toJson()).toList(),
       'hasReachedMax': instance.hasReachedMax,
+      'currentPage': instance.currentPage,
+      'totalPages': instance.totalPages,
+      'totalResults': instance.totalResults,
       'result': instance.result,
       'searchEvent': instance.searchEvent.toJson(),
     };

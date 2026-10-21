@@ -295,8 +295,10 @@ class _Translations$settings$en_US extends Translations$settings$zh_CN {
 	@override String get cloudFavoritePreferredSubtitle => 'When enabled, the favorite button on the comic info page performs cloud collection, and the original cloud collection menu item switches to local collection';
 	@override String get autoFollowOnCollect => 'Auto-follow on collect';
 	@override String get autoFollowOnCollectSubtitle => 'Automatically add comics to the follow list when favorited';
-	@override String get leftHandMode => 'Left-hand mode';
-	@override String get leftHandModeSubtitle => 'Move floating action buttons and other controls to the left side';
+	@override String get leftHandMode => 'Actions on the left';
+	@override String get leftHandModeSubtitle => 'Moves detail-page and floating controls; set tap-to-turn zones separately in Reader settings > Gestures';
+	@override String get actionsOnLeft => 'Actions left';
+	@override String get actionsOnRight => 'Actions right';
 	@override String get clickCoverToStartReading => 'Tap cover to start reading';
 	@override String get clickCoverToStartReadingSubtitle => 'Tap the cover on the comic info page to start reading directly';
 	@override String get androidKeepAlive => 'Keep alive';
@@ -626,8 +628,10 @@ class _Translations$reader$en_US extends Translations$reader$zh_CN {
 	// Translations
 	@override String get pageMode => 'Page turn mode';
 	@override String get fullscreen => 'Fullscreen';
-	@override String get leftHandMode => 'Left-hand mode';
-	@override String get rightHandMode => 'Right-hand mode';
+	@override String get leftHandMode => 'Tap left to turn';
+	@override String get rightHandMode => 'Tap right to turn';
+	@override String get topHalfNext => 'Tap top to advance';
+	@override String get bottomHalfNext => 'Tap bottom to advance';
 	@override String get reverseHorizontalPageTurn => 'Reverse arrow keys';
 	@override String get reverseHorizontalPageTurnSubtitle => 'Swap left/right arrow keys for page turning, useful for right-to-left manga';
 	@override String get webtoonTapPageTurn => 'Webtoon tap navigation';
@@ -1132,21 +1136,24 @@ class _Translations$about$en_US extends Translations$about$zh_CN {
 	@override String get loading => 'Loading...';
 	@override String get fetchFailed => 'Failed to load';
 	@override String get networkError => 'Network error';
-	@override String get projectAddress => 'Project';
-	@override String get projectAddressDesc => 'Like this project? Give it a star on GitHub!';
-	@override String get projectLink => 'Go to GitHub repo (deretame/Breeze) ⭐';
+	@override String get projectAddress => 'This edition';
+	@override String get projectAddressDesc => 'Built on the open-source Breeze project, with plugin and iOS experience improvements from this fork.';
+	@override String get projectLink => 'View this fork · kl5212840-lang/Breeze';
+	@override String get upstreamAddress => 'Original project & credits';
+	@override String get upstreamAddressDesc => 'Thanks to the original Breeze project and its contributors. This fork is not an official upstream release.';
+	@override String get upstreamProjectLink => 'View original · deretame/Breeze';
 	@override String get contact => 'Contact';
 	@override String get contactDesc => 'Have ideas or questions? Feel free to reach out~';
 	@override String get feedback => 'Feedback';
 	@override String get feedbackDesc => 'Found a bug or have a new idea?';
 	@override String get feedbackLink => 'Open a GitHub Issue';
-	@override String get contributors => 'Contributors';
+	@override String get contributors => 'Original project contributors';
 	@override String contributorsCount({required Object count}) => '${count}';
 	@override String contributionsTooltip({required Object login, required Object count}) => '${login} (${count} commits)';
 	@override String get disclaimer => 'Disclaimer';
 	@override String get disclaimerTitle => 'Open Source Disclaimer';
 	@override String get disclaimerItem1Title => '1. Nature and Statement';
-	@override String get disclaimerItem1Content => 'This project is open-source software, independently developed and maintained by the author. It is provided "as-is". The developer makes no express or implied warranties regarding functionality, stability, security, or fitness for purpose.';
+	@override String get disclaimerItem1Content => 'This edition is based on the open-source Breeze project and is provided "as-is". Its maintainers make no express or implied warranties regarding functionality, stability, security, or fitness for purpose.';
 	@override String get disclaimerItem2Title => '2. Limitation of Liability';
 	@override String get disclaimerItem2Content => 'The developer shall not be liable for any direct, indirect, special, incidental, or consequential damages arising from use, modification, or distribution of this project (including but not limited to direct use, secondary development, or integration into other projects). These damages may include but are not limited to data loss, device damage, business interruption, lost profits, or other economic losses.';
 	@override String get disclaimerItem3Title => '3. User Responsibility';
@@ -1227,6 +1234,7 @@ class _Translations$search$en_US extends Translations$search$zh_CN {
 	@override String selectedCount({required Object count}) => '${count} selected';
 	@override String get history => 'Search History';
 	@override String get clearHistory => 'Clear History';
+	@override String get clearHistoryConfirm => 'Clear search history shared by all comic sources? This cannot be undone.';
 	@override String get newestFirst => 'Current: newest first';
 	@override String get oldestFirst => 'Current: oldest first';
 	@override String get descending => 'Newest first';
@@ -1268,6 +1276,7 @@ class _Translations$discover$en_US extends Translations$discover$zh_CN {
 	@override String get search => 'Search';
 	@override String get settings => 'Settings';
 	@override String get pluginManagement => 'Plugin Management';
+	@override String get manage => 'Manage';
 	@override String get listLayout => 'List';
 	@override String get gridLayout => 'Grid';
 	@override String moreActions({required Object title}) => '${title} · More actions';
@@ -1317,6 +1326,11 @@ class _Translations$searchResult$en_US extends Translations$searchResult$zh_CN {
 	@override String get returnToTop => 'Return to top';
 	@override String get jumpToPage => 'Jump to page';
 	@override String get jump => 'Jump';
+	@override String pageProgress({required Object page, required Object pages}) => 'Page ${page} / ${pages}';
+	@override String pageOnly({required Object page}) => 'Page ${page}';
+	@override String pageOutOfRange({required Object pages}) => 'Enter a page between 1 and ${pages}';
+	@override String get pageMustBePositive => 'Enter a page greater than zero';
+	@override String itemPageCount({required Object count}) => '${count} pages';
 	@override String get retry => 'Tap to retry';
 }
 
@@ -1429,6 +1443,8 @@ class _Translations$changelog$en_US extends Translations$changelog$zh_CN {
 	@override String get retry => 'Retry';
 	@override String get empty => 'No changelog';
 	@override String publishedAt({required Object date}) => 'Published at ${date}';
+	@override String get thisFork => 'This fork';
+	@override String get upstreamHistory => 'Upstream history';
 	@override String get viewInBrowser => 'View in browser';
 	@override String get attachments => 'Attachments';
 }
@@ -1806,8 +1822,10 @@ extension on TranslationsEnUs {
 			'settings.cloudFavoritePreferredSubtitle' => 'When enabled, the favorite button on the comic info page performs cloud collection, and the original cloud collection menu item switches to local collection',
 			'settings.autoFollowOnCollect' => 'Auto-follow on collect',
 			'settings.autoFollowOnCollectSubtitle' => 'Automatically add comics to the follow list when favorited',
-			'settings.leftHandMode' => 'Left-hand mode',
-			'settings.leftHandModeSubtitle' => 'Move floating action buttons and other controls to the left side',
+			'settings.leftHandMode' => 'Actions on the left',
+			'settings.leftHandModeSubtitle' => 'Moves detail-page and floating controls; set tap-to-turn zones separately in Reader settings > Gestures',
+			'settings.actionsOnLeft' => 'Actions left',
+			'settings.actionsOnRight' => 'Actions right',
 			'settings.clickCoverToStartReading' => 'Tap cover to start reading',
 			'settings.clickCoverToStartReadingSubtitle' => 'Tap the cover on the comic info page to start reading directly',
 			'settings.androidKeepAlive' => 'Keep alive',
@@ -2110,8 +2128,10 @@ extension on TranslationsEnUs {
 			'comicInfo.resolveEpsCountFailed' => ({required Object type}) => 'Cannot resolve episode count for reading: ${type}',
 			'reader.pageMode' => 'Page turn mode',
 			'reader.fullscreen' => 'Fullscreen',
-			'reader.leftHandMode' => 'Left-hand mode',
-			'reader.rightHandMode' => 'Right-hand mode',
+			'reader.leftHandMode' => 'Tap left to turn',
+			'reader.rightHandMode' => 'Tap right to turn',
+			'reader.topHalfNext' => 'Tap top to advance',
+			'reader.bottomHalfNext' => 'Tap bottom to advance',
 			'reader.reverseHorizontalPageTurn' => 'Reverse arrow keys',
 			'reader.reverseHorizontalPageTurnSubtitle' => 'Swap left/right arrow keys for page turning, useful for right-to-left manga',
 			'reader.webtoonTapPageTurn' => 'Webtoon tap navigation',
@@ -2129,12 +2149,12 @@ extension on TranslationsEnUs {
 			'reader.networkStatus' => 'Network status',
 			'reader.networkStatusSubtitle' => 'May be inaccurate on Linux',
 			'reader.battery' => 'Battery',
+			_ => null,
+		} ?? switch (path) {
 			'reader.time' => 'Time',
 			'reader.verticalPositionTop' => 'Top',
 			'reader.verticalPositionBottom' => 'Bottom',
 			'reader.horizontalPositionLeft' => 'Left',
-			_ => null,
-		} ?? switch (path) {
 			'reader.horizontalPositionCenter' => 'Center',
 			'reader.horizontalPositionRight' => 'Right',
 			'reader.readingDirectionLtr' => 'Left to right',
@@ -2537,21 +2557,24 @@ extension on TranslationsEnUs {
 			'about.loading' => 'Loading...',
 			'about.fetchFailed' => 'Failed to load',
 			'about.networkError' => 'Network error',
-			'about.projectAddress' => 'Project',
-			'about.projectAddressDesc' => 'Like this project? Give it a star on GitHub!',
-			'about.projectLink' => 'Go to GitHub repo (deretame/Breeze) ⭐',
+			'about.projectAddress' => 'This edition',
+			'about.projectAddressDesc' => 'Built on the open-source Breeze project, with plugin and iOS experience improvements from this fork.',
+			'about.projectLink' => 'View this fork · kl5212840-lang/Breeze',
+			'about.upstreamAddress' => 'Original project & credits',
+			'about.upstreamAddressDesc' => 'Thanks to the original Breeze project and its contributors. This fork is not an official upstream release.',
+			'about.upstreamProjectLink' => 'View original · deretame/Breeze',
 			'about.contact' => 'Contact',
 			'about.contactDesc' => 'Have ideas or questions? Feel free to reach out~',
 			'about.feedback' => 'Feedback',
 			'about.feedbackDesc' => 'Found a bug or have a new idea?',
 			'about.feedbackLink' => 'Open a GitHub Issue',
-			'about.contributors' => 'Contributors',
+			'about.contributors' => 'Original project contributors',
 			'about.contributorsCount' => ({required Object count}) => '${count}',
 			'about.contributionsTooltip' => ({required Object login, required Object count}) => '${login} (${count} commits)',
 			'about.disclaimer' => 'Disclaimer',
 			'about.disclaimerTitle' => 'Open Source Disclaimer',
 			'about.disclaimerItem1Title' => '1. Nature and Statement',
-			'about.disclaimerItem1Content' => 'This project is open-source software, independently developed and maintained by the author. It is provided "as-is". The developer makes no express or implied warranties regarding functionality, stability, security, or fitness for purpose.',
+			'about.disclaimerItem1Content' => 'This edition is based on the open-source Breeze project and is provided "as-is". Its maintainers make no express or implied warranties regarding functionality, stability, security, or fitness for purpose.',
 			'about.disclaimerItem2Title' => '2. Limitation of Liability',
 			'about.disclaimerItem2Content' => 'The developer shall not be liable for any direct, indirect, special, incidental, or consequential damages arising from use, modification, or distribution of this project (including but not limited to direct use, secondary development, or integration into other projects). These damages may include but are not limited to data loss, device damage, business interruption, lost profits, or other economic losses.',
 			'about.disclaimerItem3Title' => '3. User Responsibility',
@@ -2605,6 +2628,7 @@ extension on TranslationsEnUs {
 			'search.selectedCount' => ({required Object count}) => '${count} selected',
 			'search.history' => 'Search History',
 			'search.clearHistory' => 'Clear History',
+			'search.clearHistoryConfirm' => 'Clear search history shared by all comic sources? This cannot be undone.',
 			'search.newestFirst' => 'Current: newest first',
 			'search.oldestFirst' => 'Current: oldest first',
 			'search.descending' => 'Newest first',
@@ -2637,7 +2661,10 @@ extension on TranslationsEnUs {
 			'discover.search' => 'Search',
 			'discover.settings' => 'Settings',
 			'discover.pluginManagement' => 'Plugin Management',
+			'discover.manage' => 'Manage',
 			'discover.listLayout' => 'List',
+			_ => null,
+		} ?? switch (path) {
 			'discover.gridLayout' => 'Grid',
 			'discover.moreActions' => ({required Object title}) => '${title} · More actions',
 			'discover.enablePlugin' => 'Enable plugin',
@@ -2647,8 +2674,6 @@ extension on TranslationsEnUs {
 			'discover.noPlugins' => 'No plugins available. Go to the plugin store to install one~',
 			'discover.pluginStore' => 'Plugin Store',
 			'discover.browseInstall' => 'Browse & Install',
-			_ => null,
-		} ?? switch (path) {
 			'discover.noPluginForSearch' => 'No plugins available, cannot search',
 			'discover.pluginInfoLoadFailed' => ({required Object error}) => 'Failed to load plugin info: ${error}',
 			'discover.pluginCapability' => 'Plugin Capability',
@@ -2670,6 +2695,11 @@ extension on TranslationsEnUs {
 			'searchResult.returnToTop' => 'Return to top',
 			'searchResult.jumpToPage' => 'Jump to page',
 			'searchResult.jump' => 'Jump',
+			'searchResult.pageProgress' => ({required Object page, required Object pages}) => 'Page ${page} / ${pages}',
+			'searchResult.pageOnly' => ({required Object page}) => 'Page ${page}',
+			'searchResult.pageOutOfRange' => ({required Object pages}) => 'Enter a page between 1 and ${pages}',
+			'searchResult.pageMustBePositive' => 'Enter a page greater than zero',
+			'searchResult.itemPageCount' => ({required Object count}) => '${count} pages',
 			'searchResult.retry' => 'Tap to retry',
 			'comicList.defaultTitle' => 'Comic List',
 			'comicList.missingSource' => 'Missing plugin source, cannot load list',
@@ -2746,6 +2776,8 @@ extension on TranslationsEnUs {
 			'changelog.retry' => 'Retry',
 			'changelog.empty' => 'No changelog',
 			'changelog.publishedAt' => ({required Object date}) => 'Published at ${date}',
+			'changelog.thisFork' => 'This fork',
+			'changelog.upstreamHistory' => 'Upstream history',
 			'changelog.viewInBrowser' => 'View in browser',
 			'changelog.attachments' => 'Attachments',
 			'webview.title' => 'Webpage',

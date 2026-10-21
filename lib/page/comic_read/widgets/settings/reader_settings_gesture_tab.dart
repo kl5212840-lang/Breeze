@@ -55,7 +55,9 @@ class _TapPageTurnModeSection extends StatelessWidget {
               },
             ),
             _SettingsChoiceChip(
-              title: t.reader.leftHandMode,
+              title: effective.readMode == 0
+                  ? t.reader.topHalfNext
+                  : t.reader.leftHandMode,
               selected: mode == ReaderTapPageTurnMode.leftHand,
               onTap: () {
                 if (mode == ReaderTapPageTurnMode.leftHand) {
@@ -70,7 +72,9 @@ class _TapPageTurnModeSection extends StatelessWidget {
               },
             ),
             _SettingsChoiceChip(
-              title: t.reader.rightHandMode,
+              title: effective.readMode == 0
+                  ? t.reader.bottomHalfNext
+                  : t.reader.rightHandMode,
               selected: mode == ReaderTapPageTurnMode.rightHand,
               onTap: () {
                 if (mode == ReaderTapPageTurnMode.rightHand) {

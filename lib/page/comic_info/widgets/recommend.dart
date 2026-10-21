@@ -35,7 +35,7 @@ class RecommendWidget extends StatelessWidget {
 
     Widget scrollView = ComicFixedSizeHorizontalList(
       entries: comicInfoList,
-      spacing: 0,
+      spacing: 10,
       roundedCorner: true,
       itemWidth: (isTabletWithOutContext() ? 200 : 150) * 0.75,
     );
@@ -48,7 +48,7 @@ class RecommendWidget extends StatelessWidget {
     }
 
     return Padding(
-      padding: EdgeInsets.zero,
+      padding: const EdgeInsets.symmetric(horizontal: 2),
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: scrollView,

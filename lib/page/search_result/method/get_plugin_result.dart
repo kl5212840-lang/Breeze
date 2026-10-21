@@ -5,6 +5,11 @@ import 'package:zephyr/page/search_result/models/bloc_state.dart';
 import 'package:zephyr/page/search_result/models/comic_number.dart';
 import 'package:zephyr/page/search_result/models/unified_plugin_search.dart';
 
+int trustworthyTotalPages(UnifiedPluginSearchPaging paging) {
+  if (!paging.hasReachedMax && paging.pages <= paging.page) return 0;
+  return paging.pages;
+}
+
 Future<BlocState> getPluginSearchResult(
   SearchEvent event,
   BlocState blocState,
@@ -27,9 +32,20 @@ Future<BlocState> getPluginSearchResult(
       .toList();
 
   blocState.pagesCount = parsed.paging.page;
+  // A few older plugins reported the current page as the total page count.
+  // Do not present "1 / 1" while the same response says more pages exist.
+  blocState.totalPages = trustworthyTotalPages(parsed.paging);
+  blocState.totalResults = parsed.paging.total;
   blocState.hasReachedMax = parsed.paging.hasReachedMax;
   blocState.comics = [...blocState.comics, ...list];
-  blocState.pluginExtern = parsed.extern;
+  // The blocklist is a local presentation preference. Some plugins return a
+  // fresh pagination extern and omit it, so keep it across page responses.
+  blocState.pluginExtern = {
+    ...extern,
+    ...parsed.extern,
+    if (extern.containsKey('blockedCategories'))
+      'blockedCategories': extern['blockedCategories'],
+  };
   return blocState;
 }
 

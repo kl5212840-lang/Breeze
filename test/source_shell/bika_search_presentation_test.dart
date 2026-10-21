@@ -5,6 +5,8 @@ import 'package:zephyr/main.dart' show objectbox;
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
+import 'package:zephyr/page/search_result/method/get_plugin_result.dart';
+import 'package:zephyr/page/search_result/models/unified_plugin_search.dart';
 import 'package:zephyr/page/search_result/view/search_result_page.dart';
 import 'package:zephyr/page/search_result/view/source_quick_category_bar.dart';
 import 'package:zephyr/page/search_result/view/source_search_detail_list.dart';
@@ -13,6 +15,31 @@ import 'package:zephyr/widgets/comic_entry/models/models.dart';
 import '../test_helper.dart';
 
 void main() {
+  test('pagination hides contradictory totals from older plugins', () {
+    expect(
+      trustworthyTotalPages(
+        const UnifiedPluginSearchPaging(
+          page: 1,
+          pages: 1,
+          total: 400,
+          hasReachedMax: false,
+        ),
+      ),
+      0,
+    );
+    expect(
+      trustworthyTotalPages(
+        const UnifiedPluginSearchPaging(
+          page: 1,
+          pages: 20,
+          total: 400,
+          hasReachedMax: false,
+        ),
+      ),
+      20,
+    );
+  });
+
   test(
     'failed next page retries that page instead of duplicating the previous page',
     () {
@@ -131,7 +158,7 @@ void main() {
           'value': ['奇幻'],
         },
       ],
-      'raw': {'description': '这里是一段简介'},
+      'raw': {'description': '这里是一段简介', 'pagesCount': 120},
       'extern': <String, dynamic>{},
     });
 
@@ -146,6 +173,7 @@ void main() {
     expect(find.text('奇幻'), findsOneWidget);
     expect(find.text('这里是一段简介'), findsOneWidget);
     expect(find.text('42'), findsOneWidget);
+    expect(find.text('120 页'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pump(const Duration(milliseconds: 150));
   });
