@@ -13,6 +13,7 @@ import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/source_shell/models/source_shell_section.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/util/json/json_value.dart';
 
 @RoutePage()
 class DiscoverPage extends StatelessWidget {
@@ -199,9 +200,39 @@ class _DiscoverViewState extends State<_DiscoverView> {
         ? const <SourceShellSection>[]
         : SourceShellSection.fromPluginInfo(info, plugin.uuid);
 
+    final functions = asJsonList(
+      info?['functions'] ?? info?['function'] ?? const <dynamic>[],
+    ).map(asJsonMap).toList();
+    final webAction = functions.length == 1
+        ? asJsonMap(functions.first['action'])
+        : const <String, dynamic>{};
+    final webOnly = webAction['type'] == 'openWeb';
+    final nativeVideoOnly = webAction['type'] == 'openVideoCatalog';
+    final videoSearchAction = DiscoverRouter.videoSearchAction(webAction);
+    final showSearch =
+        !webOnly && (!nativeVideoOnly || videoSearchAction != null);
+    void onSearch() {
+      if (nativeVideoOnly) {
+        if (videoSearchAction == null) return;
+        DiscoverRouter.route(
+          context,
+          action: DiscoverRouter.attachSource(videoSearchAction, plugin.uuid),
+          currentFrom: cubit.currentFrom,
+        );
+      } else {
+        _openPluginSearch(context, plugin.uuid);
+      }
+    }
+
     final onOpen =
         !plugin.isEnabled || !SourceShellSection.canLaunch(info, sections)
         ? null
+        : webOnly || nativeVideoOnly
+        ? () => DiscoverRouter.route(
+            context,
+            action: DiscoverRouter.attachSource(webAction, plugin.uuid),
+            currentFrom: cubit.currentFrom,
+          )
         : () => context.pushRoute(
             SourceShellRoute(
               source: plugin.uuid,
@@ -222,7 +253,8 @@ class _DiscoverViewState extends State<_DiscoverView> {
         pluginState: plugin,
         infoState: infoState,
         isToggling: state.togglingUuids.contains(plugin.uuid),
-        onSearch: () => _openPluginSearch(context, plugin.uuid),
+        onSearch: onSearch,
+        showSearch: showSearch,
         onOpen: onOpen,
         onSettings: (title) => _openPluginSettings(context, plugin.uuid, title),
         onToggleEnabled: (enabled) => cubit.toggleEnabled(plugin.uuid, enabled),
@@ -241,7 +273,8 @@ class _DiscoverViewState extends State<_DiscoverView> {
         pluginState: plugin,
         infoState: infoState,
         isToggling: state.togglingUuids.contains(plugin.uuid),
-        onSearch: () => _openPluginSearch(context, plugin.uuid),
+        onSearch: onSearch,
+        showSearch: showSearch,
         onOpen: onOpen,
         onSettings: (title) => _openPluginSettings(context, plugin.uuid, title),
         onToggleEnabled: (enabled) => cubit.toggleEnabled(plugin.uuid, enabled),

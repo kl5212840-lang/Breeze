@@ -117,6 +117,25 @@ class _FluentPopupMenuButtonState<T> extends State<FluentPopupMenuButton<T>>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduced = MediaQuery.disableAnimationsOf(context);
+    _controller.duration = reduced
+        ? Duration.zero
+        : const Duration(milliseconds: 200);
+    _controller.reverseDuration = reduced
+        ? Duration.zero
+        : const Duration(milliseconds: 140);
+    if (reduced) {
+      _controller.value = _isOpen ? 1 : 0;
+      if (!_isOpen) {
+        _overlayEntry?.remove();
+        _overlayEntry = null;
+      }
+    }
+  }
+
+  @override
   void dispose() {
     _overlayEntry?.remove();
     _overlayEntry = null;
@@ -135,6 +154,9 @@ class _FluentPopupMenuButtonState<T> extends State<FluentPopupMenuButton<T>>
   }
 
   void _open() {
+    // A new open may interrupt the previous exit; never leave its barrier behind.
+    _overlayEntry?.remove();
+    _overlayEntry = null;
     final items = widget.itemBuilder(context);
     final entries = items
         .map(
@@ -184,17 +206,27 @@ class _FluentPopupMenuButtonState<T> extends State<FluentPopupMenuButton<T>>
 
   void _close({VoidCallback? onComplete}) {
     if (!_isOpen || !mounted) return;
-    _isOpen = false;
-    _controller.reverse().then((_) {
-      if (!mounted) {
-        onComplete?.call();
-        return;
-      }
-      _overlayEntry?.remove();
-      _overlayEntry = null;
-      setState(() {});
-      onComplete?.call();
-    });
+    // Acknowledge the action now; the exit animation must not delay the value
+    // or leave the arrow claiming that an already-dismissed menu is open.
+    setState(() => _isOpen = false);
+    final closing = _overlayEntry;
+    unawaited(
+      _controller.reverse().orCancel.then<void>(
+        (_) {
+          if (!mounted || _isOpen || !identical(_overlayEntry, closing)) return;
+          closing?.remove();
+          _overlayEntry = null;
+        },
+        onError: (Object error, StackTrace stack) {
+          if (error is! TickerCanceled) {
+            FlutterError.reportError(
+              FlutterErrorDetails(exception: error, stack: stack),
+            );
+          }
+        },
+      ),
+    );
+    onComplete?.call();
   }
 
   double _calculateMenuWidth(
@@ -287,6 +319,25 @@ class _FluentDropdownState<T> extends State<FluentDropdown<T>>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduced = MediaQuery.disableAnimationsOf(context);
+    _controller.duration = reduced
+        ? Duration.zero
+        : const Duration(milliseconds: 200);
+    _controller.reverseDuration = reduced
+        ? Duration.zero
+        : const Duration(milliseconds: 140);
+    if (reduced) {
+      _controller.value = _isOpen ? 1 : 0;
+      if (!_isOpen) {
+        _overlayEntry?.remove();
+        _overlayEntry = null;
+      }
+    }
+  }
+
+  @override
   void dispose() {
     _overlayEntry?.remove();
     _overlayEntry = null;
@@ -305,6 +356,9 @@ class _FluentDropdownState<T> extends State<FluentDropdown<T>>
   }
 
   void _open() {
+    // A new open may interrupt the previous exit; never leave its barrier behind.
+    _overlayEntry?.remove();
+    _overlayEntry = null;
     final entries = widget.items.entries.map((entry) {
       return _MenuEntry<T>(
         value: entry.key,
@@ -349,21 +403,27 @@ class _FluentDropdownState<T> extends State<FluentDropdown<T>>
 
   void _close({VoidCallback? onComplete}) {
     if (!_isOpen || !mounted) return;
-    // 立即把状态置为关闭，避免关闭过程中重复触发 _toggle/_close。
-    _isOpen = false;
-    _controller.reverse().then((_) {
-      // 动画期间 widget 可能被 deactivate/dispose，所以这里必须判断 mounted。
-      // onComplete（即 onChanged）仍要调用：用户已经做出了选择，
-      // 即使本 widget 被移除，通知父级更新状态也是安全的（不访问 context）。
-      if (!mounted) {
-        onComplete?.call();
-        return;
-      }
-      _overlayEntry?.remove();
-      _overlayEntry = null;
-      setState(() {});
-      onComplete?.call();
-    });
+    // Acknowledge the action now; the exit animation must not delay the value
+    // or leave the arrow claiming that an already-dismissed menu is open.
+    setState(() => _isOpen = false);
+    final closing = _overlayEntry;
+    unawaited(
+      _controller.reverse().orCancel.then<void>(
+        (_) {
+          if (!mounted || _isOpen || !identical(_overlayEntry, closing)) return;
+          closing?.remove();
+          _overlayEntry = null;
+        },
+        onError: (Object error, StackTrace stack) {
+          if (error is! TickerCanceled) {
+            FlutterError.reportError(
+              FlutterErrorDetails(exception: error, stack: stack),
+            );
+          }
+        },
+      ),
+    );
+    onComplete?.call();
   }
 
   double _calculateMenuWidth(BuildContext context, double triggerWidth) {
@@ -395,42 +455,61 @@ class _FluentDropdownState<T> extends State<FluentDropdown<T>>
 
     return CompositedTransformTarget(
       link: _layerLink,
-      child: GestureDetector(
+      child: Semantics(
+        button: true,
+        enabled: widget.onChanged != null,
+        expanded: _isOpen,
+        excludeSemantics: true,
+        label: widget.displayValue,
         onTap: widget.onChanged == null ? null : _toggle,
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 180),
-          padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-          decoration: BoxDecoration(
-            color: colorScheme.surface,
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: colorScheme.outline.withValues(alpha: 0.35),
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: Text(
-                  widget.displayValue,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: textStyle?.copyWith(
-                    color: textColor.withValues(alpha: 0.9),
+            onTap: widget.onChanged == null ? null : _toggle,
+            child: Ink(
+              decoration: BoxDecoration(
+                color: colorScheme.surface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: colorScheme.outline.withValues(alpha: 0.35),
+                ),
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 180, minHeight: 44),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          widget.displayValue,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: textStyle?.copyWith(
+                            color: textColor.withValues(alpha: 0.9),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      AnimatedRotation(
+                        turns: _isOpen ? 0.5 : 0,
+                        duration: MediaQuery.disableAnimationsOf(context)
+                            ? Duration.zero
+                            : const Duration(milliseconds: 160),
+                        curve: Curves.easeOutCubic,
+                        child: Icon(
+                          Icons.keyboard_arrow_down,
+                          size: 18,
+                          color: textColor.withValues(alpha: 0.5),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              AnimatedRotation(
-                turns: _isOpen ? 0.5 : 0,
-                duration: const Duration(milliseconds: 200),
-                child: Icon(
-                  Icons.keyboard_arrow_down,
-                  size: 18,
-                  color: textColor.withValues(alpha: 0.5),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -515,6 +594,7 @@ class _HoverableMenuItemState extends State<_HoverableMenuItem> {
       child: GestureDetector(
         onTap: widget.onTap,
         child: Container(
+          constraints: const BoxConstraints(minHeight: 44),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
             color: widget.isSelected
@@ -593,7 +673,9 @@ class _MenuPanel<T> extends StatelessWidget {
                       )
                     else
                       AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 180),
+                        duration: MediaQuery.disableAnimationsOf(context)
+                            ? Duration.zero
+                            : const Duration(milliseconds: 180),
                         transitionBuilder: (child, animation) {
                           return ScaleTransition(
                             scale: animation,

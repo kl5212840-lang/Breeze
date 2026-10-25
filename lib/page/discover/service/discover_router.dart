@@ -1,3 +1,7 @@
+import 'package:zephyr/page/video/video_page_route.dart';
+import 'dart:convert';
+import 'dart:async';
+
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/comic_list/models/comic_list_scene.dart';
@@ -8,6 +12,11 @@ import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/page/video/native_video_catalog_page.dart';
+import 'package:zephyr/page/video/video_search_filters.dart';
+import 'package:zephyr/page/video/video_search_history.dart';
+import 'package:zephyr/page/video/video_search_page.dart';
+import 'package:zephyr/page/video/video_site_browser.dart';
 
 import 'package:zephyr/page/discover/view/plugin_function_dialog.dart';
 
@@ -17,6 +26,19 @@ import 'package:zephyr/page/discover/view/plugin_function_dialog.dart';
 /// 与 UI 解耦，方便集中维护。
 class DiscoverRouter {
   DiscoverRouter._();
+
+  /// Native video search is opt-in. Never route it through comic search.
+  static Map<String, dynamic>? videoSearchAction(Map<String, dynamic> action) {
+    final payload = asJsonMap(action['payload']);
+    if (action['type'] != 'openVideoCatalog' ||
+        payload['nativeSearch'] != true) {
+      return null;
+    }
+    return {
+      ...action,
+      'payload': {...payload, 'openSearch': true},
+    };
+  }
 
   static Future<void> route(
     BuildContext context, {
@@ -34,6 +56,8 @@ class DiscoverRouter {
         await _openSearch(context, asJsonMap(action['payload']));
       case 'openWeb':
         await _openWeb(context, asJsonMap(action['payload']));
+      case 'openVideoCatalog':
+        await _openVideoCatalog(context, asJsonMap(action['payload']));
       case 'openPluginFunction':
         await _openPluginFunction(
           context,
@@ -62,6 +86,7 @@ class DiscoverRouter {
     if (type != 'openPluginFunction' &&
         type != 'openCloudFavorite' &&
         type != 'openSearch' &&
+        type != 'openVideoCatalog' &&
         type != 'openComicList' &&
         type != 'openComicInfo') {
       return action;
@@ -120,7 +145,159 @@ class DiscoverRouter {
     if (!context.mounted) {
       return;
     }
-    context.pushRoute(WebViewRoute(info: [title, url]));
+    final navigation = asJsonMap(payload['navigation']);
+    context.pushRoute(
+      WebViewRoute(
+        info: [title, url, if (navigation.isNotEmpty) jsonEncode(navigation)],
+      ),
+    );
+  }
+
+  static Future<void> _openVideoCatalog(
+    BuildContext context,
+    Map<String, dynamic> payload,
+  ) async {
+    final source = _sourceFromString(payload['source']?.toString());
+    final homeUrl = Uri.tryParse(payload['url']?.toString() ?? '');
+    final selectors = asJsonMap(
+      payload['selectors'],
+    ).map((key, value) => MapEntry(key, value.toString()));
+    const requiredSelectors = [
+      'row',
+      'rowTitle',
+      'rowCards',
+      'cards',
+      'cardLink',
+      'cardTitle',
+      'cardImage',
+      'cardSubtitle',
+      'cardDuration',
+      'detailTitle',
+      'detailCover',
+      'detailDescription',
+      'detailTags',
+      'episodes',
+      'related',
+      'video',
+    ];
+    if (source.isEmpty ||
+        homeUrl == null ||
+        homeUrl.scheme != 'https' ||
+        homeUrl.host.isEmpty ||
+        homeUrl.userInfo.isNotEmpty ||
+        (homeUrl.hasPort && homeUrl.port != 443) ||
+        requiredSelectors.any(
+          (key) =>
+              selectors[key]?.trim().isNotEmpty != true ||
+              selectors[key]!.length > 300,
+        )) {
+      return;
+    }
+    String path(String name) => payload[name]?.toString().trim() ?? '';
+    if (path('catalogFnPath').isEmpty ||
+        path('detailFnPath').isEmpty ||
+        path('playbackFnPath').isEmpty ||
+        !context.mounted) {
+      return;
+    }
+    final categories = <NativeCatalogCategory>[];
+    for (final item in asJsonList(payload['categories']).take(12)) {
+      final entry = asJsonMap(item);
+      final title = entry['title']?.toString().trim() ?? '';
+      final url = Uri.tryParse(entry['url']?.toString() ?? '');
+      if (title.isEmpty ||
+          title.length > 30 ||
+          url == null ||
+          url.scheme != 'https' ||
+          url.host != homeUrl.host ||
+          url.userInfo.isNotEmpty ||
+          (url.hasPort && url.port != 443) ||
+          (url.path != '/' && url.path != '/search')) {
+        continue;
+      }
+      categories.add(NativeCatalogCategory(title: title, url: url));
+    }
+    final tabs = <NativeCatalogTab>[];
+    for (final item in asJsonList(payload['tabs']).take(4)) {
+      final entry = asJsonMap(item);
+      final id = entry['id']?.toString() ?? '';
+      final title = entry['title']?.toString().trim() ?? '';
+      final mode = entry['mode']?.toString() ?? '';
+      final url = Uri.tryParse(entry['url']?.toString() ?? '');
+      if (!{'recommend', 'ranking', 'subscriptions', 'me'}.contains(id) ||
+          title.isEmpty ||
+          title.length > 12 ||
+          !{'catalog', 'website', 'account'}.contains(mode) ||
+          url == null ||
+          url.scheme != 'https' ||
+          url.host != homeUrl.host ||
+          url.userInfo.isNotEmpty ||
+          (url.hasPort && url.port != 443) ||
+          (mode == 'catalog' &&
+              url.path != '/' &&
+              url.path != '/search' &&
+              !(payload['nativeSubscriptions'] == true &&
+                  id == 'subscriptions' &&
+                  url.path == '/subscriptions'))) {
+        continue;
+      }
+      tabs.add(NativeCatalogTab(id: id, title: title, url: url, mode: mode));
+    }
+    final schema = asJsonMap(payload['searchFilters']).isEmpty
+        ? null
+        : VideoFilterSchema.fromWire(asJsonMap(payload['searchFilters']));
+    Uri? initialUrl;
+    if (payload['openSearch'] == true) {
+      if (payload['nativeSearch'] != true) return;
+      final result = await Navigator.of(context, rootNavigator: true)
+          .push<VideoSearchFilters>(
+            videoPageRoute(
+              builder: (_) => VideoSearchPage(
+                source: source,
+                initial: const VideoSearchFilters(),
+                authorEnabled: schema != null,
+              ),
+            ),
+          );
+      if (result == null || !context.mounted) return;
+      initialUrl = result.toUri(homeUrl);
+      unawaited(
+        VideoSearchHistory.add(source, result.query).catchError((Object _) {
+          if (context.mounted) showErrorToast(t.videoSearch.historyWriteFailed);
+        }),
+      );
+    }
+    if (!context.mounted) return;
+    await Navigator.of(context, rootNavigator: true).push<void>(
+      videoPageRoute(
+        builder: (_) => NativeVideoCatalogPage(
+          source: source,
+          title: payload['title']?.toString() ?? 'Video',
+          homeUrl: homeUrl,
+          initialUrl: initialUrl,
+          catalogFnPath: path('catalogFnPath'),
+          detailFnPath: path('detailFnPath'),
+          playbackFnPath: path('playbackFnPath'),
+          nativeAccount: payload['nativeAccount'] == true,
+          nativeSubscriptions: payload['nativeSubscriptions'] == true,
+          nativeAuth: payload['nativeAuth'] == true,
+          nativeSiteActions: payload['nativeSiteActions'] == true,
+          externalAuthenticationEntries: [
+            for (final raw in asJsonList(
+              payload['externalAuthenticationEntries'],
+            ).take(4))
+              if (Uri.tryParse(raw.toString()) case final Uri rawEntry)
+                if (videoSiteExternalAuthenticationEntry(homeUrl, rawEntry)
+                    case final Uri entry)
+                  entry,
+          ],
+          searchFilters: schema,
+          selectors: selectors,
+          categories: categories,
+          tabs: tabs,
+        ),
+      ),
+    );
   }
 
   static Future<void> _openPluginFunction(

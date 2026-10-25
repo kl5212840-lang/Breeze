@@ -67,6 +67,7 @@ class TranslationsEnUs extends Translations with BaseTranslations<AppLocale, Tra
 	@override late final _Translations$comicFollow$en_US comicFollow = _Translations$comicFollow$en_US._(_root);
 	@override late final _Translations$changelog$en_US changelog = _Translations$changelog$en_US._(_root);
 	@override late final _Translations$webview$en_US webview = _Translations$webview$en_US._(_root);
+	@override late final _Translations$videoPlayback$en_US videoPlayback = _Translations$videoPlayback$en_US._(_root);
 	@override late final _Translations$oldRanking$en_US oldRanking = _Translations$oldRanking$en_US._(_root);
 	@override late final _Translations$login$en_US login = _Translations$login$en_US._(_root);
 	@override late final _Translations$fontSetting$en_US fontSetting = _Translations$fontSetting$en_US._(_root);
@@ -74,7 +75,15 @@ class TranslationsEnUs extends Translations with BaseTranslations<AppLocale, Tra
 	@override late final _Translations$foregroundTask$en_US foregroundTask = _Translations$foregroundTask$en_US._(_root);
 	@override late final _Translations$notification$en_US notification = _Translations$notification$en_US._(_root);
 	@override late final _Translations$update$en_US update = _Translations$update$en_US._(_root);
+	@override late final _Translations$videoDownload$en_US videoDownload = _Translations$videoDownload$en_US._(_root);
+	@override late final _Translations$videoCommunity$en_US videoCommunity = _Translations$videoCommunity$en_US._(_root);
+	@override late final _Translations$videoAccount$en_US videoAccount = _Translations$videoAccount$en_US._(_root);
+	@override late final _Translations$videoSiteAccount$en_US videoSiteAccount = _Translations$videoSiteAccount$en_US._(_root);
 	@override late final _Translations$dialog$en_US dialog = _Translations$dialog$en_US._(_root);
+	@override late final _Translations$videoFilters$en_US videoFilters = _Translations$videoFilters$en_US._(_root);
+	@override late final _Translations$videoSearch$en_US videoSearch = _Translations$videoSearch$en_US._(_root);
+	@override late final _Translations$videoMetadata$en_US videoMetadata = _Translations$videoMetadata$en_US._(_root);
+	@override late final _Translations$videoPersonal$en_US videoPersonal = _Translations$videoPersonal$en_US._(_root);
 }
 
 // Path: common
@@ -109,6 +118,8 @@ class _Translations$common$en_US extends Translations$common$zh_CN {
 	@override String get overwrite => 'Overwrite';
 	@override String get cancelled => 'Cancelled';
 	@override String get search => 'Search';
+	@override String get previousPage => 'Previous';
+	@override String get nextPage => 'Next';
 	@override String get clear => 'Clear';
 	@override String get copy => 'Copy';
 	@override String get paste => 'Paste';
@@ -1466,9 +1477,207 @@ class _Translations$webview$en_US extends Translations$webview$zh_CN {
 	@override String get windowClosed => 'WebView window closed';
 	@override String get openedInExternalWindow => 'Webpage opened in external window';
 	@override String get back => 'Back';
+	@override String get forward => 'Forward';
+	@override String get siteBack => 'Page back';
+	@override String get siteHome => 'Site home';
+	@override String get siteSearch => 'Site search';
+	@override String get closeWebpage => 'Close webpage and return to Breeze';
 	@override String get closeWindow => 'Close WebView window';
+	@override String get nativePlaybackTrial => 'Try native player';
+	@override String get nativePlaybackUnavailable => 'Native playback is unavailable for this page. Continue in the website player.';
 	@override String loadError({required Object error}) => 'Load failed (${error})';
 	@override String httpErrorStatus({required Object statusCode}) => 'Server returned abnormal status code: ${statusCode}';
+}
+
+// Path: videoPlayback
+class _Translations$videoPlayback$en_US extends Translations$videoPlayback$zh_CN {
+	_Translations$videoPlayback$en_US._(TranslationsEnUs root) : this._root = root, super.internal(root);
+
+	final TranslationsEnUs _root; // ignore: unused_field
+
+	// Translations
+	@override String get playFailed => 'Playback could not start. Retry or choose another source; opening the website is also available.';
+	@override String get actionFailed => 'Could not apply this playback control. Please try again.';
+	@override String get backToWeb => 'Website view';
+	@override String get minimizeShort => 'Details';
+	@override String get landscapeShort => 'Rotate';
+	@override String get previousEpisode => 'Previous episode';
+	@override String get nextEpisode => 'Next episode';
+	@override String get nextSource => 'Try next source';
+	@override String get fastForward => 'Hold for 2× speed';
+	@override String get source => 'Choose source';
+	@override String get pause => 'Pause';
+	@override String get play => 'Play';
+	@override String get replay => 'Replay';
+	@override String get rewind10 => 'Back 10 seconds';
+	@override String get forward10 => 'Forward 10 seconds';
+	@override String get fullscreen => 'Fullscreen';
+	@override String get exitFullscreen => 'Exit fullscreen';
+	@override String get defaultFullscreenOrientation => 'Fullscreen orientation';
+	@override String get portraitFullscreen => 'Portrait fullscreen';
+	@override String get landscapeFullscreen => 'Landscape fullscreen';
+	@override String get switchToPortrait => 'Switch to portrait fullscreen';
+	@override String get switchToLandscape => 'Switch to landscape fullscreen';
+	@override String get mute => 'Mute';
+	@override String get unmute => 'Unmute';
+	@override String get speed => 'Playback speed';
+	@override String get buffering => 'Buffering';
+	@override String get videoDetails => 'Video details';
+	@override String get nativePlayback => 'Native playback';
+	@override String get playerActions => 'Playback options';
+	@override String get browserActions => 'Browser options';
+	@override String get personalPage => 'Profile';
+	@override String get accountUnconfirmed => 'Site login status is not confirmed';
+	@override String get siteContents => 'Site content';
+	@override String get subscriptionsEmpty => 'No subscription videos available';
+	@override String get inlinePlaybackNote => 'Playing in Breeze; return to view the original details';
+	@override String get episodes => 'Episodes';
+	@override String get related => 'You may also like';
+	@override String get searchVideos => 'Search videos';
+	@override String get closeSearch => 'Close search';
+	@override String get search => 'Search';
+	@override String get websiteToggle => 'Display mode';
+	@override String get nativeMode => 'Native';
+	@override String get catalogRefreshFailed => 'Could not refresh. Showing previously loaded content.';
+	@override String get playbackSettings => 'Video settings';
+	@override String get hostSettingsScope => 'Playback preferences are shared. Source settings are saved separately.';
+	@override String get settingsSaveFailed => 'Could not save settings. Please try again.';
+	@override String get settingsLoadFailed => 'Video settings could not be loaded';
+	@override String get autoplay => 'Autoplay';
+	@override String get resumeProgress => 'Resume playback';
+	@override String get recordHistory => 'Watch history';
+	@override String get recordHistoryNote => 'Saved on this device. Turning this off also disables resume.';
+	@override String get watchHistory => 'Watch history';
+	@override String get historyEmpty => 'No watch history yet';
+	@override String get historyEmptyNote => 'Native videos appear here after 5 seconds of playback or completion. Tap a record to watch again';
+	@override String get historyLoadFailed => 'Watch history could not be loaded';
+	@override String get historyChangeFailed => 'Could not delete the record. Please try again.';
+	@override String get clearWatchHistory => 'Clear watch history';
+	@override String get clearWatchHistoryPrompt => 'Delete this source\'s local watch history and resume positions? Your website account is not affected.';
+	@override String removeWatchHistoryPrompt({required Object title}) => 'Delete the local watch record and resume position for ${title}?';
+	@override String get watchedComplete => 'Watched';
+	@override String watchPosition({required Object position, required Object duration}) => 'Last watched ${position} / ${duration}';
+	@override String get siteAccount => 'Website account';
+	@override String get siteAccountNote => 'Account content comes from the site. The browser handles login and required account actions; local watch history is stored separately';
+	@override String get sourceSettings => 'Source settings';
+	@override String get sourceSettingsNote => 'Parsing timeout, source preference and website presentation';
+	@override String get defaultSpeed => 'Default speed';
+	@override String get holdSpeed => 'Temporary speed on hold';
+	@override String fastForwardRate({required Object rate}) => 'Playing at ${rate}×';
+	@override String get controlsTimeout => 'Auto-hide controls';
+	@override String seconds({required Object value}) => '${value} seconds';
+	@override String get coverVideo => 'Fill frame';
+	@override String get coverVideoNote => 'Landscape may crop edges. Portrait keeps the full frame.';
+	@override String get doubleTapAction => 'Double-tap action';
+	@override String get doubleTapSeek => 'Center: play/pause; sides: back/forward 10 seconds';
+	@override String get doubleTapPlay => 'Play or pause';
+	@override String get swipeSeek => 'Swipe horizontally to seek';
+	@override String get controlsStyle => 'Player controls';
+	@override String get systemControls => 'System style';
+	@override String get breezeControls => 'Breeze controls';
+	@override String get controlsStyleNote => 'Choose player controls here. Other screens follow the system.';
+	@override String get swipeSeekNote => 'Drag to preview; release to seek.';
+	@override String get lockControls => 'Lock player controls';
+	@override String get unlockControls => 'Unlock player controls';
+	@override String get expandDescription => 'Show description';
+	@override String get collapseDescription => 'Less';
+	@override String get catalogFallback => 'Native content could not load. Retry or open the website.';
+	@override String get verificationTitle => 'Website verification';
+	@override String get localWatchHistory => 'Local history';
+	@override String get verificationNote => 'Complete verification on the website. Your original page will resume when it succeeds.';
+	@override String get verificationSlow => 'Verification is taking longer than expected. Keep the same network exit. If Safari works on this network, copy diagnostics instead of repeatedly reloading.';
+	@override String get verificationStableNote => 'The website may request verification at any time. Use its own verification controls. Checking the result does not submit verification; reloading starts it over.';
+	@override String get verificationActions => 'Verification';
+	@override String get verificationHelp => 'About verification';
+	@override String get enableBrowserInspection => 'Web inspector';
+	@override String get disableBrowserInspection => 'Stop inspector';
+	@override String get browserInspectionPrompt => 'Allow Safari Web Inspector to connect for this source session only. This does not reload verification or upload logs. An inspector can see website content, requests and login information, so connect only to a trusted Mac.\n\nEnable Web Inspector in Safari\'s advanced settings on your iPhone, then connect it to a Mac and select the Breeze page under your iPhone in Safari\'s Develop menu. Share only verification error codes, never raw HAR files, cookies, request headers or account data. Closing the source disables inspection.';
+	@override String get browserInspectionNote => 'Browser inspection updated without reloading verification';
+	@override String get browserInspectionFailed => 'Could not change inspection. iOS 16.4 or later is required.';
+	@override String get nativeAfterVerification => 'Return to native after verification';
+	@override String get websiteAfterVerification => 'Stay on website after verification';
+	@override String get reloadVerificationPrompt => 'Reloading interrupts the current verification and starts it over. Continue?';
+	@override String get checkVerification => 'Check verification';
+	@override String get reloadVerification => 'Reload verification';
+	@override String get verificationRequired => 'The website requires security verification again. Your playback position is retained.';
+	@override String get continueVerification => 'Open verification';
+	@override String get siteUnavailable => 'The native catalog is not ready. Retry, or open the website and switch back to the native catalog.';
+	@override String get copyDiagnostic => 'Copy diagnostics';
+	@override String get diagnosticCopied => 'Diagnostics copied without account data';
+	@override String get home => 'Home';
+	@override String get website => 'Website';
+	@override String get nativeCatalog => 'Native interface';
+	@override String get acknowledge => 'Got it';
+	@override String get closeSource => 'Close Hanime1 source';
+	@override String get quickSettings => 'Quick settings';
+	@override String get currentPlayback => 'Current playback';
+	@override String get currentSpeedNote => 'Applies to this video.';
+	@override String get systemControlsShort => 'System';
+	@override String get gestureSettings => 'Gestures';
+	@override String get gestureOff => 'Off';
+	@override String get doubleTapSeekShort => 'Seek by region';
+	@override String get allPlaybackSettings => 'All playback settings';
+	@override String get collapseTags => 'Fewer tags';
+	@override String moreTags({required Object count}) => 'More tags (${count})';
+	@override String sourceNumber({required Object index}) => 'Source ${index}';
+	@override String get siteEpisodeOrder => 'Site order · Episode numbers follow the titles';
+	@override String get currentEpisode => 'Playing';
+	@override String episodeCount({required Object count}) => '${count} entries';
+	@override String get defaultsNote => 'Defaults. Adjust the current video during playback.';
+	@override String get playbackGroup => 'Playback and picture';
+	@override String get controlsGroup => 'Controls';
+	@override String get historyGroup => 'History and resume';
+	@override String get portraitMode => 'Portrait viewing';
+	@override String get portraitFocus => 'Focus';
+	@override String get portraitEpisodes => 'Episode feed';
+	@override String get portraitModeNote => 'Focus on this video, or swipe through the site episode list. Stops at the end.';
+	@override String get episodeSwipeHint => 'Swipe up for next · Down for previous';
+	@override String get episodeBoundary => 'End of the site episode list';
+	@override String get episodeSwitchFailed => 'Switch failed. Current video retained.';
+	@override String get episodeSwitching => 'Preparing episode';
+	@override String get episodeOrderUnavailable => 'Current video is absent from the episode list. Choose an episode manually.';
+	@override String get episodeAscending => 'Ascending';
+	@override String get episodeDescending => 'Descending';
+	@override String get episodeSite => 'Site order';
+	@override String get episodeManual => 'Custom';
+	@override String get episodeManualNote => 'Drag to reorder for this session only. Apply to change the active queue.';
+	@override String get episodeOrderFallback => 'Episode numbers are unclear. Site order is retained; custom order is available.';
+	@override String get episodeSessionOrder => 'Order applies to this session. The current video and position stay unchanged.';
+	@override String get episodeApplyOrder => 'Apply order';
+	@override String get episodeReorder => 'Reorder';
+	@override String get episodeMoveUp => 'Move up';
+	@override String get episodeMoveDown => 'Move down';
+	@override String get episodeWaiting => 'Loading the selected video…';
+	@override String get settingsSearch => 'Search video settings';
+	@override String get settingsScopeCommon => 'All video sources';
+	@override String get settingsScopeSource => 'This source only';
+	@override String get settingsSearchEmpty => 'No matching video settings';
+	@override String get settingsMotion => 'Interface motion';
+	@override String get settingsMotionNote => 'Adjust in system Accessibility settings.';
+	@override String get settingsAll => 'All video settings';
+	@override String get settingsMotionValue => 'Follow system';
+	@override String get resumeRequiresHistory => 'Enable watch history to use resume.';
+	@override String get pageAnalysis => 'Page analysis';
+	@override String get analysisRunning => 'Reading page status…';
+	@override String get analysisFailed => 'Analysis could not finish. Try again.';
+	@override String get analysisMode => 'Display mode';
+	@override String get analysisPage => 'Current page';
+	@override String get analysisState => 'Page status';
+	@override String get analysisScope => 'Page status and loading metadata only. Account content is excluded.';
+	@override String get analyzeAgain => 'Analyze again';
+	@override String get analysisVerification => 'Awaiting site verification';
+	@override String get analysisLoading => 'Loading';
+	@override String get analysisDisplayed => 'Page displayed';
+	@override String get analysisCopied => 'Copied';
+	@override String get analysisCopyFailed => 'Could not copy. Try again.';
+	@override String get analysisCreator => 'Creator profile';
+	@override String get analysisProfile => 'User profile';
+	@override String get analysisHome => 'Home';
+	@override String get analysisSubscriptions => 'Subscriptions';
+	@override String get analysisVideo => 'Video details';
+	@override String get analysisPlaylist => 'Playlist';
+	@override String get analysisSitePage => 'Website page';
+	@override String get accountBackup => 'Login backup';
 }
 
 // Path: oldRanking
@@ -1618,6 +1827,208 @@ class _Translations$update$en_US extends Translations$update$zh_CN {
 	@override String get unknownArch => 'Unknown';
 }
 
+// Path: videoDownload
+class _Translations$videoDownload$en_US extends Translations$videoDownload$zh_CN {
+	_Translations$videoDownload$en_US._(TranslationsEnUs root) : this._root = root, super.internal(root);
+
+	final TranslationsEnUs _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => 'Download video';
+	@override String get chooseQuality => 'Choose a quality to download';
+	@override String get loading => 'Reading download options…';
+	@override String get empty => 'No download options could be read';
+	@override String downloading({required Object quality}) => 'Downloading ${quality}';
+	@override String get saving => 'Choose where to save the file';
+	@override String get cancel => 'Cancel download';
+	@override String get cancelled => 'Download cancelled';
+	@override String get saved => 'Video saved to your selected location';
+	@override String get failed => 'Download did not finish. Reload the options and try again.';
+	@override String get unavailable => 'Native file saving is unavailable on this device. Download on the website.';
+	@override String get reload => 'Reload options';
+	@override String get website => 'Download on website';
+}
+
+// Path: videoCommunity
+class _Translations$videoCommunity$en_US extends Translations$videoCommunity$zh_CN {
+	_Translations$videoCommunity$en_US._(TranslationsEnUs root) : this._root = root, super.internal(root);
+
+	final TranslationsEnUs _root; // ignore: unused_field
+
+	// Translations
+	@override String get stateUnknown => 'Account state is not confirmed. Try reading it again.';
+	@override String get actionsUnreadable => 'Some actions could not be read. Try again.';
+	@override String get login => 'Sign in';
+	@override String get register => 'Create account';
+	@override String get email => 'Email';
+	@override String get displayName => 'Username';
+	@override String get password => 'Password';
+	@override String get passwordVisibility => 'Show or hide password';
+	@override String get invalidEmail => 'Enter a valid email address';
+	@override String get required => 'This field is required';
+	@override String get remember => 'Stay signed in on this device';
+	@override String get authNote => 'Use the site\'s current sign-in or registration form. Your password is used only for this submission, never saved in plugins, logs or cloud backup. Additional verification opens the site page.';
+	@override String get authFailed => 'The site did not complete sign-in or registration. Check your details or continue on the website.';
+	@override String get authUnconfirmed => 'Submission has not been confirmed. Check the website before trying again.';
+	@override String get submitting => 'Submitting…';
+	@override String get haveAccount => 'Already have an account? Sign in';
+	@override String get createAccount => 'New here? Create an account';
+	@override String get manageAccount => 'Manage site account';
+	@override String get preferences => 'Settings & tools';
+	@override String get followedCreators => 'Followed creators';
+	@override String get subscriptionFeed => 'Subscription feed';
+	@override String get comments => 'Comments';
+	@override String get replies => 'Replies';
+	@override String get viewReplies => 'View replies';
+	@override String get writeComment => 'Write a comment';
+	@override String get post => 'Post comment';
+	@override String get noComments => 'No comments yet';
+	@override String get emptyLibrary => 'This list is empty';
+	@override String get loginRequired => 'Sign in to your site account to continue.';
+	@override String get verificationRequired => 'The site requires verification. Return to the player and complete it on the website before retrying. Playback will not switch to the website automatically.';
+	@override String get unconfirmed => 'The result could not be confirmed. Refresh the site content to check before submitting again.';
+	@override String get pageChanged => 'The site page has changed. Go back and reopen this video.';
+	@override String get unsupported => 'This page does not currently provide the required site operation. Continue on the website.';
+	@override String get busy => 'Another operation is in progress. Try again shortly.';
+	@override String get rejected => 'The site did not accept this operation. Check your details and try again.';
+	@override String get network => 'Unable to load right now. Check your connection and retry.';
+	@override String get like => 'Like';
+	@override String get liked => 'Liked';
+	@override String get follow => 'Follow creator';
+	@override String get following => 'Following';
+	@override String get createPlaylist => 'Create playlist';
+	@override String get playlistTitle => 'Playlist name';
+	@override String get playlistDescription => 'Description';
+	@override String get editPlaylist => 'Edit playlist';
+	@override String get deletePlaylist => 'Delete playlist';
+	@override String get deletePlaylistPrompt => 'Delete this playlist from your site account? This cannot be undone locally.';
+	@override String expandCreator({required Object name}) => 'Show ${name}’s videos';
+	@override String collapseCreator({required Object name}) => 'Hide ${name}’s videos';
+	@override String get viewCreatorWorks => 'View all videos';
+	@override String get favoriteTo => 'Save to playlist';
+	@override String get favorite => 'Save';
+	@override String get favorited => 'Saved';
+	@override String get watchLater => 'Watch later';
+	@override String get inWatchLater => 'In Watch later';
+	@override String get addToPlaylist => 'Add to this playlist';
+	@override String get addedToPlaylist => 'Added';
+	@override String get notInPlaylist => 'Not added';
+	@override String get readPlaylistState => 'Check whether this video is added';
+	@override String get checkResult => 'Check result';
+	@override String get noPlaylists => 'No playlists yet. Create one to save this video.';
+	@override String get share => 'Share';
+	@override String get shareUnavailable => 'System sharing is unavailable on this device.';
+	@override String get shareFailed => 'Could not open sharing. Please try again.';
+	@override String get loadMore => 'Load more';
+	@override String get commentsChanged => 'The comment list has changed. Refresh to continue.';
+	@override String get followShort => 'Subscribe';
+	@override String get reply => 'Reply';
+	@override String get overview => 'Overview';
+	@override String get closeKeyboard => 'Hide keyboard';
+	@override String get dislike => 'Dislike';
+	@override String get disliked => 'Disliked';
+	@override String get noReplies => 'No replies yet';
+	@override String get postVerificationOnly => 'Posting requires site email verification. Reading remains available.';
+	@override String get loginToPost => 'Sign in to check the site’s posting permissions.';
+	@override String get publishingUnavailable => 'Comments are readable. Continue on the website to post.';
+	@override String get checkStatus => 'Check result';
+	@override String get createdNotAdded => 'The playlist was created. This video has not been added.';
+	@override String get addToCreatedPlaylist => 'Add to this playlist';
+	@override String get uploader => 'Uploader';
+	@override String get creatorUnavailable => 'The author’s real profile could not be identified. Retry, or view all works separately.';
+	@override String get unassignedSubscriptionUpdates => 'Updates without a confirmed author';
+	@override String get moreSubscribedCreators => 'More subscribed authors';
+}
+
+// Path: videoAccount
+class _Translations$videoAccount$en_US extends Translations$videoAccount$zh_CN {
+	_Translations$videoAccount$en_US._(TranslationsEnUs root) : this._root = root, super.internal(root);
+
+	final TranslationsEnUs _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => 'Login backup & cloud sync';
+	@override String get scope => 'Player preferences use Breeze’s Sync settings; source settings and account backups use Sync plugins. Use the existing WebDAV / S3 upload and download workflow.';
+	@override String get privacy => 'The backup contains session credentials that grant account access, not your password or Cloudflare clearance. Existing sync is not end-to-end encryption with a user-only key. Use trusted private storage and HTTPS.';
+	@override String get empty => 'No account backup, or the backup has expired';
+	@override String get saved => 'Account backup saved (not proof of a current login)';
+	@override String get backup => 'Back up current site login';
+	@override String get backupPrompt => 'Save this login session in the plugin configuration, which is uploaded to your configured cloud when Sync plugins is enabled. Continue?';
+	@override String get restore => 'Restore synced login';
+	@override String get restorePrompt => 'Replace this site’s account session on this device with the saved session. The site may still require verification or another login. Security verification is not restored or bypassed. Continue?';
+	@override String get forget => 'Remove account backup';
+	@override String get forgetPrompt => 'Remove the backup from this plugin configuration; upload or sync plugins to update the cloud. This does not log out the website. Copies already downloaded to other devices cannot be remotely revoked; use the site’s account security tools to revoke sessions.';
+	@override String get login => 'View site account';
+	@override String get cloud => 'Breeze cloud sync settings';
+	@override String get backupDone => 'Saved in plugin configuration. Use Breeze Sync plugins to upload.';
+	@override String get restored => 'Written to this device’s browser. Open the site to confirm; expired sessions require login.';
+	@override String get forgotten => 'Local backup removed. Upload or sync plugins to update the cloud.';
+	@override String get failed => 'Could not complete. Retry; no automatic cloud upload or overwrite was performed.';
+	@override String get loginRequired => 'First log in through this plugin’s website, then back up the account.';
+	@override String get settingsNote => 'Video preferences use Breeze’s Sync settings. Site login backup is under this source’s My → Login backup & cloud sync.';
+}
+
+// Path: videoSiteAccount
+class _Translations$videoSiteAccount$en_US extends Translations$videoSiteAccount$zh_CN {
+	_Translations$videoSiteAccount$en_US._(TranslationsEnUs root) : this._root = root, super.internal(root);
+
+	final TranslationsEnUs _root; // ignore: unused_field
+
+	// Translations
+	@override String get leavePending => 'Leaving will not undo a submitted action. Read the site state again when you return.';
+	@override String get title => 'Account details';
+	@override String get profile => 'Profile';
+	@override String get name => 'Username';
+	@override String get email => 'Login email';
+	@override String get saveProfile => 'Save profile';
+	@override String get password => 'Password';
+	@override String get oldPassword => 'Current password';
+	@override String get newPassword => 'New password';
+	@override String get confirmPassword => 'Confirm new password';
+	@override String get changePassword => 'Change password';
+	@override String get photo => 'Avatar';
+	@override String get choosePhoto => 'Change avatar';
+	@override String get uploadPhoto => 'Upload avatar';
+	@override String get cancelPhoto => 'Cancel selection';
+	@override String get photoFormats => 'PNG, GIF, JPEG and WebP';
+	@override String get invalidPhoto => 'Unsupported image format. Choose an avatar on the website.';
+	@override String get verification => 'Email verification';
+	@override String get code => '6-digit code';
+	@override String get requestCode => 'Get code';
+	@override String get verifyCode => 'Verify code';
+	@override String resendIn({required Object seconds}) => 'Resend in ${seconds} s';
+	@override String get codeSent => 'The site sent a verification code. Check your email.';
+	@override String get failed => 'The site did not complete this action. Check and retry.';
+	@override String get unavailable => 'This action is not recognized yet. Refresh or continue on the website.';
+	@override String get website => 'Continue on website';
+	@override String get refresh => 'Read again';
+	@override String get submitted => 'Submitted. Reading the site result…';
+	@override String get unconfirmed => 'Result unconfirmed. Read again; submission will not repeat automatically.';
+	@override String get readbackMatched => 'Profile values confirmed by a fresh read.';
+	@override String get passwordUnconfirmed => 'Password submitted. Check the site result; submission will not repeat automatically.';
+	@override String get discardTitle => 'Discard unsaved changes?';
+	@override String get discardBody => 'Changes stay on this screen only and will be cleared when you leave.';
+	@override String get logout => 'Log out of site';
+	@override String get logoutPrompt => 'Log out of this website? Saved login backups will not be removed automatically.';
+	@override String get required => 'Complete this field';
+	@override String get emailInvalid => 'Enter a valid email address';
+	@override String get passwordMismatch => 'The new passwords do not match';
+	@override String get recoveryTitle => 'Recover password';
+	@override String get recoveryDescription => 'Send the site password reset link to your login email.';
+	@override String get sendRecovery => 'Send reset link';
+	@override String get recoverySent => 'The site confirmed the reset email was sent. Check your inbox.';
+	@override String get backLogin => 'Back to login';
+	@override String get avatarUnconfirmed => 'Avatar submitted. Read again to check the result.';
+	@override String get unsupportedAccount => 'Account details unavailable. Read again or continue on the website.';
+	@override String get otpUnconfirmed => 'Code submitted. Check the site result.';
+	@override String get forgetPassword => 'Forgot password';
+	@override String get googleInBrowser => 'Use Google in browser';
+	@override String get googleWebsiteTitle => 'Google website sign-in';
+	@override String get googleWebsiteNote => 'Continue Google sign-in in your system browser. Your browser and this page have separate site sessions. Return here to sign in with your site email and password.';
+	@override String get continueInBrowser => 'Continue in browser';
+	@override String get browserOpenFailed => 'Could not open your system browser. Please retry.';
+}
+
 // Path: dialog
 class _Translations$dialog$en_US extends Translations$dialog$zh_CN {
 	_Translations$dialog$en_US._(TranslationsEnUs root) : this._root = root, super.internal(root);
@@ -1627,6 +2038,112 @@ class _Translations$dialog$en_US extends Translations$dialog$zh_CN {
 	// Translations
 	@override String get hideOrClose => 'Hide to tray or close app';
 	@override String get rememberChoice => 'Remember my choice';
+}
+
+// Path: videoFilters
+class _Translations$videoFilters$en_US extends Translations$videoFilters$zh_CN {
+	_Translations$videoFilters$en_US._(TranslationsEnUs root) : this._root = root, super.internal(root);
+
+	final TranslationsEnUs _root; // ignore: unused_field
+
+	// Translations
+	@override String get title => 'Filters';
+	@override String get genre => 'Type';
+	@override String get tags => 'Tags';
+	@override String get sort => 'Sort';
+	@override String get date => 'Release date';
+	@override String get duration => 'Duration';
+	@override String get searchMode => 'Search scope';
+	@override String get yearMonth => 'Specific year / month';
+	@override String get year => 'Year';
+	@override String get allYears => 'All years';
+	@override String get allMonths => 'All months';
+	@override String get invalidYear => 'Enter a four-digit year';
+	@override String month({required Object value}) => 'Month ${value}';
+	@override String get optionsUnavailable => 'Options are unavailable. Reload the site and try again.';
+	@override String get searchTags => 'Search tags';
+	@override String get anyTag => 'Match any tag';
+	@override String get anyTagNote => 'Include at least one selected tag.';
+	@override String get allTagNote => 'Include every selected tag.';
+	@override String get noMatchingTags => 'No matching tags';
+	@override String get authors => 'Authors';
+	@override String get videos => 'Videos';
+	@override String get reset => 'Reset all';
+	@override String get apply => 'Apply filters';
+	@override String get contextChanged => 'The page changed. Reopen filters to apply your choices.';
+	@override String get draftNote => 'Draft · Apply to update.';
+	@override String get applyShort => 'Apply';
+	@override String get allFilters => 'All filters';
+	@override String get clearFilters => 'Clear filters';
+	@override String get allMatch => 'Match all';
+	@override String get anyMatch => 'Match any';
+	@override String selected({required Object count}) => '${count} selected';
+	@override String get selectedTags => 'Selected tags';
+	@override String get showSelected => 'View selected tags';
+	@override String get noSelection => 'No tags selected';
+	@override String get allGroups => 'All groups';
+	@override String get closeKeyboard => 'Dismiss keyboard';
+	@override String get clearAll => 'Clear filters and query';
+	@override String get active => 'Active filters';
+	@override String get removeFilter => 'Remove this condition';
+	@override String get customDate => 'Custom date';
+	@override String get searchGroup => 'Group';
+}
+
+// Path: videoSearch
+class _Translations$videoSearch$en_US extends Translations$videoSearch$zh_CN {
+	_Translations$videoSearch$en_US._(TranslationsEnUs root) : this._root = root, super.internal(root);
+
+	final TranslationsEnUs _root; // ignore: unused_field
+
+	// Translations
+	@override String get recent => 'Recent searches';
+	@override String get clearRecent => 'Clear recent searches';
+	@override String get removeRecent => 'Remove this search';
+	@override String get localOnly => 'Stored only on this device';
+	@override String get hint => 'Search videos or creators';
+	@override String get clearQuery => 'Clear query';
+	@override String get submit => 'Search';
+	@override String get cancel => 'Cancel search';
+	@override String get recentFailed => 'Recent searches are unavailable. You can still search.';
+	@override String get historyWriteFailed => 'Search submitted. Recent search could not be saved.';
+	@override String get noRecent => 'No recent searches';
+	@override String get contextChanged => 'The page changed. Reopen search to submit your query.';
+}
+
+// Path: videoMetadata
+class _Translations$videoMetadata$en_US extends Translations$videoMetadata$zh_CN {
+	_Translations$videoMetadata$en_US._(TranslationsEnUs root) : this._root = root, super.internal(root);
+
+	final TranslationsEnUs _root; // ignore: unused_field
+
+	// Translations
+	@override String get author => 'Author';
+	@override String views({required Object value}) => 'Views ${value}';
+	@override String rating({required Object value}) => 'Positive ${value}';
+	@override String duration({required Object value}) => 'Duration ${value}';
+	@override String totalVotes({required Object count}) => 'Votes ${count}';
+	@override String positiveVotes({required Object count}) => 'Up ${count}';
+	@override String negativeVotes({required Object count}) => 'Down ${count}';
+}
+
+// Path: videoPersonal
+class _Translations$videoPersonal$en_US extends Translations$videoPersonal$zh_CN {
+	_Translations$videoPersonal$en_US._(TranslationsEnUs root) : this._root = root, super.internal(root);
+
+	final TranslationsEnUs _root; // ignore: unused_field
+
+	// Translations
+	@override String get my => 'My library';
+	@override String get overview => 'Overview';
+	@override String get histories => 'History';
+	@override String get watchLater => 'Watch later';
+	@override String get likes => 'Liked videos';
+	@override String get playlists => 'Playlists';
+	@override String get recent => 'Recently watched';
+	@override String get viewAll => 'View all';
+	@override String get recentUnavailable => 'History is unavailable. You can open the full list.';
+	@override String get emptyHistory => 'No watch history yet.';
 }
 
 /// The flat map containing all translations for locale <en-US>.
@@ -1663,6 +2180,8 @@ extension on TranslationsEnUs {
 			'common.overwrite' => 'Overwrite',
 			'common.cancelled' => 'Cancelled',
 			'common.search' => 'Search',
+			'common.previousPage' => 'Previous',
+			'common.nextPage' => 'Next',
 			'common.clear' => 'Clear',
 			'common.copy' => 'Copy',
 			'common.paste' => 'Paste',
@@ -2147,10 +2666,10 @@ extension on TranslationsEnUs {
 			'reader.pageNumber' => 'Page number',
 			'reader.pageNumberSubtitle' => 'Show current/total page count',
 			'reader.networkStatus' => 'Network status',
-			'reader.networkStatusSubtitle' => 'May be inaccurate on Linux',
-			'reader.battery' => 'Battery',
 			_ => null,
 		} ?? switch (path) {
+			'reader.networkStatusSubtitle' => 'May be inaccurate on Linux',
+			'reader.battery' => 'Battery',
 			'reader.time' => 'Time',
 			'reader.verticalPositionTop' => 'Top',
 			'reader.verticalPositionBottom' => 'Bottom',
@@ -2661,10 +3180,10 @@ extension on TranslationsEnUs {
 			'discover.search' => 'Search',
 			'discover.settings' => 'Settings',
 			'discover.pluginManagement' => 'Plugin Management',
-			'discover.manage' => 'Manage',
-			'discover.listLayout' => 'List',
 			_ => null,
 		} ?? switch (path) {
+			'discover.manage' => 'Manage',
+			'discover.listLayout' => 'List',
 			'discover.gridLayout' => 'Grid',
 			'discover.moreActions' => ({required Object title}) => '${title} · More actions',
 			'discover.enablePlugin' => 'Enable plugin',
@@ -2790,9 +3309,198 @@ extension on TranslationsEnUs {
 			'webview.windowClosed' => 'WebView window closed',
 			'webview.openedInExternalWindow' => 'Webpage opened in external window',
 			'webview.back' => 'Back',
+			'webview.forward' => 'Forward',
+			'webview.siteBack' => 'Page back',
+			'webview.siteHome' => 'Site home',
+			'webview.siteSearch' => 'Site search',
+			'webview.closeWebpage' => 'Close webpage and return to Breeze',
 			'webview.closeWindow' => 'Close WebView window',
+			'webview.nativePlaybackTrial' => 'Try native player',
+			'webview.nativePlaybackUnavailable' => 'Native playback is unavailable for this page. Continue in the website player.',
 			'webview.loadError' => ({required Object error}) => 'Load failed (${error})',
 			'webview.httpErrorStatus' => ({required Object statusCode}) => 'Server returned abnormal status code: ${statusCode}',
+			'videoPlayback.playFailed' => 'Playback could not start. Retry or choose another source; opening the website is also available.',
+			'videoPlayback.actionFailed' => 'Could not apply this playback control. Please try again.',
+			'videoPlayback.backToWeb' => 'Website view',
+			'videoPlayback.minimizeShort' => 'Details',
+			'videoPlayback.landscapeShort' => 'Rotate',
+			'videoPlayback.previousEpisode' => 'Previous episode',
+			'videoPlayback.nextEpisode' => 'Next episode',
+			'videoPlayback.nextSource' => 'Try next source',
+			'videoPlayback.fastForward' => 'Hold for 2× speed',
+			'videoPlayback.source' => 'Choose source',
+			'videoPlayback.pause' => 'Pause',
+			'videoPlayback.play' => 'Play',
+			'videoPlayback.replay' => 'Replay',
+			'videoPlayback.rewind10' => 'Back 10 seconds',
+			'videoPlayback.forward10' => 'Forward 10 seconds',
+			'videoPlayback.fullscreen' => 'Fullscreen',
+			'videoPlayback.exitFullscreen' => 'Exit fullscreen',
+			'videoPlayback.defaultFullscreenOrientation' => 'Fullscreen orientation',
+			'videoPlayback.portraitFullscreen' => 'Portrait fullscreen',
+			'videoPlayback.landscapeFullscreen' => 'Landscape fullscreen',
+			'videoPlayback.switchToPortrait' => 'Switch to portrait fullscreen',
+			'videoPlayback.switchToLandscape' => 'Switch to landscape fullscreen',
+			'videoPlayback.mute' => 'Mute',
+			'videoPlayback.unmute' => 'Unmute',
+			'videoPlayback.speed' => 'Playback speed',
+			'videoPlayback.buffering' => 'Buffering',
+			'videoPlayback.videoDetails' => 'Video details',
+			'videoPlayback.nativePlayback' => 'Native playback',
+			'videoPlayback.playerActions' => 'Playback options',
+			'videoPlayback.browserActions' => 'Browser options',
+			'videoPlayback.personalPage' => 'Profile',
+			'videoPlayback.accountUnconfirmed' => 'Site login status is not confirmed',
+			'videoPlayback.siteContents' => 'Site content',
+			'videoPlayback.subscriptionsEmpty' => 'No subscription videos available',
+			'videoPlayback.inlinePlaybackNote' => 'Playing in Breeze; return to view the original details',
+			'videoPlayback.episodes' => 'Episodes',
+			'videoPlayback.related' => 'You may also like',
+			'videoPlayback.searchVideos' => 'Search videos',
+			'videoPlayback.closeSearch' => 'Close search',
+			'videoPlayback.search' => 'Search',
+			'videoPlayback.websiteToggle' => 'Display mode',
+			'videoPlayback.nativeMode' => 'Native',
+			'videoPlayback.catalogRefreshFailed' => 'Could not refresh. Showing previously loaded content.',
+			'videoPlayback.playbackSettings' => 'Video settings',
+			'videoPlayback.hostSettingsScope' => 'Playback preferences are shared. Source settings are saved separately.',
+			'videoPlayback.settingsSaveFailed' => 'Could not save settings. Please try again.',
+			'videoPlayback.settingsLoadFailed' => 'Video settings could not be loaded',
+			'videoPlayback.autoplay' => 'Autoplay',
+			'videoPlayback.resumeProgress' => 'Resume playback',
+			'videoPlayback.recordHistory' => 'Watch history',
+			'videoPlayback.recordHistoryNote' => 'Saved on this device. Turning this off also disables resume.',
+			'videoPlayback.watchHistory' => 'Watch history',
+			'videoPlayback.historyEmpty' => 'No watch history yet',
+			'videoPlayback.historyEmptyNote' => 'Native videos appear here after 5 seconds of playback or completion. Tap a record to watch again',
+			'videoPlayback.historyLoadFailed' => 'Watch history could not be loaded',
+			'videoPlayback.historyChangeFailed' => 'Could not delete the record. Please try again.',
+			'videoPlayback.clearWatchHistory' => 'Clear watch history',
+			'videoPlayback.clearWatchHistoryPrompt' => 'Delete this source\'s local watch history and resume positions? Your website account is not affected.',
+			'videoPlayback.removeWatchHistoryPrompt' => ({required Object title}) => 'Delete the local watch record and resume position for ${title}?',
+			'videoPlayback.watchedComplete' => 'Watched',
+			'videoPlayback.watchPosition' => ({required Object position, required Object duration}) => 'Last watched ${position} / ${duration}',
+			'videoPlayback.siteAccount' => 'Website account',
+			'videoPlayback.siteAccountNote' => 'Account content comes from the site. The browser handles login and required account actions; local watch history is stored separately',
+			'videoPlayback.sourceSettings' => 'Source settings',
+			'videoPlayback.sourceSettingsNote' => 'Parsing timeout, source preference and website presentation',
+			'videoPlayback.defaultSpeed' => 'Default speed',
+			'videoPlayback.holdSpeed' => 'Temporary speed on hold',
+			'videoPlayback.fastForwardRate' => ({required Object rate}) => 'Playing at ${rate}×',
+			'videoPlayback.controlsTimeout' => 'Auto-hide controls',
+			'videoPlayback.seconds' => ({required Object value}) => '${value} seconds',
+			'videoPlayback.coverVideo' => 'Fill frame',
+			'videoPlayback.coverVideoNote' => 'Landscape may crop edges. Portrait keeps the full frame.',
+			'videoPlayback.doubleTapAction' => 'Double-tap action',
+			'videoPlayback.doubleTapSeek' => 'Center: play/pause; sides: back/forward 10 seconds',
+			'videoPlayback.doubleTapPlay' => 'Play or pause',
+			'videoPlayback.swipeSeek' => 'Swipe horizontally to seek',
+			'videoPlayback.controlsStyle' => 'Player controls',
+			'videoPlayback.systemControls' => 'System style',
+			'videoPlayback.breezeControls' => 'Breeze controls',
+			'videoPlayback.controlsStyleNote' => 'Choose player controls here. Other screens follow the system.',
+			'videoPlayback.swipeSeekNote' => 'Drag to preview; release to seek.',
+			'videoPlayback.lockControls' => 'Lock player controls',
+			'videoPlayback.unlockControls' => 'Unlock player controls',
+			'videoPlayback.expandDescription' => 'Show description',
+			'videoPlayback.collapseDescription' => 'Less',
+			'videoPlayback.catalogFallback' => 'Native content could not load. Retry or open the website.',
+			'videoPlayback.verificationTitle' => 'Website verification',
+			'videoPlayback.localWatchHistory' => 'Local history',
+			'videoPlayback.verificationNote' => 'Complete verification on the website. Your original page will resume when it succeeds.',
+			'videoPlayback.verificationSlow' => 'Verification is taking longer than expected. Keep the same network exit. If Safari works on this network, copy diagnostics instead of repeatedly reloading.',
+			'videoPlayback.verificationStableNote' => 'The website may request verification at any time. Use its own verification controls. Checking the result does not submit verification; reloading starts it over.',
+			'videoPlayback.verificationActions' => 'Verification',
+			'videoPlayback.verificationHelp' => 'About verification',
+			'videoPlayback.enableBrowserInspection' => 'Web inspector',
+			'videoPlayback.disableBrowserInspection' => 'Stop inspector',
+			'videoPlayback.browserInspectionPrompt' => 'Allow Safari Web Inspector to connect for this source session only. This does not reload verification or upload logs. An inspector can see website content, requests and login information, so connect only to a trusted Mac.\n\nEnable Web Inspector in Safari\'s advanced settings on your iPhone, then connect it to a Mac and select the Breeze page under your iPhone in Safari\'s Develop menu. Share only verification error codes, never raw HAR files, cookies, request headers or account data. Closing the source disables inspection.',
+			'videoPlayback.browserInspectionNote' => 'Browser inspection updated without reloading verification',
+			'videoPlayback.browserInspectionFailed' => 'Could not change inspection. iOS 16.4 or later is required.',
+			'videoPlayback.nativeAfterVerification' => 'Return to native after verification',
+			'videoPlayback.websiteAfterVerification' => 'Stay on website after verification',
+			'videoPlayback.reloadVerificationPrompt' => 'Reloading interrupts the current verification and starts it over. Continue?',
+			'videoPlayback.checkVerification' => 'Check verification',
+			'videoPlayback.reloadVerification' => 'Reload verification',
+			'videoPlayback.verificationRequired' => 'The website requires security verification again. Your playback position is retained.',
+			'videoPlayback.continueVerification' => 'Open verification',
+			'videoPlayback.siteUnavailable' => 'The native catalog is not ready. Retry, or open the website and switch back to the native catalog.',
+			'videoPlayback.copyDiagnostic' => 'Copy diagnostics',
+			'videoPlayback.diagnosticCopied' => 'Diagnostics copied without account data',
+			'videoPlayback.home' => 'Home',
+			'videoPlayback.website' => 'Website',
+			'videoPlayback.nativeCatalog' => 'Native interface',
+			'videoPlayback.acknowledge' => 'Got it',
+			'videoPlayback.closeSource' => 'Close Hanime1 source',
+			'videoPlayback.quickSettings' => 'Quick settings',
+			'videoPlayback.currentPlayback' => 'Current playback',
+			'videoPlayback.currentSpeedNote' => 'Applies to this video.',
+			'videoPlayback.systemControlsShort' => 'System',
+			'videoPlayback.gestureSettings' => 'Gestures',
+			'videoPlayback.gestureOff' => 'Off',
+			'videoPlayback.doubleTapSeekShort' => 'Seek by region',
+			'videoPlayback.allPlaybackSettings' => 'All playback settings',
+			'videoPlayback.collapseTags' => 'Fewer tags',
+			'videoPlayback.moreTags' => ({required Object count}) => 'More tags (${count})',
+			'videoPlayback.sourceNumber' => ({required Object index}) => 'Source ${index}',
+			'videoPlayback.siteEpisodeOrder' => 'Site order · Episode numbers follow the titles',
+			'videoPlayback.currentEpisode' => 'Playing',
+			'videoPlayback.episodeCount' => ({required Object count}) => '${count} entries',
+			'videoPlayback.defaultsNote' => 'Defaults. Adjust the current video during playback.',
+			'videoPlayback.playbackGroup' => 'Playback and picture',
+			'videoPlayback.controlsGroup' => 'Controls',
+			'videoPlayback.historyGroup' => 'History and resume',
+			'videoPlayback.portraitMode' => 'Portrait viewing',
+			'videoPlayback.portraitFocus' => 'Focus',
+			'videoPlayback.portraitEpisodes' => 'Episode feed',
+			'videoPlayback.portraitModeNote' => 'Focus on this video, or swipe through the site episode list. Stops at the end.',
+			'videoPlayback.episodeSwipeHint' => 'Swipe up for next · Down for previous',
+			'videoPlayback.episodeBoundary' => 'End of the site episode list',
+			'videoPlayback.episodeSwitchFailed' => 'Switch failed. Current video retained.',
+			'videoPlayback.episodeSwitching' => 'Preparing episode',
+			'videoPlayback.episodeOrderUnavailable' => 'Current video is absent from the episode list. Choose an episode manually.',
+			'videoPlayback.episodeAscending' => 'Ascending',
+			'videoPlayback.episodeDescending' => 'Descending',
+			'videoPlayback.episodeSite' => 'Site order',
+			'videoPlayback.episodeManual' => 'Custom',
+			'videoPlayback.episodeManualNote' => 'Drag to reorder for this session only. Apply to change the active queue.',
+			'videoPlayback.episodeOrderFallback' => 'Episode numbers are unclear. Site order is retained; custom order is available.',
+			'videoPlayback.episodeSessionOrder' => 'Order applies to this session. The current video and position stay unchanged.',
+			'videoPlayback.episodeApplyOrder' => 'Apply order',
+			'videoPlayback.episodeReorder' => 'Reorder',
+			'videoPlayback.episodeMoveUp' => 'Move up',
+			'videoPlayback.episodeMoveDown' => 'Move down',
+			'videoPlayback.episodeWaiting' => 'Loading the selected video…',
+			'videoPlayback.settingsSearch' => 'Search video settings',
+			'videoPlayback.settingsScopeCommon' => 'All video sources',
+			'videoPlayback.settingsScopeSource' => 'This source only',
+			'videoPlayback.settingsSearchEmpty' => 'No matching video settings',
+			'videoPlayback.settingsMotion' => 'Interface motion',
+			'videoPlayback.settingsMotionNote' => 'Adjust in system Accessibility settings.',
+			'videoPlayback.settingsAll' => 'All video settings',
+			'videoPlayback.settingsMotionValue' => 'Follow system',
+			'videoPlayback.resumeRequiresHistory' => 'Enable watch history to use resume.',
+			'videoPlayback.pageAnalysis' => 'Page analysis',
+			'videoPlayback.analysisRunning' => 'Reading page status…',
+			'videoPlayback.analysisFailed' => 'Analysis could not finish. Try again.',
+			'videoPlayback.analysisMode' => 'Display mode',
+			'videoPlayback.analysisPage' => 'Current page',
+			'videoPlayback.analysisState' => 'Page status',
+			'videoPlayback.analysisScope' => 'Page status and loading metadata only. Account content is excluded.',
+			'videoPlayback.analyzeAgain' => 'Analyze again',
+			'videoPlayback.analysisVerification' => 'Awaiting site verification',
+			'videoPlayback.analysisLoading' => 'Loading',
+			'videoPlayback.analysisDisplayed' => 'Page displayed',
+			'videoPlayback.analysisCopied' => 'Copied',
+			'videoPlayback.analysisCopyFailed' => 'Could not copy. Try again.',
+			'videoPlayback.analysisCreator' => 'Creator profile',
+			'videoPlayback.analysisProfile' => 'User profile',
+			'videoPlayback.analysisHome' => 'Home',
+			'videoPlayback.analysisSubscriptions' => 'Subscriptions',
+			'videoPlayback.analysisVideo' => 'Video details',
+			'videoPlayback.analysisPlaylist' => 'Playlist',
+			'videoPlayback.analysisSitePage' => 'Website page',
+			'videoPlayback.accountBackup' => 'Login backup',
 			'oldRanking.bikaRanking' => 'Bika Ranking',
 			'oldRanking.jmRanking' => 'JM Ranking',
 			'oldRanking.switchSource' => 'Switch',
@@ -2877,8 +3585,246 @@ extension on TranslationsEnUs {
 			'update.apkDownloadFailed' => 'Download failed, please try again later',
 			'update.installPermissionRequired' => 'Please grant install app permission',
 			'update.unknownArch' => 'Unknown',
+			'videoDownload.title' => 'Download video',
+			'videoDownload.chooseQuality' => 'Choose a quality to download',
+			'videoDownload.loading' => 'Reading download options…',
+			'videoDownload.empty' => 'No download options could be read',
+			'videoDownload.downloading' => ({required Object quality}) => 'Downloading ${quality}',
+			'videoDownload.saving' => 'Choose where to save the file',
+			'videoDownload.cancel' => 'Cancel download',
+			'videoDownload.cancelled' => 'Download cancelled',
+			'videoDownload.saved' => 'Video saved to your selected location',
+			'videoDownload.failed' => 'Download did not finish. Reload the options and try again.',
+			'videoDownload.unavailable' => 'Native file saving is unavailable on this device. Download on the website.',
+			'videoDownload.reload' => 'Reload options',
+			'videoDownload.website' => 'Download on website',
+			'videoCommunity.stateUnknown' => 'Account state is not confirmed. Try reading it again.',
+			'videoCommunity.actionsUnreadable' => 'Some actions could not be read. Try again.',
+			'videoCommunity.login' => 'Sign in',
+			'videoCommunity.register' => 'Create account',
+			'videoCommunity.email' => 'Email',
+			'videoCommunity.displayName' => 'Username',
+			'videoCommunity.password' => 'Password',
+			'videoCommunity.passwordVisibility' => 'Show or hide password',
+			'videoCommunity.invalidEmail' => 'Enter a valid email address',
+			'videoCommunity.required' => 'This field is required',
+			'videoCommunity.remember' => 'Stay signed in on this device',
+			'videoCommunity.authNote' => 'Use the site\'s current sign-in or registration form. Your password is used only for this submission, never saved in plugins, logs or cloud backup. Additional verification opens the site page.',
+			'videoCommunity.authFailed' => 'The site did not complete sign-in or registration. Check your details or continue on the website.',
+			'videoCommunity.authUnconfirmed' => 'Submission has not been confirmed. Check the website before trying again.',
+			'videoCommunity.submitting' => 'Submitting…',
+			'videoCommunity.haveAccount' => 'Already have an account? Sign in',
+			'videoCommunity.createAccount' => 'New here? Create an account',
+			'videoCommunity.manageAccount' => 'Manage site account',
+			'videoCommunity.preferences' => 'Settings & tools',
+			'videoCommunity.followedCreators' => 'Followed creators',
+			'videoCommunity.subscriptionFeed' => 'Subscription feed',
+			'videoCommunity.comments' => 'Comments',
+			'videoCommunity.replies' => 'Replies',
+			'videoCommunity.viewReplies' => 'View replies',
+			'videoCommunity.writeComment' => 'Write a comment',
+			'videoCommunity.post' => 'Post comment',
+			'videoCommunity.noComments' => 'No comments yet',
+			'videoCommunity.emptyLibrary' => 'This list is empty',
+			'videoCommunity.loginRequired' => 'Sign in to your site account to continue.',
+			'videoCommunity.verificationRequired' => 'The site requires verification. Return to the player and complete it on the website before retrying. Playback will not switch to the website automatically.',
+			'videoCommunity.unconfirmed' => 'The result could not be confirmed. Refresh the site content to check before submitting again.',
+			'videoCommunity.pageChanged' => 'The site page has changed. Go back and reopen this video.',
+			'videoCommunity.unsupported' => 'This page does not currently provide the required site operation. Continue on the website.',
+			'videoCommunity.busy' => 'Another operation is in progress. Try again shortly.',
+			'videoCommunity.rejected' => 'The site did not accept this operation. Check your details and try again.',
+			'videoCommunity.network' => 'Unable to load right now. Check your connection and retry.',
+			'videoCommunity.like' => 'Like',
+			'videoCommunity.liked' => 'Liked',
+			'videoCommunity.follow' => 'Follow creator',
+			'videoCommunity.following' => 'Following',
+			'videoCommunity.createPlaylist' => 'Create playlist',
+			'videoCommunity.playlistTitle' => 'Playlist name',
+			'videoCommunity.playlistDescription' => 'Description',
+			'videoCommunity.editPlaylist' => 'Edit playlist',
+			'videoCommunity.deletePlaylist' => 'Delete playlist',
+			'videoCommunity.deletePlaylistPrompt' => 'Delete this playlist from your site account? This cannot be undone locally.',
+			'videoCommunity.expandCreator' => ({required Object name}) => 'Show ${name}’s videos',
+			'videoCommunity.collapseCreator' => ({required Object name}) => 'Hide ${name}’s videos',
+			'videoCommunity.viewCreatorWorks' => 'View all videos',
+			'videoCommunity.favoriteTo' => 'Save to playlist',
+			'videoCommunity.favorite' => 'Save',
+			'videoCommunity.favorited' => 'Saved',
+			'videoCommunity.watchLater' => 'Watch later',
+			'videoCommunity.inWatchLater' => 'In Watch later',
+			'videoCommunity.addToPlaylist' => 'Add to this playlist',
+			'videoCommunity.addedToPlaylist' => 'Added',
+			'videoCommunity.notInPlaylist' => 'Not added',
+			'videoCommunity.readPlaylistState' => 'Check whether this video is added',
+			'videoCommunity.checkResult' => 'Check result',
+			'videoCommunity.noPlaylists' => 'No playlists yet. Create one to save this video.',
+			'videoCommunity.share' => 'Share',
+			'videoCommunity.shareUnavailable' => 'System sharing is unavailable on this device.',
+			'videoCommunity.shareFailed' => 'Could not open sharing. Please try again.',
+			'videoCommunity.loadMore' => 'Load more',
+			'videoCommunity.commentsChanged' => 'The comment list has changed. Refresh to continue.',
+			'videoCommunity.followShort' => 'Subscribe',
+			'videoCommunity.reply' => 'Reply',
+			'videoCommunity.overview' => 'Overview',
+			'videoCommunity.closeKeyboard' => 'Hide keyboard',
+			'videoCommunity.dislike' => 'Dislike',
+			'videoCommunity.disliked' => 'Disliked',
+			'videoCommunity.noReplies' => 'No replies yet',
+			'videoCommunity.postVerificationOnly' => 'Posting requires site email verification. Reading remains available.',
+			'videoCommunity.loginToPost' => 'Sign in to check the site’s posting permissions.',
+			'videoCommunity.publishingUnavailable' => 'Comments are readable. Continue on the website to post.',
+			'videoCommunity.checkStatus' => 'Check result',
+			'videoCommunity.createdNotAdded' => 'The playlist was created. This video has not been added.',
+			'videoCommunity.addToCreatedPlaylist' => 'Add to this playlist',
+			'videoCommunity.uploader' => 'Uploader',
+			'videoCommunity.creatorUnavailable' => 'The author’s real profile could not be identified. Retry, or view all works separately.',
+			'videoCommunity.unassignedSubscriptionUpdates' => 'Updates without a confirmed author',
+			'videoCommunity.moreSubscribedCreators' => 'More subscribed authors',
+			'videoAccount.title' => 'Login backup & cloud sync',
+			'videoAccount.scope' => 'Player preferences use Breeze’s Sync settings; source settings and account backups use Sync plugins. Use the existing WebDAV / S3 upload and download workflow.',
+			'videoAccount.privacy' => 'The backup contains session credentials that grant account access, not your password or Cloudflare clearance. Existing sync is not end-to-end encryption with a user-only key. Use trusted private storage and HTTPS.',
+			'videoAccount.empty' => 'No account backup, or the backup has expired',
+			'videoAccount.saved' => 'Account backup saved (not proof of a current login)',
+			'videoAccount.backup' => 'Back up current site login',
+			'videoAccount.backupPrompt' => 'Save this login session in the plugin configuration, which is uploaded to your configured cloud when Sync plugins is enabled. Continue?',
+			'videoAccount.restore' => 'Restore synced login',
+			'videoAccount.restorePrompt' => 'Replace this site’s account session on this device with the saved session. The site may still require verification or another login. Security verification is not restored or bypassed. Continue?',
+			'videoAccount.forget' => 'Remove account backup',
+			'videoAccount.forgetPrompt' => 'Remove the backup from this plugin configuration; upload or sync plugins to update the cloud. This does not log out the website. Copies already downloaded to other devices cannot be remotely revoked; use the site’s account security tools to revoke sessions.',
+			'videoAccount.login' => 'View site account',
+			'videoAccount.cloud' => 'Breeze cloud sync settings',
+			'videoAccount.backupDone' => 'Saved in plugin configuration. Use Breeze Sync plugins to upload.',
+			_ => null,
+		} ?? switch (path) {
+			'videoAccount.restored' => 'Written to this device’s browser. Open the site to confirm; expired sessions require login.',
+			'videoAccount.forgotten' => 'Local backup removed. Upload or sync plugins to update the cloud.',
+			'videoAccount.failed' => 'Could not complete. Retry; no automatic cloud upload or overwrite was performed.',
+			'videoAccount.loginRequired' => 'First log in through this plugin’s website, then back up the account.',
+			'videoAccount.settingsNote' => 'Video preferences use Breeze’s Sync settings. Site login backup is under this source’s My → Login backup & cloud sync.',
+			'videoSiteAccount.leavePending' => 'Leaving will not undo a submitted action. Read the site state again when you return.',
+			'videoSiteAccount.title' => 'Account details',
+			'videoSiteAccount.profile' => 'Profile',
+			'videoSiteAccount.name' => 'Username',
+			'videoSiteAccount.email' => 'Login email',
+			'videoSiteAccount.saveProfile' => 'Save profile',
+			'videoSiteAccount.password' => 'Password',
+			'videoSiteAccount.oldPassword' => 'Current password',
+			'videoSiteAccount.newPassword' => 'New password',
+			'videoSiteAccount.confirmPassword' => 'Confirm new password',
+			'videoSiteAccount.changePassword' => 'Change password',
+			'videoSiteAccount.photo' => 'Avatar',
+			'videoSiteAccount.choosePhoto' => 'Change avatar',
+			'videoSiteAccount.uploadPhoto' => 'Upload avatar',
+			'videoSiteAccount.cancelPhoto' => 'Cancel selection',
+			'videoSiteAccount.photoFormats' => 'PNG, GIF, JPEG and WebP',
+			'videoSiteAccount.invalidPhoto' => 'Unsupported image format. Choose an avatar on the website.',
+			'videoSiteAccount.verification' => 'Email verification',
+			'videoSiteAccount.code' => '6-digit code',
+			'videoSiteAccount.requestCode' => 'Get code',
+			'videoSiteAccount.verifyCode' => 'Verify code',
+			'videoSiteAccount.resendIn' => ({required Object seconds}) => 'Resend in ${seconds} s',
+			'videoSiteAccount.codeSent' => 'The site sent a verification code. Check your email.',
+			'videoSiteAccount.failed' => 'The site did not complete this action. Check and retry.',
+			'videoSiteAccount.unavailable' => 'This action is not recognized yet. Refresh or continue on the website.',
+			'videoSiteAccount.website' => 'Continue on website',
+			'videoSiteAccount.refresh' => 'Read again',
+			'videoSiteAccount.submitted' => 'Submitted. Reading the site result…',
+			'videoSiteAccount.unconfirmed' => 'Result unconfirmed. Read again; submission will not repeat automatically.',
+			'videoSiteAccount.readbackMatched' => 'Profile values confirmed by a fresh read.',
+			'videoSiteAccount.passwordUnconfirmed' => 'Password submitted. Check the site result; submission will not repeat automatically.',
+			'videoSiteAccount.discardTitle' => 'Discard unsaved changes?',
+			'videoSiteAccount.discardBody' => 'Changes stay on this screen only and will be cleared when you leave.',
+			'videoSiteAccount.logout' => 'Log out of site',
+			'videoSiteAccount.logoutPrompt' => 'Log out of this website? Saved login backups will not be removed automatically.',
+			'videoSiteAccount.required' => 'Complete this field',
+			'videoSiteAccount.emailInvalid' => 'Enter a valid email address',
+			'videoSiteAccount.passwordMismatch' => 'The new passwords do not match',
+			'videoSiteAccount.recoveryTitle' => 'Recover password',
+			'videoSiteAccount.recoveryDescription' => 'Send the site password reset link to your login email.',
+			'videoSiteAccount.sendRecovery' => 'Send reset link',
+			'videoSiteAccount.recoverySent' => 'The site confirmed the reset email was sent. Check your inbox.',
+			'videoSiteAccount.backLogin' => 'Back to login',
+			'videoSiteAccount.avatarUnconfirmed' => 'Avatar submitted. Read again to check the result.',
+			'videoSiteAccount.unsupportedAccount' => 'Account details unavailable. Read again or continue on the website.',
+			'videoSiteAccount.otpUnconfirmed' => 'Code submitted. Check the site result.',
+			'videoSiteAccount.forgetPassword' => 'Forgot password',
+			'videoSiteAccount.googleInBrowser' => 'Use Google in browser',
+			'videoSiteAccount.googleWebsiteTitle' => 'Google website sign-in',
+			'videoSiteAccount.googleWebsiteNote' => 'Continue Google sign-in in your system browser. Your browser and this page have separate site sessions. Return here to sign in with your site email and password.',
+			'videoSiteAccount.continueInBrowser' => 'Continue in browser',
+			'videoSiteAccount.browserOpenFailed' => 'Could not open your system browser. Please retry.',
 			'dialog.hideOrClose' => 'Hide to tray or close app',
 			'dialog.rememberChoice' => 'Remember my choice',
+			'videoFilters.title' => 'Filters',
+			'videoFilters.genre' => 'Type',
+			'videoFilters.tags' => 'Tags',
+			'videoFilters.sort' => 'Sort',
+			'videoFilters.date' => 'Release date',
+			'videoFilters.duration' => 'Duration',
+			'videoFilters.searchMode' => 'Search scope',
+			'videoFilters.yearMonth' => 'Specific year / month',
+			'videoFilters.year' => 'Year',
+			'videoFilters.allYears' => 'All years',
+			'videoFilters.allMonths' => 'All months',
+			'videoFilters.invalidYear' => 'Enter a four-digit year',
+			'videoFilters.month' => ({required Object value}) => 'Month ${value}',
+			'videoFilters.optionsUnavailable' => 'Options are unavailable. Reload the site and try again.',
+			'videoFilters.searchTags' => 'Search tags',
+			'videoFilters.anyTag' => 'Match any tag',
+			'videoFilters.anyTagNote' => 'Include at least one selected tag.',
+			'videoFilters.allTagNote' => 'Include every selected tag.',
+			'videoFilters.noMatchingTags' => 'No matching tags',
+			'videoFilters.authors' => 'Authors',
+			'videoFilters.videos' => 'Videos',
+			'videoFilters.reset' => 'Reset all',
+			'videoFilters.apply' => 'Apply filters',
+			'videoFilters.contextChanged' => 'The page changed. Reopen filters to apply your choices.',
+			'videoFilters.draftNote' => 'Draft · Apply to update.',
+			'videoFilters.applyShort' => 'Apply',
+			'videoFilters.allFilters' => 'All filters',
+			'videoFilters.clearFilters' => 'Clear filters',
+			'videoFilters.allMatch' => 'Match all',
+			'videoFilters.anyMatch' => 'Match any',
+			'videoFilters.selected' => ({required Object count}) => '${count} selected',
+			'videoFilters.selectedTags' => 'Selected tags',
+			'videoFilters.showSelected' => 'View selected tags',
+			'videoFilters.noSelection' => 'No tags selected',
+			'videoFilters.allGroups' => 'All groups',
+			'videoFilters.closeKeyboard' => 'Dismiss keyboard',
+			'videoFilters.clearAll' => 'Clear filters and query',
+			'videoFilters.active' => 'Active filters',
+			'videoFilters.removeFilter' => 'Remove this condition',
+			'videoFilters.customDate' => 'Custom date',
+			'videoFilters.searchGroup' => 'Group',
+			'videoSearch.recent' => 'Recent searches',
+			'videoSearch.clearRecent' => 'Clear recent searches',
+			'videoSearch.removeRecent' => 'Remove this search',
+			'videoSearch.localOnly' => 'Stored only on this device',
+			'videoSearch.hint' => 'Search videos or creators',
+			'videoSearch.clearQuery' => 'Clear query',
+			'videoSearch.submit' => 'Search',
+			'videoSearch.cancel' => 'Cancel search',
+			'videoSearch.recentFailed' => 'Recent searches are unavailable. You can still search.',
+			'videoSearch.historyWriteFailed' => 'Search submitted. Recent search could not be saved.',
+			'videoSearch.noRecent' => 'No recent searches',
+			'videoSearch.contextChanged' => 'The page changed. Reopen search to submit your query.',
+			'videoMetadata.author' => 'Author',
+			'videoMetadata.views' => ({required Object value}) => 'Views ${value}',
+			'videoMetadata.rating' => ({required Object value}) => 'Positive ${value}',
+			'videoMetadata.duration' => ({required Object value}) => 'Duration ${value}',
+			'videoMetadata.totalVotes' => ({required Object count}) => 'Votes ${count}',
+			'videoMetadata.positiveVotes' => ({required Object count}) => 'Up ${count}',
+			'videoMetadata.negativeVotes' => ({required Object count}) => 'Down ${count}',
+			'videoPersonal.my' => 'My library',
+			'videoPersonal.overview' => 'Overview',
+			'videoPersonal.histories' => 'History',
+			'videoPersonal.watchLater' => 'Watch later',
+			'videoPersonal.likes' => 'Liked videos',
+			'videoPersonal.playlists' => 'Playlists',
+			'videoPersonal.recent' => 'Recently watched',
+			'videoPersonal.viewAll' => 'View all',
+			'videoPersonal.recentUnavailable' => 'History is unavailable. You can open the full list.',
+			'videoPersonal.emptyHistory' => 'No watch history yet.',
 			_ => null,
 		};
 	}
