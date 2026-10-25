@@ -17,6 +17,7 @@ class PluginCard extends StatelessWidget {
     required this.infoState,
     required this.isToggling,
     required this.onSearch,
+    this.showSearch = true,
     required this.onOpen,
     required this.onSettings,
     required this.onToggleEnabled,
@@ -29,6 +30,7 @@ class PluginCard extends StatelessWidget {
   final DiscoverPluginInfoState infoState;
   final bool isToggling;
   final VoidCallback onSearch;
+  final bool showSearch;
   final VoidCallback? onOpen;
   final void Function(String title) onSettings;
   final ValueChanged<bool> onToggleEnabled;
@@ -190,7 +192,7 @@ class PluginCard extends StatelessWidget {
                 )
               else
                 const Spacer(),
-              if (isEnabled) ...[
+              if (isEnabled && showSearch) ...[
                 const SizedBox(width: 8),
                 IconButton.outlined(
                   tooltip: t.sourceShell.search,

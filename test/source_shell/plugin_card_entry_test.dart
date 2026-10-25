@@ -33,7 +33,11 @@ void main() {
     deletedAt: null,
   );
 
-  Widget card({required bool enabled, required VoidCallback? onOpen}) {
+  Widget card({
+    required bool enabled,
+    required VoidCallback? onOpen,
+    bool showSearch = true,
+  }) {
     return MaterialApp(
       home: Scaffold(
         body: SingleChildScrollView(
@@ -61,6 +65,7 @@ void main() {
             ),
             isToggling: false,
             onSearch: () {},
+            showSearch: showSearch,
             onOpen: onOpen,
             onSettings: (_) {},
             onToggleEnabled: (_) {},
@@ -87,6 +92,16 @@ void main() {
     await tester.pumpWidget(card(enabled: false, onOpen: () {}));
 
     expect(find.text(t.sourceShell.enter), findsNothing);
+  });
+
+  testWidgets('web-only list entry omits unsupported comic search', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      card(enabled: true, onOpen: () {}, showSearch: false),
+    );
+    expect(find.byTooltip(t.sourceShell.search), findsNothing);
+    expect(find.text(t.sourceShell.enter), findsOneWidget);
   });
 
   testWidgets('legacy shortcuts remain when no source shell is available', (

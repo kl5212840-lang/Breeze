@@ -6,6 +6,7 @@ import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/i18n/i18n_helper.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/comic_read/widgets/settings/reader_settings_sheet.dart';
+import 'package:zephyr/page/video/video_playback_settings_page.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/page/setting/real_sr/service/real_sr_super_resolution.dart';
 
@@ -70,6 +71,17 @@ class _GlobalSettingPageState extends State<GlobalSettingPage> {
             title: t.reader.settings,
             subtitle: '${t.reader.readingMode} · ${t.reader.doubleTapAction}',
             onTap: () => showReaderSettingsSheet(context),
+          ),
+          const Divider(height: 1, thickness: 0.3),
+          settingCategoryTile(
+            icon: Icons.video_settings_outlined,
+            title: t.videoPlayback.playbackSettings,
+            subtitle: t.videoPlayback.hostSettingsScope,
+            onTap: () => Navigator.of(context).push<void>(
+              MaterialPageRoute(
+                builder: (_) => const VideoPlaybackSettingsPage(),
+              ),
+            ),
           ),
           const Divider(height: 1, thickness: 0.3),
           settingCategoryTile(

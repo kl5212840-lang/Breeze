@@ -4,9 +4,11 @@
 
 ## 本分支发布
 
-当前先提供 **iOS / iPadOS 未签名 IPA**。请到[本仓库 Releases](https://github.com/kl5212840-lang/Breeze/releases)下载 `Breeze-iOS-v3.0.40.ipa`，使用自己的签名工具侧载；它不是 App Store 安装包，也不能直接点开安装。安装前建议备份应用数据。
+当前先提供 **iOS / iPadOS 未签名 IPA**。请到[本仓库 Releases](https://github.com/kl5212840-lang/Breeze/releases)下载 `Breeze-iOS-v3.0.41.ipa`，使用自己的签名工具侧载；它不是 App Store 安装包，也不能直接点开安装。安装前建议备份应用数据。
 
 本分支的「哔咔漫画+」和「[禁漫天堂+](https://github.com/kl5212840-lang/Breeze-plugin-JmComic-change)」由本账号分别维护，在配套 Breeze 的插件商城置顶。哔咔漫画+与上游插件并存；禁漫天堂+沿用 [mumushu0501-boop 原插件](https://github.com/mumushu0501-boop/Breeze-plugin-JmComic-change)的 ID，更新会替换原安装并沿用其本地记录。应用 IPA 与插件是不同的发布包：更新应用需安装新版 IPA，更新插件则走插件商城。拷贝漫画 fork 目前尚未建立独立 Release 和更新目录，本轮不作为独立插件发布。
+
+本次新增 Hanime1 原生浏览与播放。请同时下载 Release 附件 `Hanime1-native-v0.11.2.cjs`，在应用的插件管理中选择“从本地安装”；已安装者可从插件设置更新。它与 IPA 分开安装，目前通过 Release 附件提供。
 
 下方 Android、Windows、macOS、Linux 等跨平台安装说明沿用上游项目的发布渠道；本 fork 暂未提供这些平台的安装包。
 
@@ -184,7 +186,7 @@ brew uninstall --zap breeze
 
 ### 📱 iOS / iPadOS
 
-由于 iOS 系统的封闭性，未上架 App Store 的应用需要通过“侧载 (Sideloading)”并自行签名才能安装。本分支请前往[本仓库 Releases](https://github.com/kl5212840-lang/Breeze/releases)下载 `Breeze-iOS-v3.0.40.ipa`；若需要上游版本，请前往[上游 Releases](https://github.com/deretame/Breeze/releases)。可使用以下工具之一安装：
+由于 iOS 系统的封闭性，未上架 App Store 的应用需要通过“侧载 (Sideloading)”并自行签名才能安装。本分支请前往[本仓库 Releases](https://github.com/kl5212840-lang/Breeze/releases)下载 `Breeze-iOS-v3.0.41.ipa`；若需要上游版本，请前往[上游 Releases](https://github.com/deretame/Breeze/releases)。可使用以下工具之一安装：
 
 #### 🌟 推荐方案：AltStore
 

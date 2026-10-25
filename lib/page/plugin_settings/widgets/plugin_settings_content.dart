@@ -8,6 +8,7 @@ import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/widgets/fluent_dropdown.dart';
 import 'package:zephyr/widgets/multi_choice_list_dialog.dart';
+import 'package:zephyr/page/video/video_playback_settings_page.dart';
 
 class PluginSettingsContent extends StatelessWidget {
   const PluginSettingsContent({
@@ -51,6 +52,24 @@ class PluginSettingsContent extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       children: [
+        if (state.isVideoSource)
+          ListTile(
+            leading: const Icon(Icons.video_settings_outlined),
+            title: Text(t.videoPlayback.playbackSettings),
+            subtitle: Text(t.videoPlayback.hostSettingsScope),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () async {
+              await Navigator.of(context).push<void>(
+                MaterialPageRoute(
+                  builder: (_) =>
+                      VideoPlaybackSettingsPage(source: from, sourceName: null),
+                ),
+              );
+              if (context.mounted) {
+                await context.read<PluginSettingsCubit>().load(from);
+              }
+            },
+          ),
         // 插件自身设置优先，宿主管理项沉底
         ..._buildBodySections(context),
         if (state.detailSupported) _buildDetailSection(),

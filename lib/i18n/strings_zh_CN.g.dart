@@ -72,6 +72,7 @@ class Translations with BaseTranslations<AppLocale, Translations> {
 	late final Translations$comicFollow$zh_CN comicFollow = Translations$comicFollow$zh_CN.internal(_root);
 	late final Translations$changelog$zh_CN changelog = Translations$changelog$zh_CN.internal(_root);
 	late final Translations$webview$zh_CN webview = Translations$webview$zh_CN.internal(_root);
+	late final Translations$videoPlayback$zh_CN videoPlayback = Translations$videoPlayback$zh_CN.internal(_root);
 	late final Translations$oldRanking$zh_CN oldRanking = Translations$oldRanking$zh_CN.internal(_root);
 	late final Translations$login$zh_CN login = Translations$login$zh_CN.internal(_root);
 	late final Translations$fontSetting$zh_CN fontSetting = Translations$fontSetting$zh_CN.internal(_root);
@@ -79,7 +80,15 @@ class Translations with BaseTranslations<AppLocale, Translations> {
 	late final Translations$foregroundTask$zh_CN foregroundTask = Translations$foregroundTask$zh_CN.internal(_root);
 	late final Translations$notification$zh_CN notification = Translations$notification$zh_CN.internal(_root);
 	late final Translations$update$zh_CN update = Translations$update$zh_CN.internal(_root);
+	late final Translations$videoDownload$zh_CN videoDownload = Translations$videoDownload$zh_CN.internal(_root);
+	late final Translations$videoCommunity$zh_CN videoCommunity = Translations$videoCommunity$zh_CN.internal(_root);
+	late final Translations$videoAccount$zh_CN videoAccount = Translations$videoAccount$zh_CN.internal(_root);
+	late final Translations$videoSiteAccount$zh_CN videoSiteAccount = Translations$videoSiteAccount$zh_CN.internal(_root);
 	late final Translations$dialog$zh_CN dialog = Translations$dialog$zh_CN.internal(_root);
+	late final Translations$videoFilters$zh_CN videoFilters = Translations$videoFilters$zh_CN.internal(_root);
+	late final Translations$videoSearch$zh_CN videoSearch = Translations$videoSearch$zh_CN.internal(_root);
+	late final Translations$videoMetadata$zh_CN videoMetadata = Translations$videoMetadata$zh_CN.internal(_root);
+	late final Translations$videoPersonal$zh_CN videoPersonal = Translations$videoPersonal$zh_CN.internal(_root);
 }
 
 // Path: common
@@ -164,6 +173,12 @@ class Translations$common$zh_CN {
 
 	/// zh-CN: '搜索'
 	String get search => '搜索';
+
+	/// zh-CN: '上一页'
+	String get previousPage => '上一页';
+
+	/// zh-CN: '下一页'
+	String get nextPage => '下一页';
 
 	/// zh-CN: '清空'
 	String get clear => '清空';
@@ -3774,14 +3789,590 @@ class Translations$webview$zh_CN {
 	/// zh-CN: '返回'
 	String get back => '返回';
 
+	/// zh-CN: '前进'
+	String get forward => '前进';
+
+	/// zh-CN: '网页返回'
+	String get siteBack => '网页返回';
+
+	/// zh-CN: '站点首页'
+	String get siteHome => '站点首页';
+
+	/// zh-CN: '站内搜索'
+	String get siteSearch => '站内搜索';
+
+	/// zh-CN: '关闭网页并返回 Breeze'
+	String get closeWebpage => '关闭网页并返回 Breeze';
+
 	/// zh-CN: '关闭 WebView 窗口'
 	String get closeWindow => '关闭 WebView 窗口';
+
+	/// zh-CN: '原生试播'
+	String get nativePlaybackTrial => '原生试播';
+
+	/// zh-CN: '此页面暂时无法原生播放，请继续使用网页播放器'
+	String get nativePlaybackUnavailable => '此页面暂时无法原生播放，请继续使用网页播放器';
 
 	/// zh-CN: '加载失败（$error）'
 	String loadError({required Object error}) => '加载失败（${error}）';
 
 	/// zh-CN: '服务器返回异常状态码：$statusCode'
 	String httpErrorStatus({required Object statusCode}) => '服务器返回异常状态码：${statusCode}';
+}
+
+// Path: videoPlayback
+class Translations$videoPlayback$zh_CN {
+	Translations$videoPlayback$zh_CN.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// zh-CN: '播放暂未成功，请重试或切换线路；也可在网页打开'
+	String get playFailed => '播放暂未成功，请重试或切换线路；也可在网页打开';
+
+	/// zh-CN: '播放操作未成功，请重试。'
+	String get actionFailed => '播放操作未成功，请重试。';
+
+	/// zh-CN: '网页界面'
+	String get backToWeb => '网页界面';
+
+	/// zh-CN: '缩小'
+	String get minimizeShort => '缩小';
+
+	/// zh-CN: '横屏'
+	String get landscapeShort => '横屏';
+
+	/// zh-CN: '上一集'
+	String get previousEpisode => '上一集';
+
+	/// zh-CN: '下一集'
+	String get nextEpisode => '下一集';
+
+	/// zh-CN: '试下一线路'
+	String get nextSource => '试下一线路';
+
+	/// zh-CN: '长按 2 倍速'
+	String get fastForward => '长按 2 倍速';
+
+	/// zh-CN: '选择线路'
+	String get source => '选择线路';
+
+	/// zh-CN: '暂停'
+	String get pause => '暂停';
+
+	/// zh-CN: '播放'
+	String get play => '播放';
+
+	/// zh-CN: '重新播放'
+	String get replay => '重新播放';
+
+	/// zh-CN: '后退 10 秒'
+	String get rewind10 => '后退 10 秒';
+
+	/// zh-CN: '前进 10 秒'
+	String get forward10 => '前进 10 秒';
+
+	/// zh-CN: '全屏播放'
+	String get fullscreen => '全屏播放';
+
+	/// zh-CN: '退出全屏'
+	String get exitFullscreen => '退出全屏';
+
+	/// zh-CN: '全屏方向'
+	String get defaultFullscreenOrientation => '全屏方向';
+
+	/// zh-CN: '竖屏全屏'
+	String get portraitFullscreen => '竖屏全屏';
+
+	/// zh-CN: '横屏全屏'
+	String get landscapeFullscreen => '横屏全屏';
+
+	/// zh-CN: '切换到竖屏全屏'
+	String get switchToPortrait => '切换到竖屏全屏';
+
+	/// zh-CN: '切换到横屏全屏'
+	String get switchToLandscape => '切换到横屏全屏';
+
+	/// zh-CN: '静音'
+	String get mute => '静音';
+
+	/// zh-CN: '取消静音'
+	String get unmute => '取消静音';
+
+	/// zh-CN: '播放速度'
+	String get speed => '播放速度';
+
+	/// zh-CN: '缓冲中'
+	String get buffering => '缓冲中';
+
+	/// zh-CN: '视频详情'
+	String get videoDetails => '视频详情';
+
+	/// zh-CN: '原生播放'
+	String get nativePlayback => '原生播放';
+
+	/// zh-CN: '播放选项'
+	String get playerActions => '播放选项';
+
+	/// zh-CN: '网页选项'
+	String get browserActions => '网页选项';
+
+	/// zh-CN: '个人中心'
+	String get personalPage => '个人中心';
+
+	/// zh-CN: '暂未确认站点登录状态'
+	String get accountUnconfirmed => '暂未确认站点登录状态';
+
+	/// zh-CN: '站点内容'
+	String get siteContents => '站点内容';
+
+	/// zh-CN: '暂未取得订阅视频'
+	String get subscriptionsEmpty => '暂未取得订阅视频';
+
+	/// zh-CN: '正在 Breeze 中播放；原站详情仍可通过返回查看'
+	String get inlinePlaybackNote => '正在 Breeze 中播放；原站详情仍可通过返回查看';
+
+	/// zh-CN: '剧集'
+	String get episodes => '剧集';
+
+	/// zh-CN: '相关推荐'
+	String get related => '相关推荐';
+
+	/// zh-CN: '搜索视频'
+	String get searchVideos => '搜索视频';
+
+	/// zh-CN: '关闭搜索'
+	String get closeSearch => '关闭搜索';
+
+	/// zh-CN: '搜索'
+	String get search => '搜索';
+
+	/// zh-CN: '切换显示模式'
+	String get websiteToggle => '切换显示模式';
+
+	/// zh-CN: '原生'
+	String get nativeMode => '原生';
+
+	/// zh-CN: '更新暂未成功，显示上次加载的内容'
+	String get catalogRefreshFailed => '更新暂未成功，显示上次加载的内容';
+
+	/// zh-CN: '视频设置'
+	String get playbackSettings => '视频设置';
+
+	/// zh-CN: '播放偏好通用，图源设置独立保存。'
+	String get hostSettingsScope => '播放偏好通用，图源设置独立保存。';
+
+	/// zh-CN: '设置保存失败，请重试'
+	String get settingsSaveFailed => '设置保存失败，请重试';
+
+	/// zh-CN: '视频设置暂时无法读取'
+	String get settingsLoadFailed => '视频设置暂时无法读取';
+
+	/// zh-CN: '自动播放'
+	String get autoplay => '自动播放';
+
+	/// zh-CN: '继续上次位置'
+	String get resumeProgress => '继续上次位置';
+
+	/// zh-CN: '观看记录'
+	String get recordHistory => '观看记录';
+
+	/// zh-CN: '保存在本机；关闭后不再续播。'
+	String get recordHistoryNote => '保存在本机；关闭后不再续播。';
+
+	/// zh-CN: '观看记录'
+	String get watchHistory => '观看记录';
+
+	/// zh-CN: '还没有观看记录'
+	String get historyEmpty => '还没有观看记录';
+
+	/// zh-CN: '原生播放超过 5 秒或播放结束后会记在这里，可再次打开观看'
+	String get historyEmptyNote => '原生播放超过 5 秒或播放结束后会记在这里，可再次打开观看';
+
+	/// zh-CN: '观看记录暂时无法读取'
+	String get historyLoadFailed => '观看记录暂时无法读取';
+
+	/// zh-CN: '记录未能删除，请重试'
+	String get historyChangeFailed => '记录未能删除，请重试';
+
+	/// zh-CN: '清空观看记录'
+	String get clearWatchHistory => '清空观看记录';
+
+	/// zh-CN: '删除此图源在本机保存的全部观看记录和续播位置？不会影响网站账号。'
+	String get clearWatchHistoryPrompt => '删除此图源在本机保存的全部观看记录和续播位置？不会影响网站账号。';
+
+	/// zh-CN: '删除“$title”的本机观看记录及续播位置？'
+	String removeWatchHistoryPrompt({required Object title}) => '删除“${title}”的本机观看记录及续播位置？';
+
+	/// zh-CN: '已看完'
+	String get watchedComplete => '已看完';
+
+	/// zh-CN: '上次看到 $position / $duration'
+	String watchPosition({required Object position, required Object duration}) => '上次看到 ${position} / ${duration}';
+
+	/// zh-CN: '站点账号'
+	String get siteAccount => '站点账号';
+
+	/// zh-CN: '账号内容来自站点；网页登录用于登录与必要账号操作，本机观看记录单独保存'
+	String get siteAccountNote => '账号内容来自站点；网页登录用于登录与必要账号操作，本机观看记录单独保存';
+
+	/// zh-CN: '图源设置'
+	String get sourceSettings => '图源设置';
+
+	/// zh-CN: '解析等待、播放线路偏好、网页展示整理'
+	String get sourceSettingsNote => '解析等待、播放线路偏好、网页展示整理';
+
+	/// zh-CN: '默认倍速'
+	String get defaultSpeed => '默认倍速';
+
+	/// zh-CN: '长按临时倍速'
+	String get holdSpeed => '长按临时倍速';
+
+	/// zh-CN: '$rate 倍速播放中'
+	String fastForwardRate({required Object rate}) => '${rate} 倍速播放中';
+
+	/// zh-CN: '自动隐藏'
+	String get controlsTimeout => '自动隐藏';
+
+	/// zh-CN: '$value 秒'
+	String seconds({required Object value}) => '${value} 秒';
+
+	/// zh-CN: '铺满画面'
+	String get coverVideo => '铺满画面';
+
+	/// zh-CN: '横屏可能裁边；竖屏保留完整画面。'
+	String get coverVideoNote => '横屏可能裁边；竖屏保留完整画面。';
+
+	/// zh-CN: '双击画面操作'
+	String get doubleTapAction => '双击画面操作';
+
+	/// zh-CN: '中间播放／暂停，两侧后退／前进 10 秒'
+	String get doubleTapSeek => '中间播放／暂停，两侧后退／前进 10 秒';
+
+	/// zh-CN: '播放或暂停'
+	String get doubleTapPlay => '播放或暂停';
+
+	/// zh-CN: '横滑调整进度'
+	String get swipeSeek => '横滑调整进度';
+
+	/// zh-CN: '播放控件'
+	String get controlsStyle => '播放控件';
+
+	/// zh-CN: '系统样式'
+	String get systemControls => '系统样式';
+
+	/// zh-CN: 'Breeze 控件'
+	String get breezeControls => 'Breeze 控件';
+
+	/// zh-CN: '播放控件可单独选择，其他界面跟随系统。'
+	String get controlsStyleNote => '播放控件可单独选择，其他界面跟随系统。';
+
+	/// zh-CN: '拖动预览，松手跳转。'
+	String get swipeSeekNote => '拖动预览，松手跳转。';
+
+	/// zh-CN: '锁定播放控件'
+	String get lockControls => '锁定播放控件';
+
+	/// zh-CN: '解锁播放控件'
+	String get unlockControls => '解锁播放控件';
+
+	/// zh-CN: '展开简介'
+	String get expandDescription => '展开简介';
+
+	/// zh-CN: '收起简介'
+	String get collapseDescription => '收起简介';
+
+	/// zh-CN: '原生内容暂时加载失败，可重试或在网页打开'
+	String get catalogFallback => '原生内容暂时加载失败，可重试或在网页打开';
+
+	/// zh-CN: '站点安全验证'
+	String get verificationTitle => '站点安全验证';
+
+	/// zh-CN: '本机记录'
+	String get localWatchHistory => '本机记录';
+
+	/// zh-CN: '请在站点页面完成验证，通过后会继续打开原页面。'
+	String get verificationNote => '请在站点页面完成验证，通过后会继续打开原页面。';
+
+	/// zh-CN: '验证长时间未完成。请保持当前出口稳定；若同一网络下 Safari 正常，请复制诊断反馈，不必反复重新加载。'
+	String get verificationSlow => '验证长时间未完成。请保持当前出口稳定；若同一网络下 Safari 正常，请复制诊断反馈，不必反复重新加载。';
+
+	/// zh-CN: '站点可能随时要求验证。请操作网站自己的验证控件；检查结果不会提交验证，重新加载会从头开始。'
+	String get verificationStableNote => '站点可能随时要求验证。请操作网站自己的验证控件；检查结果不会提交验证，重新加载会从头开始。';
+
+	/// zh-CN: '验证选项'
+	String get verificationActions => '验证选项';
+
+	/// zh-CN: '验证说明'
+	String get verificationHelp => '验证说明';
+
+	/// zh-CN: '网页调试'
+	String get enableBrowserInspection => '网页调试';
+
+	/// zh-CN: '关闭调试'
+	String get disableBrowserInspection => '关闭调试';
+
+	/// zh-CN: '仅在本次打开插件期间允许 Safari 的网页检查器连接，不会刷新验证或自动上传日志。连接后可以查看网页、请求和登录信息，请只连接你信任的 Mac。 开启后，在 iPhone 的 Safari 高级设置中打开网页检查器；连接 Mac，用 Safari 的开发菜单选择这部 iPhone 下的 Breeze 页面。只需反馈验证相关的错误代码，不要发送原始 HAR、Cookie、请求头或账号信息。关闭插件后自动停用。'
+	String get browserInspectionPrompt => '仅在本次打开插件期间允许 Safari 的网页检查器连接，不会刷新验证或自动上传日志。连接后可以查看网页、请求和登录信息，请只连接你信任的 Mac。\n\n开启后，在 iPhone 的 Safari 高级设置中打开网页检查器；连接 Mac，用 Safari 的开发菜单选择这部 iPhone 下的 Breeze 页面。只需反馈验证相关的错误代码，不要发送原始 HAR、Cookie、请求头或账号信息。关闭插件后自动停用。';
+
+	/// zh-CN: '浏览器调试状态已更新，不会重新加载验证页'
+	String get browserInspectionNote => '浏览器调试状态已更新，不会重新加载验证页';
+
+	/// zh-CN: '无法更改浏览器调试状态；需要 iOS 16.4 或更新版本'
+	String get browserInspectionFailed => '无法更改浏览器调试状态；需要 iOS 16.4 或更新版本';
+
+	/// zh-CN: '验证后回到原生'
+	String get nativeAfterVerification => '验证后回到原生';
+
+	/// zh-CN: '验证后保留网页'
+	String get websiteAfterVerification => '验证后保留网页';
+
+	/// zh-CN: '重新加载会中断当前验证并从头开始。确定继续吗？'
+	String get reloadVerificationPrompt => '重新加载会中断当前验证并从头开始。确定继续吗？';
+
+	/// zh-CN: '检查验证'
+	String get checkVerification => '检查验证';
+
+	/// zh-CN: '重载验证'
+	String get reloadVerification => '重载验证';
+
+	/// zh-CN: '站点要求重新完成安全验证，播放位置已保留'
+	String get verificationRequired => '站点要求重新完成安全验证，播放位置已保留';
+
+	/// zh-CN: '前往验证'
+	String get continueVerification => '前往验证';
+
+	/// zh-CN: '原生目录尚未准备好。可重试，或打开网页后再切回原生目录。'
+	String get siteUnavailable => '原生目录尚未准备好。可重试，或打开网页后再切回原生目录。';
+
+	/// zh-CN: '复制诊断'
+	String get copyDiagnostic => '复制诊断';
+
+	/// zh-CN: '已复制无账号信息的诊断内容'
+	String get diagnosticCopied => '已复制无账号信息的诊断内容';
+
+	/// zh-CN: '首页'
+	String get home => '首页';
+
+	/// zh-CN: '网页'
+	String get website => '网页';
+
+	/// zh-CN: '原生界面'
+	String get nativeCatalog => '原生界面';
+
+	/// zh-CN: '知道了'
+	String get acknowledge => '知道了';
+
+	/// zh-CN: '关闭 Hanime1 图源'
+	String get closeSource => '关闭 Hanime1 图源';
+
+	/// zh-CN: '快捷设置'
+	String get quickSettings => '快捷设置';
+
+	/// zh-CN: '当前播放'
+	String get currentPlayback => '当前播放';
+
+	/// zh-CN: '仅调整当前视频。'
+	String get currentSpeedNote => '仅调整当前视频。';
+
+	/// zh-CN: '系统样式'
+	String get systemControlsShort => '系统样式';
+
+	/// zh-CN: '手势操作'
+	String get gestureSettings => '手势操作';
+
+	/// zh-CN: '关闭'
+	String get gestureOff => '关闭';
+
+	/// zh-CN: '分区快退／快进'
+	String get doubleTapSeekShort => '分区快退／快进';
+
+	/// zh-CN: '完整播放设置'
+	String get allPlaybackSettings => '完整播放设置';
+
+	/// zh-CN: '收起标签'
+	String get collapseTags => '收起标签';
+
+	/// zh-CN: '更多标签（$count）'
+	String moreTags({required Object count}) => '更多标签（${count}）';
+
+	/// zh-CN: '线路 $index'
+	String sourceNumber({required Object index}) => '线路 ${index}';
+
+	/// zh-CN: '按站点顺序排列 · 集数以标题为准'
+	String get siteEpisodeOrder => '按站点顺序排列 · 集数以标题为准';
+
+	/// zh-CN: '正在播放'
+	String get currentEpisode => '正在播放';
+
+	/// zh-CN: '共 $count 个条目'
+	String episodeCount({required Object count}) => '共 ${count} 个条目';
+
+	/// zh-CN: '默认偏好；当前视频可就地调整。'
+	String get defaultsNote => '默认偏好；当前视频可就地调整。';
+
+	/// zh-CN: '播放与画面'
+	String get playbackGroup => '播放与画面';
+
+	/// zh-CN: '控件外观'
+	String get controlsGroup => '控件外观';
+
+	/// zh-CN: '记录与恢复'
+	String get historyGroup => '记录与恢复';
+
+	/// zh-CN: '竖屏播放方式'
+	String get portraitMode => '竖屏播放方式';
+
+	/// zh-CN: '专注观看'
+	String get portraitFocus => '专注观看';
+
+	/// zh-CN: '剧集连看'
+	String get portraitEpisodes => '剧集连看';
+
+	/// zh-CN: '专注观看当前视频；剧集连看可上下滑切换站点列表，末尾停止。'
+	String get portraitModeNote => '专注观看当前视频；剧集连看可上下滑切换站点列表，末尾停止。';
+
+	/// zh-CN: '上滑下一项 · 下滑上一项'
+	String get episodeSwipeHint => '上滑下一项 · 下滑上一项';
+
+	/// zh-CN: '已到站点剧集列表边界'
+	String get episodeBoundary => '已到站点剧集列表边界';
+
+	/// zh-CN: '切换失败，当前视频已保留'
+	String get episodeSwitchFailed => '切换失败，当前视频已保留';
+
+	/// zh-CN: '正在准备下一项'
+	String get episodeSwitching => '正在准备下一项';
+
+	/// zh-CN: '当前视频不在站点剧集列表中，请手动选集'
+	String get episodeOrderUnavailable => '当前视频不在站点剧集列表中，请手动选集';
+
+	/// zh-CN: '正序'
+	String get episodeAscending => '正序';
+
+	/// zh-CN: '倒序'
+	String get episodeDescending => '倒序';
+
+	/// zh-CN: '原站'
+	String get episodeSite => '原站';
+
+	/// zh-CN: '自定'
+	String get episodeManual => '自定';
+
+	/// zh-CN: '拖动调整顺序，仅本次播放有效。应用前不会改变播放队列。'
+	String get episodeManualNote => '拖动调整顺序，仅本次播放有效。应用前不会改变播放队列。';
+
+	/// zh-CN: '无法可靠识别集数，暂按原站顺序；可自定排序。'
+	String get episodeOrderFallback => '无法可靠识别集数，暂按原站顺序；可自定排序。';
+
+	/// zh-CN: '排序仅影响本次播放，当前视频与进度保持不变。'
+	String get episodeSessionOrder => '排序仅影响本次播放，当前视频与进度保持不变。';
+
+	/// zh-CN: '应用顺序'
+	String get episodeApplyOrder => '应用顺序';
+
+	/// zh-CN: '拖动排序'
+	String get episodeReorder => '拖动排序';
+
+	/// zh-CN: '上移'
+	String get episodeMoveUp => '上移';
+
+	/// zh-CN: '下移'
+	String get episodeMoveDown => '下移';
+
+	/// zh-CN: '正在加载目标视频…'
+	String get episodeWaiting => '正在加载目标视频…';
+
+	/// zh-CN: '搜索视频设置'
+	String get settingsSearch => '搜索视频设置';
+
+	/// zh-CN: '通用视频'
+	String get settingsScopeCommon => '通用视频';
+
+	/// zh-CN: '仅当前图源'
+	String get settingsScopeSource => '仅当前图源';
+
+	/// zh-CN: '没有匹配的视频设置'
+	String get settingsSearchEmpty => '没有匹配的视频设置';
+
+	/// zh-CN: '界面动效'
+	String get settingsMotion => '界面动效';
+
+	/// zh-CN: '在系统「辅助功能」中调整。'
+	String get settingsMotionNote => '在系统「辅助功能」中调整。';
+
+	/// zh-CN: '全部视频设置'
+	String get settingsAll => '全部视频设置';
+
+	/// zh-CN: '跟随系统'
+	String get settingsMotionValue => '跟随系统';
+
+	/// zh-CN: '开启观看记录后可用。'
+	String get resumeRequiresHistory => '开启观看记录后可用。';
+
+	/// zh-CN: '页面分析'
+	String get pageAnalysis => '页面分析';
+
+	/// zh-CN: '正在读取页面状态…'
+	String get analysisRunning => '正在读取页面状态…';
+
+	/// zh-CN: '分析未完成，请重试。'
+	String get analysisFailed => '分析未完成，请重试。';
+
+	/// zh-CN: '显示模式'
+	String get analysisMode => '显示模式';
+
+	/// zh-CN: '当前页面'
+	String get analysisPage => '当前页面';
+
+	/// zh-CN: '页面状态'
+	String get analysisState => '页面状态';
+
+	/// zh-CN: '仅分析页面状态与加载信息，不含账号内容。'
+	String get analysisScope => '仅分析页面状态与加载信息，不含账号内容。';
+
+	/// zh-CN: '重新分析'
+	String get analyzeAgain => '重新分析';
+
+	/// zh-CN: '等待站点验证'
+	String get analysisVerification => '等待站点验证';
+
+	/// zh-CN: '正在加载'
+	String get analysisLoading => '正在加载';
+
+	/// zh-CN: '页面已显示'
+	String get analysisDisplayed => '页面已显示';
+
+	/// zh-CN: '已复制'
+	String get analysisCopied => '已复制';
+
+	/// zh-CN: '复制失败，请重试。'
+	String get analysisCopyFailed => '复制失败，请重试。';
+
+	/// zh-CN: '作者主页'
+	String get analysisCreator => '作者主页';
+
+	/// zh-CN: '个人主页'
+	String get analysisProfile => '个人主页';
+
+	/// zh-CN: '推荐首页'
+	String get analysisHome => '推荐首页';
+
+	/// zh-CN: '订阅内容'
+	String get analysisSubscriptions => '订阅内容';
+
+	/// zh-CN: '视频详情'
+	String get analysisVideo => '视频详情';
+
+	/// zh-CN: '播放清单'
+	String get analysisPlaylist => '播放清单';
+
+	/// zh-CN: '站点页面'
+	String get analysisSitePage => '站点页面';
+
+	/// zh-CN: '登录备份'
+	String get accountBackup => '登录备份';
 }
 
 // Path: oldRanking
@@ -4099,6 +4690,540 @@ class Translations$update$zh_CN {
 	String get unknownArch => '未知';
 }
 
+// Path: videoDownload
+class Translations$videoDownload$zh_CN {
+	Translations$videoDownload$zh_CN.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// zh-CN: '下载视频'
+	String get title => '下载视频';
+
+	/// zh-CN: '选择清晰度后下载'
+	String get chooseQuality => '选择清晰度后下载';
+
+	/// zh-CN: '正在读取下载选项…'
+	String get loading => '正在读取下载选项…';
+
+	/// zh-CN: '未读取到可用下载选项'
+	String get empty => '未读取到可用下载选项';
+
+	/// zh-CN: '正在下载 $quality'
+	String downloading({required Object quality}) => '正在下载 ${quality}';
+
+	/// zh-CN: '请选择文件保存位置'
+	String get saving => '请选择文件保存位置';
+
+	/// zh-CN: '取消下载'
+	String get cancel => '取消下载';
+
+	/// zh-CN: '已取消下载'
+	String get cancelled => '已取消下载';
+
+	/// zh-CN: '视频已保存到所选位置'
+	String get saved => '视频已保存到所选位置';
+
+	/// zh-CN: '下载未完成，请重新读取选项后重试。'
+	String get failed => '下载未完成，请重新读取选项后重试。';
+
+	/// zh-CN: '此设备暂不支持原生文件保存，可在网页下载。'
+	String get unavailable => '此设备暂不支持原生文件保存，可在网页下载。';
+
+	/// zh-CN: '重新读取选项'
+	String get reload => '重新读取选项';
+
+	/// zh-CN: '在网页下载'
+	String get website => '在网页下载';
+}
+
+// Path: videoCommunity
+class Translations$videoCommunity$zh_CN {
+	Translations$videoCommunity$zh_CN.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// zh-CN: '登录状态尚未确认，请重试读取。'
+	String get stateUnknown => '登录状态尚未确认，请重试读取。';
+
+	/// zh-CN: '部分操作暂未识别，可重试读取。'
+	String get actionsUnreadable => '部分操作暂未识别，可重试读取。';
+
+	/// zh-CN: '登录'
+	String get login => '登录';
+
+	/// zh-CN: '注册'
+	String get register => '注册';
+
+	/// zh-CN: '电子邮箱'
+	String get email => '电子邮箱';
+
+	/// zh-CN: '用户名'
+	String get displayName => '用户名';
+
+	/// zh-CN: '密码'
+	String get password => '密码';
+
+	/// zh-CN: '显示或隐藏密码'
+	String get passwordVisibility => '显示或隐藏密码';
+
+	/// zh-CN: '请输入有效的电子邮箱'
+	String get invalidEmail => '请输入有效的电子邮箱';
+
+	/// zh-CN: '请填写此项'
+	String get required => '请填写此项';
+
+	/// zh-CN: '在此设备上保持登录'
+	String get remember => '在此设备上保持登录';
+
+	/// zh-CN: '使用站点当前表单登录或注册。密码仅用于本次提交，不写入插件、日志或云端；需要额外验证时会打开站点网页。'
+	String get authNote => '使用站点当前表单登录或注册。密码仅用于本次提交，不写入插件、日志或云端；需要额外验证时会打开站点网页。';
+
+	/// zh-CN: '站点未完成登录或注册，请核对填写内容；也可在网页继续。'
+	String get authFailed => '站点未完成登录或注册，请核对填写内容；也可在网页继续。';
+
+	/// zh-CN: '尚未确认提交结果，请在网页查看，勿重复提交。'
+	String get authUnconfirmed => '尚未确认提交结果，请在网页查看，勿重复提交。';
+
+	/// zh-CN: '正在提交…'
+	String get submitting => '正在提交…';
+
+	/// zh-CN: '已有账号，去登录'
+	String get haveAccount => '已有账号，去登录';
+
+	/// zh-CN: '没有账号，去注册'
+	String get createAccount => '没有账号，去注册';
+
+	/// zh-CN: '管理站点账号'
+	String get manageAccount => '管理站点账号';
+
+	/// zh-CN: '设置工具'
+	String get preferences => '设置工具';
+
+	/// zh-CN: '关注的作者'
+	String get followedCreators => '关注的作者';
+
+	/// zh-CN: '订阅动态'
+	String get subscriptionFeed => '订阅动态';
+
+	/// zh-CN: '评论'
+	String get comments => '评论';
+
+	/// zh-CN: '回复'
+	String get replies => '回复';
+
+	/// zh-CN: '查看回复'
+	String get viewReplies => '查看回复';
+
+	/// zh-CN: '写评论'
+	String get writeComment => '写评论';
+
+	/// zh-CN: '发送评论'
+	String get post => '发送评论';
+
+	/// zh-CN: '暂无评论'
+	String get noComments => '暂无评论';
+
+	/// zh-CN: '此列表暂无内容'
+	String get emptyLibrary => '此列表暂无内容';
+
+	/// zh-CN: '此操作需要登录站点账号。'
+	String get loginRequired => '此操作需要登录站点账号。';
+
+	/// zh-CN: '站点要求额外验证。可返回播放页，在网页完成验证后重试；当前视频不会自动切到网页。'
+	String get verificationRequired => '站点要求额外验证。可返回播放页，在网页完成验证后重试；当前视频不会自动切到网页。';
+
+	/// zh-CN: '无法确认操作是否已完成，请刷新站点内容核对，勿重复提交。'
+	String get unconfirmed => '无法确认操作是否已完成，请刷新站点内容核对，勿重复提交。';
+
+	/// zh-CN: '当前站点页面已改变，请返回并重新打开此视频。'
+	String get pageChanged => '当前站点页面已改变，请返回并重新打开此视频。';
+
+	/// zh-CN: '此页面暂未提供可用的站点操作，可在网页继续。'
+	String get unsupported => '此页面暂未提供可用的站点操作，可在网页继续。';
+
+	/// zh-CN: '正在处理上一项操作，请稍后再试。'
+	String get busy => '正在处理上一项操作，请稍后再试。';
+
+	/// zh-CN: '站点未接受此操作，请核对后重试。'
+	String get rejected => '站点未接受此操作，请核对后重试。';
+
+	/// zh-CN: '暂时无法加载，请检查连接后重试。'
+	String get network => '暂时无法加载，请检查连接后重试。';
+
+	/// zh-CN: '点赞'
+	String get like => '点赞';
+
+	/// zh-CN: '已点赞'
+	String get liked => '已点赞';
+
+	/// zh-CN: '订阅作者'
+	String get follow => '订阅作者';
+
+	/// zh-CN: '已订阅'
+	String get following => '已订阅';
+
+	/// zh-CN: '新建播放清单'
+	String get createPlaylist => '新建播放清单';
+
+	/// zh-CN: '清单名称'
+	String get playlistTitle => '清单名称';
+
+	/// zh-CN: '清单简介'
+	String get playlistDescription => '清单简介';
+
+	/// zh-CN: '编辑播放清单'
+	String get editPlaylist => '编辑播放清单';
+
+	/// zh-CN: '删除播放清单'
+	String get deletePlaylist => '删除播放清单';
+
+	/// zh-CN: '将从站点账号删除此播放清单，不能通过本机恢复。确定删除？'
+	String get deletePlaylistPrompt => '将从站点账号删除此播放清单，不能通过本机恢复。确定删除？';
+
+	/// zh-CN: '展开$name的作品'
+	String expandCreator({required Object name}) => '展开${name}的作品';
+
+	/// zh-CN: '收起$name的作品'
+	String collapseCreator({required Object name}) => '收起${name}的作品';
+
+	/// zh-CN: '查看全部作品'
+	String get viewCreatorWorks => '查看全部作品';
+
+	/// zh-CN: '收藏到播放清单'
+	String get favoriteTo => '收藏到播放清单';
+
+	/// zh-CN: '收藏'
+	String get favorite => '收藏';
+
+	/// zh-CN: '已收藏'
+	String get favorited => '已收藏';
+
+	/// zh-CN: '稍后观看'
+	String get watchLater => '稍后观看';
+
+	/// zh-CN: '已加入稍后观看'
+	String get inWatchLater => '已加入稍后观看';
+
+	/// zh-CN: '加入此清单'
+	String get addToPlaylist => '加入此清单';
+
+	/// zh-CN: '已加入'
+	String get addedToPlaylist => '已加入';
+
+	/// zh-CN: '未加入'
+	String get notInPlaylist => '未加入';
+
+	/// zh-CN: '点击核查是否已加入'
+	String get readPlaylistState => '点击核查是否已加入';
+
+	/// zh-CN: '核查结果'
+	String get checkResult => '核查结果';
+
+	/// zh-CN: '还没有播放清单，可以新建后收藏。'
+	String get noPlaylists => '还没有播放清单，可以新建后收藏。';
+
+	/// zh-CN: '分享'
+	String get share => '分享';
+
+	/// zh-CN: '此设备暂不支持系统分享。'
+	String get shareUnavailable => '此设备暂不支持系统分享。';
+
+	/// zh-CN: '未能打开系统分享，请重试。'
+	String get shareFailed => '未能打开系统分享，请重试。';
+
+	/// zh-CN: '加载更多'
+	String get loadMore => '加载更多';
+
+	/// zh-CN: '评论列表已更新，请刷新后继续。'
+	String get commentsChanged => '评论列表已更新，请刷新后继续。';
+
+	/// zh-CN: '订阅'
+	String get followShort => '订阅';
+
+	/// zh-CN: '回复'
+	String get reply => '回复';
+
+	/// zh-CN: '简介'
+	String get overview => '简介';
+
+	/// zh-CN: '收起键盘'
+	String get closeKeyboard => '收起键盘';
+
+	/// zh-CN: '点踩'
+	String get dislike => '点踩';
+
+	/// zh-CN: '已点踩'
+	String get disliked => '已点踩';
+
+	/// zh-CN: '暂无回复'
+	String get noReplies => '暂无回复';
+
+	/// zh-CN: '发表评论需站点邮箱验证；阅读不受影响。'
+	String get postVerificationOnly => '发表评论需站点邮箱验证；阅读不受影响。';
+
+	/// zh-CN: '登录后可查看站点的发表权限。'
+	String get loginToPost => '登录后可查看站点的发表权限。';
+
+	/// zh-CN: '当前可阅读评论，发表请在网页继续。'
+	String get publishingUnavailable => '当前可阅读评论，发表请在网页继续。';
+
+	/// zh-CN: '核对结果'
+	String get checkStatus => '核对结果';
+
+	/// zh-CN: '清单已创建，当前视频尚未加入。'
+	String get createdNotAdded => '清单已创建，当前视频尚未加入。';
+
+	/// zh-CN: '加入此清单'
+	String get addToCreatedPlaylist => '加入此清单';
+
+	/// zh-CN: '上传者'
+	String get uploader => '上传者';
+
+	/// zh-CN: '尚未识别此作者的真实资料页，请重试；全部作品仍可单独查看。'
+	String get creatorUnavailable => '尚未识别此作者的真实资料页，请重试；全部作品仍可单独查看。';
+
+	/// zh-CN: '未关联作者的更新'
+	String get unassignedSubscriptionUpdates => '未关联作者的更新';
+
+	/// zh-CN: '更多订阅作者'
+	String get moreSubscribedCreators => '更多订阅作者';
+}
+
+// Path: videoAccount
+class Translations$videoAccount$zh_CN {
+	Translations$videoAccount$zh_CN.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// zh-CN: '登录备份与云同步'
+	String get title => '登录备份与云同步';
+
+	/// zh-CN: '播放器偏好随 Breeze 的“同步设置”保存；图源设置和登录备份随“同步插件”保存。请使用现有 WebDAV / S3 的上传、下载流程。'
+	String get scope => '播放器偏好随 Breeze 的“同步设置”保存；图源设置和登录备份随“同步插件”保存。请使用现有 WebDAV / S3 的上传、下载流程。';
+
+	/// zh-CN: '登录备份含可用于访问账号的会话凭据，不采集密码，不包含 Cloudflare 验证凭据。现有同步并非用户独占密钥的端到端加密，请仅使用可信私有空间及 HTTPS。'
+	String get privacy => '登录备份含可用于访问账号的会话凭据，不采集密码，不包含 Cloudflare 验证凭据。现有同步并非用户独占密钥的端到端加密，请仅使用可信私有空间及 HTTPS。';
+
+	/// zh-CN: '没有登录备份，或备份已过期'
+	String get empty => '没有登录备份，或备份已过期';
+
+	/// zh-CN: '已保存登录备份（不代表当前已登录）'
+	String get saved => '已保存登录备份（不代表当前已登录）';
+
+	/// zh-CN: '备份当前站点登录'
+	String get backup => '备份当前站点登录';
+
+	/// zh-CN: '将当前登录会话存入此插件配置，并在启用“同步插件”时上传到你配置的云端。是否继续？'
+	String get backupPrompt => '将当前登录会话存入此插件配置，并在启用“同步插件”时上传到你配置的云端。是否继续？';
+
+	/// zh-CN: '恢复已同步的登录'
+	String get restore => '恢复已同步的登录';
+
+	/// zh-CN: '将用已保存的登录会话替换本机此站点的账号会话。网站仍可能要求验证或重新登录，不会恢复或跳过安全验证。是否继续？'
+	String get restorePrompt => '将用已保存的登录会话替换本机此站点的账号会话。网站仍可能要求验证或重新登录，不会恢复或跳过安全验证。是否继续？';
+
+	/// zh-CN: '移除登录备份'
+	String get forget => '移除登录备份';
+
+	/// zh-CN: '移除此插件配置中的登录备份，下次上传/同步插件时更新云端。不会退出当前网页账号。已下载到其他设备的副本不会被远程撤销；如需撤销会话，请使用网站账号安全功能。'
+	String get forgetPrompt => '移除此插件配置中的登录备份，下次上传/同步插件时更新云端。不会退出当前网页账号。已下载到其他设备的副本不会被远程撤销；如需撤销会话，请使用网站账号安全功能。';
+
+	/// zh-CN: '查看站点账户'
+	String get login => '查看站点账户';
+
+	/// zh-CN: 'Breeze 云同步设置'
+	String get cloud => 'Breeze 云同步设置';
+
+	/// zh-CN: '已存入插件配置，请通过 Breeze 同步插件上传'
+	String get backupDone => '已存入插件配置，请通过 Breeze 同步插件上传';
+
+	/// zh-CN: '已写入本机浏览器，请打开站点确认登录；失效时需重新登录'
+	String get restored => '已写入本机浏览器，请打开站点确认登录；失效时需重新登录';
+
+	/// zh-CN: '已移除本机备份，云端变更需上传／同步插件'
+	String get forgotten => '已移除本机备份，云端变更需上传／同步插件';
+
+	/// zh-CN: '操作未完成，请重试；不会自动上传或覆盖云端'
+	String get failed => '操作未完成，请重试；不会自动上传或覆盖云端';
+
+	/// zh-CN: '请先在此插件网页中完成登录，再备份当前账号'
+	String get loginRequired => '请先在此插件网页中完成登录，再备份当前账号';
+
+	/// zh-CN: '视频偏好参与 Breeze 的“同步设置”；站点登录备份见此图源“我的 → 登录备份与云同步”。'
+	String get settingsNote => '视频偏好参与 Breeze 的“同步设置”；站点登录备份见此图源“我的 → 登录备份与云同步”。';
+}
+
+// Path: videoSiteAccount
+class Translations$videoSiteAccount$zh_CN {
+	Translations$videoSiteAccount$zh_CN.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// zh-CN: '离开不会撤销已提交的操作。返回后请重新读取站点状态。'
+	String get leavePending => '离开不会撤销已提交的操作。返回后请重新读取站点状态。';
+
+	/// zh-CN: '账户资料'
+	String get title => '账户资料';
+
+	/// zh-CN: '基本资料'
+	String get profile => '基本资料';
+
+	/// zh-CN: '用户名'
+	String get name => '用户名';
+
+	/// zh-CN: '登录邮箱'
+	String get email => '登录邮箱';
+
+	/// zh-CN: '保存资料'
+	String get saveProfile => '保存资料';
+
+	/// zh-CN: '密码'
+	String get password => '密码';
+
+	/// zh-CN: '当前密码'
+	String get oldPassword => '当前密码';
+
+	/// zh-CN: '新密码'
+	String get newPassword => '新密码';
+
+	/// zh-CN: '确认新密码'
+	String get confirmPassword => '确认新密码';
+
+	/// zh-CN: '更改密码'
+	String get changePassword => '更改密码';
+
+	/// zh-CN: '头像'
+	String get photo => '头像';
+
+	/// zh-CN: '更换头像'
+	String get choosePhoto => '更换头像';
+
+	/// zh-CN: '上传头像'
+	String get uploadPhoto => '上传头像';
+
+	/// zh-CN: '取消选图'
+	String get cancelPhoto => '取消选图';
+
+	/// zh-CN: '支持 PNG、GIF、JPEG 和 WebP'
+	String get photoFormats => '支持 PNG、GIF、JPEG 和 WebP';
+
+	/// zh-CN: '图片格式暂不支持，可在网页选择头像。'
+	String get invalidPhoto => '图片格式暂不支持，可在网页选择头像。';
+
+	/// zh-CN: '邮箱安全验证'
+	String get verification => '邮箱安全验证';
+
+	/// zh-CN: '6 位验证码'
+	String get code => '6 位验证码';
+
+	/// zh-CN: '获取验证码'
+	String get requestCode => '获取验证码';
+
+	/// zh-CN: '确认验证'
+	String get verifyCode => '确认验证';
+
+	/// zh-CN: '$seconds 秒后可重发'
+	String resendIn({required Object seconds}) => '${seconds} 秒后可重发';
+
+	/// zh-CN: '站点已发送验证码，请查看邮箱。'
+	String get codeSent => '站点已发送验证码，请查看邮箱。';
+
+	/// zh-CN: '站点未完成此操作，请检查后重试。'
+	String get failed => '站点未完成此操作，请检查后重试。';
+
+	/// zh-CN: '此项暂未识别，可重新读取或在网页继续。'
+	String get unavailable => '此项暂未识别，可重新读取或在网页继续。';
+
+	/// zh-CN: '在网页继续'
+	String get website => '在网页继续';
+
+	/// zh-CN: '重新读取'
+	String get refresh => '重新读取';
+
+	/// zh-CN: '已提交，正在读取站点结果…'
+	String get submitted => '已提交，正在读取站点结果…';
+
+	/// zh-CN: '结果尚未确认，请重新读取；不会自动重复提交。'
+	String get unconfirmed => '结果尚未确认，请重新读取；不会自动重复提交。';
+
+	/// zh-CN: '已重新读取并确认资料一致。'
+	String get readbackMatched => '已重新读取并确认资料一致。';
+
+	/// zh-CN: '密码已提交，请根据站点结果确认；不会自动重复提交。'
+	String get passwordUnconfirmed => '密码已提交，请根据站点结果确认；不会自动重复提交。';
+
+	/// zh-CN: '放弃未保存的修改？'
+	String get discardTitle => '放弃未保存的修改？';
+
+	/// zh-CN: '修改只保留在当前页面，离开后将清除。'
+	String get discardBody => '修改只保留在当前页面，离开后将清除。';
+
+	/// zh-CN: '退出站点账号'
+	String get logout => '退出站点账号';
+
+	/// zh-CN: '退出当前网站账号？已保存的登录备份不会自动删除。'
+	String get logoutPrompt => '退出当前网站账号？已保存的登录备份不会自动删除。';
+
+	/// zh-CN: '请填写此项'
+	String get required => '请填写此项';
+
+	/// zh-CN: '请输入有效的邮箱地址'
+	String get emailInvalid => '请输入有效的邮箱地址';
+
+	/// zh-CN: '两次新密码不一致'
+	String get passwordMismatch => '两次新密码不一致';
+
+	/// zh-CN: '找回密码'
+	String get recoveryTitle => '找回密码';
+
+	/// zh-CN: '向登录邮箱发送原站密码重置链接。'
+	String get recoveryDescription => '向登录邮箱发送原站密码重置链接。';
+
+	/// zh-CN: '发送重置链接'
+	String get sendRecovery => '发送重置链接';
+
+	/// zh-CN: '站点已确认发送重置邮件，请查看邮箱。'
+	String get recoverySent => '站点已确认发送重置邮件，请查看邮箱。';
+
+	/// zh-CN: '返回登录'
+	String get backLogin => '返回登录';
+
+	/// zh-CN: '头像已提交，请重新读取确认。'
+	String get avatarUnconfirmed => '头像已提交，请重新读取确认。';
+
+	/// zh-CN: '账户资料尚未读取，请重新读取或在网页继续。'
+	String get unsupportedAccount => '账户资料尚未读取，请重新读取或在网页继续。';
+
+	/// zh-CN: '验证码已提交，请检查站点结果。'
+	String get otpUnconfirmed => '验证码已提交，请检查站点结果。';
+
+	/// zh-CN: '忘记密码'
+	String get forgetPassword => '忘记密码';
+
+	/// zh-CN: '使用 Google（浏览器）'
+	String get googleInBrowser => '使用 Google（浏览器）';
+
+	/// zh-CN: 'Google 网站登录'
+	String get googleWebsiteTitle => 'Google 网站登录';
+
+	/// zh-CN: 'Google 登录需要在系统浏览器中继续。浏览器与此处的站点登录状态独立；返回后，可在此用站点邮箱和密码登录。'
+	String get googleWebsiteNote => 'Google 登录需要在系统浏览器中继续。浏览器与此处的站点登录状态独立；返回后，可在此用站点邮箱和密码登录。';
+
+	/// zh-CN: '在浏览器继续'
+	String get continueInBrowser => '在浏览器继续';
+
+	/// zh-CN: '无法打开系统浏览器，请重试。'
+	String get browserOpenFailed => '无法打开系统浏览器，请重试。';
+}
+
 // Path: dialog
 class Translations$dialog$zh_CN {
 	Translations$dialog$zh_CN.internal(this._root);
@@ -4112,6 +5237,252 @@ class Translations$dialog$zh_CN {
 
 	/// zh-CN: '记住我的选择'
 	String get rememberChoice => '记住我的选择';
+}
+
+// Path: videoFilters
+class Translations$videoFilters$zh_CN {
+	Translations$videoFilters$zh_CN.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// zh-CN: '筛选'
+	String get title => '筛选';
+
+	/// zh-CN: '类型'
+	String get genre => '类型';
+
+	/// zh-CN: '标签'
+	String get tags => '标签';
+
+	/// zh-CN: '排序'
+	String get sort => '排序';
+
+	/// zh-CN: '发布日期'
+	String get date => '发布日期';
+
+	/// zh-CN: '时长'
+	String get duration => '时长';
+
+	/// zh-CN: '搜索范围'
+	String get searchMode => '搜索范围';
+
+	/// zh-CN: '指定年／月'
+	String get yearMonth => '指定年／月';
+
+	/// zh-CN: '年份'
+	String get year => '年份';
+
+	/// zh-CN: '全部年份'
+	String get allYears => '全部年份';
+
+	/// zh-CN: '全部月份'
+	String get allMonths => '全部月份';
+
+	/// zh-CN: '请输入四位年份'
+	String get invalidYear => '请输入四位年份';
+
+	/// zh-CN: '$value 月'
+	String month({required Object value}) => '${value} 月';
+
+	/// zh-CN: '暂未读取到此项选项，请重新加载站点后重试。'
+	String get optionsUnavailable => '暂未读取到此项选项，请重新加载站点后重试。';
+
+	/// zh-CN: '搜索标签'
+	String get searchTags => '搜索标签';
+
+	/// zh-CN: '匹配任一标签'
+	String get anyTag => '匹配任一标签';
+
+	/// zh-CN: '包含所选任一标签即可。'
+	String get anyTagNote => '包含所选任一标签即可。';
+
+	/// zh-CN: '需要同时包含所有所选标签。'
+	String get allTagNote => '需要同时包含所有所选标签。';
+
+	/// zh-CN: '没有匹配的标签'
+	String get noMatchingTags => '没有匹配的标签';
+
+	/// zh-CN: '作者'
+	String get authors => '作者';
+
+	/// zh-CN: '视频'
+	String get videos => '视频';
+
+	/// zh-CN: '全部重置'
+	String get reset => '全部重置';
+
+	/// zh-CN: '应用筛选'
+	String get apply => '应用筛选';
+
+	/// zh-CN: '页面已变化，筛选未应用，请重新打开筛选。'
+	String get contextChanged => '页面已变化，筛选未应用，请重新打开筛选。';
+
+	/// zh-CN: '草稿，应用后生效。'
+	String get draftNote => '草稿，应用后生效。';
+
+	/// zh-CN: '应用'
+	String get applyShort => '应用';
+
+	/// zh-CN: '全部筛选'
+	String get allFilters => '全部筛选';
+
+	/// zh-CN: '清除筛选'
+	String get clearFilters => '清除筛选';
+
+	/// zh-CN: '全部满足'
+	String get allMatch => '全部满足';
+
+	/// zh-CN: '任一满足'
+	String get anyMatch => '任一满足';
+
+	/// zh-CN: '已选 $count 项'
+	String selected({required Object count}) => '已选 ${count} 项';
+
+	/// zh-CN: '已选标签'
+	String get selectedTags => '已选标签';
+
+	/// zh-CN: '查看已选标签'
+	String get showSelected => '查看已选标签';
+
+	/// zh-CN: '尚未选择标签'
+	String get noSelection => '尚未选择标签';
+
+	/// zh-CN: '全部分组'
+	String get allGroups => '全部分组';
+
+	/// zh-CN: '收起键盘'
+	String get closeKeyboard => '收起键盘';
+
+	/// zh-CN: '清空所有条件与关键词'
+	String get clearAll => '清空所有条件与关键词';
+
+	/// zh-CN: '当前条件'
+	String get active => '当前条件';
+
+	/// zh-CN: '移除此条件'
+	String get removeFilter => '移除此条件';
+
+	/// zh-CN: '指定日期'
+	String get customDate => '指定日期';
+
+	/// zh-CN: '分组'
+	String get searchGroup => '分组';
+}
+
+// Path: videoSearch
+class Translations$videoSearch$zh_CN {
+	Translations$videoSearch$zh_CN.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// zh-CN: '最近搜索'
+	String get recent => '最近搜索';
+
+	/// zh-CN: '清空最近搜索'
+	String get clearRecent => '清空最近搜索';
+
+	/// zh-CN: '删除这条搜索'
+	String get removeRecent => '删除这条搜索';
+
+	/// zh-CN: '仅保存在本机'
+	String get localOnly => '仅保存在本机';
+
+	/// zh-CN: '搜索视频或作者'
+	String get hint => '搜索视频或作者';
+
+	/// zh-CN: '清除关键词'
+	String get clearQuery => '清除关键词';
+
+	/// zh-CN: '搜索'
+	String get submit => '搜索';
+
+	/// zh-CN: '取消搜索'
+	String get cancel => '取消搜索';
+
+	/// zh-CN: '最近搜索暂不可用，仍可继续搜索。'
+	String get recentFailed => '最近搜索暂不可用，仍可继续搜索。';
+
+	/// zh-CN: '搜索已提交，最近搜索未能保存。'
+	String get historyWriteFailed => '搜索已提交，最近搜索未能保存。';
+
+	/// zh-CN: '没有最近搜索'
+	String get noRecent => '没有最近搜索';
+
+	/// zh-CN: '页面已变化，搜索未提交，请重新打开搜索。'
+	String get contextChanged => '页面已变化，搜索未提交，请重新打开搜索。';
+}
+
+// Path: videoMetadata
+class Translations$videoMetadata$zh_CN {
+	Translations$videoMetadata$zh_CN.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// zh-CN: '作者'
+	String get author => '作者';
+
+	/// zh-CN: '播放 $value'
+	String views({required Object value}) => '播放 ${value}';
+
+	/// zh-CN: '好评 $value'
+	String rating({required Object value}) => '好评 ${value}';
+
+	/// zh-CN: '时长 $value'
+	String duration({required Object value}) => '时长 ${value}';
+
+	/// zh-CN: '总票 $count'
+	String totalVotes({required Object count}) => '总票 ${count}';
+
+	/// zh-CN: '赞 $count'
+	String positiveVotes({required Object count}) => '赞 ${count}';
+
+	/// zh-CN: '踩 $count'
+	String negativeVotes({required Object count}) => '踩 ${count}';
+}
+
+// Path: videoPersonal
+class Translations$videoPersonal$zh_CN {
+	Translations$videoPersonal$zh_CN.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// zh-CN: '我的'
+	String get my => '我的';
+
+	/// zh-CN: '总览'
+	String get overview => '总览';
+
+	/// zh-CN: '观看记录'
+	String get histories => '观看记录';
+
+	/// zh-CN: '稍后观看'
+	String get watchLater => '稍后观看';
+
+	/// zh-CN: '喜欢视频'
+	String get likes => '喜欢视频';
+
+	/// zh-CN: '播放清单'
+	String get playlists => '播放清单';
+
+	/// zh-CN: '最近观看'
+	String get recent => '最近观看';
+
+	/// zh-CN: '查看全部'
+	String get viewAll => '查看全部';
+
+	/// zh-CN: '暂时无法读取观看记录，可打开完整列表。'
+	String get recentUnavailable => '暂时无法读取观看记录，可打开完整列表。';
+
+	/// zh-CN: '还没有观看记录。'
+	String get emptyHistory => '还没有观看记录。';
 }
 
 /// The flat map containing all translations for locale <zh-CN>.
@@ -4148,6 +5519,8 @@ extension on Translations {
 			'common.overwrite' => '覆盖',
 			'common.cancelled' => '已取消',
 			'common.search' => '搜索',
+			'common.previousPage' => '上一页',
+			'common.nextPage' => '下一页',
 			'common.clear' => '清空',
 			'common.copy' => '复制',
 			'common.paste' => '粘贴',
@@ -4632,10 +6005,10 @@ extension on Translations {
 			'reader.infoDisplay' => '信息项显示',
 			'reader.pageNumber' => '页数',
 			'reader.pageNumberSubtitle' => '显示当前页/总页数',
-			'reader.networkStatus' => '网络状态',
-			'reader.networkStatusSubtitle' => 'Linux 下可能不准确',
 			_ => null,
 		} ?? switch (path) {
+			'reader.networkStatus' => '网络状态',
+			'reader.networkStatusSubtitle' => 'Linux 下可能不准确',
 			'reader.battery' => '电量',
 			'reader.time' => '时间',
 			'reader.verticalPositionTop' => '顶部',
@@ -5146,10 +6519,10 @@ extension on Translations {
 			'search.loadFailedForSource' => ({required Object source}) => '${source} 加载失败',
 			'discover.title' => '发现',
 			'discover.search' => '搜索',
-			'discover.settings' => '设置',
-			'discover.pluginManagement' => '插件管理',
 			_ => null,
 		} ?? switch (path) {
+			'discover.settings' => '设置',
+			'discover.pluginManagement' => '插件管理',
 			'discover.manage' => '管理',
 			'discover.listLayout' => '列表',
 			'discover.gridLayout' => '网格',
@@ -5277,9 +6650,198 @@ extension on Translations {
 			'webview.windowClosed' => 'WebView 窗口已关闭',
 			'webview.openedInExternalWindow' => '网页已在独立窗口中打开',
 			'webview.back' => '返回',
+			'webview.forward' => '前进',
+			'webview.siteBack' => '网页返回',
+			'webview.siteHome' => '站点首页',
+			'webview.siteSearch' => '站内搜索',
+			'webview.closeWebpage' => '关闭网页并返回 Breeze',
 			'webview.closeWindow' => '关闭 WebView 窗口',
+			'webview.nativePlaybackTrial' => '原生试播',
+			'webview.nativePlaybackUnavailable' => '此页面暂时无法原生播放，请继续使用网页播放器',
 			'webview.loadError' => ({required Object error}) => '加载失败（${error}）',
 			'webview.httpErrorStatus' => ({required Object statusCode}) => '服务器返回异常状态码：${statusCode}',
+			'videoPlayback.playFailed' => '播放暂未成功，请重试或切换线路；也可在网页打开',
+			'videoPlayback.actionFailed' => '播放操作未成功，请重试。',
+			'videoPlayback.backToWeb' => '网页界面',
+			'videoPlayback.minimizeShort' => '缩小',
+			'videoPlayback.landscapeShort' => '横屏',
+			'videoPlayback.previousEpisode' => '上一集',
+			'videoPlayback.nextEpisode' => '下一集',
+			'videoPlayback.nextSource' => '试下一线路',
+			'videoPlayback.fastForward' => '长按 2 倍速',
+			'videoPlayback.source' => '选择线路',
+			'videoPlayback.pause' => '暂停',
+			'videoPlayback.play' => '播放',
+			'videoPlayback.replay' => '重新播放',
+			'videoPlayback.rewind10' => '后退 10 秒',
+			'videoPlayback.forward10' => '前进 10 秒',
+			'videoPlayback.fullscreen' => '全屏播放',
+			'videoPlayback.exitFullscreen' => '退出全屏',
+			'videoPlayback.defaultFullscreenOrientation' => '全屏方向',
+			'videoPlayback.portraitFullscreen' => '竖屏全屏',
+			'videoPlayback.landscapeFullscreen' => '横屏全屏',
+			'videoPlayback.switchToPortrait' => '切换到竖屏全屏',
+			'videoPlayback.switchToLandscape' => '切换到横屏全屏',
+			'videoPlayback.mute' => '静音',
+			'videoPlayback.unmute' => '取消静音',
+			'videoPlayback.speed' => '播放速度',
+			'videoPlayback.buffering' => '缓冲中',
+			'videoPlayback.videoDetails' => '视频详情',
+			'videoPlayback.nativePlayback' => '原生播放',
+			'videoPlayback.playerActions' => '播放选项',
+			'videoPlayback.browserActions' => '网页选项',
+			'videoPlayback.personalPage' => '个人中心',
+			'videoPlayback.accountUnconfirmed' => '暂未确认站点登录状态',
+			'videoPlayback.siteContents' => '站点内容',
+			'videoPlayback.subscriptionsEmpty' => '暂未取得订阅视频',
+			'videoPlayback.inlinePlaybackNote' => '正在 Breeze 中播放；原站详情仍可通过返回查看',
+			'videoPlayback.episodes' => '剧集',
+			'videoPlayback.related' => '相关推荐',
+			'videoPlayback.searchVideos' => '搜索视频',
+			'videoPlayback.closeSearch' => '关闭搜索',
+			'videoPlayback.search' => '搜索',
+			'videoPlayback.websiteToggle' => '切换显示模式',
+			'videoPlayback.nativeMode' => '原生',
+			'videoPlayback.catalogRefreshFailed' => '更新暂未成功，显示上次加载的内容',
+			'videoPlayback.playbackSettings' => '视频设置',
+			'videoPlayback.hostSettingsScope' => '播放偏好通用，图源设置独立保存。',
+			'videoPlayback.settingsSaveFailed' => '设置保存失败，请重试',
+			'videoPlayback.settingsLoadFailed' => '视频设置暂时无法读取',
+			'videoPlayback.autoplay' => '自动播放',
+			'videoPlayback.resumeProgress' => '继续上次位置',
+			'videoPlayback.recordHistory' => '观看记录',
+			'videoPlayback.recordHistoryNote' => '保存在本机；关闭后不再续播。',
+			'videoPlayback.watchHistory' => '观看记录',
+			'videoPlayback.historyEmpty' => '还没有观看记录',
+			'videoPlayback.historyEmptyNote' => '原生播放超过 5 秒或播放结束后会记在这里，可再次打开观看',
+			'videoPlayback.historyLoadFailed' => '观看记录暂时无法读取',
+			'videoPlayback.historyChangeFailed' => '记录未能删除，请重试',
+			'videoPlayback.clearWatchHistory' => '清空观看记录',
+			'videoPlayback.clearWatchHistoryPrompt' => '删除此图源在本机保存的全部观看记录和续播位置？不会影响网站账号。',
+			'videoPlayback.removeWatchHistoryPrompt' => ({required Object title}) => '删除“${title}”的本机观看记录及续播位置？',
+			'videoPlayback.watchedComplete' => '已看完',
+			'videoPlayback.watchPosition' => ({required Object position, required Object duration}) => '上次看到 ${position} / ${duration}',
+			'videoPlayback.siteAccount' => '站点账号',
+			'videoPlayback.siteAccountNote' => '账号内容来自站点；网页登录用于登录与必要账号操作，本机观看记录单独保存',
+			'videoPlayback.sourceSettings' => '图源设置',
+			'videoPlayback.sourceSettingsNote' => '解析等待、播放线路偏好、网页展示整理',
+			'videoPlayback.defaultSpeed' => '默认倍速',
+			'videoPlayback.holdSpeed' => '长按临时倍速',
+			'videoPlayback.fastForwardRate' => ({required Object rate}) => '${rate} 倍速播放中',
+			'videoPlayback.controlsTimeout' => '自动隐藏',
+			'videoPlayback.seconds' => ({required Object value}) => '${value} 秒',
+			'videoPlayback.coverVideo' => '铺满画面',
+			'videoPlayback.coverVideoNote' => '横屏可能裁边；竖屏保留完整画面。',
+			'videoPlayback.doubleTapAction' => '双击画面操作',
+			'videoPlayback.doubleTapSeek' => '中间播放／暂停，两侧后退／前进 10 秒',
+			'videoPlayback.doubleTapPlay' => '播放或暂停',
+			'videoPlayback.swipeSeek' => '横滑调整进度',
+			'videoPlayback.controlsStyle' => '播放控件',
+			'videoPlayback.systemControls' => '系统样式',
+			'videoPlayback.breezeControls' => 'Breeze 控件',
+			'videoPlayback.controlsStyleNote' => '播放控件可单独选择，其他界面跟随系统。',
+			'videoPlayback.swipeSeekNote' => '拖动预览，松手跳转。',
+			'videoPlayback.lockControls' => '锁定播放控件',
+			'videoPlayback.unlockControls' => '解锁播放控件',
+			'videoPlayback.expandDescription' => '展开简介',
+			'videoPlayback.collapseDescription' => '收起简介',
+			'videoPlayback.catalogFallback' => '原生内容暂时加载失败，可重试或在网页打开',
+			'videoPlayback.verificationTitle' => '站点安全验证',
+			'videoPlayback.localWatchHistory' => '本机记录',
+			'videoPlayback.verificationNote' => '请在站点页面完成验证，通过后会继续打开原页面。',
+			'videoPlayback.verificationSlow' => '验证长时间未完成。请保持当前出口稳定；若同一网络下 Safari 正常，请复制诊断反馈，不必反复重新加载。',
+			'videoPlayback.verificationStableNote' => '站点可能随时要求验证。请操作网站自己的验证控件；检查结果不会提交验证，重新加载会从头开始。',
+			'videoPlayback.verificationActions' => '验证选项',
+			'videoPlayback.verificationHelp' => '验证说明',
+			'videoPlayback.enableBrowserInspection' => '网页调试',
+			'videoPlayback.disableBrowserInspection' => '关闭调试',
+			'videoPlayback.browserInspectionPrompt' => '仅在本次打开插件期间允许 Safari 的网页检查器连接，不会刷新验证或自动上传日志。连接后可以查看网页、请求和登录信息，请只连接你信任的 Mac。\n\n开启后，在 iPhone 的 Safari 高级设置中打开网页检查器；连接 Mac，用 Safari 的开发菜单选择这部 iPhone 下的 Breeze 页面。只需反馈验证相关的错误代码，不要发送原始 HAR、Cookie、请求头或账号信息。关闭插件后自动停用。',
+			'videoPlayback.browserInspectionNote' => '浏览器调试状态已更新，不会重新加载验证页',
+			'videoPlayback.browserInspectionFailed' => '无法更改浏览器调试状态；需要 iOS 16.4 或更新版本',
+			'videoPlayback.nativeAfterVerification' => '验证后回到原生',
+			'videoPlayback.websiteAfterVerification' => '验证后保留网页',
+			'videoPlayback.reloadVerificationPrompt' => '重新加载会中断当前验证并从头开始。确定继续吗？',
+			'videoPlayback.checkVerification' => '检查验证',
+			'videoPlayback.reloadVerification' => '重载验证',
+			'videoPlayback.verificationRequired' => '站点要求重新完成安全验证，播放位置已保留',
+			'videoPlayback.continueVerification' => '前往验证',
+			'videoPlayback.siteUnavailable' => '原生目录尚未准备好。可重试，或打开网页后再切回原生目录。',
+			'videoPlayback.copyDiagnostic' => '复制诊断',
+			'videoPlayback.diagnosticCopied' => '已复制无账号信息的诊断内容',
+			'videoPlayback.home' => '首页',
+			'videoPlayback.website' => '网页',
+			'videoPlayback.nativeCatalog' => '原生界面',
+			'videoPlayback.acknowledge' => '知道了',
+			'videoPlayback.closeSource' => '关闭 Hanime1 图源',
+			'videoPlayback.quickSettings' => '快捷设置',
+			'videoPlayback.currentPlayback' => '当前播放',
+			'videoPlayback.currentSpeedNote' => '仅调整当前视频。',
+			'videoPlayback.systemControlsShort' => '系统样式',
+			'videoPlayback.gestureSettings' => '手势操作',
+			'videoPlayback.gestureOff' => '关闭',
+			'videoPlayback.doubleTapSeekShort' => '分区快退／快进',
+			'videoPlayback.allPlaybackSettings' => '完整播放设置',
+			'videoPlayback.collapseTags' => '收起标签',
+			'videoPlayback.moreTags' => ({required Object count}) => '更多标签（${count}）',
+			'videoPlayback.sourceNumber' => ({required Object index}) => '线路 ${index}',
+			'videoPlayback.siteEpisodeOrder' => '按站点顺序排列 · 集数以标题为准',
+			'videoPlayback.currentEpisode' => '正在播放',
+			'videoPlayback.episodeCount' => ({required Object count}) => '共 ${count} 个条目',
+			'videoPlayback.defaultsNote' => '默认偏好；当前视频可就地调整。',
+			'videoPlayback.playbackGroup' => '播放与画面',
+			'videoPlayback.controlsGroup' => '控件外观',
+			'videoPlayback.historyGroup' => '记录与恢复',
+			'videoPlayback.portraitMode' => '竖屏播放方式',
+			'videoPlayback.portraitFocus' => '专注观看',
+			'videoPlayback.portraitEpisodes' => '剧集连看',
+			'videoPlayback.portraitModeNote' => '专注观看当前视频；剧集连看可上下滑切换站点列表，末尾停止。',
+			'videoPlayback.episodeSwipeHint' => '上滑下一项 · 下滑上一项',
+			'videoPlayback.episodeBoundary' => '已到站点剧集列表边界',
+			'videoPlayback.episodeSwitchFailed' => '切换失败，当前视频已保留',
+			'videoPlayback.episodeSwitching' => '正在准备下一项',
+			'videoPlayback.episodeOrderUnavailable' => '当前视频不在站点剧集列表中，请手动选集',
+			'videoPlayback.episodeAscending' => '正序',
+			'videoPlayback.episodeDescending' => '倒序',
+			'videoPlayback.episodeSite' => '原站',
+			'videoPlayback.episodeManual' => '自定',
+			'videoPlayback.episodeManualNote' => '拖动调整顺序，仅本次播放有效。应用前不会改变播放队列。',
+			'videoPlayback.episodeOrderFallback' => '无法可靠识别集数，暂按原站顺序；可自定排序。',
+			'videoPlayback.episodeSessionOrder' => '排序仅影响本次播放，当前视频与进度保持不变。',
+			'videoPlayback.episodeApplyOrder' => '应用顺序',
+			'videoPlayback.episodeReorder' => '拖动排序',
+			'videoPlayback.episodeMoveUp' => '上移',
+			'videoPlayback.episodeMoveDown' => '下移',
+			'videoPlayback.episodeWaiting' => '正在加载目标视频…',
+			'videoPlayback.settingsSearch' => '搜索视频设置',
+			'videoPlayback.settingsScopeCommon' => '通用视频',
+			'videoPlayback.settingsScopeSource' => '仅当前图源',
+			'videoPlayback.settingsSearchEmpty' => '没有匹配的视频设置',
+			'videoPlayback.settingsMotion' => '界面动效',
+			'videoPlayback.settingsMotionNote' => '在系统「辅助功能」中调整。',
+			'videoPlayback.settingsAll' => '全部视频设置',
+			'videoPlayback.settingsMotionValue' => '跟随系统',
+			'videoPlayback.resumeRequiresHistory' => '开启观看记录后可用。',
+			'videoPlayback.pageAnalysis' => '页面分析',
+			'videoPlayback.analysisRunning' => '正在读取页面状态…',
+			'videoPlayback.analysisFailed' => '分析未完成，请重试。',
+			'videoPlayback.analysisMode' => '显示模式',
+			'videoPlayback.analysisPage' => '当前页面',
+			'videoPlayback.analysisState' => '页面状态',
+			'videoPlayback.analysisScope' => '仅分析页面状态与加载信息，不含账号内容。',
+			'videoPlayback.analyzeAgain' => '重新分析',
+			'videoPlayback.analysisVerification' => '等待站点验证',
+			'videoPlayback.analysisLoading' => '正在加载',
+			'videoPlayback.analysisDisplayed' => '页面已显示',
+			'videoPlayback.analysisCopied' => '已复制',
+			'videoPlayback.analysisCopyFailed' => '复制失败，请重试。',
+			'videoPlayback.analysisCreator' => '作者主页',
+			'videoPlayback.analysisProfile' => '个人主页',
+			'videoPlayback.analysisHome' => '推荐首页',
+			'videoPlayback.analysisSubscriptions' => '订阅内容',
+			'videoPlayback.analysisVideo' => '视频详情',
+			'videoPlayback.analysisPlaylist' => '播放清单',
+			'videoPlayback.analysisSitePage' => '站点页面',
+			'videoPlayback.accountBackup' => '登录备份',
 			'oldRanking.bikaRanking' => '哔咔排行榜',
 			'oldRanking.jmRanking' => '禁漫排行榜',
 			'oldRanking.switchSource' => '切换',
@@ -5364,8 +6926,246 @@ extension on Translations {
 			'update.apkDownloadFailed' => '下载失败，请稍后再试！',
 			'update.installPermissionRequired' => '请授予安装应用权限！',
 			'update.unknownArch' => '未知',
+			'videoDownload.title' => '下载视频',
+			'videoDownload.chooseQuality' => '选择清晰度后下载',
+			'videoDownload.loading' => '正在读取下载选项…',
+			'videoDownload.empty' => '未读取到可用下载选项',
+			'videoDownload.downloading' => ({required Object quality}) => '正在下载 ${quality}',
+			'videoDownload.saving' => '请选择文件保存位置',
+			'videoDownload.cancel' => '取消下载',
+			'videoDownload.cancelled' => '已取消下载',
+			'videoDownload.saved' => '视频已保存到所选位置',
+			'videoDownload.failed' => '下载未完成，请重新读取选项后重试。',
+			'videoDownload.unavailable' => '此设备暂不支持原生文件保存，可在网页下载。',
+			'videoDownload.reload' => '重新读取选项',
+			'videoDownload.website' => '在网页下载',
+			'videoCommunity.stateUnknown' => '登录状态尚未确认，请重试读取。',
+			'videoCommunity.actionsUnreadable' => '部分操作暂未识别，可重试读取。',
+			'videoCommunity.login' => '登录',
+			'videoCommunity.register' => '注册',
+			'videoCommunity.email' => '电子邮箱',
+			'videoCommunity.displayName' => '用户名',
+			'videoCommunity.password' => '密码',
+			'videoCommunity.passwordVisibility' => '显示或隐藏密码',
+			'videoCommunity.invalidEmail' => '请输入有效的电子邮箱',
+			'videoCommunity.required' => '请填写此项',
+			'videoCommunity.remember' => '在此设备上保持登录',
+			'videoCommunity.authNote' => '使用站点当前表单登录或注册。密码仅用于本次提交，不写入插件、日志或云端；需要额外验证时会打开站点网页。',
+			'videoCommunity.authFailed' => '站点未完成登录或注册，请核对填写内容；也可在网页继续。',
+			'videoCommunity.authUnconfirmed' => '尚未确认提交结果，请在网页查看，勿重复提交。',
+			'videoCommunity.submitting' => '正在提交…',
+			'videoCommunity.haveAccount' => '已有账号，去登录',
+			'videoCommunity.createAccount' => '没有账号，去注册',
+			'videoCommunity.manageAccount' => '管理站点账号',
+			'videoCommunity.preferences' => '设置工具',
+			'videoCommunity.followedCreators' => '关注的作者',
+			'videoCommunity.subscriptionFeed' => '订阅动态',
+			'videoCommunity.comments' => '评论',
+			'videoCommunity.replies' => '回复',
+			'videoCommunity.viewReplies' => '查看回复',
+			'videoCommunity.writeComment' => '写评论',
+			'videoCommunity.post' => '发送评论',
+			'videoCommunity.noComments' => '暂无评论',
+			'videoCommunity.emptyLibrary' => '此列表暂无内容',
+			'videoCommunity.loginRequired' => '此操作需要登录站点账号。',
+			'videoCommunity.verificationRequired' => '站点要求额外验证。可返回播放页，在网页完成验证后重试；当前视频不会自动切到网页。',
+			'videoCommunity.unconfirmed' => '无法确认操作是否已完成，请刷新站点内容核对，勿重复提交。',
+			'videoCommunity.pageChanged' => '当前站点页面已改变，请返回并重新打开此视频。',
+			'videoCommunity.unsupported' => '此页面暂未提供可用的站点操作，可在网页继续。',
+			'videoCommunity.busy' => '正在处理上一项操作，请稍后再试。',
+			'videoCommunity.rejected' => '站点未接受此操作，请核对后重试。',
+			'videoCommunity.network' => '暂时无法加载，请检查连接后重试。',
+			'videoCommunity.like' => '点赞',
+			'videoCommunity.liked' => '已点赞',
+			'videoCommunity.follow' => '订阅作者',
+			'videoCommunity.following' => '已订阅',
+			'videoCommunity.createPlaylist' => '新建播放清单',
+			'videoCommunity.playlistTitle' => '清单名称',
+			'videoCommunity.playlistDescription' => '清单简介',
+			'videoCommunity.editPlaylist' => '编辑播放清单',
+			'videoCommunity.deletePlaylist' => '删除播放清单',
+			'videoCommunity.deletePlaylistPrompt' => '将从站点账号删除此播放清单，不能通过本机恢复。确定删除？',
+			'videoCommunity.expandCreator' => ({required Object name}) => '展开${name}的作品',
+			'videoCommunity.collapseCreator' => ({required Object name}) => '收起${name}的作品',
+			'videoCommunity.viewCreatorWorks' => '查看全部作品',
+			'videoCommunity.favoriteTo' => '收藏到播放清单',
+			'videoCommunity.favorite' => '收藏',
+			'videoCommunity.favorited' => '已收藏',
+			'videoCommunity.watchLater' => '稍后观看',
+			'videoCommunity.inWatchLater' => '已加入稍后观看',
+			'videoCommunity.addToPlaylist' => '加入此清单',
+			'videoCommunity.addedToPlaylist' => '已加入',
+			'videoCommunity.notInPlaylist' => '未加入',
+			'videoCommunity.readPlaylistState' => '点击核查是否已加入',
+			'videoCommunity.checkResult' => '核查结果',
+			'videoCommunity.noPlaylists' => '还没有播放清单，可以新建后收藏。',
+			'videoCommunity.share' => '分享',
+			'videoCommunity.shareUnavailable' => '此设备暂不支持系统分享。',
+			'videoCommunity.shareFailed' => '未能打开系统分享，请重试。',
+			'videoCommunity.loadMore' => '加载更多',
+			'videoCommunity.commentsChanged' => '评论列表已更新，请刷新后继续。',
+			'videoCommunity.followShort' => '订阅',
+			'videoCommunity.reply' => '回复',
+			'videoCommunity.overview' => '简介',
+			'videoCommunity.closeKeyboard' => '收起键盘',
+			'videoCommunity.dislike' => '点踩',
+			'videoCommunity.disliked' => '已点踩',
+			'videoCommunity.noReplies' => '暂无回复',
+			'videoCommunity.postVerificationOnly' => '发表评论需站点邮箱验证；阅读不受影响。',
+			'videoCommunity.loginToPost' => '登录后可查看站点的发表权限。',
+			'videoCommunity.publishingUnavailable' => '当前可阅读评论，发表请在网页继续。',
+			'videoCommunity.checkStatus' => '核对结果',
+			'videoCommunity.createdNotAdded' => '清单已创建，当前视频尚未加入。',
+			'videoCommunity.addToCreatedPlaylist' => '加入此清单',
+			'videoCommunity.uploader' => '上传者',
+			'videoCommunity.creatorUnavailable' => '尚未识别此作者的真实资料页，请重试；全部作品仍可单独查看。',
+			'videoCommunity.unassignedSubscriptionUpdates' => '未关联作者的更新',
+			'videoCommunity.moreSubscribedCreators' => '更多订阅作者',
+			'videoAccount.title' => '登录备份与云同步',
+			'videoAccount.scope' => '播放器偏好随 Breeze 的“同步设置”保存；图源设置和登录备份随“同步插件”保存。请使用现有 WebDAV / S3 的上传、下载流程。',
+			'videoAccount.privacy' => '登录备份含可用于访问账号的会话凭据，不采集密码，不包含 Cloudflare 验证凭据。现有同步并非用户独占密钥的端到端加密，请仅使用可信私有空间及 HTTPS。',
+			'videoAccount.empty' => '没有登录备份，或备份已过期',
+			'videoAccount.saved' => '已保存登录备份（不代表当前已登录）',
+			'videoAccount.backup' => '备份当前站点登录',
+			'videoAccount.backupPrompt' => '将当前登录会话存入此插件配置，并在启用“同步插件”时上传到你配置的云端。是否继续？',
+			'videoAccount.restore' => '恢复已同步的登录',
+			'videoAccount.restorePrompt' => '将用已保存的登录会话替换本机此站点的账号会话。网站仍可能要求验证或重新登录，不会恢复或跳过安全验证。是否继续？',
+			'videoAccount.forget' => '移除登录备份',
+			'videoAccount.forgetPrompt' => '移除此插件配置中的登录备份，下次上传/同步插件时更新云端。不会退出当前网页账号。已下载到其他设备的副本不会被远程撤销；如需撤销会话，请使用网站账号安全功能。',
+			'videoAccount.login' => '查看站点账户',
+			_ => null,
+		} ?? switch (path) {
+			'videoAccount.cloud' => 'Breeze 云同步设置',
+			'videoAccount.backupDone' => '已存入插件配置，请通过 Breeze 同步插件上传',
+			'videoAccount.restored' => '已写入本机浏览器，请打开站点确认登录；失效时需重新登录',
+			'videoAccount.forgotten' => '已移除本机备份，云端变更需上传／同步插件',
+			'videoAccount.failed' => '操作未完成，请重试；不会自动上传或覆盖云端',
+			'videoAccount.loginRequired' => '请先在此插件网页中完成登录，再备份当前账号',
+			'videoAccount.settingsNote' => '视频偏好参与 Breeze 的“同步设置”；站点登录备份见此图源“我的 → 登录备份与云同步”。',
+			'videoSiteAccount.leavePending' => '离开不会撤销已提交的操作。返回后请重新读取站点状态。',
+			'videoSiteAccount.title' => '账户资料',
+			'videoSiteAccount.profile' => '基本资料',
+			'videoSiteAccount.name' => '用户名',
+			'videoSiteAccount.email' => '登录邮箱',
+			'videoSiteAccount.saveProfile' => '保存资料',
+			'videoSiteAccount.password' => '密码',
+			'videoSiteAccount.oldPassword' => '当前密码',
+			'videoSiteAccount.newPassword' => '新密码',
+			'videoSiteAccount.confirmPassword' => '确认新密码',
+			'videoSiteAccount.changePassword' => '更改密码',
+			'videoSiteAccount.photo' => '头像',
+			'videoSiteAccount.choosePhoto' => '更换头像',
+			'videoSiteAccount.uploadPhoto' => '上传头像',
+			'videoSiteAccount.cancelPhoto' => '取消选图',
+			'videoSiteAccount.photoFormats' => '支持 PNG、GIF、JPEG 和 WebP',
+			'videoSiteAccount.invalidPhoto' => '图片格式暂不支持，可在网页选择头像。',
+			'videoSiteAccount.verification' => '邮箱安全验证',
+			'videoSiteAccount.code' => '6 位验证码',
+			'videoSiteAccount.requestCode' => '获取验证码',
+			'videoSiteAccount.verifyCode' => '确认验证',
+			'videoSiteAccount.resendIn' => ({required Object seconds}) => '${seconds} 秒后可重发',
+			'videoSiteAccount.codeSent' => '站点已发送验证码，请查看邮箱。',
+			'videoSiteAccount.failed' => '站点未完成此操作，请检查后重试。',
+			'videoSiteAccount.unavailable' => '此项暂未识别，可重新读取或在网页继续。',
+			'videoSiteAccount.website' => '在网页继续',
+			'videoSiteAccount.refresh' => '重新读取',
+			'videoSiteAccount.submitted' => '已提交，正在读取站点结果…',
+			'videoSiteAccount.unconfirmed' => '结果尚未确认，请重新读取；不会自动重复提交。',
+			'videoSiteAccount.readbackMatched' => '已重新读取并确认资料一致。',
+			'videoSiteAccount.passwordUnconfirmed' => '密码已提交，请根据站点结果确认；不会自动重复提交。',
+			'videoSiteAccount.discardTitle' => '放弃未保存的修改？',
+			'videoSiteAccount.discardBody' => '修改只保留在当前页面，离开后将清除。',
+			'videoSiteAccount.logout' => '退出站点账号',
+			'videoSiteAccount.logoutPrompt' => '退出当前网站账号？已保存的登录备份不会自动删除。',
+			'videoSiteAccount.required' => '请填写此项',
+			'videoSiteAccount.emailInvalid' => '请输入有效的邮箱地址',
+			'videoSiteAccount.passwordMismatch' => '两次新密码不一致',
+			'videoSiteAccount.recoveryTitle' => '找回密码',
+			'videoSiteAccount.recoveryDescription' => '向登录邮箱发送原站密码重置链接。',
+			'videoSiteAccount.sendRecovery' => '发送重置链接',
+			'videoSiteAccount.recoverySent' => '站点已确认发送重置邮件，请查看邮箱。',
+			'videoSiteAccount.backLogin' => '返回登录',
+			'videoSiteAccount.avatarUnconfirmed' => '头像已提交，请重新读取确认。',
+			'videoSiteAccount.unsupportedAccount' => '账户资料尚未读取，请重新读取或在网页继续。',
+			'videoSiteAccount.otpUnconfirmed' => '验证码已提交，请检查站点结果。',
+			'videoSiteAccount.forgetPassword' => '忘记密码',
+			'videoSiteAccount.googleInBrowser' => '使用 Google（浏览器）',
+			'videoSiteAccount.googleWebsiteTitle' => 'Google 网站登录',
+			'videoSiteAccount.googleWebsiteNote' => 'Google 登录需要在系统浏览器中继续。浏览器与此处的站点登录状态独立；返回后，可在此用站点邮箱和密码登录。',
+			'videoSiteAccount.continueInBrowser' => '在浏览器继续',
+			'videoSiteAccount.browserOpenFailed' => '无法打开系统浏览器，请重试。',
 			'dialog.hideOrClose' => '隐藏到托盘或关闭程序',
 			'dialog.rememberChoice' => '记住我的选择',
+			'videoFilters.title' => '筛选',
+			'videoFilters.genre' => '类型',
+			'videoFilters.tags' => '标签',
+			'videoFilters.sort' => '排序',
+			'videoFilters.date' => '发布日期',
+			'videoFilters.duration' => '时长',
+			'videoFilters.searchMode' => '搜索范围',
+			'videoFilters.yearMonth' => '指定年／月',
+			'videoFilters.year' => '年份',
+			'videoFilters.allYears' => '全部年份',
+			'videoFilters.allMonths' => '全部月份',
+			'videoFilters.invalidYear' => '请输入四位年份',
+			'videoFilters.month' => ({required Object value}) => '${value} 月',
+			'videoFilters.optionsUnavailable' => '暂未读取到此项选项，请重新加载站点后重试。',
+			'videoFilters.searchTags' => '搜索标签',
+			'videoFilters.anyTag' => '匹配任一标签',
+			'videoFilters.anyTagNote' => '包含所选任一标签即可。',
+			'videoFilters.allTagNote' => '需要同时包含所有所选标签。',
+			'videoFilters.noMatchingTags' => '没有匹配的标签',
+			'videoFilters.authors' => '作者',
+			'videoFilters.videos' => '视频',
+			'videoFilters.reset' => '全部重置',
+			'videoFilters.apply' => '应用筛选',
+			'videoFilters.contextChanged' => '页面已变化，筛选未应用，请重新打开筛选。',
+			'videoFilters.draftNote' => '草稿，应用后生效。',
+			'videoFilters.applyShort' => '应用',
+			'videoFilters.allFilters' => '全部筛选',
+			'videoFilters.clearFilters' => '清除筛选',
+			'videoFilters.allMatch' => '全部满足',
+			'videoFilters.anyMatch' => '任一满足',
+			'videoFilters.selected' => ({required Object count}) => '已选 ${count} 项',
+			'videoFilters.selectedTags' => '已选标签',
+			'videoFilters.showSelected' => '查看已选标签',
+			'videoFilters.noSelection' => '尚未选择标签',
+			'videoFilters.allGroups' => '全部分组',
+			'videoFilters.closeKeyboard' => '收起键盘',
+			'videoFilters.clearAll' => '清空所有条件与关键词',
+			'videoFilters.active' => '当前条件',
+			'videoFilters.removeFilter' => '移除此条件',
+			'videoFilters.customDate' => '指定日期',
+			'videoFilters.searchGroup' => '分组',
+			'videoSearch.recent' => '最近搜索',
+			'videoSearch.clearRecent' => '清空最近搜索',
+			'videoSearch.removeRecent' => '删除这条搜索',
+			'videoSearch.localOnly' => '仅保存在本机',
+			'videoSearch.hint' => '搜索视频或作者',
+			'videoSearch.clearQuery' => '清除关键词',
+			'videoSearch.submit' => '搜索',
+			'videoSearch.cancel' => '取消搜索',
+			'videoSearch.recentFailed' => '最近搜索暂不可用，仍可继续搜索。',
+			'videoSearch.historyWriteFailed' => '搜索已提交，最近搜索未能保存。',
+			'videoSearch.noRecent' => '没有最近搜索',
+			'videoSearch.contextChanged' => '页面已变化，搜索未提交，请重新打开搜索。',
+			'videoMetadata.author' => '作者',
+			'videoMetadata.views' => ({required Object value}) => '播放 ${value}',
+			'videoMetadata.rating' => ({required Object value}) => '好评 ${value}',
+			'videoMetadata.duration' => ({required Object value}) => '时长 ${value}',
+			'videoMetadata.totalVotes' => ({required Object count}) => '总票 ${count}',
+			'videoMetadata.positiveVotes' => ({required Object count}) => '赞 ${count}',
+			'videoMetadata.negativeVotes' => ({required Object count}) => '踩 ${count}',
+			'videoPersonal.my' => '我的',
+			'videoPersonal.overview' => '总览',
+			'videoPersonal.histories' => '观看记录',
+			'videoPersonal.watchLater' => '稍后观看',
+			'videoPersonal.likes' => '喜欢视频',
+			'videoPersonal.playlists' => '播放清单',
+			'videoPersonal.recent' => '最近观看',
+			'videoPersonal.viewAll' => '查看全部',
+			'videoPersonal.recentUnavailable' => '暂时无法读取观看记录，可打开完整列表。',
+			'videoPersonal.emptyHistory' => '还没有观看记录。',
 			_ => null,
 		};
 	}

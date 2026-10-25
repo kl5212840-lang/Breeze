@@ -6,6 +6,7 @@ import 'package:zephyr/main.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/comic_follow/cubit/comic_follow_cubit.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
+import 'package:zephyr/page/video/video_playback_preferences.dart';
 
 import 'package:zephyr/network/sync/comic_sync_core.dart';
 import 'package:zephyr/network/sync/s3_sync_service.dart';
@@ -18,11 +19,24 @@ const String _appearanceBlockName = 'appearance';
 const String _libraryBlockName = 'library';
 const String _readerBlockName = 'reader';
 const String _pluginsBlockName = 'plugins';
+const String _videoBlockName = 'video';
+
+/// Production retains Breeze's existing compression/encryption. A codec seam
+/// lets transport/merge tests use a fake remote without native Rust or accounts.
+class SettingsSyncCodec {
+  const SettingsSyncCodec({
+    this.encode = ComicSyncCore.encodeEncryptedPayload,
+    this.decode = ComicSyncCore.decodeEncryptedPayload,
+  });
+  final Future<List<int>> Function(List<int>) encode;
+  final Future<List<int>> Function(List<int>) decode;
+}
 
 const List<String> _syncableSettingsBlockNames = <String>[
   _appearanceBlockName,
   _libraryBlockName,
   _readerBlockName,
+  _videoBlockName,
 ];
 
 bool isSyncServiceConfigured(GlobalSettingState state) {
@@ -71,7 +85,7 @@ Future<void> autoSync(
     return;
   }
 
-  await _syncSettings(
+  await runSettingsSync(
     adapter,
     globalSettingCubit: globalSettingCubit,
     currentGlobalSetting: state,
@@ -92,7 +106,7 @@ Future<void> manualUploadToCloud({
   }
 
   await uploadComicData(adapter);
-  await _manualUploadSettings(
+  await uploadSettingsData(
     adapter,
     state: state,
     globalSettingCubit: globalSettingCubit,
@@ -116,7 +130,7 @@ Future<void> manualDownloadFromCloud({
   }
 
   await downloadComicData(adapter);
-  await _manualDownloadSettings(
+  await downloadSettingsData(
     adapter,
     state: state,
     globalSettingCubit: globalSettingCubit,
@@ -127,10 +141,11 @@ Future<void> manualDownloadFromCloud({
 }
 
 /// 手动上传设置与插件数据（以本地为准，直接覆盖云端）。
-Future<void> _manualUploadSettings(
+Future<void> uploadSettingsData(
   ComicSyncRemoteAdapter adapter, {
   required GlobalSettingState state,
   GlobalSettingCubit? globalSettingCubit,
+  SettingsSyncCodec codec = const SettingsSyncCodec(),
 }) async {
   if (!state.syncSetting.syncSettings && !state.syncSetting.syncPlugins) {
     return;
@@ -138,9 +153,7 @@ Future<void> _manualUploadSettings(
 
   final localSnapshot = await _buildLocalSettingsSnapshot(state);
   final localPayload = _buildSettingsPayload(state, localSnapshot);
-  final localBytes = await ComicSyncCore.encodeEncryptedPayload(
-    utf8.encode(jsonEncode(localPayload)),
-  );
+  final localBytes = await codec.encode(utf8.encode(jsonEncode(localPayload)));
   final localMd5 = ComicSyncCore.calculateMd5(localBytes);
 
   await _uploadSettingsPayload(
@@ -158,10 +171,11 @@ Future<void> _manualUploadSettings(
 }
 
 /// 手动下载设置与插件数据（以云端为准，应用到本机）。
-Future<void> _manualDownloadSettings(
+Future<void> downloadSettingsData(
   ComicSyncRemoteAdapter adapter, {
   required GlobalSettingState state,
   GlobalSettingCubit? globalSettingCubit,
+  SettingsSyncCodec codec = const SettingsSyncCodec(),
 }) async {
   if (!state.syncSetting.syncSettings && !state.syncSetting.syncPlugins) {
     return;
@@ -187,6 +201,7 @@ Future<void> _manualDownloadSettings(
   final remoteSnapshot = await _decodeSettingsPayload(
     remoteData.bytes,
     fallbackSyncTime: remoteData.timestamp,
+    codec: codec,
   );
 
   final blocksToApply = <String, _SettingsBlockPayload>{};
@@ -218,6 +233,7 @@ Future<void> _manualDownloadSettings(
     mergedState,
     globalSettingCubit: globalSettingCubit,
   );
+  await _applyVideoBlock(blocksToApply[_videoBlockName]);
 
   final pluginBlock = blocksToApply[_pluginsBlockName];
   if (pluginBlock != null) {
@@ -230,17 +246,16 @@ Future<void> _manualDownloadSettings(
   });
 }
 
-Future<void> _syncSettings(
+Future<void> runSettingsSync(
   ComicSyncRemoteAdapter adapter, {
   required GlobalSettingState currentGlobalSetting,
   GlobalSettingCubit? globalSettingCubit,
+  SettingsSyncCodec codec = const SettingsSyncCodec(),
 }) async {
   final localGlobal = globalSettingCubit?.state ?? currentGlobalSetting;
   final localSnapshot = await _buildLocalSettingsSnapshot(localGlobal);
   final localPayload = _buildSettingsPayload(localGlobal, localSnapshot);
-  final localBytes = await ComicSyncCore.encodeEncryptedPayload(
-    utf8.encode(jsonEncode(localPayload)),
-  );
+  final localBytes = await codec.encode(utf8.encode(jsonEncode(localPayload)));
   final localMd5 = ComicSyncCore.calculateMd5(localBytes);
 
   final allRemote = await adapter.listRemoteDataFiles();
@@ -300,6 +315,7 @@ Future<void> _syncSettings(
   final remoteSnapshot = await _decodeSettingsPayload(
     remoteData.bytes,
     fallbackSyncTime: remoteData.timestamp,
+    codec: codec,
   );
   final mergeResult = await _mergeSettingsSnapshots(
     localGlobal,
@@ -330,6 +346,9 @@ Future<void> _syncSettings(
   if (mergeResult.shouldApplyPluginData) {
     await _applyPluginBlockData(mergeResult.pluginBlockData);
   }
+  if (localGlobal.syncSetting.syncSettings) {
+    await _applyVideoBlock(mergeResult.mergedSnapshot.blocks[_videoBlockName]);
+  }
 
   await _persistLocalSettingsBlockMeta(mergeResult.localBlockMeta);
 
@@ -337,7 +356,7 @@ Future<void> _syncSettings(
     mergeResult.mergedState,
     mergeResult.mergedSnapshot,
   );
-  final mergedBytes = await ComicSyncCore.encodeEncryptedPayload(
+  final mergedBytes = await codec.encode(
     utf8.encode(jsonEncode(mergedPayload)),
   );
   final mergedMd5 = ComicSyncCore.calculateMd5(mergedBytes);
@@ -408,12 +427,23 @@ Future<_SettingsSnapshot> _buildLocalSettingsSnapshot(
 
   if (globalSetting.syncSetting.syncSettings) {
     final blockData = _extractSyncableSettingsBlocks(globalSetting);
+    blockData[_videoBlockName] = {
+      'version': 1,
+      'values': (await VideoPlaybackPreferences.read()).toValues(),
+    };
+    final videoModifiedAt = await VideoPlaybackPreferences.modifiedAt();
     for (final entry in blockData.entries) {
       final blockName = entry.key;
       final data = entry.value;
       final hash = _calculateStructuredMd5(data);
       final previous = existingMeta[blockName];
-      final updatedAt = previous == null
+      final updatedAt = blockName == _videoBlockName
+          ? (previous?.hash == hash
+                ? previous!.updatedAt
+                : videoModifiedAt > 0
+                ? videoModifiedAt
+                : 1)
+          : previous == null
           ? baseTimestamp
           : previous.hash == hash
           ? _normalizeTimestamp(previous.updatedAt, fallback: baseTimestamp)
@@ -465,12 +495,23 @@ Future<_SettingsSnapshot> _buildLocalSettingsSnapshot(
 Future<_SettingsSnapshot> _decodeSettingsPayload(
   List<int> payloadBytes, {
   required int fallbackSyncTime,
+  SettingsSyncCodec codec = const SettingsSyncCodec(),
 }) async {
-  final raw = await ComicSyncCore.decodeEncryptedPayload(payloadBytes);
+  final raw = await codec.decode(payloadBytes);
   final payloadRaw = jsonDecode(utf8.decode(raw));
   return _snapshotFromPayload(
     _toJsonMap(payloadRaw),
     fallbackSyncTime: fallbackSyncTime,
+  );
+}
+
+Future<void> _applyVideoBlock(_SettingsBlockPayload? block) async {
+  // Missing legacy block or a future incompatible version leaves this device
+  // untouched. Video settings never flow into comic reader/plugin stores.
+  if (block == null || block.data['version'] != 1) return;
+  await VideoPlaybackPreferences.restore(
+    _toJsonMap(block.data['values']),
+    updatedAt: block.updatedAt,
   );
 }
 

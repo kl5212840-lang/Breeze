@@ -17,6 +17,7 @@ class PluginGridTile extends StatelessWidget {
     required this.isToggling,
     required this.onOpen,
     required this.onSearch,
+    this.showSearch = true,
     required this.onSettings,
     required this.onToggleEnabled,
     required this.onRetry,
@@ -28,6 +29,7 @@ class PluginGridTile extends StatelessWidget {
   final bool isToggling;
   final VoidCallback? onOpen;
   final VoidCallback onSearch;
+  final bool showSearch;
   final void Function(String title) onSettings;
   final ValueChanged<bool> onToggleEnabled;
   final VoidCallback onRetry;
@@ -155,11 +157,12 @@ class PluginGridTile extends StatelessWidget {
                     }
                   },
                   itemBuilder: (_) => [
-                    PopupMenuItem(
-                      value: _PluginGridAction.search,
-                      enabled: enabled,
-                      child: Text(t.sourceShell.search),
-                    ),
+                    if (showSearch)
+                      PopupMenuItem(
+                        value: _PluginGridAction.search,
+                        enabled: enabled,
+                        child: Text(t.sourceShell.search),
+                      ),
                     PopupMenuItem(
                       value: _PluginGridAction.settings,
                       child: Text(t.discover.settings),

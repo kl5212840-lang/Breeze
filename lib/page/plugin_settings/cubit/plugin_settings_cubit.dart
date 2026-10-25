@@ -22,6 +22,7 @@ class PluginSettingsState {
     this.detailSupported = false,
     this.loadingUserInfo = false,
     this.userInfoError = '',
+    this.isVideoSource = false,
   });
 
   final bool loading;
@@ -37,6 +38,7 @@ class PluginSettingsState {
   final bool detailSupported;
   final bool loadingUserInfo;
   final String userInfoError;
+  final bool isVideoSource;
   PluginSettingsState copyWith({
     bool? loading,
     String? error,
@@ -51,6 +53,7 @@ class PluginSettingsState {
     bool? detailSupported,
     bool? loadingUserInfo,
     String? userInfoError,
+    bool? isVideoSource,
   }) {
     return PluginSettingsState(
       loading: loading ?? this.loading,
@@ -66,6 +69,7 @@ class PluginSettingsState {
       detailSupported: detailSupported ?? this.detailSupported,
       loadingUserInfo: loadingUserInfo ?? this.loadingUserInfo,
       userInfoError: userInfoError ?? this.userInfoError,
+      isVideoSource: isVideoSource ?? this.isVideoSource,
     );
   }
 }
@@ -114,6 +118,7 @@ class PluginSettingsCubit extends Cubit<PluginSettingsState> {
       emit(
         state.copyWith(
           loading: false,
+          isVideoSource: settingsEnvelope.data['mediaType'] == 'video',
           error: '',
           sections: settingsSections,
           values: values,

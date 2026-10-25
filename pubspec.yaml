@@ -1,7 +1,7 @@
 name: zephyr
 description: "使用Flutter开发的漫画阅读应用，使用插件提供漫画源支持。"
 publish_to: none
-version: 3.0.40+2228
+version: 3.0.41+2253
 
 environment:
   sdk: ^3.12.0
@@ -40,6 +40,7 @@ dependencies:
 
   # 网络通信与内容解析
   flutter_inappwebview: ^6.1.5 # 网络: 内嵌 WebView
+  video_player: ^2.14.1 # 媒体: 原生视频播放验证
   desktop_webview_linux:
     path: third_party/desktop_webview_linux # 网络: Linux专用的webview
   url_launcher: ^6.3.1 # 网络: 调起系统链接
@@ -106,6 +107,7 @@ dev_dependencies:
   integration_test:
     sdk: flutter
   flutter_lints: ^6.0.0 # 规范: 官方 Lint 规则
+  video_player_platform_interface: ^6.9.0 # 测试: 原生播放控件假平台
 
   # 代码生成
   build_runner: ^2.0.0 # 生成: 代码生成执行器

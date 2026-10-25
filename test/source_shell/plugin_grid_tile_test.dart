@@ -27,6 +27,7 @@ void main() {
     bool enabled = true,
     VoidCallback? onOpen,
     ValueChanged<bool>? onToggle,
+    bool showSearch = true,
     TextScaler textScaler = TextScaler.noScaling,
   }) => MaterialApp(
     home: Scaffold(
@@ -45,6 +46,7 @@ void main() {
               isToggling: false,
               onOpen: onOpen,
               onSearch: () {},
+              showSearch: showSearch,
               onSettings: (_) {},
               onToggleEnabled: onToggle ?? (_) {},
               onRetry: () {},
@@ -64,6 +66,14 @@ void main() {
     await tester.tap(find.text('测试图源'));
     expect(opens, 1);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('web-only tile omits unsupported comic search', (tester) async {
+    await tester.pumpWidget(tile(onOpen: () {}, showSearch: false));
+    await tester.tap(find.byTooltip(t.discover.moreActions(title: '测试图源')));
+    await tester.pumpAndSettle();
+    expect(find.text(t.sourceShell.search), findsNothing);
+    expect(find.text(t.discover.settings), findsOneWidget);
   });
 
   testWidgets('disabled tile keeps an enable action in its menu', (
