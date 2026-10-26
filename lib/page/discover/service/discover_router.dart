@@ -17,6 +17,8 @@ import 'package:zephyr/page/video/video_search_filters.dart';
 import 'package:zephyr/page/video/video_search_history.dart';
 import 'package:zephyr/page/video/video_search_page.dart';
 import 'package:zephyr/page/video/video_site_browser.dart';
+import 'package:zephyr/page/video/api_video_library_page.dart';
+import 'package:zephyr/page/video/api_video_repository.dart';
 
 import 'package:zephyr/page/discover/view/plugin_function_dialog.dart';
 
@@ -30,7 +32,10 @@ class DiscoverRouter {
   /// Native video search is opt-in. Never route it through comic search.
   static Map<String, dynamic>? videoSearchAction(Map<String, dynamic> action) {
     final payload = asJsonMap(action['payload']);
-    if (action['type'] != 'openVideoCatalog' ||
+    if (!const {
+          'openVideoCatalog',
+          'openVideoLibrary',
+        }.contains(action['type']) ||
         payload['nativeSearch'] != true) {
       return null;
     }
@@ -58,6 +63,8 @@ class DiscoverRouter {
         await _openWeb(context, asJsonMap(action['payload']));
       case 'openVideoCatalog':
         await _openVideoCatalog(context, asJsonMap(action['payload']));
+      case 'openVideoLibrary':
+        await _openVideoLibrary(context, asJsonMap(action['payload']));
       case 'openPluginFunction':
         await _openPluginFunction(
           context,
@@ -87,6 +94,7 @@ class DiscoverRouter {
         type != 'openCloudFavorite' &&
         type != 'openSearch' &&
         type != 'openVideoCatalog' &&
+        type != 'openVideoLibrary' &&
         type != 'openComicList' &&
         type != 'openComicInfo') {
       return action;
@@ -300,6 +308,69 @@ class DiscoverRouter {
     );
   }
 
+  static Future<void> _openVideoLibrary(
+    BuildContext context,
+    Map<String, dynamic> payload,
+  ) async {
+    final source = _sourceFromString(payload['source']?.toString());
+    final home = Uri.tryParse(payload['url']?.toString() ?? '');
+    String path(String key) => payload[key]?.toString().trim() ?? '';
+    final function = RegExp(
+      r'^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$',
+    );
+    if (payload['protocol'] != 1 ||
+        source.isEmpty ||
+        home == null ||
+        home.scheme != 'https' ||
+        home.host.isEmpty ||
+        home.userInfo.isNotEmpty ||
+        (home.hasPort && home.port != 443) ||
+        ['catalogFnPath', 'detailFnPath', 'playbackFnPath'].any(
+          (key) => path(key).length > 120 || !function.hasMatch(path(key)),
+        )) {
+      return;
+    }
+    var query = '';
+    if (payload['openSearch'] == true) {
+      if (payload['nativeSearch'] != true) return;
+      final result = await Navigator.of(context, rootNavigator: true)
+          .push<VideoSearchFilters>(
+            videoPageRoute(
+              builder: (_) => VideoSearchPage(
+                source: source,
+                initial: const VideoSearchFilters(),
+                authorEnabled: false,
+                hint: t.videoLibrary.searchHint,
+              ),
+            ),
+          );
+      if (result == null || !context.mounted) return;
+      query = result.query;
+      unawaited(
+        VideoSearchHistory.add(source, query).catchError((Object _) {}),
+      );
+    }
+    if (!context.mounted) return;
+    await Navigator.of(context, rootNavigator: true).push<void>(
+      videoPageRoute(
+        builder: (_) => ApiVideoLibraryPage(
+          repository: ApiVideoRepository(
+            source: source,
+            home: home,
+            catalogFn: path('catalogFnPath'),
+            detailFn: path('detailFnPath'),
+            playbackFn: path('playbackFnPath'),
+            batchDetailFn: function.hasMatch(path('batchDetailFnPath'))
+                ? path('batchDetailFnPath')
+                : null,
+          ),
+          title: payload['title']?.toString() ?? 'Video',
+          initialQuery: query,
+        ),
+      ),
+    );
+  }
+
   static Future<void> _openPluginFunction(
     BuildContext context,
     Map<String, dynamic> payload, {
@@ -400,7 +471,7 @@ class DiscoverRouter {
     if (!context.mounted) {
       return;
     }
-    context.pushRoute(ComicListRoute(scene: scene, title: scene.title));
+    await context.pushRoute(ComicListRoute(scene: scene, title: scene.title));
   }
 
   static Future<void> _openComicInfo(

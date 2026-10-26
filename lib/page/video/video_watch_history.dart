@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/foundation.dart';
+import 'package:zephyr/page/video/video_playback_identity.dart';
 
 /// Local viewing metadata only. Never stores cookies, credentials or media
 /// source URLs, and never shares the comic reader's page/episode model.
@@ -24,25 +26,10 @@ class VideoWatchRecord {
   final bool completed;
 
   static Uri? canonicalUrl(Uri url) {
-    final id = url.queryParameters['v'] ?? '';
-    if (url.scheme != 'https' ||
-        url.host.isEmpty ||
-        url.userInfo.isNotEmpty ||
-        (url.hasPort && url.port != 443) ||
-        url.path != '/watch' ||
-        !RegExp(r'^\d+$').hasMatch(id)) {
-      return null;
-    }
-    return Uri(
-      scheme: 'https',
-      host: url.host,
-      path: '/watch',
-      queryParameters: {'v': id},
-    );
+    return videoPlaybackIdentity(url);
   }
 
-  String get legacyProgressKey =>
-      'breeze.video.progress.${watchUrl.host}.${watchUrl.queryParameters['v']}';
+  String get legacyProgressKey => videoPlaybackProgressKey(watchUrl);
 
   Map<String, Object?> toJson() => {
     'watchUrl': watchUrl.toString(),
@@ -94,6 +81,7 @@ class VideoWatchRecord {
 }
 
 class VideoWatchHistory {
+  static final changes = ValueNotifier<int>(0);
   static const limit = 200;
   static const _prefix = 'breeze.video.history.v1.';
   static Future<void>? _writes;
@@ -153,6 +141,7 @@ class VideoWatchHistory {
         ),
       );
       if (!saved) throw StateError('Video history was not saved');
+      changes.value++;
     });
     _writes = job;
     void release() {

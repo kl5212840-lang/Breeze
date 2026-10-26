@@ -194,6 +194,10 @@ class _VideoSiteBrowserState extends State<VideoSiteBrowser> {
         'dialogConfirm': t.common.confirm,
         'dialogCancel': t.common.cancel,
         'externalAuthenticationEntries': _authenticationEntries,
+        'verificationWindowTitle': t.videoPlayback.verificationTitle,
+        'verificationWindowReturn': t.videoPlayback.verificationWindowReturn,
+        'verificationWindowHint': t.videoPlayback.verificationWindowHint,
+        'verificationWindowCancel': t.common.cancel,
       },
       creationParamsCodec: const StandardMessageCodec(),
       onPlatformViewCreated: (id) {
@@ -219,13 +223,45 @@ abstract interface class VideoBrowserInspection {
   Future<bool> setInspectionEnabled(bool enabled);
 }
 
+abstract interface class VideoBrowserVerificationWindow {
+  /// The user decides when to return; opening a window is not verification.
+  Future<bool> openVerificationWindow(Uri url);
+}
+
+/// Resolve a host-authored expression on both the plain iOS browser and the
+/// standard Android WebView. evaluateJavascript alone cannot await a Promise.
+Future<dynamic> videoBrowserReadAsync(
+  InAppWebViewController controller,
+  String expression,
+) async {
+  final platform = controller.platform;
+  if (platform is VideoSiteBrowserController) {
+    return platform.evaluateAsyncJavascript(expression);
+  }
+  final result = await controller.callAsyncJavaScript(
+    functionBody: 'return await ($expression);',
+  );
+  if (result == null || result.error != null) {
+    // Script errors can include private page values. Keep the failure generic.
+    throw StateError('Asynchronous document read failed');
+  }
+  return result.value;
+}
+
 class VideoSiteBrowserController extends PlatformInAppWebViewController
-    implements VideoBrowserInspection {
+    implements VideoBrowserInspection, VideoBrowserVerificationWindow {
   VideoSiteBrowserController(this.channel, int id)
     : super.implementation(
         PlatformInAppWebViewControllerCreationParams(id: id),
       );
   final MethodChannel channel;
+
+  @override
+  Future<bool> openVerificationWindow(Uri url) async =>
+      await channel.invokeMethod<String>('verificationWindow', {
+        'url': url.toString(),
+      }) ==
+      'retry';
 
   /// Resolve the result of a host-authored asynchronous read, including its Promise.
   Future<dynamic> evaluateAsyncJavascript(String source) =>

@@ -22,6 +22,9 @@ import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_info.da
 export 'package:zephyr/page/bookshelf/bloc/folder_shelf_event.dart';
 export 'package:zephyr/page/bookshelf/bloc/folder_shelf_state.dart';
 
+/// Test-only worker database root; production keeps the normal app directory.
+String? debugShelfDbRootPath;
+
 class FolderShelfBloc extends Bloc<FolderShelfEvent, FolderShelfState> {
   FolderShelfBloc({required ShelfPageMode mode})
     : super(FolderShelfState(mode: mode)) {
@@ -66,6 +69,7 @@ class FolderShelfBloc extends Bloc<FolderShelfEvent, FolderShelfState> {
       final payload = {
         'mode': currentMode.name,
         'currentPath': currentPath,
+        'dbRootPath': debugShelfDbRootPath,
         'keyword': search?.keyword ?? '',
         'sort': search?.sort ?? 'dd',
         'sources': search?.sources ?? const <String>[],
@@ -393,7 +397,9 @@ Future<Map<String, dynamic>> _runFolderShelfLoadTask(
   try {
     ensureWorkerIsolateInitialized(token);
     await initRustLib(silent: true);
-    objectbox = await ObjectBox.create();
+    objectbox = await ObjectBox.create(
+      dbRootPath: payload['dbRootPath'] as String?,
+    );
 
     final mode = ShelfPageMode.values.byName(payload['mode'] as String);
     final folderType = FolderShelfBloc._toFolderType(mode);

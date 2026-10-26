@@ -45,11 +45,27 @@ class PluginStoreState {
 class PluginStoreCubit extends Cubit<PluginStoreState> {
   PluginStoreCubit() : super(const PluginStoreState());
 
+  int _catalogLoad = 0;
+
   Future<void> loadCloudPlugins() async {
+    final request = ++_catalogLoad;
+    bool current() => !isClosed && request == _catalogLoad;
     emit(state.copyWith(cloudLoading: true, cloudError: ''));
 
     try {
-      final payload = await fetchCloudPluginListWithCdnFallback();
+      final fallback = await readCloudPluginCatalogFallback();
+      if (!current()) return;
+      if (state.cloudPlugins.isEmpty) {
+        final saved = asJsonList(jsonDecode(fallback))
+            .map((item) => CloudPluginItem.fromJson(asJsonMap(item)))
+            .where((item) => item.manifest.uuid.trim().isNotEmpty)
+            .toList();
+        emit(state.copyWith(cloudPlugins: saved));
+      }
+      final payload = await fetchCloudPluginListWithCdnFallback(
+        fallback: fallback,
+      );
+      if (!current()) return;
       final decoded = jsonDecode(payload);
       final entries = asJsonList(decoded)
           .map((item) => CloudPluginItem.fromJson(asJsonMap(item)))
@@ -64,6 +80,7 @@ class PluginStoreCubit extends Cubit<PluginStoreState> {
         ),
       );
     } catch (e, stackTrace) {
+      if (!current()) return;
       logger.w('拉取云端插件列表失败', error: e, stackTrace: stackTrace);
       emit(
         state.copyWith(

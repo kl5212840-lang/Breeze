@@ -7,6 +7,142 @@ import 'package:zephyr/page/video/native_video_controls.dart';
 
 void main() {
   testWidgets(
+    'catalog back and more keep equal UIKit hit areas and visible plate metrics',
+    (tester) async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final channels = <MethodChannel>[];
+      messenger.setMockMethodCallHandler(SystemChannels.platform_views, (
+        call,
+      ) async {
+        if (call.method == 'create') {
+          final channel = MethodChannel(
+            'breeze.video.control.${(call.arguments as Map)['id']}',
+          );
+          channels.add(channel);
+          messenger.setMockMethodCallHandler(channel, (_) async => null);
+        }
+        return null;
+      });
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(SystemChannels.platform_views, null);
+        for (final channel in channels) {
+          messenger.setMockMethodCallHandler(channel, null);
+        }
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            appBar: AppBar(
+              leading: Center(
+                child: NativeVideoIconButton(
+                  light: false,
+                  tooltip: 'Back',
+                  icon: Icons.arrow_back_rounded,
+                  symbol: 'chevron.left',
+                  onPressed: () {},
+                ),
+              ),
+              actions: [
+                NativeVideoMenu(
+                  hostPresentation: true,
+                  label: '',
+                  tooltip: 'More',
+                  width: 44,
+                  icon: Icons.more_horiz_rounded,
+                  symbol: 'ellipsis',
+                  selected: '',
+                  options: const {'exit': 'Exit'},
+                  onSelected: (_) {},
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final views = find.byType(UiKitView);
+      expect(views, findsNWidgets(2));
+      for (var index = 0; index < 2; index++) {
+        final view = tester.widget<UiKitView>(views.at(index));
+        final arguments = view.creationParams! as Map;
+        expect(tester.getSize(views.at(index)), const Size(44, 44));
+        expect(arguments['backgroundInset'], 4);
+        expect(arguments['iconSize'], 22);
+      }
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'catalog fallback back and more share a 36pt plate without shrinking touch targets',
+    (tester) async {
+      var backs = 0;
+      String? selected;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: VideoControlAppearance(
+            systemControls: false,
+            child: Scaffold(
+              appBar: AppBar(
+                leading: Center(
+                  child: NativeVideoIconButton(
+                    light: false,
+                    tooltip: 'Back',
+                    icon: Icons.arrow_back_rounded,
+                    symbol: 'chevron.left',
+                    onPressed: () => backs++,
+                  ),
+                ),
+                actions: [
+                  NativeVideoMenu(
+                    hostPresentation: true,
+                    label: '',
+                    tooltip: 'More',
+                    width: 44,
+                    icon: Icons.more_horiz_rounded,
+                    symbol: 'ellipsis',
+                    selected: '',
+                    options: const {'exit': 'Exit'},
+                    onSelected: (value) => selected = value,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      expect(find.byType(UiKitView), findsNothing);
+      for (final label in ['Back', 'More']) {
+        final touch = find.byTooltip(label);
+        final plate = find.descendant(
+          of: touch,
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is SizedBox && widget.width == 36 && widget.height == 36,
+          ),
+        );
+        expect(tester.getSize(touch), const Size(44, 44));
+        expect(plate, findsOneWidget);
+        expect(tester.getRect(plate).center, tester.getRect(touch).center);
+      }
+      await tester.tap(find.byTooltip('More'));
+      await tester.pumpAndSettle();
+      expect(find.text('Exit'), findsOneWidget);
+      await tester.tapAt(tester.getCenter(find.byTooltip('Back')));
+      await tester.pumpAndSettle();
+      expect(find.text('Exit'), findsNothing);
+      expect(backs, 0, reason: 'Dismissal must not reach the back control');
+      await tester.tap(find.byTooltip('More'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Exit'));
+      await tester.pumpAndSettle();
+      expect(selected, 'exit');
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
     'UIKit action enabled state follows pending writes and ignores a disabled press',
     (tester) async {
       final messenger =

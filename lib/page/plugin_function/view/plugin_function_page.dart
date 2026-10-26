@@ -1,3 +1,5 @@
+import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -24,7 +26,11 @@ class PluginFunctionPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(title)),
+      appBar: AppBar(
+        leading: const SourceBackButton(),
+        title: Text(title),
+        actions: [SourceMoreButton(source: from)],
+      ),
       body: PluginFunctionContent(
         from: from,
         functionId: functionId,

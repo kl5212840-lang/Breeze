@@ -23,7 +23,7 @@ void main() {
       expect(report, contains('200500'));
       expect(report, contains('a4e73e244a127e27-SJC'));
       expect(report, contains('/other'));
-      expect(report, contains('diagnosticVersion: 5'));
+      expect(report, contains('diagnosticVersion: 7'));
       expect(report, contains('resource-status-0-is-unknown'));
       expect(report, contains('clearance-presence-is-not-acceptance'));
       for (final secret in [
@@ -174,8 +174,11 @@ void main() {
         'https://user@challenges.cloudflare.com/',
         'https://challenges.cloudflare.com:8443/',
         'http://challenges.cloudflare.com/',
-        'javascript:alert(1)',
         'data:text/html,test',
+        'blob:https://challenges.cloudflare.com/test-document',
+        'javascript:""',
+        'file:///private/local-document',
+        'custom-app://open',
         'about:settings',
       ]) {
         expect(

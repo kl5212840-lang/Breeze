@@ -1,3 +1,5 @@
+import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -33,10 +35,7 @@ class SearchResultBar extends StatelessWidget implements PreferredSizeWidget {
         child: Row(
           children: [
             // 左侧返回按钮
-            IconButton(
-              icon: const Icon(Icons.arrow_back),
-              onPressed: () => context.maybePop(),
-            ),
+            SourceBackButton(onPressed: () => context.maybePop()),
 
             // 中间的紧凑搜索入口，点击后在原位置展开完整输入框
             Expanded(
@@ -56,14 +55,15 @@ class SearchResultBar extends StatelessWidget implements PreferredSizeWidget {
                 context.read<SearchCubit>().state.from,
               ),
               builder: (context, snapshot) => snapshot.data == true
-                  ? IconButton(
+                  ? SourceChromeIconButton(
                       tooltip: t.search.advancedSearchOptions,
-                      icon: const Icon(Icons.tune),
+                      icon: Icons.tune,
+                      symbol: 'slider.horizontal.3',
                       onPressed: () => _search(context),
                     )
                   : const SizedBox.shrink(),
             ),
-            const SizedBox(width: 8),
+            SourceMoreButton(source: context.watch<SearchCubit>().state.from),
           ],
         ),
       ),

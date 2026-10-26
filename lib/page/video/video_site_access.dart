@@ -17,20 +17,22 @@ String videoSiteDiagnosticPath(Uri? uri) =>
     : '/other';
 
 /// Only navigation frames are filtered here, not arbitrary resource requests.
-/// Keep third-party top-level pages blocked while allowing the site's human
-/// verification frame to run in the existing browser and cookie store.
+/// Keep app top-level routing separate from the browser's internal documents.
+/// Local subframe documents retain WebKit's ordinary origin and CSP checks.
 bool allowVideoSiteNavigation(
   Uri home,
   Uri? destination, {
   required bool isMainFrame,
 }) {
-  if (destination == null || destination.userInfo.isNotEmpty) return false;
+  if (destination == null) return false;
   if (!isMainFrame &&
       destination.scheme == 'about' &&
       const {'blank', 'srcdoc'}.contains(destination.path)) {
     return true;
   }
-  if (destination.scheme != 'https' ||
+  if (destination.userInfo.isNotEmpty ||
+      destination.authority.contains('@') ||
+      destination.scheme != 'https' ||
       (destination.hasPort && destination.port != 443)) {
     return false;
   }
@@ -390,7 +392,7 @@ class VideoBrowserDiagnostics {
   }
 
   String report() =>
-      'diagnosticVersion: 5\n'
+      'diagnosticVersion: 7\n'
       'observationLimits: resource-status-0-is-unknown; '
       'closed-shadow-and-cross-origin-frame-errors-not-observed; '
       'clearance-presence-is-not-acceptance\n'

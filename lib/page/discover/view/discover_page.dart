@@ -207,7 +207,10 @@ class _DiscoverViewState extends State<_DiscoverView> {
         ? asJsonMap(functions.first['action'])
         : const <String, dynamic>{};
     final webOnly = webAction['type'] == 'openWeb';
-    final nativeVideoOnly = webAction['type'] == 'openVideoCatalog';
+    final nativeVideoOnly = const {
+      'openVideoCatalog',
+      'openVideoLibrary',
+    }.contains(webAction['type']);
     final videoSearchAction = DiscoverRouter.videoSearchAction(webAction);
     final showSearch =
         !webOnly && (!nativeVideoOnly || videoSearchAction != null);

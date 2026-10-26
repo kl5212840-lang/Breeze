@@ -1,6 +1,8 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/source_shell/source_return_mode_tile.dart';
+import 'package:zephyr/page/source_shell/source_diagnostic_tools_tile.dart';
 import 'package:zephyr/page/plugin_settings/cubit/plugin_settings_cubit.dart';
 import 'package:zephyr/page/plugin_settings/widgets/plugin_settings_sections.dart';
 import 'package:zephyr/page/setting/common/plugin_user_info_card.dart';
@@ -9,6 +11,7 @@ import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/widgets/fluent_dropdown.dart';
 import 'package:zephyr/widgets/multi_choice_list_dialog.dart';
 import 'package:zephyr/page/video/video_playback_settings_page.dart';
+import 'package:zephyr/widgets/plugin_usage_notice.dart';
 
 class PluginSettingsContent extends StatelessWidget {
   const PluginSettingsContent({
@@ -52,6 +55,7 @@ class PluginSettingsContent extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       children: [
+        const SourceReturnModeTile(),
         if (state.isVideoSource)
           ListTile(
             leading: const Icon(Icons.video_settings_outlined),
@@ -70,6 +74,7 @@ class PluginSettingsContent extends StatelessWidget {
               }
             },
           ),
+        if (state.isVideoSource) SourceDiagnosticToolsTile(source: from),
         // 插件自身设置优先，宿主管理项沉底
         ..._buildBodySections(context),
         if (state.detailSupported) _buildDetailSection(),
@@ -95,6 +100,12 @@ class PluginSettingsContent extends StatelessWidget {
       _buildUpdatePluginRow(),
       _buildDebugModeRow(),
       if (debugEnabled) _buildDebugUrlRow(context),
+      PluginSettingsFieldRow(
+        title: t.about.disclaimer,
+        subtitle: t.about.disclaimerSummary,
+        trailing: const Icon(Icons.info_outline, size: 18),
+        onTap: () => showPluginUsageNotice(context),
+      ),
       _buildDeletePluginRow(),
     ];
   }

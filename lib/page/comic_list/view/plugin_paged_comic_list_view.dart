@@ -1,4 +1,6 @@
 import 'package:auto_route/auto_route.dart';
+import 'package:flutter/foundation.dart';
+import 'package:zephyr/page/source_shell/source_list_scroll_positions.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -32,6 +34,7 @@ class PluginPagedComicListView extends StatelessWidget {
     this.cloudFavorite = false,
     this.detailedView = false,
     this.blockedCategories = const {},
+    this.requestPage,
   });
 
   final String pluginId;
@@ -46,6 +49,7 @@ class PluginPagedComicListView extends StatelessWidget {
   final bool cloudFavorite;
   final bool detailedView;
   final Set<String> blockedCategories;
+  final PluginPageRequest? requestPage;
 
   @override
   Widget build(BuildContext context) {
@@ -55,6 +59,7 @@ class PluginPagedComicListView extends StatelessWidget {
         fnPath: fnPath,
         coreBuilder: coreBuilder,
         externBuilder: externBuilder,
+        requestPage: requestPage,
       )..loadInitial(),
       child: _PluginPagedComicListBody(
         shrinkWrap: shrinkWrap,
@@ -98,7 +103,8 @@ class _PluginPagedComicListBody extends StatefulWidget {
 
 class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
     with AutomaticKeepAliveClientMixin {
-  final ScrollController scrollController = ScrollController();
+  late final SourceListScrollPositions _scrollPositions;
+  ScrollController get scrollController => _scrollPositions.controller;
 
   @override
   bool get wantKeepAlive => true;
@@ -106,13 +112,24 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
   @override
   void initState() {
     super.initState();
-    scrollController.addListener(_onScroll);
+    _scrollPositions = SourceListScrollPositions(detailed: widget.detailedView)
+      ..addListener(_onScroll);
+  }
+
+  @override
+  void didUpdateWidget(_PluginPagedComicListBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _scrollPositions.select(widget.detailedView);
+    if (!setEquals(oldWidget.blockedCategories, widget.blockedCategories) ||
+        oldWidget.rankingLayout != widget.rankingLayout) {
+      _scrollPositions.reset(afterLayout: true);
+    }
   }
 
   @override
   void dispose() {
-    scrollController.removeListener(_onScroll);
-    scrollController.dispose();
+    _scrollPositions.removeListener(_onScroll);
+    _scrollPositions.dispose();
     super.dispose();
   }
 
@@ -121,33 +138,23 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
     super.build(context);
     return RefreshIndicator(
       onRefresh: () => context.read<PluginPagedComicListCubit>().loadInitial(),
-      child: BlocBuilder<PluginPagedComicListCubit, PluginPagedComicListState>(
+      child: BlocConsumer<PluginPagedComicListCubit, PluginPagedComicListState>(
+        listenWhen: (_, state) =>
+            state.status == PluginPagedComicListStatus.initial,
+        listener: (_, _) => _scrollPositions.reset(),
         builder: (context, state) {
           switch (state.status) {
             case PluginPagedComicListStatus.initial:
-              return const CustomScrollView(
-                physics: AlwaysScrollableScrollPhysics(),
-                slivers: [
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: Center(child: CircularProgressIndicator()),
-                  ),
-                ],
+              return _statusView(
+                const Center(child: CircularProgressIndicator()),
               );
             case PluginPagedComicListStatus.failure:
-              return CustomScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                slivers: [
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: ErrorView(
-                      errorMessage: userFacingErrorMessage(state.result),
-                      onRetry: () => context
-                          .read<PluginPagedComicListCubit>()
-                          .loadInitial(),
-                    ),
-                  ),
-                ],
+              return _statusView(
+                ErrorView(
+                  errorMessage: userFacingErrorMessage(state.result),
+                  onRetry: () =>
+                      context.read<PluginPagedComicListCubit>().loadInitial(),
+                ),
               );
             case PluginPagedComicListStatus.loadingMore:
             case PluginPagedComicListStatus.loadingMoreFailure:
@@ -158,6 +165,19 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
       ),
     );
   }
+
+  Widget _statusView(Widget child) => CustomScrollView(
+    physics: widget.physics ?? const AlwaysScrollableScrollPhysics(),
+    shrinkWrap: widget.shrinkWrap,
+    slivers: [
+      if (widget.shrinkWrap)
+        SliverToBoxAdapter(
+          child: Padding(padding: const EdgeInsets.all(24), child: child),
+        )
+      else
+        SliverFillRemaining(hasScrollBody: false, child: child),
+    ],
+  );
 
   Widget _buildContent(BuildContext context, PluginPagedComicListState state) {
     if (state.list.isEmpty &&
@@ -239,10 +259,12 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
       );
     }
 
-    if (widget.cloudFavorite && widget.detailedView) {
+    if (widget.detailedView) {
       return SourceSearchDetailList(
         entries: visibleEntries,
         controller: scrollController,
+        physics: widget.physics ?? const AlwaysScrollableScrollPhysics(),
+        shrinkWrap: widget.shrinkWrap,
         hasReachedMax: state.hasReachedMax,
         isLoadingMore: state.status == PluginPagedComicListStatus.loadingMore,
         loadMoreFailed:
@@ -250,8 +272,13 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
         onRetryLoadMore: () =>
             context.read<PluginPagedComicListCubit>().retryLoadMore(),
         onLoadMore: () => context.read<PluginPagedComicListCubit>().loadMore(),
-        onReturned: () =>
-            context.read<PluginPagedComicListCubit>().loadInitial(),
+        onReturned: widget.cloudFavorite
+            ? () {
+                if (context.mounted) {
+                  context.read<PluginPagedComicListCubit>().loadInitial();
+                }
+              }
+            : null,
       );
     }
 
@@ -289,6 +316,7 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
   }
 
   void _onScroll() {
+    if (_scrollPositions.isChanging || !mounted) return;
     if (_isBottom) {
       context.read<PluginPagedComicListCubit>().loadMore();
     }

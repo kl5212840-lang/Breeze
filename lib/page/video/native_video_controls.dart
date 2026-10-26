@@ -122,6 +122,9 @@ class NativeVideoMenu extends StatelessWidget {
   /// Use the single-route host fallback when platform menus are unavailable.
   final bool hostPresentation;
 
+  bool get _usesIconMetrics =>
+      icon != null && label.isEmpty && width == VideoControlMetrics.touchExtent;
+
   @override
   Widget build(BuildContext context) {
     if (hostPresentation && !_usesUIKit(context)) {
@@ -139,6 +142,10 @@ class NativeVideoMenu extends StatelessWidget {
             'selected': selected,
             if (hostPresentation) 'choiceValues': const ['native', 'website'],
             'symbol': symbol,
+            if (_usesIconMetrics) ...{
+              'iconSize': VideoControlMetrics.glyphExtent,
+              'backgroundInset': VideoControlMetrics.backgroundInset,
+            },
             'light': light,
             'dark': light || Theme.of(context).brightness == Brightness.dark,
             'options': [
@@ -293,6 +300,17 @@ class _HostVideoMenuState extends State<_HostVideoMenu> {
   @override
   Widget build(BuildContext context) {
     final menu = widget.menu;
+    if (menu._usesIconMetrics) {
+      // Back and More occupy the same 44pt touch frame and inset material,
+      // including when the user chooses the non-UIKit control appearance.
+      return NativeVideoIconButton(
+        tooltip: menu.tooltip,
+        icon: menu.icon!,
+        symbol: menu.symbol,
+        light: menu.light,
+        onPressed: _open,
+      );
+    }
     return IconButton(
       tooltip: menu.tooltip,
       onPressed: _open,

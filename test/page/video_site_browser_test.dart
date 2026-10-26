@@ -1,10 +1,74 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zephyr/page/video/video_site_browser.dart';
 
+class _AsyncReadController extends PlatformInAppWebViewController {
+  _AsyncReadController()
+    : super.implementation(
+        const PlatformInAppWebViewControllerCreationParams(
+          id: 'android-async-read',
+        ),
+      );
+  final pending = Completer<CallAsyncJavaScriptResult?>();
+  String? body;
+  @override
+  Future<CallAsyncJavaScriptResult?> callAsyncJavaScript({
+    required String functionBody,
+    Map<String, dynamic> arguments = const {},
+    ContentWorld? contentWorld,
+  }) {
+    body = functionBody;
+    return pending.future;
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('standard WebView reads await the real asynchronous result', () async {
+    final platform = _AsyncReadController();
+    var resolved = false;
+    final read =
+        videoBrowserReadAsync(
+          InAppWebViewController.fromPlatform(platform: platform),
+          'Promise.resolve({status:"ok"})',
+        ).then((value) {
+          resolved = true;
+          return value;
+        });
+    await Future<void>.delayed(Duration.zero);
+    expect(resolved, isFalse);
+    expect(platform.body, 'return await (Promise.resolve({status:"ok"}));');
+    platform.pending.complete(
+      CallAsyncJavaScriptResult(value: {'status': 'ok'}),
+    );
+    expect((await read)['status'], 'ok');
+  });
+  test(
+    'asynchronous script errors stay generic and never become empty success',
+    () async {
+      final platform = _AsyncReadController();
+      final read = videoBrowserReadAsync(
+        InAppWebViewController.fromPlatform(platform: platform),
+        'Promise.reject("private")',
+      );
+      platform.pending.complete(
+        CallAsyncJavaScriptResult(error: 'private page value'),
+      );
+      await expectLater(
+        read,
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'safe error',
+            'Asynchronous document read failed',
+          ),
+        ),
+      );
+    },
+  );
   test('async document reads use the Promise-aware native command', () async {
     const channel = MethodChannel('video-browser-async-test');
     MethodCall? received;
@@ -43,6 +107,38 @@ void main() {
       'WKNavigation other 0 other',
     );
   });
+  test(
+    'verification window uses an explicit native result, not assumed success',
+    () async {
+      const channel = MethodChannel('video-browser-verification-window-test');
+      final requests = <MethodCall>[];
+      var response = 'cancelled';
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            requests.add(call);
+            return response;
+          });
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, null),
+      );
+      final browser = VideoSiteBrowserController(channel, 3);
+      final page = Uri.parse('https://hanime1.me/');
+      expect(await browser.openVerificationWindow(page), isFalse);
+      response = 'retry';
+      expect(await browser.openVerificationWindow(page), isTrue);
+      expect(requests.map((call) => call.method), [
+        'verificationWindow',
+        'verificationWindow',
+      ]);
+      expect(
+        requests.every(
+          (call) => (call.arguments as Map)['url'] == page.toString(),
+        ),
+        isTrue,
+      );
+    },
+  );
   group('external authentication entry policy', () {
     final home = Uri.parse('https://hanime1.me/');
 

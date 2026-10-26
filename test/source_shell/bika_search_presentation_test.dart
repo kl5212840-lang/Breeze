@@ -101,7 +101,7 @@ void main() {
     expect(searchCubit.state.pluginExtern['blockedCategories'], ['短篇']);
     expect(find.textContaining('已屏蔽'), findsOneWidget);
 
-    await tester.tap(find.text('清除屏蔽 (1)'));
+    await tester.tap(find.byTooltip('清除屏蔽 (1)'));
     await tester.pump();
     expect(
       searchCubit.state.pluginExtern.containsKey('blockedCategories'),

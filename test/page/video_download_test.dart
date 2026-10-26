@@ -152,7 +152,7 @@ void main() {
           VideoDownloadStatus.failed,
         );
       }
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
       expect(
         await VideoSystemDownload().save(
           choice: choice,
@@ -163,6 +163,33 @@ void main() {
         VideoDownloadStatus.unavailable,
       );
       expect(calls, 0);
+    },
+  );
+  test(
+    'Android export distinguishes a saved file from picker cancellation',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      final replies = ['cancelled', 'saved'].iterator;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'start');
+        expect(call.arguments['referer'], 'https://hanime1.me/watch?v=42');
+        replies.moveNext();
+        return replies.current;
+      });
+      for (final expected in [
+        VideoDownloadStatus.cancelled,
+        VideoDownloadStatus.saved,
+      ]) {
+        expect(
+          await VideoSystemDownload().save(
+            choice: choice,
+            video: video,
+            title: 'Title',
+            onProgress: (_) {},
+          ),
+          expected,
+        );
+      }
     },
   );
 

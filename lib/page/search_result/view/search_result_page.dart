@@ -1,3 +1,5 @@
+import 'package:zephyr/page/source_shell/source_list_presentation.dart';
+import 'package:zephyr/page/source_shell/source_list_scroll_positions.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart' hide Thumb;
 import 'package:flutter/rendering.dart';
@@ -74,8 +76,8 @@ class _SearchResultPage extends StatefulWidget {
 class _SearchResultPageState extends State<_SearchResultPage>
     with SingleTickerProviderStateMixin {
   late SearchEvent searchEvent;
-  final _scrollController = ScrollController();
-  bool _detailedView = true;
+  final _scrollPositions = SourceListScrollPositions(detailed: true);
+  ScrollController get _scrollController => _scrollPositions.controller;
   late AnimationController _animationController;
   late Animation<Offset> _slideAnimation;
 
@@ -98,7 +100,7 @@ class _SearchResultPageState extends State<_SearchResultPage>
         );
 
     searchEvent = widget.searchEvent;
-    _scrollController.addListener(_onScroll);
+    _scrollPositions.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final keyword = widget.searchEvent.searchStates.searchKeyword.trim();
       if (keyword.isEmpty) return;
@@ -119,8 +121,8 @@ class _SearchResultPageState extends State<_SearchResultPage>
   @override
   void dispose() {
     _animationController.dispose();
-    _scrollController.removeListener(_onScroll);
-    _scrollController.dispose();
+    _scrollPositions.removeListener(_onScroll);
+    _scrollPositions.dispose();
     super.dispose();
   }
 
@@ -131,89 +133,79 @@ class _SearchResultPageState extends State<_SearchResultPage>
     final quickCategories = sourceQuickCategories(source);
     final resultState = context.watch<SearchBloc>().state;
     final pageLabel = _pageLabel(resultState);
-    return Scaffold(
-      appBar: SearchResultBar(searchEvent: searchEvent),
-      body: quickCategories.isEmpty
-          ? Column(
-              children: [
-                if (pageLabel != null)
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      onPressed: _jumpToPage,
-                      icon: const Icon(Icons.layers_outlined, size: 18),
-                      label: Text(pageLabel),
-                    ),
-                  ),
-                Expanded(child: _bloc()),
-              ],
-            )
-          : Column(
+    return BlocListener<SearchCubit, SearchStates>(
+      listener: (_, _) => _scrollPositions.reset(),
+      child: SourceListPresentation(
+        source: source,
+        detailedByDefault: true,
+        builder: (context, detailedView, onViewChanged) {
+          _scrollPositions.select(detailedView);
+          return Scaffold(
+            appBar: SearchResultBar(searchEvent: searchEvent),
+            body: Column(
               children: [
                 SourceQuickCategoryBar(
                   categories: quickCategories,
-                  detailedView: _detailedView,
+                  detailedView: detailedView,
                   pageLabel: pageLabel,
                   onPageTap: _jumpToPage,
-                  onViewChanged: (value) {
-                    setState(() => _detailedView = value);
-                    if (_scrollController.hasClients) {
-                      _scrollController.jumpTo(0);
-                    }
-                  },
+                  onViewChanged: onViewChanged,
                 ),
-                Expanded(child: _bloc()),
+                Expanded(child: _bloc(detailedView)),
               ],
             ),
-      floatingActionButtonLocation:
-          context.watch<GlobalSettingCubit>().state.leftHandModeEnabled
-          ? FloatingActionButtonLocation.startFloat
-          : FloatingActionButtonLocation.endFloat,
-      floatingActionButton: SlideTransition(
-        position: _slideAnimation,
-        child: SpeedDial(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          buttonSize: const Size(56, 56),
-          childrenButtonSize: const Size(56, 56),
-          backgroundColor: colorScheme.primaryContainer,
-          foregroundColor: colorScheme.onPrimaryContainer,
-          icon: Icons.menu,
-          activeIcon: Icons.close,
-          useRotationAnimation: true,
-          animationDuration: const Duration(milliseconds: 300),
-          spacing: 12,
-          spaceBetweenChildren: 8,
-          children: [
-            SpeedDialChild(
-              child: const Icon(Icons.vertical_align_top),
-              label: t.searchResult.returnToTop,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+            floatingActionButtonLocation:
+                context.watch<GlobalSettingCubit>().state.leftHandModeEnabled
+                ? FloatingActionButtonLocation.startFloat
+                : FloatingActionButtonLocation.endFloat,
+            floatingActionButton: SlideTransition(
+              position: _slideAnimation,
+              child: SpeedDial(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                buttonSize: const Size(56, 56),
+                childrenButtonSize: const Size(56, 56),
+                backgroundColor: colorScheme.primaryContainer,
+                foregroundColor: colorScheme.onPrimaryContainer,
+                icon: Icons.menu,
+                activeIcon: Icons.close,
+                useRotationAnimation: true,
+                animationDuration: const Duration(milliseconds: 300),
+                spacing: 12,
+                spaceBetweenChildren: 8,
+                children: [
+                  SpeedDialChild(
+                    child: const Icon(Icons.vertical_align_top),
+                    label: t.searchResult.returnToTop,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    backgroundColor: colorScheme.secondaryContainer,
+                    foregroundColor: colorScheme.onSecondaryContainer,
+                    onTap: () {
+                      _scrollController.animateTo(
+                        0,
+                        duration: const Duration(milliseconds: 500),
+                        curve: Curves.easeInOut,
+                      );
+                    },
+                  ),
+                  SpeedDialChild(
+                    child: const Icon(Icons.shortcut),
+                    label: t.searchResult.jumpToPage,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    backgroundColor: colorScheme.secondaryContainer,
+                    foregroundColor: colorScheme.onSecondaryContainer,
+                    onTap: _jumpToPage,
+                  ),
+                ],
               ),
-              backgroundColor: colorScheme.secondaryContainer,
-              foregroundColor: colorScheme.onSecondaryContainer,
-              onTap: () {
-                _scrollController.animateTo(
-                  0,
-                  duration: const Duration(milliseconds: 500),
-                  curve: Curves.easeInOut,
-                );
-              },
             ),
-            SpeedDialChild(
-              child: const Icon(Icons.shortcut),
-              label: t.searchResult.jumpToPage,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              backgroundColor: colorScheme.secondaryContainer,
-              foregroundColor: colorScheme.onSecondaryContainer,
-              onTap: _jumpToPage,
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -256,10 +248,12 @@ class _SearchResultPageState extends State<_SearchResultPage>
     context.read<SearchBloc>().add(
       searchEvent.copyWith(page: targetPage, status: SearchStatus.initial),
     );
-    if (_scrollController.hasClients) _scrollController.jumpTo(0);
+    _scrollPositions.reset();
   }
 
-  Widget _bloc() => BlocBuilder<SearchBloc, SearchState>(
+  Widget _bloc(bool detailedView) => BlocConsumer<SearchBloc, SearchState>(
+    listenWhen: (_, state) => state.status == SearchStatus.initial,
+    listener: (_, _) => _scrollPositions.reset(),
     builder: (context, state) {
       switch (state.status) {
         case SearchStatus.initial:
@@ -302,7 +296,7 @@ class _SearchResultPageState extends State<_SearchResultPage>
             }
             searchEvent = state.searchEvent;
           }
-          return _comicList(context, state);
+          return _comicList(context, state, detailedView);
       }
     },
   );
@@ -311,9 +305,12 @@ class _SearchResultPageState extends State<_SearchResultPage>
     return event.searchStates.searchKeyword.trim();
   }
 
-  Widget _comicList(BuildContext context, SearchState state) {
+  Widget _comicList(
+    BuildContext context,
+    SearchState state,
+    bool detailedView,
+  ) {
     final search = context.watch<SearchCubit>().state;
-    final source = search.from;
     final blocked = blockedCategoryNames(
       search.pluginExtern['blockedCategories'],
     );
@@ -321,7 +318,7 @@ class _SearchResultPageState extends State<_SearchResultPage>
       state.comics.map((item) => item.comic),
       blocked,
     );
-    if (_detailedView && sourceQuickCategories(source).isNotEmpty) {
+    if (detailedView) {
       if (state.status == SearchStatus.success &&
           entries.isEmpty &&
           state.hasReachedMax) {
@@ -384,6 +381,7 @@ class _SearchResultPageState extends State<_SearchResultPage>
   }
 
   void _onScroll() {
+    if (_scrollPositions.isChanging || !mounted) return;
     // 控制 FAB 的上下移动
     if (_scrollController.position.userScrollDirection ==
         ScrollDirection.reverse) {

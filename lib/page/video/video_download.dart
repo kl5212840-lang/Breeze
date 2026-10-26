@@ -15,7 +15,11 @@ class VideoSystemDownload {
   String? _job;
 
   static bool get available =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+      !kIsWeb &&
+      [
+        TargetPlatform.iOS,
+        TargetPlatform.android,
+      ].contains(defaultTargetPlatform);
 
   Future<VideoDownloadStatus> save({
     required VideoDownloadChoice choice,

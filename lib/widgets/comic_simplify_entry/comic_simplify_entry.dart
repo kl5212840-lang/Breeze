@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/comic_simplify_entry/selection_badge.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
@@ -285,13 +286,15 @@ class ComicSimplifyEntry extends StatelessWidget {
     final primary = Theme.of(context).colorScheme.primary;
     return ClipRRect(
       borderRadius: BorderRadius.circular(circular),
-      child: Container(
-        foregroundDecoration: isSelected && selectionMode
-            ? BoxDecoration(
-                border: Border.all(color: primary, width: 4),
-                borderRadius: BorderRadius.circular(circular),
-              )
-            : null,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        foregroundDecoration: BoxDecoration(
+          border: Border.all(
+            color: isSelected && selectionMode ? primary : Colors.transparent,
+            width: 4,
+          ),
+          borderRadius: BorderRadius.circular(circular),
+        ),
         child: Stack(
           children: [
             CoverWidget(
@@ -346,11 +349,13 @@ class ComicSimplifyEntry extends StatelessWidget {
                 ),
               ),
             ),
-            if (selectionMode)
-              Positioned(
-                top: 8,
-                right: 8,
-                child: Container(
+            Positioned(
+              top: 8,
+              right: 8,
+              child: ComicSelectionBadge(
+                visible: selectionMode,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
                   width: 30,
                   height: 30,
                   decoration: BoxDecoration(
@@ -372,6 +377,7 @@ class ComicSimplifyEntry extends StatelessWidget {
                   ),
                 ),
               ),
+            ),
           ],
         ),
       ),

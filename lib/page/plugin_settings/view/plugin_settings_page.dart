@@ -1,3 +1,5 @@
+import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -32,12 +34,14 @@ class PluginSettingsPage extends StatelessWidget {
     required this.pluginUuid,
     required this.pluginRuntimeName,
     required this.pluginDisplayName,
+    this.insideSource = false,
   });
 
   final String from;
   final String pluginUuid;
   final String pluginRuntimeName;
   final String pluginDisplayName;
+  final bool insideSource;
 
   @override
   Widget build(BuildContext context) {
@@ -48,6 +52,7 @@ class PluginSettingsPage extends StatelessWidget {
         pluginUuid: pluginUuid,
         pluginRuntimeName: pluginRuntimeName,
         pluginDisplayName: pluginDisplayName,
+        insideSource: insideSource,
       ),
     );
   }
@@ -59,12 +64,14 @@ class _PluginSettingsPageView extends StatefulWidget {
     required this.pluginUuid,
     required this.pluginRuntimeName,
     required this.pluginDisplayName,
+    required this.insideSource,
   });
 
   final String from;
   final String pluginUuid;
   final String pluginRuntimeName;
   final String pluginDisplayName;
+  final bool insideSource;
 
   @override
   State<_PluginSettingsPageView> createState() =>
@@ -457,6 +464,7 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
 
     return Scaffold(
       appBar: AppBar(
+        leading: const SourceBackButton(),
         title: Text(
           t.plugin.pluginSettingsTitle(name: widget.pluginDisplayName),
         ),
@@ -465,11 +473,13 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
         backgroundColor: Colors.transparent,
         actions: [
           if (!deleted)
-            IconButton(
+            SourceChromeIconButton(
               tooltip: t.plugin.sync,
               onPressed: _syncPlugin,
-              icon: const Icon(Icons.sync),
+              icon: Icons.sync,
+              symbol: 'arrow.triangle.2.circlepath',
             ),
+          if (widget.insideSource) SourceMoreButton(source: widget.from),
         ],
       ),
       body: Center(

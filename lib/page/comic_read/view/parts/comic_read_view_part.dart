@@ -22,6 +22,7 @@ extension _ComicReadViewPart on _ComicReadPageState {
     final cubit = context.read<ReaderCubit>();
     return ComicReadAppBar(
       title: epInfo.epName,
+      source: widget.from,
       isDesktopFullscreen: _lifecycleController.isDesktopFullscreen,
       onToggleFullscreen: _isDesktopPlatform
           ? () => unawaited(_lifecycleController.toggleDesktopFullscreen())

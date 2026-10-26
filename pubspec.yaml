@@ -1,7 +1,7 @@
 name: zephyr
 description: "使用Flutter开发的漫画阅读应用，使用插件提供漫画源支持。"
 publish_to: none
-version: 3.0.41+2253
+version: 3.0.37+2262
 
 environment:
   sdk: ^3.12.0
@@ -148,6 +148,7 @@ flutter:
 
   # 资源文件配置
   assets:
+    - asset/plugins/personal_catalog.json
     - path: asset/image/app_icon.ico
       platforms: [windows, linux, macos]
     - path: asset/image/app-icon.png

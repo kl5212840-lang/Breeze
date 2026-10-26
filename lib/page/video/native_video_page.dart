@@ -9,6 +9,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
 import 'package:zephyr/page/video/video_playback_preferences.dart';
 import 'package:zephyr/page/video/video_playback_settings_page.dart';
@@ -29,6 +30,7 @@ import 'package:zephyr/page/video/video_interaction.dart';
 import 'package:zephyr/page/video/video_panel_transition.dart';
 import 'package:zephyr/page/video/video_episode_sequence.dart';
 import 'package:zephyr/page/video/video_episode_picker.dart';
+import 'package:zephyr/page/video/video_playback_identity.dart';
 import 'package:zephyr/util/debouncer.dart';
 
 typedef NativeEpisodeLoad = ({
@@ -59,11 +61,16 @@ class NativeVideoPage extends StatefulWidget {
     this.onPlaybackExit,
     this.loadEpisode,
     this.onEpisodeChanged,
+    this.detailBuilder,
+    this.extraPlayerActions,
   });
 
   final NativePlaybackSession session;
   final Future<NativeEpisodeLoad> Function(Uri)? loadEpisode;
   final ValueChanged<NativeEpisodeLoad>? onEpisodeChanged;
+  final Widget Function(BuildContext, NativePlaybackSession)? detailBuilder;
+  final List<Widget> Function(BuildContext, NativePlaybackSession)?
+  extraPlayerActions;
   final ValueChanged<Uri>? onOpenVideo;
   final AsyncCallback? onOpenCreator;
   final AsyncCallback? onOpenCreatorWorks;
@@ -153,9 +160,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
   bool? _lastPlaying;
   bool? _lastBuffering;
 
-  String get _progressKey =>
-      'breeze.video.progress.${_session.watchUrl.host}.'
-      '${_session.watchUrl.queryParameters['v'] ?? _session.watchUrl.path}';
+  String get _progressKey => videoPlaybackProgressKey(_session.watchUrl);
 
   bool get _isPhone =>
       (Platform.isIOS || Platform.isAndroid) && !isTabletWithOutContext();
@@ -687,7 +692,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     final previous = _controller;
     final oldEngagement = _engagement;
     if (load == null ||
-        previous == null ||
+        (previous == null && !_failed) ||
         _episodeLoading ||
         _loading ||
         _retrying ||
@@ -697,8 +702,8 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     }
     final oldSession = _session;
     final oldState = (
-      position: previous.value.position,
-      playing: previous.value.isPlaying,
+      position: previous?.value.position ?? _resumePosition,
+      playing: previous?.value.isPlaying ?? _preferences.autoplay,
     );
     final sourceLabel = _session.sources.elementAtOrNull(_sourceIndex)?.label;
     _episodeReturns[oldSession.watchUrl] = oldState;
@@ -722,7 +727,9 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       await _persistProgress();
       if (!mounted) return;
       stage = 'pause-current';
-      await previous.pause().timeout(const Duration(seconds: 3));
+      if (previous != null) {
+        await previous.pause().timeout(const Duration(seconds: 3));
+      }
       if (!canContinue()) throw StateError('Episode switch cancelled');
       // A manual choice has exactly one authoritative site-document read.
       // No detached fetch, speculative session cache or competing binding task.
@@ -742,10 +749,14 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       );
       if (sourceIndex < 0) sourceIndex = 0;
       stage = 'release-current-media';
-      previous.removeListener(_onPlayerChanged);
+      previous?.removeListener(_onPlayerChanged);
       setState(() => _controller = null);
-      previousReleased = true;
-      await _retireEpisodePlayer(previous).timeout(const Duration(seconds: 8));
+      previousReleased = previous != null;
+      if (previous != null) {
+        await _retireEpisodePlayer(
+          previous,
+        ).timeout(const Duration(seconds: 8));
+      }
       await _waitForEpisodeRetirements();
       if (!mounted || _episodeCancelled) {
         throw StateError('Episode switch cancelled');
@@ -800,7 +811,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       if (!canContinue()) {
         throw StateError('Episode switch cancelled');
       }
-      previous.removeListener(_onPlayerChanged);
+      previous?.removeListener(_onPlayerChanged);
       oldEngagement?.removeListener(_onEngagementChanged);
       oldEngagement?.dispose();
       oldEngagement?.operations.dispose();
@@ -884,6 +895,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                 cancelled || !_foreground || _verificationRequired;
           }
         } else if (mounted &&
+            previous != null &&
             oldState.playing &&
             _foreground &&
             !_verificationRequired) {
@@ -1556,6 +1568,15 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     if (mounted) Navigator.of(context).pop(true);
   }
 
+  void _exitSourceFromPlayer() {
+    if (_leavingToSite) return;
+    _leavingToSite = true;
+    _closeQuickSettings();
+    // The quick panel belongs to this route. Close its state rather than
+    // popping a route, then let normal player disposal restore system chrome.
+    exitSourceToDiscover(context);
+  }
+
   void _leaveSiteActions({bool login = false}) {
     final route = ModalRoute.of(context);
     if (route != null) {
@@ -1696,7 +1717,9 @@ class _NativeVideoPageState extends State<NativeVideoPage>
   );
 
   List<Widget> _fullscreenActions({bool rail = false, bool subtle = false}) {
-    if (_engagement == null) return [];
+    if (_engagement == null) {
+      return widget.extraPlayerActions?.call(context, _session) ?? [];
+    }
     return [
       _siteControl(VideoSiteAction.like, rail: rail, subtle: subtle),
       if (rail) _siteControl(VideoSiteAction.dislike, rail: true),
@@ -2176,7 +2199,8 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                     const Spacer(),
                   if (wide &&
                       _session.episodes.isNotEmpty &&
-                      widget.onOpenVideo != null)
+                      (widget.onOpenVideo != null ||
+                          widget.loadEpisode != null))
                     NativeVideoTextButton(
                       maxWidth: 100,
                       label: t.videoPlayback.episodes,
@@ -2361,6 +2385,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                 _closeQuickSettings();
                 unawaited(_backToWeb());
               },
+              onExitSource: _exitSourceFromPlayer,
               onEpisode: _selectEpisode,
             ),
           ),
@@ -2966,7 +2991,9 @@ class _NativeVideoPageState extends State<NativeVideoPage>
 
   Widget _inlineTools() {
     if (_editingComments) return const SizedBox.shrink();
-    final episodes = _session.episodes.isNotEmpty && widget.onOpenVideo != null;
+    final episodes =
+        _session.episodes.isNotEmpty &&
+        (widget.onOpenVideo != null || widget.loadEpisode != null);
     final sources = _session.sources.length > 1;
     if (!episodes && !sources) return const SizedBox.shrink();
     final current = _session.episodes
@@ -3064,6 +3091,18 @@ class _NativeVideoPageState extends State<NativeVideoPage>
   }
 
   Widget _detailContent() {
+    if (widget.detailBuilder case final builder?) {
+      return ColoredBox(
+        key: _detailContentKey,
+        color: Theme.of(context).colorScheme.surface,
+        child: Column(
+          children: [
+            _inlineTools(),
+            Expanded(child: builder(context, _session)),
+          ],
+        ),
+      );
+    }
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final tags = _tagsExpanded ? _session.tags : _session.tags.take(4);

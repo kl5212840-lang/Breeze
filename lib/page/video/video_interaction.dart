@@ -54,6 +54,17 @@ class VideoFeedbackLabel extends StatelessWidget {
   );
 }
 
+/// iOS keyboard dismissal can briefly report an inset below zero. Never pass
+/// that transient value to Padding or Dialog's inset animation.
+MediaQueryData videoOverlayMedia(MediaQueryData media) => media.copyWith(
+  viewInsets: EdgeInsets.fromLTRB(
+    media.viewInsets.left.clamp(0.0, double.infinity),
+    media.viewInsets.top.clamp(0.0, double.infinity),
+    media.viewInsets.right.clamp(0.0, double.infinity),
+    media.viewInsets.bottom.clamp(0.0, double.infinity),
+  ),
+);
+
 Future<T?> showVideoTaskSheet<T>({
   required BuildContext context,
   required WidgetBuilder builder,
@@ -65,20 +76,24 @@ Future<T?> showVideoTaskSheet<T>({
   constraints: const BoxConstraints(maxWidth: 720),
   sheetAnimationStyle: VideoMotion.sheet(context),
   builder: (context) {
-    final media = MediaQuery.of(context);
-    return Padding(
-      padding: EdgeInsets.only(bottom: media.viewInsets.bottom),
-      child: SafeArea(
-        top: false,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight:
-                (media.size.height -
-                    media.padding.vertical -
-                    media.viewInsets.bottom) *
-                .92,
+    final media = videoOverlayMedia(MediaQuery.of(context));
+    return MediaQuery(
+      data: media,
+      child: Padding(
+        padding: EdgeInsets.only(bottom: media.viewInsets.bottom),
+        child: SafeArea(
+          top: false,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight:
+                  (media.size.height -
+                          media.padding.vertical -
+                          media.viewInsets.bottom)
+                      .clamp(0.0, double.infinity) *
+                  .92,
+            ),
+            child: builder(context),
           ),
-          child: builder(context),
         ),
       ),
     );

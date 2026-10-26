@@ -1,3 +1,5 @@
+import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -397,12 +399,23 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     if (_loadingScheme) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+        appBar: AppBar(
+          leading: const SourceBackButton(),
+          title: Text(t.login.title),
+          actions: [if (from.isNotEmpty) SourceMoreButton(source: from)],
+        ),
+        body: const Center(child: CircularProgressIndicator()),
+      );
     }
 
     if (_schemeError != null) {
       return Scaffold(
-        appBar: AppBar(title: Text(t.login.title)),
+        appBar: AppBar(
+          leading: const SourceBackButton(),
+          title: Text(t.login.title),
+          actions: [if (from.isNotEmpty) SourceMoreButton(source: from)],
+        ),
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -427,12 +440,29 @@ class _LoginPageState extends State<LoginPage> {
         : _submitLabel;
     return Scaffold(
       appBar: AppBar(
+        leading: const SourceBackButton(),
         title: Text(title.isEmpty ? t.login.title : title),
         actions: [
-          IconButton(
-            icon: Icon(Icons.settings),
-            onPressed: () => context.pushRoute(GlobalSettingRoute()),
-          ),
+          if (from.isNotEmpty)
+            SourceMoreButton(
+              source: from,
+              actions: [
+                SourceMenuAction(
+                  id: 'settings',
+                  label: t.discover.settings,
+                  icon: Icons.settings_outlined,
+                  symbol: 'gearshape',
+                  onSelected: () => context.pushRoute(GlobalSettingRoute()),
+                ),
+              ],
+            )
+          else
+            SourceChromeIconButton(
+              tooltip: t.discover.settings,
+              icon: Icons.settings_outlined,
+              symbol: 'gearshape',
+              onPressed: () => context.pushRoute(GlobalSettingRoute()),
+            ),
         ],
       ),
       body: SingleChildScrollView(

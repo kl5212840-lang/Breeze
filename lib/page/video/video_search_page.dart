@@ -1,3 +1,4 @@
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/video/video_browse_theme.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
@@ -6,9 +7,15 @@ import 'package:zephyr/page/video/video_search_history.dart';
 import 'package:zephyr/page/video/video_interaction.dart';
 
 class VideoSearchEntry extends StatelessWidget {
-  const VideoSearchEntry({super.key, required this.query, required this.onTap});
+  const VideoSearchEntry({
+    super.key,
+    required this.query,
+    required this.onTap,
+    this.hint,
+  });
   final String query;
   final VoidCallback onTap;
+  final String? hint;
 
   @override
   Widget build(BuildContext context) => Tooltip(
@@ -30,7 +37,7 @@ class VideoSearchEntry extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    query.isEmpty ? t.videoSearch.hint : query,
+                    query.isEmpty ? hint ?? t.videoSearch.hint : query,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodyLarge,
@@ -51,10 +58,12 @@ class VideoSearchPage extends StatefulWidget {
     required this.source,
     required this.initial,
     this.authorEnabled = true,
+    this.hint,
   });
   final String source;
   final VideoSearchFilters initial;
   final bool authorEnabled;
+  final String? hint;
 
   @override
   State<VideoSearchPage> createState() => _VideoSearchPageState();
@@ -142,10 +151,9 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
     child: Scaffold(
       appBar: AppBar(
         titleSpacing: 0,
-        leading: IconButton(
+        leading: SourceBackButton(
           tooltip: t.videoSearch.cancel,
           onPressed: _cancel,
-          icon: const Icon(Icons.arrow_back_rounded),
         ),
         title: TextField(
           key: const ValueKey('video-search.input'),
@@ -157,7 +165,7 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
               (_, {required currentLength, required isFocused, maxLength}) =>
                   null,
           decoration: InputDecoration(
-            hintText: t.videoSearch.submit,
+            hintText: widget.hint ?? t.videoSearch.submit,
             filled: true,
             isDense: true,
             suffixIcon: ValueListenableBuilder(

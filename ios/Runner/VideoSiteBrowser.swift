@@ -38,6 +38,53 @@ struct VideoSiteExternalAuthenticationPolicy {
   }
 }
 
+/// App routing applies to top-level destinations. Existing subframes also
+/// create local documents; WebKit must apply their normal origin/CSP rules.
+/// This policy never evaluates those documents or changes browser security.
+struct VideoSiteNavigationPolicy {
+  let host: String
+
+  private func aboutDocument(for url: URL) -> String? {
+    guard url.scheme?.lowercased() == "about" else { return nil }
+    // WKNavigationAction supplies an Objective-C-backed URL. Its opaque
+    // about:blank URL can have an empty `path`, unlike URL(string:) in Swift.
+    // Compare only the exact opaque document name, never decode or log it.
+    let raw = url.absoluteString
+    guard let colon = raw.firstIndex(of: ":") else { return nil }
+    let document = raw[raw.index(after: colon)...].prefix { $0 != "?" && $0 != "#" }
+    return document == "blank" || document == "srcdoc" ? String(document) : nil
+  }
+
+  func rejectionReason(for url: URL, main: Bool) -> String? {
+    let scheme = url.scheme?.lowercased() ?? ""
+    if !main {
+      if scheme == "about" {
+        return aboutDocument(for: url) == nil ? "about-document" : nil
+      }
+    }
+    guard scheme == "https" else { return "scheme" }
+    guard url.user == nil, url.password == nil else { return "credentials" }
+    guard url.port == nil || url.port == 443 else { return "port" }
+    guard !main || url.host?.lowercased() == host.lowercased() else { return "top-level-host" }
+    return nil
+  }
+
+  /// Fixed categories only: no embedded document, script, URL, ID or token.
+  func classification(for url: URL) -> [String: String] {
+    let rawScheme = url.scheme?.lowercased() ?? ""
+    let scheme = ["https", "http", "about", "data", "blob", "javascript", "file"].contains(rawScheme)
+      ? rawScheme : "other"
+    let targetHost = url.host?.lowercased() ?? ""
+    let destination = targetHost.isEmpty ? "none" : targetHost == host.lowercased() ? "site"
+      : targetHost == "challenges.cloudflare.com" || targetHost.hasSuffix(".challenges.cloudflare.com") ? "provider" : "other"
+    let document = aboutDocument(for: url) ?? "other"
+    let pathForm = scheme != "about" ? "not-about" : url.path.isEmpty ? "empty"
+      : ["blank", "srcdoc"].contains(url.path) ? url.path : "other"
+    return ["scheme": scheme, "destination": destination, "aboutDocument": document,
+      "aboutPathForm": pathForm]
+  }
+}
+
 /// Standard WebKit browser for video sources. No user scripts, JS bridge,
 /// console wrappers, custom UA, cookie import or TLS exceptions are installed.
 final class VideoSiteBrowserFactory: NSObject, FlutterPlatformViewFactory {
@@ -62,12 +109,105 @@ final class VideoSiteBrowserFactory: NSObject, FlutterPlatformViewFactory {
   }
 }
 
+/// A bounded comparison using a plain UIKit WKWebView and the same WebKit
+/// store. No bridge, page probes, custom UA or navigation delegate is attached.
+private final class VideoVerificationPauseDelegate: NSObject, WKNavigationDelegate {
+  private var completion: ((Bool) -> Void)?
+  private var deadline: Timer?
+  var expectedNavigation: WKNavigation?
+  init(completion: @escaping (Bool) -> Void) {
+    self.completion = completion
+    super.init()
+    deadline = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in self?.finish(false) }
+  }
+  private func finish(_ committed: Bool) {
+    deadline?.invalidate()
+    deadline = nil
+    let callback = completion
+    completion = nil
+    callback?(committed)
+  }
+  func failedToStart() { finish(false) }
+  func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+    if navigation != nil && navigation === expectedNavigation { finish(true) }
+  }
+  func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+    if navigation != nil && navigation === expectedNavigation { finish(false) }
+  }
+  func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+    if navigation != nil && navigation === expectedNavigation { finish(false) }
+  }
+  func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { finish(false) }
+  deinit { deadline?.invalidate(); completion?(false) }
+}
+
+private final class VideoVerificationWindowController: UIViewController {
+  private let browser: WKWebView
+  private let destination: URL
+  private let returnTitle: String
+  private let hint: String
+  private var completion: ((String) -> Void)?
+
+  init(url: URL, title: String, returnTitle: String, hint: String,
+       completion: @escaping (String) -> Void) {
+    let configuration = WKWebViewConfiguration()
+    configuration.websiteDataStore = .default()
+    browser = WKWebView(frame: .zero, configuration: configuration)
+    destination = url
+    self.returnTitle = returnTitle
+    self.hint = hint
+    self.completion = completion
+    super.init(nibName: nil, bundle: nil)
+    self.title = title
+  }
+
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    view.backgroundColor = .systemBackground
+    navigationItem.prompt = hint
+    browser.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(browser)
+    NSLayoutConstraint.activate([
+      browser.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+      browser.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+      browser.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      browser.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+    ])
+    navigationItem.leftBarButtonItem = UIBarButtonItem(title: returnTitle,
+      style: .done, target: self, action: #selector(retryAfterWindow))
+    browser.load(URLRequest(url: destination))
+  }
+
+  @objc private func retryAfterWindow() { finish("retry") }
+
+  private func finish(_ value: String) {
+    guard let completed = completion else { return }
+    completion = nil
+    browser.stopLoading()
+    (navigationController ?? self).dismiss(animated: !UIAccessibility.isReduceMotionEnabled) {
+      completed(value)
+    }
+  }
+
+  deinit {
+    browser.stopLoading()
+    completion?("cancelled")
+  }
+}
+
 private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavigationDelegate, WKUIDelegate, WKHTTPCookieStoreObserver {
   private let web: WKWebView
   private let channel: FlutterMethodChannel
   private let host: String
   private let dialogConfirm: String
   private let dialogCancel: String
+  private let verificationWindowTitle: String
+  private let verificationWindowReturn: String
+  private let verificationWindowHint: String
+  private var verificationWindow: UINavigationController?
+  private var verificationPause: VideoVerificationPauseDelegate?
   private var externalAuthentication: VideoSiteExternalAuthenticationPolicy
   private var dismissSiteDialog: (() -> Void)?
   private var urlObserver: NSKeyValueObservation?
@@ -84,6 +224,7 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
   private var requestAgents: [String: String] = [:]
   private var counters: [String: Int] = [:]
   private var events: [[String: Any]] = []
+  private var navigationDecisions: [[String: Any]] = []
 
   init(frame: CGRect, id: Int64, args: Any?, messenger: FlutterBinaryMessenger) {
     let arguments = args as? [String: Any] ?? [:]
@@ -93,6 +234,9 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
       home: URL(string: raw), entries: arguments["externalAuthenticationEntries"] as? [String] ?? [])
     dialogConfirm = arguments["dialogConfirm"] as? String ?? "OK"
     dialogCancel = arguments["dialogCancel"] as? String ?? "Cancel"
+    verificationWindowTitle = arguments["verificationWindowTitle"] as? String ?? "Site verification"
+    verificationWindowReturn = arguments["verificationWindowReturn"] as? String ?? "Return and retry"
+    verificationWindowHint = arguments["verificationWindowHint"] as? String ?? "Verify manually using this session."
     let configuration = WKWebViewConfiguration()
     configuration.websiteDataStore = .default()
     configuration.allowsInlineMediaPlayback = true
@@ -125,6 +269,12 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
       case "url": result(self.web.url?.absoluteString)
       case "canGoBack": result(self.web.canGoBack)
       case "goBack": self.web.goBack(); result(nil)
+      case "verificationWindow":
+        guard let raw = args["url"] as? String, let url = URL(string: raw),
+              self.allowed(url, main: true) else {
+          result(FlutterError(code: "URL_REJECTED", message: "Invalid video site URL", details: nil)); return
+        }
+        self.presentVerificationWindow(url: url, result: result)
       case "inspectable":
         guard let enabled = args["enabled"] as? Bool else {
           result(FlutterError(code: "INVALID_ARGUMENT", message: "Expected inspection preference", details: nil)); return
@@ -167,6 +317,8 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
 
   deinit {
     dismissSiteDialog?()
+    verificationWindow?.dismiss(animated: false)
+    verificationWindow = nil
     urlObserver?.invalidate()
     web.stopLoading()
     web.navigationDelegate = nil
@@ -196,7 +348,7 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
       "requestUaObserved": !requestAgents.isEmpty,
       "documentGeneration": documentGeneration,
       "documentLocation": web.url == nil ? "unavailable" : web.url?.absoluteString == "about:blank" ? "blank" : web.url?.host == host ? "site" : "other",
-      "events": counters, "timeline": events,
+      "events": counters, "timeline": events, "navigationDecisions": navigationDecisions,
     ]
     if let status = committedStatus { data["committedMainStatus"] = status }
     if let status = provisionalStatus { data["provisionalMainStatus"] = status }
@@ -211,11 +363,81 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
     record("shared-cookie-store-changed")
   }
 
+  private func presentVerificationWindow(url: URL, result: @escaping FlutterResult) {
+    guard verificationWindow == nil, verificationPause == nil,
+          web.window != nil, dismissSiteDialog == nil else {
+      result(FlutterError(code: "UNAVAILABLE", message: "Verification window unavailable", details: nil)); return
+    }
+    var responder: UIResponder? = web
+    while responder != nil && !(responder is UIViewController) { responder = responder?.next }
+    guard var controller = responder as? UIViewController else {
+      result(FlutterError(code: "UNAVAILABLE", message: "Verification window unavailable", details: nil)); return
+    }
+    while let presented = controller.presentedViewController { controller = presented }
+    guard !controller.isBeingDismissed, !controller.isBeingPresented,
+          !(controller is UIAlertController) else {
+      result(FlutterError(code: "BUSY", message: "Wait for the current presentation", details: nil)); return
+    }
+    // Commit a local empty document first, so the old challenge cannot keep
+    // running JavaScript or updating the shared store behind the comparison.
+    // The visible return button explicitly requests one normal site reload.
+    let pause = VideoVerificationPauseDelegate { [weak self, weak controller] committed in
+      guard let self = self else { result("cancelled"); return }
+      self.verificationPause = nil
+      self.web.navigationDelegate = nil
+      guard committed, let controller = controller, self.web.window != nil else {
+        self.web.navigationDelegate = self
+        self.web.uiDelegate = self
+        self.record("verification-window-unavailable")
+        self.pendingURL = url
+        self.web.load(URLRequest(url: url))
+        result(FlutterError(code: "UNAVAILABLE", message: "Verification window unavailable", details: nil))
+        return
+      }
+      self.record("verification-window-source-paused")
+      let content = VideoVerificationWindowController(url: url, title: self.verificationWindowTitle,
+        returnTitle: self.verificationWindowReturn, hint: self.verificationWindowHint) { [weak self] value in
+          self?.verificationWindow = nil
+          self?.web.navigationDelegate = self
+          self?.web.uiDelegate = self
+          self?.record("verification-window-closed")
+          result(value)
+        }
+      let navigation = UINavigationController(rootViewController: content)
+      navigation.modalPresentationStyle = .fullScreen
+      self.verificationWindow = navigation
+      self.record("verification-window-opened")
+      controller.present(navigation, animated: !UIAccessibility.isReduceMotionEnabled)
+    }
+    verificationPause = pause
+    web.navigationDelegate = nil
+    web.stopLoading()
+    web.navigationDelegate = pause
+    web.uiDelegate = nil
+    pause.expectedNavigation = web.loadHTMLString("<!doctype html><title></title>", baseURL: nil)
+    if pause.expectedNavigation == nil { pause.failedToStart() }
+  }
+
   private func allowed(_ url: URL, main: Bool) -> Bool {
-    if !main && url.scheme == "about" && ["blank", "srcdoc"].contains(url.path) { return true }
-    guard url.scheme == "https", url.user == nil, url.password == nil,
-          url.port == nil || url.port == 443 else { return false }
-    return !main || url.host == host
+    VideoSiteNavigationPolicy(host: host).rejectionReason(for: url, main: main) == nil
+  }
+
+  private func recordNavigation(_ action: WKNavigationAction, url: URL, main: Bool) {
+    let policy = VideoSiteNavigationPolicy(host: host)
+    var decision: [String: Any] = policy.classification(for: url)
+    decision["main"] = main
+    decision["targetFrameExists"] = action.targetFrame != nil
+    decision["reason"] = policy.rejectionReason(for: url, main: main) ?? "allowed"
+    let origin = action.sourceFrame.securityOrigin
+    let sourceHost = origin.host.lowercased()
+    decision["source"] = sourceHost.isEmpty ? "opaque" : sourceHost == host.lowercased() ? "site"
+      : sourceHost == "challenges.cloudflare.com" || sourceHost.hasSuffix(".challenges.cloudflare.com") ? "provider" : "other"
+    decision["type"] = action.navigationType == .linkActivated ? "link"
+      : action.navigationType == .formSubmitted || action.navigationType == .formResubmitted ? "form"
+      : action.navigationType == .backForward ? "history" : action.navigationType == .reload ? "reload" : "other"
+    decision["ms"] = Int((ProcessInfo.processInfo.systemUptime - created) * 1000)
+    if navigationDecisions.count >= 24 { navigationDecisions.removeFirst() }
+    navigationDecisions.append(decision)
   }
 
   private func emit(_ method: String, extra: [String: Any] = [:]) {
@@ -243,6 +465,7 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
       return
     }
     let permitted = allowed(url, main: main)
+    recordNavigation(action, url: url, main: main)
     if permitted && main { pendingURL = url }
     let destination = url.host == host ? "site" : url.host == "challenges.cloudflare.com" ? "provider" : "other"
     record("\(main ? "main" : "frame")-\(destination)-\(permitted ? "allowed" : "blocked")")

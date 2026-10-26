@@ -169,6 +169,7 @@ void main() {
       expect(opens, 1);
       expect(tester.takeException(), isNull);
     },
-    variant: TargetPlatformVariant.only(TargetPlatform.android),
+    // Android now supports native downloads too; Linux still uses the website.
+    variant: TargetPlatformVariant.only(TargetPlatform.linux),
   );
 }

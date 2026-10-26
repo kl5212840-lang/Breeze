@@ -1,3 +1,4 @@
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_account_backup.dart';
@@ -110,7 +111,10 @@ class _VideoAccountPageState extends State<VideoAccountPage> {
   Widget build(BuildContext context) => PopScope(
     canPop: !_busy,
     child: Scaffold(
-      appBar: AppBar(title: Text(t.videoAccount.title)),
+      appBar: AppBar(
+        leading: const SourceBackButton(),
+        title: Text(t.videoAccount.title),
+      ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(

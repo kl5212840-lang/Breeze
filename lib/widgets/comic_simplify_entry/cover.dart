@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:material_ui/material_ui.dart';
@@ -10,7 +11,7 @@ import 'package:zephyr/widgets/picture_bloc/models/picture_info.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry.dart';
 
-class CoverWidget extends StatelessWidget {
+class CoverWidget extends StatefulWidget {
   final String fileServer;
   final String path;
   final String id;
@@ -33,31 +34,85 @@ class CoverWidget extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    final pictureInfo = PictureInfo(
-      from: from,
-      url: fileServer,
-      path: path,
-      cartoonId: id,
-      pictureType: pictureType,
-    );
+  State<CoverWidget> createState() => _CoverWidgetState();
+}
 
-    final width = this.width ?? context.screenWidth * 0.3;
-    final height = this.height ?? (context.screenWidth * 0.3) / 0.75;
+class _CoverWidgetState extends State<CoverWidget> {
+  late PictureInfo _pictureInfo;
+  late PictureBloc _bloc;
+  ImageProvider? _imageProvider;
+  ({String path, int width, int height})? _imageKey;
+
+  @override
+  void initState() {
+    super.initState();
+    _pictureInfo = _buildPictureInfo();
+    // Bloc 由 State 持有：build 里只引用，不创建。
+    // Keep image requests tied to picture identity instead of selection/layout.
+    // BlocProvider.create itself is lazy; ordinary rebuilds do not create IO.
+    _bloc = PictureBloc()..add(GetPicture(_pictureInfo));
+  }
+
+  @override
+  void didUpdateWidget(covariant CoverWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.fileServer != widget.fileServer ||
+        oldWidget.path != widget.path ||
+        oldWidget.id != widget.id ||
+        oldWidget.pictureType != widget.pictureType ||
+        oldWidget.from != widget.from) {
+      _pictureInfo = _buildPictureInfo();
+      // Only a changed picture identity requests an image. Layout changes only
+      // update the decode-size key below.
+      _imageProvider = null;
+      _imageKey = null;
+      // PictureBloc drops requests while busy. A new picture identity needs
+      // its own bloc, otherwise a slow previous request can win or drop it.
+      final previous = _bloc;
+      _bloc = PictureBloc()..add(GetPicture(_pictureInfo));
+      unawaited(previous.close());
+    }
+  }
+
+  @override
+  void dispose() {
+    unawaited(_bloc.close());
+    super.dispose();
+  }
+
+  PictureInfo _buildPictureInfo() {
+    return PictureInfo(
+      from: widget.from,
+      url: widget.fileServer,
+      path: widget.path,
+      cartoonId: widget.id,
+      pictureType: widget.pictureType,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final width = widget.width ?? context.screenWidth * 0.3;
+    final height = widget.height ?? (context.screenWidth * 0.3) / 0.75;
     final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
     final decodeWidth = ((width * devicePixelRatio) * 1.2).round();
     final decodeHeight = ((height * devicePixelRatio) * 1.2).round();
-
-    return BlocProvider(
-      create: (context) => PictureBloc()..add(GetPicture(pictureInfo)),
+    return BlocProvider.value(
+      value: _bloc,
       child: SizedBox(
         width: width,
         height: height,
         child: BlocBuilder<PictureBloc, PictureLoadState>(
+          bloc: _bloc,
+          // 只在图片路径/状态变化时重建，避免无关 rebuild 重新 resolve。
+          buildWhen: (prev, curr) =>
+              prev.status != curr.status ||
+              prev.imagePath != curr.imagePath ||
+              prev.result != curr.result,
           builder: (context, state) {
             switch (state.status) {
               case PictureLoadStatus.initial:
-                if (pictureType == PictureType.category) {
+                if (widget.pictureType == PictureType.category) {
                   return const _CategoryCoverFallback();
                 }
                 return Container(
@@ -66,7 +121,7 @@ class CoverWidget extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: Colors.grey[200],
                     borderRadius: BorderRadius.circular(
-                      roundedCorner ? kComicCardBorderRadius : 0.0,
+                      widget.roundedCorner ? kComicCardBorderRadius : 0.0,
                     ),
                   ),
                   child: Center(
@@ -74,6 +129,21 @@ class CoverWidget extends StatelessWidget {
                   ),
                 );
               case PictureLoadStatus.success:
+                // image 对象缓存：选中切换等无关 rebuild 不 new provider，
+                // DecorationImage 相等就不重新 resolve，封面不闪。
+                final key = (
+                  path: state.imagePath!,
+                  width: decodeWidth < 1 ? 1 : decodeWidth,
+                  height: decodeHeight < 1 ? 1 : decodeHeight,
+                );
+                if (_imageKey != key) {
+                  _imageKey = key;
+                  _imageProvider = ResizeImage(
+                    FileImage(File(key.path)),
+                    width: key.width,
+                    height: key.height,
+                  );
+                }
                 return RepaintBoundary(
                   child: Container(
                     width: width,
@@ -81,15 +151,11 @@ class CoverWidget extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: Colors.grey[300],
                       borderRadius: BorderRadius.circular(
-                        roundedCorner ? 5.0 : 0.0,
+                        widget.roundedCorner ? 5.0 : 0.0,
                       ),
                       image: DecorationImage(
                         fit: BoxFit.cover,
-                        image: ResizeImage(
-                          FileImage(File(state.imagePath!)),
-                          width: decodeWidth < 1 ? 1 : decodeWidth,
-                          height: decodeHeight < 1 ? 1 : decodeHeight,
-                        ),
+                        image: _imageProvider!,
                         onError: (error, stackTrace) {
                           logger.d(
                             '图片解码失败: ${state.imagePath}',
@@ -102,7 +168,7 @@ class CoverWidget extends StatelessWidget {
                   ),
                 );
               case PictureLoadStatus.failure:
-                if (pictureType == PictureType.category) {
+                if (widget.pictureType == PictureType.category) {
                   return const _CategoryCoverFallback();
                 }
                 if (state.result.toString().contains('404')) {
@@ -116,7 +182,7 @@ class CoverWidget extends StatelessWidget {
                 } else {
                   return InkWell(
                     onTap: () {
-                      context.read<PictureBloc>().add(GetPicture(pictureInfo));
+                      context.read<PictureBloc>().add(GetPicture(_pictureInfo));
                     },
                     child: Center(child: Icon(Icons.refresh)),
                   );

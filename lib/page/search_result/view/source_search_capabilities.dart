@@ -35,11 +35,32 @@ List<Map<String, dynamic>> uniqueAdvancedFields(
   String source,
   List<Map<String, dynamic>> fields,
 ) {
-  if (sourceQuickCategories(source).isEmpty) return fields;
+  final hasQuickCategories = sourceQuickCategories(source).isNotEmpty;
+  final hasScope = sourceSearchScopeOptions(fields).isNotEmpty;
   return fields.where((field) {
     final key = field['key']?.toString();
-    return key != 'sortBy' && key != 'blockedCategories';
+    if (hasScope && key == 'q_type') return false;
+    return !hasQuickCategories ||
+        (key != 'sortBy' && key != 'blockedCategories');
   }).toList();
+}
+
+Map<String, String> sourceSearchScopeOptions(
+  List<Map<String, dynamic>> fields,
+) {
+  for (final field in fields) {
+    if (field['key'] != 'q_type' ||
+        field['kind'] != 'choice' ||
+        field['options'] is! List) {
+      continue;
+    }
+    return {
+      for (final option in (field['options'] as List).whereType<Map>())
+        if (option['label']?.toString().trim().isNotEmpty == true)
+          option['value']?.toString() ?? '': option['label'].toString(),
+    };
+  }
+  return const {};
 }
 
 Future<bool> hasUniqueAdvancedFields(String source) async {
