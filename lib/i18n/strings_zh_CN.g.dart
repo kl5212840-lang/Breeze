@@ -89,6 +89,7 @@ class Translations with BaseTranslations<AppLocale, Translations> {
 	late final Translations$videoSearch$zh_CN videoSearch = Translations$videoSearch$zh_CN.internal(_root);
 	late final Translations$videoMetadata$zh_CN videoMetadata = Translations$videoMetadata$zh_CN.internal(_root);
 	late final Translations$videoPersonal$zh_CN videoPersonal = Translations$videoPersonal$zh_CN.internal(_root);
+	late final Translations$videoLibrary$zh_CN videoLibrary = Translations$videoLibrary$zh_CN.internal(_root);
 }
 
 // Path: common
@@ -606,14 +607,14 @@ class Translations$settings$zh_CN {
 	/// zh-CN: '上传到云端'
 	String get uploadToCloud => '上传到云端';
 
-	/// zh-CN: '以本机数据为准，覆盖云端'
-	String get uploadToCloudSubtitle => '以本机数据为准，覆盖云端';
+	/// zh-CN: '设置与漫画以本机为准；视频收藏合并'
+	String get uploadToCloudSubtitle => '设置与漫画以本机为准；视频收藏合并';
 
 	/// zh-CN: '从云端同步到本机'
 	String get downloadFromCloud => '从云端同步到本机';
 
-	/// zh-CN: '以云端数据为准，应用到本机'
-	String get downloadFromCloudSubtitle => '以云端数据为准，应用到本机';
+	/// zh-CN: '应用云端设置与漫画；视频收藏合并'
+	String get downloadFromCloudSubtitle => '应用云端设置与漫画；视频收藏合并';
 
 	/// zh-CN: '立即上传'
 	String get manualUpload => '立即上传';
@@ -3042,62 +3043,62 @@ class Translations$about$zh_CN {
 	/// zh-CN: '免责声明'
 	String get disclaimer => '免责声明';
 
-	/// zh-CN: '开源项目免责声明'
-	String get disclaimerTitle => '开源项目免责声明';
+	/// zh-CN: '使用说明与免责声明'
+	String get disclaimerTitle => '使用说明与免责声明';
 
-	/// zh-CN: '1. 项目性质与声明'
-	String get disclaimerItem1Title => '1. 项目性质与声明';
+	/// zh-CN: '1. 项目与插件'
+	String get disclaimerItem1Title => '1. 项目与插件';
 
-	/// zh-CN: '此版本基于 Breeze 开源项目开发，以"原样"形式提供。项目维护者不对功能完整性、稳定性、安全性或适用性作出任何明示或暗示的担保。'
-	String get disclaimerItem1Content => '此版本基于 Breeze 开源项目开发，以"原样"形式提供。项目维护者不对功能完整性、稳定性、安全性或适用性作出任何明示或暗示的担保。';
+	/// zh-CN: '本版本基于 Breeze 开源项目开发。插件独立提供站点接入能力；除非另有明确说明，应用与插件均非来源站点官方产品，也不代表站点立场。'
+	String get disclaimerItem1Content => '本版本基于 Breeze 开源项目开发。插件独立提供站点接入能力；除非另有明确说明，应用与插件均非来源站点官方产品，也不代表站点立场。';
 
-	/// zh-CN: '2. 责任限制'
-	String get disclaimerItem2Title => '2. 责任限制';
+	/// zh-CN: '2. 内容与版权'
+	String get disclaimerItem2Title => '2. 内容与版权';
 
-	/// zh-CN: '开发者对因使用、修改或分发本项目（包括但不限于直接使用、二次开发或集成至其他项目）而导致的任何直接、间接、特殊、附带或后果性损害不承担任何责任。这些损害可能包括但不限于数据丢失、设备损坏、业务中断、利润损失或其他经济损失。'
-	String get disclaimerItem2Content => '开发者对因使用、修改或分发本项目（包括但不限于直接使用、二次开发或集成至其他项目）而导致的任何直接、间接、特殊、附带或后果性损害不承担任何责任。这些损害可能包括但不限于数据丢失、设备损坏、业务中断、利润损失或其他经济损失。';
+	/// zh-CN: '漫画、视频、封面及简介等来自所选插件连接的第三方站点，相关权利归原权利人所有。应用可访问内容，不代表已获得下载、复制或传播授权。'
+	String get disclaimerItem2Content => '漫画、视频、封面及简介等来自所选插件连接的第三方站点，相关权利归原权利人所有。应用可访问内容，不代表已获得下载、复制或传播授权。';
 
-	/// zh-CN: '3. 用户责任'
-	String get disclaimerItem3Title => '3. 用户责任';
+	/// zh-CN: '3. 账号与第三方服务'
+	String get disclaimerItem3Title => '3. 账号与第三方服务';
 
-	/// zh-CN: '用户在使用本项目时，应自行评估其适用性并承担所有风险。用户须确保其使用行为符合所在国家或地区的法律法规及道德规范。开发者不对用户因违反法律法规或不当使用本项目而导致的任何后果负责。'
-	String get disclaimerItem3Content => '用户在使用本项目时，应自行评估其适用性并承担所有风险。用户须确保其使用行为符合所在国家或地区的法律法规及道德规范。开发者不对用户因违反法律法规或不当使用本项目而导致的任何后果负责。';
+	/// zh-CN: '登录、收藏、订阅及站点验证由对应插件和站点处理，账号规则与服务限制以站点说明为准。打开官网使用系统浏览器，其登录状态可能与应用内不同。'
+	String get disclaimerItem3Content => '登录、收藏、订阅及站点验证由对应插件和站点处理，账号规则与服务限制以站点说明为准。打开官网使用系统浏览器，其登录状态可能与应用内不同。';
 
-	/// zh-CN: '4. 第三方依赖与资源'
-	String get disclaimerItem4Title => '4. 第三方依赖与资源';
+	/// zh-CN: '4. 隐私与数据'
+	String get disclaimerItem4Title => '4. 隐私与数据';
 
-	/// zh-CN: '本项目可能依赖或引用第三方库、工具、服务或其他资源。开发者不对这些第三方资源的内容、功能、安全性或合法性负责。用户应自行评估并承担使用第三方资源的风险。'
-	String get disclaimerItem4Content => '本项目可能依赖或引用第三方库、工具、服务或其他资源。开发者不对这些第三方资源的内容、功能、安全性或合法性负责。用户应自行评估并承担使用第三方资源的风险。';
+	/// zh-CN: '插件在提供功能时可能处理登录信息、会话和内容请求，请仅安装可信插件。阅读记录、收藏和账号数据可能保存在设备及你启用的备份或同步服务中；分享诊断前请检查敏感信息。'
+	String get disclaimerItem4Content => '插件在提供功能时可能处理登录信息、会话和内容请求，请仅安装可信插件。阅读记录、收藏和账号数据可能保存在设备及你启用的备份或同步服务中；分享诊断前请检查敏感信息。';
 
-	/// zh-CN: '5. 无担保声明'
-	String get disclaimerItem5Title => '5. 无担保声明';
+	/// zh-CN: '5. 网络与可用性'
+	String get disclaimerItem5Title => '5. 网络与可用性';
 
-	/// zh-CN: '开发者明确声明不对本项目提供任何形式的担保，包括但不限于：适销性担保；特定用途适用性担保；不侵犯第三方权利担保；无错误或无中断运行担保。'
-	String get disclaimerItem5Content => '开发者明确声明不对本项目提供任何形式的担保，包括但不限于：适销性担保；特定用途适用性担保；不侵犯第三方权利担保；无错误或无中断运行担保。';
+	/// zh-CN: '第三方站点、接口、线路和验证规则可能变化，内容可能失效或暂时不可访问。应用无法保证第三方服务持续可用；重要本地数据请定期备份。'
+	String get disclaimerItem5Content => '第三方站点、接口、线路和验证规则可能变化，内容可能失效或暂时不可访问。应用无法保证第三方服务持续可用；重要本地数据请定期备份。';
 
-	/// zh-CN: '6. 项目修改与终止'
-	String get disclaimerItem6Title => '6. 项目修改与终止';
+	/// zh-CN: '6. 使用范围'
+	String get disclaimerItem6Title => '6. 使用范围';
 
-	/// zh-CN: '开发者保留随时修改、暂停或终止本项目的权利，且无需提前通知用户。开发者不对因项目修改、暂停或终止而导致的任何后果负责。'
-	String get disclaimerItem6Content => '开发者保留随时修改、暂停或终止本项目的权利，且无需提前通知用户。开发者不对因项目修改、暂停或终止而导致的任何后果负责。';
+	/// zh-CN: '请遵守所在地区的法律法规、站点规则及年龄要求，并确认你有权访问、下载或分享相关内容。'
+	String get disclaimerItem6Content => '请遵守所在地区的法律法规、站点规则及年龄要求，并确认你有权访问、下载或分享相关内容。';
 
-	/// zh-CN: '7. 贡献者责任'
-	String get disclaimerItem7Title => '7. 贡献者责任';
+	/// zh-CN: '7. 问题反馈'
+	String get disclaimerItem7Title => '7. 问题反馈';
 
-	/// zh-CN: '如果本项目接受外部贡献，贡献者的行为仅代表其个人立场，不代表开发者的观点或立场。开发者对贡献者的行为及其贡献内容不承担责任。'
-	String get disclaimerItem7Content => '如果本项目接受外部贡献，贡献者的行为仅代表其个人立场，不代表开发者的观点或立场。开发者对贡献者的行为及其贡献内容不承担责任。';
+	/// zh-CN: '内容、版权或站点账号问题请联系来源站点或权利人。应用与插件的功能问题请向相应项目反馈；提交截图和日志前请遮去账号、口令及其他敏感信息。'
+	String get disclaimerItem7Content => '内容、版权或站点账号问题请联系来源站点或权利人。应用与插件的功能问题请向相应项目反馈；提交截图和日志前请遮去账号、口令及其他敏感信息。';
 
-	/// zh-CN: '8. 法律合规性'
-	String get disclaimerItem8Title => '8. 法律合规性';
+	/// zh-CN: '8. 开源许可与责任边界'
+	String get disclaimerItem8Title => '8. 开源许可与责任边界';
 
-	/// zh-CN: '用户在使用本项目时，应确保其行为符合所在国家或地区的法律法规。开发者不对用户因违反法律法规而导致的任何后果负责。'
-	String get disclaimerItem8Content => '用户在使用本项目时，应确保其行为符合所在国家或地区的法律法规。开发者不对用户因违反法律法规而导致的任何后果负责。';
+	/// zh-CN: '软件以“原样”提供，不承诺无错误、不中断或适合特定用途。Breeze 及相关组件分别遵循其开源许可；担保与责任限制以相应许可和适用法律为准，本说明不排除法律规定不能免除的责任。'
+	String get disclaimerItem8Content => '软件以“原样”提供，不承诺无错误、不中断或适合特定用途。Breeze 及相关组件分别遵循其开源许可；担保与责任限制以相应许可和适用法律为准，本说明不排除法律规定不能免除的责任。';
 
-	/// zh-CN: '重要提示'
-	String get disclaimerImportant => '重要提示';
+	/// zh-CN: '说明'
+	String get disclaimerImportant => '说明';
 
-	/// zh-CN: '在使用本项目之前，请仔细阅读并理解本免责声明。如果您不同意本声明的任何条款，请立即停止使用本项目。继续使用本项目即表示您已阅读、理解并同意本免责声明的全部内容。'
-	String get disclaimerImportantContent => '在使用本项目之前，请仔细阅读并理解本免责声明。如果您不同意本声明的任何条款，请立即停止使用本项目。继续使用本项目即表示您已阅读、理解并同意本免责声明的全部内容。';
+	/// zh-CN: '本说明帮助你了解应用与第三方服务的边界，不替代开源许可或站点条款。可随时从“关于”或插件设置再次查看。'
+	String get disclaimerImportantContent => '本说明帮助你了解应用与第三方服务的边界，不替代开源许可或站点条款。可随时从“关于”或插件设置再次查看。';
 
 	/// zh-CN: '检查更新'
 	String get checkUpdate => '检查更新';
@@ -3113,6 +3114,9 @@ class Translations$about$zh_CN {
 
 	/// zh-CN: '隐私政策'
 	String get privacy => '隐私政策';
+
+	/// zh-CN: '内容来源、账号与数据说明'
+	String get disclaimerSummary => '内容来源、账号与数据说明';
 }
 
 // Path: oldHome
@@ -3434,6 +3438,39 @@ class Translations$sourceShell$zh_CN {
 
 	/// zh-CN: '退出图源，返回发现'
 	String get exitSourceHint => '退出图源，返回发现';
+
+	/// zh-CN: '退出插件'
+	String get exitPlugin => '退出插件';
+
+	/// zh-CN: '导航与设置'
+	String get navigationActions => '导航与设置';
+
+	/// zh-CN: '插件返回方式'
+	String get returnMode => '插件返回方式';
+
+	/// zh-CN: '按功能：跳过标签切换记录；逐层：保留返回路径。功能内部均逐层返回。'
+	String get returnModeDescription => '按功能：跳过标签切换记录；逐层：保留返回路径。功能内部均逐层返回。';
+
+	/// zh-CN: '按功能返回'
+	String get returnByFunction => '按功能返回';
+
+	/// zh-CN: '逐层返回'
+	String get returnStepByStep => '逐层返回';
+
+	/// zh-CN: '返回方式保存失败，请重试'
+	String get returnModeSaveFailed => '返回方式保存失败，请重试';
+
+	/// zh-CN: '页面诊断工具'
+	String get diagnosticTools => '页面诊断工具';
+
+	/// zh-CN: '显示页面分析和网页调试'
+	String get diagnosticToolsDescription => '显示页面分析和网页调试';
+
+	/// zh-CN: '无法保存诊断设置'
+	String get diagnosticToolsSaveFailed => '无法保存诊断设置';
+
+	/// zh-CN: '打开官网'
+	String get openOfficialWebsite => '打开官网';
 }
 
 // Path: searchResult
@@ -3515,6 +3552,42 @@ class Translations$comicList$zh_CN {
 
 	/// zh-CN: '列表请求缺少 fnPath'
 	String get missingFnPath => '列表请求缺少 fnPath';
+
+	/// zh-CN: '未能保存显示方式'
+	String get viewSaveFailed => '未能保存显示方式';
+
+	/// zh-CN: '切换网格'
+	String get switchToGrid => '切换网格';
+
+	/// zh-CN: '切换列表'
+	String get switchToList => '切换列表';
+
+	/// zh-CN: '查找选项'
+	String get searchOptions => '查找选项';
+
+	/// zh-CN: '全部 $count 项'
+	String showAllOptions({required Object count}) => '全部 ${count} 项';
+
+	/// zh-CN: '收起选项'
+	String get showFewerOptions => '收起选项';
+
+	/// zh-CN: '没有匹配的选项'
+	String get noMatchingOptions => '没有匹配的选项';
+
+	/// zh-CN: '已选筛选'
+	String get activeFilters => '已选筛选';
+
+	/// zh-CN: '清空筛选'
+	String get clearFilters => '清空筛选';
+
+	/// zh-CN: '又名：$names'
+	String aliases({required Object names}) => '又名：${names}';
+
+	/// zh-CN: '热度 $count'
+	String popularity({required Object count}) => '热度 ${count}';
+
+	/// zh-CN: '搜索范围'
+	String get scope => '搜索范围';
 }
 
 // Path: comicEntry
@@ -4092,17 +4165,26 @@ class Translations$videoPlayback$zh_CN {
 	/// zh-CN: '本机记录'
 	String get localWatchHistory => '本机记录';
 
-	/// zh-CN: '请在站点页面完成验证，通过后会继续打开原页面。'
-	String get verificationNote => '请在站点页面完成验证，通过后会继续打开原页面。';
+	/// zh-CN: '请在验证窗口完成站点验证，再返回继续浏览。'
+	String get verificationNote => '请在验证窗口完成站点验证，再返回继续浏览。';
 
-	/// zh-CN: '验证长时间未完成。请保持当前出口稳定；若同一网络下 Safari 正常，请复制诊断反馈，不必反复重新加载。'
-	String get verificationSlow => '验证长时间未完成。请保持当前出口稳定；若同一网络下 Safari 正常，请复制诊断反馈，不必反复重新加载。';
+	/// zh-CN: '验证尚未完成，可重新开始；需要排查时，在插件设置中开启“页面诊断工具”。'
+	String get verificationSlow => '验证尚未完成，可重新开始；需要排查时，在插件设置中开启“页面诊断工具”。';
 
-	/// zh-CN: '站点可能随时要求验证。请操作网站自己的验证控件；检查结果不会提交验证，重新加载会从头开始。'
-	String get verificationStableNote => '站点可能随时要求验证。请操作网站自己的验证控件；检查结果不会提交验证，重新加载会从头开始。';
+	/// zh-CN: '验证成功后会继续打开原页面。'
+	String get verificationStableNote => '验证成功后会继续打开原页面。';
 
 	/// zh-CN: '验证选项'
 	String get verificationActions => '验证选项';
+
+	/// zh-CN: '开始验证'
+	String get verificationWindow => '开始验证';
+
+	/// zh-CN: '返回并继续'
+	String get verificationWindowReturn => '返回并继续';
+
+	/// zh-CN: '完成站点验证后，返回继续浏览。'
+	String get verificationWindowHint => '完成站点验证后，返回继续浏览。';
 
 	/// zh-CN: '验证说明'
 	String get verificationHelp => '验证说明';
@@ -5485,6 +5567,330 @@ class Translations$videoPersonal$zh_CN {
 	String get emptyHistory => '还没有观看记录。';
 }
 
+// Path: videoLibrary
+class Translations$videoLibrary$zh_CN {
+	Translations$videoLibrary$zh_CN.internal(this._root);
+
+	final Translations _root; // ignore: unused_field
+
+	// Translations
+
+	/// zh-CN: '片库'
+	String get library => '片库';
+
+	/// zh-CN: '收藏'
+	String get favorites => '收藏';
+
+	/// zh-CN: '记录'
+	String get history => '记录';
+
+	/// zh-CN: '搜索片名'
+	String get searchHint => '搜索片名';
+
+	/// zh-CN: '搜索收藏的片名、演员或简介'
+	String get searchFavoritesHint => '搜索收藏的片名、演员或简介';
+
+	/// zh-CN: '查找分类'
+	String get searchCategoriesHint => '查找分类';
+
+	/// zh-CN: '全部'
+	String get all => '全部';
+
+	/// zh-CN: '未分类'
+	String get unfiled => '未分类';
+
+	/// zh-CN: '全部类型'
+	String get allTypes => '全部类型';
+
+	/// zh-CN: '全部年份'
+	String get allYears => '全部年份';
+
+	/// zh-CN: '分类'
+	String get categories => '分类';
+
+	/// zh-CN: '年份'
+	String get year => '年份';
+
+	/// zh-CN: '清除筛选'
+	String get clearFilters => '清除筛选';
+
+	/// zh-CN: '$count 部作品'
+	String results({required Object count}) => '${count} 部作品';
+
+	/// zh-CN: '没有找到作品'
+	String get noResults => '没有找到作品';
+
+	/// zh-CN: '换个关键词，或移除部分筛选条件'
+	String get noResultsHint => '换个关键词，或移除部分筛选条件';
+
+	/// zh-CN: '更多内容加载失败'
+	String get appendFailed => '更多内容加载失败';
+
+	/// zh-CN: '海报网格'
+	String get grid => '海报网格';
+
+	/// zh-CN: '详细列表'
+	String get detailList => '详细列表';
+
+	/// zh-CN: '切换视图'
+	String get display => '切换视图';
+
+	/// zh-CN: '最近收藏'
+	String get recentAdded => '最近收藏';
+
+	/// zh-CN: '片名排序'
+	String get titleOrder => '片名排序';
+
+	/// zh-CN: '年份排序'
+	String get yearOrder => '年份排序';
+
+	/// zh-CN: '排序'
+	String get sort => '排序';
+
+	/// zh-CN: '源站播放 $count'
+	String sourceViews({required Object count}) => '源站播放 ${count}';
+
+	/// zh-CN: '源站评分 $score · $count 人'
+	String sourceRating({required Object score, required Object count}) => '源站评分 ${score} · ${count} 人';
+
+	/// zh-CN: '简介'
+	String get synopsis => '简介';
+
+	/// zh-CN: '暂无简介'
+	String get noSynopsis => '暂无简介';
+
+	/// zh-CN: '主演'
+	String get starring => '主演';
+
+	/// zh-CN: '导演'
+	String get director => '导演';
+
+	/// zh-CN: '地区'
+	String get region => '地区';
+
+	/// zh-CN: '语言'
+	String get language => '语言';
+
+	/// zh-CN: '上映'
+	String get released => '上映';
+
+	/// zh-CN: '资源更新'
+	String get resourceUpdated => '资源更新';
+
+	/// zh-CN: '可播 $count 集'
+	String availableEpisodes({required Object count}) => '可播 ${count} 集';
+
+	/// zh-CN: '标注共 $count 集'
+	String plannedEpisodes({required Object count}) => '标注共 ${count} 集';
+
+	/// zh-CN: '播放'
+	String get play => '播放';
+
+	/// zh-CN: '继续观看'
+	String get resume => '继续观看';
+
+	/// zh-CN: '收藏'
+	String get addFavorite => '收藏';
+
+	/// zh-CN: '已收藏'
+	String get saved => '已收藏';
+
+	/// zh-CN: '管理收藏'
+	String get manageFavorite => '管理收藏';
+
+	/// zh-CN: '取消收藏'
+	String get removeFavorite => '取消收藏';
+
+	/// zh-CN: '分类文件夹'
+	String get chooseFolders => '分类文件夹';
+
+	/// zh-CN: '新建文件夹'
+	String get newFolder => '新建文件夹';
+
+	/// zh-CN: '重命名'
+	String get renameFolder => '重命名';
+
+	/// zh-CN: '删除文件夹'
+	String get deleteFolder => '删除文件夹';
+
+	/// zh-CN: '文件夹名称'
+	String get folderName => '文件夹名称';
+
+	/// zh-CN: '只删除文件夹，作品仍保留在全部收藏中。'
+	String get folderDeleteHint => '只删除文件夹，作品仍保留在全部收藏中。';
+
+	/// zh-CN: '名称需为 1–60 个字符'
+	String get nameInvalid => '名称需为 1–60 个字符';
+
+	/// zh-CN: '已有同名文件夹'
+	String get duplicateFolder => '已有同名文件夹';
+
+	/// zh-CN: '保存失败，请重试'
+	String get saveFailed => '保存失败，请重试';
+
+	/// zh-CN: '批量管理'
+	String get batchSelect => '批量管理';
+
+	/// zh-CN: '已选 $count 部'
+	String selectedCount({required Object count}) => '已选 ${count} 部';
+
+	/// zh-CN: '全选当前结果'
+	String get selectAll => '全选当前结果';
+
+	/// zh-CN: '归类'
+	String get classify => '归类';
+
+	/// zh-CN: '移除收藏'
+	String get removeSelected => '移除收藏';
+
+	/// zh-CN: '从收藏中移除选中的 $count 部作品？'
+	String batchRemoveHint({required Object count}) => '从收藏中移除选中的 ${count} 部作品？';
+
+	/// zh-CN: '还没有收藏'
+	String get favoritesEmpty => '还没有收藏';
+
+	/// zh-CN: '收藏喜欢的作品，随时回来继续看'
+	String get favoritesEmptyHint => '收藏喜欢的作品，随时回来继续看';
+
+	/// zh-CN: '这个文件夹还没有作品'
+	String get folderEmpty => '这个文件夹还没有作品';
+
+	/// zh-CN: '还没有观看记录'
+	String get historyEmpty => '还没有观看记录';
+
+	/// zh-CN: '播放记录保存在本机'
+	String get historyHint => '播放记录保存在本机';
+
+	/// zh-CN: '清空记录'
+	String get clearHistory => '清空记录';
+
+	/// zh-CN: '清空此来源的观看记录和续播位置？'
+	String get clearHistoryConfirm => '清空此来源的观看记录和续播位置？';
+
+	/// zh-CN: '云同步设置'
+	String get syncSettings => '云同步设置';
+
+	/// zh-CN: '收藏与文件夹随 Breeze 同步；记录留在本机。'
+	String get syncNote => '收藏与文件夹随 Breeze 同步；记录留在本机。';
+
+	/// zh-CN: '本机收藏，可在 Breeze 中配置云同步'
+	String get syncLocalOnly => '本机收藏，可在 Breeze 中配置云同步';
+
+	/// zh-CN: '同步收藏'
+	String get syncNow => '同步收藏';
+
+	/// zh-CN: '正在同步'
+	String get syncing => '正在同步';
+
+	/// zh-CN: '同步失败，本机收藏已保留'
+	String get syncFailed => '同步失败，本机收藏已保留';
+
+	/// zh-CN: '收藏已同步'
+	String get syncDone => '收藏已同步';
+
+	/// zh-CN: '查看原网页'
+	String get openWebsite => '查看原网页';
+
+	/// zh-CN: '播放设置'
+	String get playSettings => '播放设置';
+
+	/// zh-CN: '插件设置'
+	String get sourceSettings => '插件设置';
+
+	/// zh-CN: '返回插件列表'
+	String get exitSource => '返回插件列表';
+
+	/// zh-CN: '全部分类'
+	String get moreCategories => '全部分类';
+
+	/// zh-CN: '暂时没有可用剧集'
+	String get mediaUnavailable => '暂时没有可用剧集';
+
+	/// zh-CN: '刷新详情'
+	String get refreshDetails => '刷新详情';
+
+	/// zh-CN: '继续观看'
+	String get continueWatching => '继续观看';
+
+	/// zh-CN: '最近搜索'
+	String get recentSearches => '最近搜索';
+
+	/// zh-CN: '可放入多个文件夹；不选择则保留在未分类。'
+	String get folderSaveHint => '可放入多个文件夹；不选择则保留在未分类。';
+
+	/// zh-CN: '分类已保存'
+	String get folderSaved => '分类已保存';
+
+	/// zh-CN: '查看文件夹'
+	String get viewFolder => '查看文件夹';
+
+	/// zh-CN: '剧集'
+	String get allEpisodes => '剧集';
+
+	/// zh-CN: '本机收藏，联网后可播放'
+	String get offlineFavoriteHint => '本机收藏，联网后可播放';
+
+	/// zh-CN: '最近更新'
+	String get updatedFirst => '最近更新';
+
+	/// zh-CN: '当前接口暂不支持此筛选'
+	String get filterUnavailable => '当前接口暂不支持此筛选';
+
+	/// zh-CN: '追更'
+	String get follow => '追更';
+
+	/// zh-CN: '已追更'
+	String get followed => '已追更';
+
+	/// zh-CN: '追更'
+	String get following => '追更';
+
+	/// zh-CN: '有更新'
+	String get hasUpdates => '有更新';
+
+	/// zh-CN: '检查更新'
+	String get checkUpdates => '检查更新';
+
+	/// zh-CN: '正在检查'
+	String get checkingUpdates => '正在检查';
+
+	/// zh-CN: '新增 $count 集'
+	String newEpisodes({required Object count}) => '新增 ${count} 集';
+
+	/// zh-CN: '在影片详情开启追更，更新会集中显示在这里。'
+	String get followHint => '在影片详情开启追更，更新会集中显示在这里。';
+
+	/// zh-CN: '已加入收藏，进入收藏时检查新剧集'
+	String get followEnabled => '已加入收藏，进入收藏时检查新剧集';
+
+	/// zh-CN: '检查完成，已保留最新剧集信息'
+	String get updateCheckDone => '检查完成，已保留最新剧集信息';
+
+	/// zh-CN: '检查未完成，已有收藏和更新信息已保留'
+	String get updateCheckFailed => '检查未完成，已有收藏和更新信息已保留';
+
+	/// zh-CN: '近24小时'
+	String get recent24Hours => '近24小时';
+
+	/// zh-CN: '别名'
+	String get alternateTitle => '别名';
+
+	/// zh-CN: '题材'
+	String get genres => '题材';
+
+	/// zh-CN: '编剧'
+	String get writers => '编剧';
+
+	/// zh-CN: '豆瓣 $score'
+	String doubanRating({required Object score}) => '豆瓣 ${score}';
+
+	/// zh-CN: '评分由资源站提供，未实时核对豆瓣'
+	String get ratingSourceHint => '评分由资源站提供，未实时核对豆瓣';
+
+	/// zh-CN: '视频收藏、文件夹和追更采用合并同步；观看记录保存在本机。'
+	String get syncMergeNote => '视频收藏、文件夹和追更采用合并同步；观看记录保存在本机。';
+}
+
 /// The flat map containing all translations for locale <zh-CN>.
 /// Only for edge cases! For simple maps, use the map function of this library.
 ///
@@ -5654,9 +6060,9 @@ extension on Translations {
 			'settings.syncPluginsSubtitle' => '开启后同步插件配置与安装状态',
 			'settings.manualSyncSection' => '手动同步',
 			'settings.uploadToCloud' => '上传到云端',
-			'settings.uploadToCloudSubtitle' => '以本机数据为准，覆盖云端',
+			'settings.uploadToCloudSubtitle' => '设置与漫画以本机为准；视频收藏合并',
 			'settings.downloadFromCloud' => '从云端同步到本机',
-			'settings.downloadFromCloudSubtitle' => '以云端数据为准，应用到本机',
+			'settings.downloadFromCloudSubtitle' => '应用云端设置与漫画；视频收藏合并',
 			'settings.manualUpload' => '立即上传',
 			'settings.manualDownload' => '立即同步',
 			'settings.manualUploadSuccess' => '已上传到云端',
@@ -6432,30 +6838,31 @@ extension on Translations {
 			'about.contributorsCount' => ({required Object count}) => '${count}人',
 			'about.contributionsTooltip' => ({required Object login, required Object count}) => '${login} (${count} 次提交)',
 			'about.disclaimer' => '免责声明',
-			'about.disclaimerTitle' => '开源项目免责声明',
-			'about.disclaimerItem1Title' => '1. 项目性质与声明',
-			'about.disclaimerItem1Content' => '此版本基于 Breeze 开源项目开发，以"原样"形式提供。项目维护者不对功能完整性、稳定性、安全性或适用性作出任何明示或暗示的担保。',
-			'about.disclaimerItem2Title' => '2. 责任限制',
-			'about.disclaimerItem2Content' => '开发者对因使用、修改或分发本项目（包括但不限于直接使用、二次开发或集成至其他项目）而导致的任何直接、间接、特殊、附带或后果性损害不承担任何责任。这些损害可能包括但不限于数据丢失、设备损坏、业务中断、利润损失或其他经济损失。',
-			'about.disclaimerItem3Title' => '3. 用户责任',
-			'about.disclaimerItem3Content' => '用户在使用本项目时，应自行评估其适用性并承担所有风险。用户须确保其使用行为符合所在国家或地区的法律法规及道德规范。开发者不对用户因违反法律法规或不当使用本项目而导致的任何后果负责。',
-			'about.disclaimerItem4Title' => '4. 第三方依赖与资源',
-			'about.disclaimerItem4Content' => '本项目可能依赖或引用第三方库、工具、服务或其他资源。开发者不对这些第三方资源的内容、功能、安全性或合法性负责。用户应自行评估并承担使用第三方资源的风险。',
-			'about.disclaimerItem5Title' => '5. 无担保声明',
-			'about.disclaimerItem5Content' => '开发者明确声明不对本项目提供任何形式的担保，包括但不限于：适销性担保；特定用途适用性担保；不侵犯第三方权利担保；无错误或无中断运行担保。',
-			'about.disclaimerItem6Title' => '6. 项目修改与终止',
-			'about.disclaimerItem6Content' => '开发者保留随时修改、暂停或终止本项目的权利，且无需提前通知用户。开发者不对因项目修改、暂停或终止而导致的任何后果负责。',
-			'about.disclaimerItem7Title' => '7. 贡献者责任',
-			'about.disclaimerItem7Content' => '如果本项目接受外部贡献，贡献者的行为仅代表其个人立场，不代表开发者的观点或立场。开发者对贡献者的行为及其贡献内容不承担责任。',
-			'about.disclaimerItem8Title' => '8. 法律合规性',
-			'about.disclaimerItem8Content' => '用户在使用本项目时，应确保其行为符合所在国家或地区的法律法规。开发者不对用户因违反法律法规而导致的任何后果负责。',
-			'about.disclaimerImportant' => '重要提示',
-			'about.disclaimerImportantContent' => '在使用本项目之前，请仔细阅读并理解本免责声明。如果您不同意本声明的任何条款，请立即停止使用本项目。继续使用本项目即表示您已阅读、理解并同意本免责声明的全部内容。',
+			'about.disclaimerTitle' => '使用说明与免责声明',
+			'about.disclaimerItem1Title' => '1. 项目与插件',
+			'about.disclaimerItem1Content' => '本版本基于 Breeze 开源项目开发。插件独立提供站点接入能力；除非另有明确说明，应用与插件均非来源站点官方产品，也不代表站点立场。',
+			'about.disclaimerItem2Title' => '2. 内容与版权',
+			'about.disclaimerItem2Content' => '漫画、视频、封面及简介等来自所选插件连接的第三方站点，相关权利归原权利人所有。应用可访问内容，不代表已获得下载、复制或传播授权。',
+			'about.disclaimerItem3Title' => '3. 账号与第三方服务',
+			'about.disclaimerItem3Content' => '登录、收藏、订阅及站点验证由对应插件和站点处理，账号规则与服务限制以站点说明为准。打开官网使用系统浏览器，其登录状态可能与应用内不同。',
+			'about.disclaimerItem4Title' => '4. 隐私与数据',
+			'about.disclaimerItem4Content' => '插件在提供功能时可能处理登录信息、会话和内容请求，请仅安装可信插件。阅读记录、收藏和账号数据可能保存在设备及你启用的备份或同步服务中；分享诊断前请检查敏感信息。',
+			'about.disclaimerItem5Title' => '5. 网络与可用性',
+			'about.disclaimerItem5Content' => '第三方站点、接口、线路和验证规则可能变化，内容可能失效或暂时不可访问。应用无法保证第三方服务持续可用；重要本地数据请定期备份。',
+			'about.disclaimerItem6Title' => '6. 使用范围',
+			'about.disclaimerItem6Content' => '请遵守所在地区的法律法规、站点规则及年龄要求，并确认你有权访问、下载或分享相关内容。',
+			'about.disclaimerItem7Title' => '7. 问题反馈',
+			'about.disclaimerItem7Content' => '内容、版权或站点账号问题请联系来源站点或权利人。应用与插件的功能问题请向相应项目反馈；提交截图和日志前请遮去账号、口令及其他敏感信息。',
+			'about.disclaimerItem8Title' => '8. 开源许可与责任边界',
+			'about.disclaimerItem8Content' => '软件以“原样”提供，不承诺无错误、不中断或适合特定用途。Breeze 及相关组件分别遵循其开源许可；担保与责任限制以相应许可和适用法律为准，本说明不排除法律规定不能免除的责任。',
+			'about.disclaimerImportant' => '说明',
+			'about.disclaimerImportantContent' => '本说明帮助你了解应用与第三方服务的边界，不替代开源许可或站点条款。可随时从“关于”或插件设置再次查看。',
 			'about.checkUpdate' => '检查更新',
 			'about.alreadyLatest' => '已是最新版本',
 			'about.updateAvailable' => '发现新版本',
 			'about.license' => '开源许可',
 			'about.privacy' => '隐私政策',
+			'about.disclaimerSummary' => '内容来源、账号与数据说明',
 			'oldHome.title' => '首页',
 			'oldHome.search' => '搜索',
 			'oldHome.hotSearch' => '热搜',
@@ -6518,9 +6925,9 @@ extension on Translations {
 			'search.noResults' => '无结果',
 			'search.loadFailedForSource' => ({required Object source}) => '${source} 加载失败',
 			'discover.title' => '发现',
-			'discover.search' => '搜索',
 			_ => null,
 		} ?? switch (path) {
+			'discover.search' => '搜索',
 			'discover.settings' => '设置',
 			'discover.pluginManagement' => '插件管理',
 			'discover.manage' => '管理',
@@ -6550,6 +6957,17 @@ extension on Translations {
 			'sourceShell.settings' => '图源设置',
 			'sourceShell.exitSource' => '退出',
 			'sourceShell.exitSourceHint' => '退出图源，返回发现',
+			'sourceShell.exitPlugin' => '退出插件',
+			'sourceShell.navigationActions' => '导航与设置',
+			'sourceShell.returnMode' => '插件返回方式',
+			'sourceShell.returnModeDescription' => '按功能：跳过标签切换记录；逐层：保留返回路径。功能内部均逐层返回。',
+			'sourceShell.returnByFunction' => '按功能返回',
+			'sourceShell.returnStepByStep' => '逐层返回',
+			'sourceShell.returnModeSaveFailed' => '返回方式保存失败，请重试',
+			'sourceShell.diagnosticTools' => '页面诊断工具',
+			'sourceShell.diagnosticToolsDescription' => '显示页面分析和网页调试',
+			'sourceShell.diagnosticToolsSaveFailed' => '无法保存诊断设置',
+			'sourceShell.openOfficialWebsite' => '打开官网',
 			'searchResult.enterPageNumber' => '输入页数',
 			'searchResult.pleaseEnterNumber' => '请输入数字',
 			'searchResult.returnToTop' => '返回顶部',
@@ -6571,6 +6989,18 @@ extension on Translations {
 			'comicList.levelCategory' => ({required Object level}) => '第${level}级分类',
 			'comicList.missingListConfig' => '缺少列表请求配置',
 			'comicList.missingFnPath' => '列表请求缺少 fnPath',
+			'comicList.viewSaveFailed' => '未能保存显示方式',
+			'comicList.switchToGrid' => '切换网格',
+			'comicList.switchToList' => '切换列表',
+			'comicList.searchOptions' => '查找选项',
+			'comicList.showAllOptions' => ({required Object count}) => '全部 ${count} 项',
+			'comicList.showFewerOptions' => '收起选项',
+			'comicList.noMatchingOptions' => '没有匹配的选项',
+			'comicList.activeFilters' => '已选筛选',
+			'comicList.clearFilters' => '清空筛选',
+			'comicList.aliases' => ({required Object names}) => '又名：${names}',
+			'comicList.popularity' => ({required Object count}) => '热度 ${count}',
+			'comicList.scope' => '搜索范围',
 			'comicEntry.updatedAt' => ({required Object time}) => '更新: ${time}',
 			'comicEntry.finished' => '完结',
 			'comicEntry.ongoing' => '连载中',
@@ -6748,10 +7178,13 @@ extension on Translations {
 			'videoPlayback.catalogFallback' => '原生内容暂时加载失败，可重试或在网页打开',
 			'videoPlayback.verificationTitle' => '站点安全验证',
 			'videoPlayback.localWatchHistory' => '本机记录',
-			'videoPlayback.verificationNote' => '请在站点页面完成验证，通过后会继续打开原页面。',
-			'videoPlayback.verificationSlow' => '验证长时间未完成。请保持当前出口稳定；若同一网络下 Safari 正常，请复制诊断反馈，不必反复重新加载。',
-			'videoPlayback.verificationStableNote' => '站点可能随时要求验证。请操作网站自己的验证控件；检查结果不会提交验证，重新加载会从头开始。',
+			'videoPlayback.verificationNote' => '请在验证窗口完成站点验证，再返回继续浏览。',
+			'videoPlayback.verificationSlow' => '验证尚未完成，可重新开始；需要排查时，在插件设置中开启“页面诊断工具”。',
+			'videoPlayback.verificationStableNote' => '验证成功后会继续打开原页面。',
 			'videoPlayback.verificationActions' => '验证选项',
+			'videoPlayback.verificationWindow' => '开始验证',
+			'videoPlayback.verificationWindowReturn' => '返回并继续',
+			'videoPlayback.verificationWindowHint' => '完成站点验证后，返回继续浏览。',
 			'videoPlayback.verificationHelp' => '验证说明',
 			'videoPlayback.enableBrowserInspection' => '网页调试',
 			'videoPlayback.disableBrowserInspection' => '关闭调试',
@@ -7006,6 +7439,8 @@ extension on Translations {
 			'videoCommunity.commentsChanged' => '评论列表已更新，请刷新后继续。',
 			'videoCommunity.followShort' => '订阅',
 			'videoCommunity.reply' => '回复',
+			_ => null,
+		} ?? switch (path) {
 			'videoCommunity.overview' => '简介',
 			'videoCommunity.closeKeyboard' => '收起键盘',
 			'videoCommunity.dislike' => '点踩',
@@ -7033,8 +7468,6 @@ extension on Translations {
 			'videoAccount.forget' => '移除登录备份',
 			'videoAccount.forgetPrompt' => '移除此插件配置中的登录备份，下次上传/同步插件时更新云端。不会退出当前网页账号。已下载到其他设备的副本不会被远程撤销；如需撤销会话，请使用网站账号安全功能。',
 			'videoAccount.login' => '查看站点账户',
-			_ => null,
-		} ?? switch (path) {
 			'videoAccount.cloud' => 'Breeze 云同步设置',
 			'videoAccount.backupDone' => '已存入插件配置，请通过 Breeze 同步插件上传',
 			'videoAccount.restored' => '已写入本机浏览器，请打开站点确认登录；失效时需重新登录',
@@ -7166,6 +7599,111 @@ extension on Translations {
 			'videoPersonal.viewAll' => '查看全部',
 			'videoPersonal.recentUnavailable' => '暂时无法读取观看记录，可打开完整列表。',
 			'videoPersonal.emptyHistory' => '还没有观看记录。',
+			'videoLibrary.library' => '片库',
+			'videoLibrary.favorites' => '收藏',
+			'videoLibrary.history' => '记录',
+			'videoLibrary.searchHint' => '搜索片名',
+			'videoLibrary.searchFavoritesHint' => '搜索收藏的片名、演员或简介',
+			'videoLibrary.searchCategoriesHint' => '查找分类',
+			'videoLibrary.all' => '全部',
+			'videoLibrary.unfiled' => '未分类',
+			'videoLibrary.allTypes' => '全部类型',
+			'videoLibrary.allYears' => '全部年份',
+			'videoLibrary.categories' => '分类',
+			'videoLibrary.year' => '年份',
+			'videoLibrary.clearFilters' => '清除筛选',
+			'videoLibrary.results' => ({required Object count}) => '${count} 部作品',
+			'videoLibrary.noResults' => '没有找到作品',
+			'videoLibrary.noResultsHint' => '换个关键词，或移除部分筛选条件',
+			'videoLibrary.appendFailed' => '更多内容加载失败',
+			'videoLibrary.grid' => '海报网格',
+			'videoLibrary.detailList' => '详细列表',
+			'videoLibrary.display' => '切换视图',
+			'videoLibrary.recentAdded' => '最近收藏',
+			'videoLibrary.titleOrder' => '片名排序',
+			'videoLibrary.yearOrder' => '年份排序',
+			'videoLibrary.sort' => '排序',
+			'videoLibrary.sourceViews' => ({required Object count}) => '源站播放 ${count}',
+			'videoLibrary.sourceRating' => ({required Object score, required Object count}) => '源站评分 ${score} · ${count} 人',
+			'videoLibrary.synopsis' => '简介',
+			'videoLibrary.noSynopsis' => '暂无简介',
+			'videoLibrary.starring' => '主演',
+			'videoLibrary.director' => '导演',
+			'videoLibrary.region' => '地区',
+			'videoLibrary.language' => '语言',
+			'videoLibrary.released' => '上映',
+			'videoLibrary.resourceUpdated' => '资源更新',
+			'videoLibrary.availableEpisodes' => ({required Object count}) => '可播 ${count} 集',
+			'videoLibrary.plannedEpisodes' => ({required Object count}) => '标注共 ${count} 集',
+			'videoLibrary.play' => '播放',
+			'videoLibrary.resume' => '继续观看',
+			'videoLibrary.addFavorite' => '收藏',
+			'videoLibrary.saved' => '已收藏',
+			'videoLibrary.manageFavorite' => '管理收藏',
+			'videoLibrary.removeFavorite' => '取消收藏',
+			'videoLibrary.chooseFolders' => '分类文件夹',
+			'videoLibrary.newFolder' => '新建文件夹',
+			'videoLibrary.renameFolder' => '重命名',
+			'videoLibrary.deleteFolder' => '删除文件夹',
+			'videoLibrary.folderName' => '文件夹名称',
+			'videoLibrary.folderDeleteHint' => '只删除文件夹，作品仍保留在全部收藏中。',
+			'videoLibrary.nameInvalid' => '名称需为 1–60 个字符',
+			'videoLibrary.duplicateFolder' => '已有同名文件夹',
+			'videoLibrary.saveFailed' => '保存失败，请重试',
+			'videoLibrary.batchSelect' => '批量管理',
+			'videoLibrary.selectedCount' => ({required Object count}) => '已选 ${count} 部',
+			'videoLibrary.selectAll' => '全选当前结果',
+			'videoLibrary.classify' => '归类',
+			'videoLibrary.removeSelected' => '移除收藏',
+			'videoLibrary.batchRemoveHint' => ({required Object count}) => '从收藏中移除选中的 ${count} 部作品？',
+			'videoLibrary.favoritesEmpty' => '还没有收藏',
+			'videoLibrary.favoritesEmptyHint' => '收藏喜欢的作品，随时回来继续看',
+			'videoLibrary.folderEmpty' => '这个文件夹还没有作品',
+			'videoLibrary.historyEmpty' => '还没有观看记录',
+			'videoLibrary.historyHint' => '播放记录保存在本机',
+			'videoLibrary.clearHistory' => '清空记录',
+			'videoLibrary.clearHistoryConfirm' => '清空此来源的观看记录和续播位置？',
+			'videoLibrary.syncSettings' => '云同步设置',
+			'videoLibrary.syncNote' => '收藏与文件夹随 Breeze 同步；记录留在本机。',
+			'videoLibrary.syncLocalOnly' => '本机收藏，可在 Breeze 中配置云同步',
+			'videoLibrary.syncNow' => '同步收藏',
+			'videoLibrary.syncing' => '正在同步',
+			'videoLibrary.syncFailed' => '同步失败，本机收藏已保留',
+			'videoLibrary.syncDone' => '收藏已同步',
+			'videoLibrary.openWebsite' => '查看原网页',
+			'videoLibrary.playSettings' => '播放设置',
+			'videoLibrary.sourceSettings' => '插件设置',
+			'videoLibrary.exitSource' => '返回插件列表',
+			'videoLibrary.moreCategories' => '全部分类',
+			'videoLibrary.mediaUnavailable' => '暂时没有可用剧集',
+			'videoLibrary.refreshDetails' => '刷新详情',
+			'videoLibrary.continueWatching' => '继续观看',
+			'videoLibrary.recentSearches' => '最近搜索',
+			'videoLibrary.folderSaveHint' => '可放入多个文件夹；不选择则保留在未分类。',
+			'videoLibrary.folderSaved' => '分类已保存',
+			'videoLibrary.viewFolder' => '查看文件夹',
+			'videoLibrary.allEpisodes' => '剧集',
+			'videoLibrary.offlineFavoriteHint' => '本机收藏，联网后可播放',
+			'videoLibrary.updatedFirst' => '最近更新',
+			'videoLibrary.filterUnavailable' => '当前接口暂不支持此筛选',
+			'videoLibrary.follow' => '追更',
+			'videoLibrary.followed' => '已追更',
+			'videoLibrary.following' => '追更',
+			'videoLibrary.hasUpdates' => '有更新',
+			'videoLibrary.checkUpdates' => '检查更新',
+			'videoLibrary.checkingUpdates' => '正在检查',
+			'videoLibrary.newEpisodes' => ({required Object count}) => '新增 ${count} 集',
+			'videoLibrary.followHint' => '在影片详情开启追更，更新会集中显示在这里。',
+			'videoLibrary.followEnabled' => '已加入收藏，进入收藏时检查新剧集',
+			'videoLibrary.updateCheckDone' => '检查完成，已保留最新剧集信息',
+			'videoLibrary.updateCheckFailed' => '检查未完成，已有收藏和更新信息已保留',
+			'videoLibrary.recent24Hours' => '近24小时',
+			'videoLibrary.alternateTitle' => '别名',
+			'videoLibrary.genres' => '题材',
+			'videoLibrary.writers' => '编剧',
+			'videoLibrary.doubanRating' => ({required Object score}) => '豆瓣 ${score}',
+			'videoLibrary.ratingSourceHint' => '评分由资源站提供，未实时核对豆瓣',
+			'videoLibrary.syncMergeNote' => '视频收藏、文件夹和追更采用合并同步；观看记录保存在本机。',
 			_ => null,
 		};
 	}

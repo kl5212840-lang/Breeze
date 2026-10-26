@@ -1,3 +1,5 @@
+import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'dart:ui';
 
 import 'package:material_ui/material_ui.dart';
@@ -10,6 +12,7 @@ import 'package:zephyr/util/context/context_extensions.dart';
 
 class ComicReadAppBar extends StatelessWidget {
   final String title;
+  final String source;
   final ValueChanged<int> changePageIndex;
   final bool isDesktopFullscreen;
   final VoidCallback? onToggleFullscreen;
@@ -17,6 +20,7 @@ class ComicReadAppBar extends StatelessWidget {
   const ComicReadAppBar({
     super.key,
     required this.title,
+    this.source = '',
     required this.changePageIndex,
     this.isDesktopFullscreen = false,
     this.onToggleFullscreen,
@@ -53,21 +57,24 @@ class ComicReadAppBar extends StatelessWidget {
             child: BackdropFilter(
               filter: ImageFilter.blur(sigmaX: 10.0, sigmaY: 10.0),
               child: AppBar(
+                leading: const SourceBackButton(),
                 title: ScrollableTitle(text: title),
                 titleSpacing: 6,
                 actions: [
                   if (onToggleFullscreen != null)
-                    IconButton(
+                    SourceChromeIconButton(
                       tooltip: isDesktopFullscreen
                           ? t.reader.exitFullscreen
                           : t.reader.enterFullscreen,
                       onPressed: onToggleFullscreen,
-                      icon: Icon(
-                        isDesktopFullscreen
-                            ? Icons.fullscreen_exit_rounded
-                            : Icons.fullscreen_rounded,
-                      ),
+                      icon: isDesktopFullscreen
+                          ? Icons.fullscreen_exit_rounded
+                          : Icons.fullscreen_rounded,
+                      symbol: isDesktopFullscreen
+                          ? 'arrow.down.right.and.arrow.up.left'
+                          : 'arrow.up.left.and.arrow.down.right',
                     ),
+                  SourceMoreButton(source: source),
                 ],
                 backgroundColor: colorScheme.surface.withValues(alpha: 0.78),
                 surfaceTintColor: Colors.transparent,

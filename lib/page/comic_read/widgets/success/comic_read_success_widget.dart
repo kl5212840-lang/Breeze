@@ -1,3 +1,4 @@
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'dart:async';
 
 import 'package:auto_route/auto_route.dart';
@@ -80,11 +81,7 @@ class _ComicReadSuccessWidgetState extends State<ComicReadSuccessWidget> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                IconButton(
-                  tooltip: '返回',
-                  onPressed: () => context.pop(),
-                  icon: const Icon(Icons.arrow_back),
-                ),
+                SourceBackButton(onPressed: () => context.pop()),
                 const Expanded(
                   child: Center(child: CircularProgressIndicator()),
                 ),

@@ -1,3 +1,6 @@
+import 'package:zephyr/page/search_result/view/source_search_scope_control.dart';
+import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -62,97 +65,102 @@ class _SearchBarState extends State<SearchBar> {
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<SearchCubit, SearchStates>(
-      builder: (context, state) => Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: Row(
-          children: [
-            IconButton(
-              icon: const Icon(Icons.arrow_back),
-              onPressed: () => context.maybePop(),
+      builder: (context, state) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Row(
+              children: [
+                SourceBackButton(onPressed: () => context.maybePop()),
+                Expanded(
+                  child: SearchQueryField(
+                    query: state.searchKeyword,
+                    autoExpand: true,
+                    hintText: t.search.searchHint,
+                    semanticLabel: t.search.title,
+                    onChanged: (keyword) {
+                      // 调度时记基线：开火时 cubit 若已被提交/dialog 回写改过，
+                      // 说明这次输入已过期，直接丢弃，否则旧词盖掉新提交。
+                      final scheduledBase = context
+                          .read<SearchCubit>()
+                          .state
+                          .searchKeyword;
+                      _keywordDebouncer.run(() {
+                        if (!mounted) {
+                          return;
+                        }
+                        final searchCubit = context.read<SearchCubit>();
+                        if (searchCubit.state.searchKeyword != scheduledBase) {
+                          return;
+                        }
+                        if (searchCubit.state.searchKeyword == keyword) {
+                          return;
+                        }
+                        searchCubit.update(
+                          searchCubit.state.copyWith(searchKeyword: keyword),
+                        );
+                      });
+                    },
+                    onSubmitted: (keyword) {
+                      _keywordDebouncer.cancel();
+                      onSearch(
+                        context,
+                        keyword,
+                        aggregateMode: widget.aggregateMode,
+                        aggregateSources: _aggregateSources,
+                      );
+                    },
+                  ),
+                ),
+                if (widget.aggregateMode)
+                  IconButton(
+                    icon: const Icon(Icons.tune),
+                    onPressed: () async {
+                      _keywordDebouncer.cancel();
+                      final searchCubit = context.read<SearchCubit>();
+                      final options = _sourceOptions(context);
+                      if (_aggregateSources.isEmpty) {
+                        _aggregateSources = {
+                          for (final source in options) source.pluginId: true,
+                        };
+                      }
+                      final selected = await showSourceSelectDialog(
+                        context,
+                        initial: _aggregateSources,
+                        sourceOptions: options,
+                      );
+                      if (selected != null && mounted) {
+                        searchCubit.update(
+                          searchCubit.state.copyWith(
+                            aggregateSources: Map<String, bool>.from(selected),
+                          ),
+                        );
+                        setState(() => _aggregateSources = selected);
+                      }
+                    },
+                  )
+                else
+                  FutureBuilder<bool>(
+                    future: hasUniqueAdvancedFields(state.from),
+                    builder: (context, snapshot) => snapshot.data == true
+                        ? SourceChromeIconButton(
+                            tooltip: t.search.advancedSearchOptions,
+                            icon: Icons.tune,
+                            symbol: 'slider.horizontal.3',
+                            onPressed: () async {
+                              _keywordDebouncer.cancel();
+                              await _showSingleSourceAdvancedSearch(context);
+                            },
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                if (!widget.aggregateMode) SourceMoreButton(source: state.from),
+              ],
             ),
-            Expanded(
-              child: SearchQueryField(
-                query: state.searchKeyword,
-                autoExpand: true,
-                hintText: t.search.searchHint,
-                semanticLabel: t.search.title,
-                onChanged: (keyword) {
-                  // 调度时记基线：开火时 cubit 若已被提交/dialog 回写改过，
-                  // 说明这次输入已过期，直接丢弃，否则旧词盖掉新提交。
-                  final scheduledBase = context
-                      .read<SearchCubit>()
-                      .state
-                      .searchKeyword;
-                  _keywordDebouncer.run(() {
-                    if (!mounted) {
-                      return;
-                    }
-                    final searchCubit = context.read<SearchCubit>();
-                    if (searchCubit.state.searchKeyword != scheduledBase) {
-                      return;
-                    }
-                    if (searchCubit.state.searchKeyword == keyword) {
-                      return;
-                    }
-                    searchCubit.update(
-                      searchCubit.state.copyWith(searchKeyword: keyword),
-                    );
-                  });
-                },
-                onSubmitted: (keyword) {
-                  _keywordDebouncer.cancel();
-                  onSearch(
-                    context,
-                    keyword,
-                    aggregateMode: widget.aggregateMode,
-                    aggregateSources: _aggregateSources,
-                  );
-                },
-              ),
-            ),
-            if (widget.aggregateMode)
-              IconButton(
-                icon: const Icon(Icons.tune),
-                onPressed: () async {
-                  _keywordDebouncer.cancel();
-                  final searchCubit = context.read<SearchCubit>();
-                  final options = _sourceOptions(context);
-                  if (_aggregateSources.isEmpty) {
-                    _aggregateSources = {
-                      for (final source in options) source.pluginId: true,
-                    };
-                  }
-                  final selected = await showSourceSelectDialog(
-                    context,
-                    initial: _aggregateSources,
-                    sourceOptions: options,
-                  );
-                  if (selected != null && mounted) {
-                    searchCubit.update(
-                      searchCubit.state.copyWith(
-                        aggregateSources: Map<String, bool>.from(selected),
-                      ),
-                    );
-                    setState(() => _aggregateSources = selected);
-                  }
-                },
-              )
-            else
-              FutureBuilder<bool>(
-                future: hasUniqueAdvancedFields(state.from),
-                builder: (context, snapshot) => snapshot.data == true
-                    ? IconButton(
-                        tooltip: t.search.advancedSearchOptions,
-                        icon: const Icon(Icons.tune),
-                        onPressed: () async {
-                          _keywordDebouncer.cancel();
-                          await _showSingleSourceAdvancedSearch(context);
-                        },
-                      )
-                    : const SizedBox.shrink(),
-              ),
-          ],
-        ),
+          ),
+          if (!widget.aggregateMode) const SourceSearchScopeBar(),
+        ],
       ),
     );
   }

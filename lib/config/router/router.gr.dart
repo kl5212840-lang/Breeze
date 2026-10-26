@@ -1173,6 +1173,7 @@ class PluginSettingsRoute extends _i46.PageRouteInfo<PluginSettingsRouteArgs> {
     required String pluginUuid,
     required String pluginRuntimeName,
     required String pluginDisplayName,
+    bool insideSource = false,
     List<_i46.PageRouteInfo>? children,
   }) : super(
          PluginSettingsRoute.name,
@@ -1182,6 +1183,7 @@ class PluginSettingsRoute extends _i46.PageRouteInfo<PluginSettingsRouteArgs> {
            pluginUuid: pluginUuid,
            pluginRuntimeName: pluginRuntimeName,
            pluginDisplayName: pluginDisplayName,
+           insideSource: insideSource,
          ),
          initialChildren: children,
        );
@@ -1198,6 +1200,7 @@ class PluginSettingsRoute extends _i46.PageRouteInfo<PluginSettingsRouteArgs> {
         pluginUuid: args.pluginUuid,
         pluginRuntimeName: args.pluginRuntimeName,
         pluginDisplayName: args.pluginDisplayName,
+        insideSource: args.insideSource,
       );
     },
   );
@@ -1210,6 +1213,7 @@ class PluginSettingsRouteArgs {
     required this.pluginUuid,
     required this.pluginRuntimeName,
     required this.pluginDisplayName,
+    this.insideSource = false,
   });
 
   final _i47.Key? key;
@@ -1222,9 +1226,11 @@ class PluginSettingsRouteArgs {
 
   final String pluginDisplayName;
 
+  final bool insideSource;
+
   @override
   String toString() {
-    return 'PluginSettingsRouteArgs{key: $key, from: $from, pluginUuid: $pluginUuid, pluginRuntimeName: $pluginRuntimeName, pluginDisplayName: $pluginDisplayName}';
+    return 'PluginSettingsRouteArgs{key: $key, from: $from, pluginUuid: $pluginUuid, pluginRuntimeName: $pluginRuntimeName, pluginDisplayName: $pluginDisplayName, insideSource: $insideSource}';
   }
 
   @override
@@ -1235,7 +1241,8 @@ class PluginSettingsRouteArgs {
         from == other.from &&
         pluginUuid == other.pluginUuid &&
         pluginRuntimeName == other.pluginRuntimeName &&
-        pluginDisplayName == other.pluginDisplayName;
+        pluginDisplayName == other.pluginDisplayName &&
+        insideSource == other.insideSource;
   }
 
   @override
@@ -1244,7 +1251,8 @@ class PluginSettingsRouteArgs {
       from.hashCode ^
       pluginUuid.hashCode ^
       pluginRuntimeName.hashCode ^
-      pluginDisplayName.hashCode;
+      pluginDisplayName.hashCode ^
+      insideSource.hashCode;
 }
 
 /// generated route for

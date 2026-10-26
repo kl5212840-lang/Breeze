@@ -7,6 +7,7 @@ import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/page/search_result/view/source_list_filter_bar.dart';
 import 'package:zephyr/page/search_result/view/source_list_categories.dart';
 import 'package:zephyr/page/search_result/view/source_search_capabilities.dart';
+import 'package:zephyr/page/search_result/view/source_search_scope_control.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
 
 /// Source-provided categories are a blocklist, not an inclusive search filter.
@@ -109,6 +110,14 @@ class _SourceQuickCategoryBarState extends State<SourceQuickCategoryBar> {
         return FutureBuilder<List<Map<String, dynamic>>>(
           future: sourceAdvancedFields(state.from),
           builder: (context, snapshot) => SourceListFilterBar(
+            leading: sourceSearchScopeOptions(snapshot.data ?? const []).isEmpty
+                ? null
+                : SourceSearchScopeControl(
+                    options: sourceSearchScopeOptions(
+                      snapshot.data ?? const [],
+                    ),
+                    onChanged: _scheduleSearch,
+                  ),
             categories: widget.categories,
             blockedCategories: blocked,
             onCategoryTap: (category) => _toggleCategory(context, category),

@@ -1,3 +1,4 @@
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -25,11 +26,7 @@ class ComicErrorWidget extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          IconButton(
-            tooltip: t.common.back,
-            onPressed: () => context.pop(),
-            icon: const Icon(Icons.arrow_back),
-          ),
+          SourceBackButton(onPressed: () => context.pop()),
           Expanded(
             child: Center(
               child: Padding(

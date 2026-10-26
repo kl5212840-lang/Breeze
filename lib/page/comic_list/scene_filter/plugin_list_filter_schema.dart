@@ -83,18 +83,16 @@ class PluginChoiceField {
       return null;
     }
 
-    final targetValue = (requestedValue?.trim().isNotEmpty ?? false)
-        ? requestedValue!.trim()
-        : (fallbackValue?.trim() ?? '');
-
-    return findOptionByValue(targetValue) ?? options.first;
+    return findOptionByValue(requestedValue) ??
+        findOptionByValue(fallbackValue) ??
+        options.first;
   }
 
   PluginChoiceOption? findOptionByValue(String? value) {
-    final trimmed = value?.trim() ?? '';
-    if (trimmed.isEmpty) {
+    if (value == null) {
       return null;
     }
+    final trimmed = value.trim();
 
     for (final option in options) {
       final found = option.findByValue(trimmed);
@@ -106,10 +104,10 @@ class PluginChoiceField {
   }
 
   List<PluginChoiceOption>? findPathByValue(String? value) {
-    final trimmed = value?.trim() ?? '';
-    if (trimmed.isEmpty) {
+    if (value == null) {
       return null;
     }
+    final trimmed = value.trim();
 
     for (final option in options) {
       final path = option.findPathByValue(trimmed);

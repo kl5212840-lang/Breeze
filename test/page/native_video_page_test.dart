@@ -208,6 +208,84 @@ void main() {
     VideoPlayerPlatform.instance = originalPlatform;
   });
 
+  for (final initiallyFailed in [false, true]) {
+    testWidgets(
+      'API episode loader has a manual picker without an external route; initial failure=$initiallyFailed',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({
+          'breeze.video.defaults.autoplay': false,
+          'breeze.video.defaults.controlsStyle': 'breeze',
+        });
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final cards = [
+          for (final id in [1, 2])
+            NativeVideoCard(
+              title: 'Episode $id',
+              episodeLabel: '第$id集',
+              watchUrl: Uri.parse(
+                'https://www.ikunzy.com/voddetail/7.html?line=a&episode=$id',
+              ),
+              coverUrl: null,
+            ),
+        ];
+        NativePlaybackSession episode(int id) => NativePlaybackSession(
+          title: 'Series',
+          watchUrl: cards[id - 1].watchUrl,
+          sources: [
+            NativePlaybackSource(
+              url: Uri.parse('https://fixture.test/$id.mp4'),
+              label: 'auto',
+              headers: const {},
+            ),
+          ],
+          description: '',
+          tags: const [],
+          episodes: cards,
+        );
+        final reads = <Uri>[];
+        if (initiallyFailed) {
+          platform.failMediaOnce = 'https://fixture.test/1.mp4';
+        }
+        await tester.pumpWidget(
+          MaterialApp(
+            home: NativeVideoPage(
+              session: episode(1),
+              detailBuilder: (_, _) => const Text('API details'),
+              loadEpisode: (uri) async {
+                reads.add(uri);
+                return (
+                  session: episode(int.parse(uri.queryParameters['episode']!)),
+                  operations: null,
+                );
+              },
+            ),
+          ),
+        );
+        for (var n = 0; n < 8; n++) {
+          await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        final picker = find.byKey(const ValueKey('video-inline.episodes'));
+        expect(picker, findsOneWidget);
+        await tester.tap(picker);
+        await tester.pump(const Duration(milliseconds: 260));
+        await tester.tap(
+          find.byKey(ValueKey('episode-queue.${cards[1].watchUrl}')),
+        );
+        for (var n = 0; n < 12; n++) {
+          await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        expect(reads, [cards[1].watchUrl]);
+        expect(platform.urls.last, 'https://fixture.test/2.mp4');
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets(
     'detail actions, fullscreen and watch-later use one state without recreating playback',
     (tester) async {
@@ -2698,4 +2776,81 @@ void main() {
       },
     );
   }
+  testWidgets(
+    'ordinary back collapses fullscreen then leaves and disposes the active player',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      SharedPreferences.setMockInitialValues({
+        'breeze.video.defaults.recordHistory': false,
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => NativeVideoPage(
+                      session: NativePlaybackSession(
+                        title: 'Exit lifecycle',
+                        watchUrl: Uri.parse('https://hanime1.me/watch?v=42'),
+                        sources: [
+                          NativePlaybackSource(
+                            url: Uri.parse('https://fixture.test/exit.mp4'),
+                            label: 'auto',
+                            headers: const {},
+                          ),
+                        ],
+                        description: '',
+                        tags: const [],
+                      ),
+                    ),
+                  ),
+                ),
+                child: const Text('App destination'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('App destination'));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(platform._events, isNotEmpty);
+      await tester.tap(
+        find.byTooltip(t.videoPlayback.fullscreen).hitTestable().last,
+      );
+      await tester.pumpAndSettle();
+      tester.view.physicalSize = const Size(844, 390);
+      await tester.pump();
+      await tester.tap(
+        find.byTooltip(t.videoPlayback.exitFullscreen).hitTestable().first,
+      );
+      await tester.pumpAndSettle();
+      tester.view.physicalSize = const Size(390, 844);
+      await tester.pump();
+      expect(find.byType(NativeVideoPage), findsOneWidget);
+      expect(platform._events, isNotEmpty);
+      expect(platform.urls, hasLength(1));
+      await tester.tap(find.byTooltip(t.common.back).hitTestable().first);
+      await tester.pumpAndSettle();
+      expect(find.text('App destination'), findsOneWidget);
+      expect(find.byType(NativeVideoPage), findsNothing);
+      // VideoPlayer stream cancellation finishes outside the widget fake
+      // clock; pumping frames alone does not let that teardown complete.
+      await tester.runAsync(() async {
+        await Future<void>.delayed(Duration.zero);
+      });
+      expect(
+        find.byType(NativeVideoPage, skipOffstage: false),
+        findsNothing,
+        reason: 'the source route must be disposed, including offstage pages',
+      );
+      expect(platform._events, isEmpty);
+    },
+  );
 }

@@ -1,3 +1,7 @@
+import 'package:zephyr/page/source_shell/source_list_presentation.dart';
+import 'package:zephyr/page/source_shell/source_list_view_toggle.dart';
+import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:auto_route/annotations.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -69,7 +73,6 @@ class _ComicListView extends StatefulWidget {
 
 class _ComicListViewState extends State<_ComicListView>
     with AutomaticKeepAliveClientMixin {
-  bool _cloudDetailedView = true;
   final Set<String> _blockedCategories = {};
 
   @override
@@ -106,7 +109,11 @@ class _ComicListViewState extends State<_ComicListView>
     );
   }
 
-  Widget _cloudToolbar(ComicListState state) => SourceListFilterBar(
+  Widget _cloudToolbar(
+    ComicListState state,
+    bool detailed,
+    ValueChanged<bool> onChanged,
+  ) => SourceListFilterBar(
     categories: sourceQuickCategories(state.currentFrom),
     blockedCategories: _blockedCategories,
     onCategoryTap: _toggleCategory,
@@ -116,8 +123,8 @@ class _ComicListViewState extends State<_ComicListView>
     onSortChanged: (value) => context
         .read<ComicListCubit>()
         .applyFilterSelections({...state.filterSelections, 'order': value}),
-    detailedView: _cloudDetailedView,
-    onViewChanged: (value) => setState(() => _cloudDetailedView = value),
+    detailedView: detailed,
+    onViewChanged: onChanged,
     viewToggleKey: const ValueKey('cloud-favorite-view-toggle'),
   );
 
@@ -135,57 +142,128 @@ class _ComicListViewState extends State<_ComicListView>
         final title =
             widget.title ?? (state.scene?.title ?? t.comicList.defaultTitle);
 
-        if (widget.embedded) {
-          return Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        title,
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
+        return SourceListPresentation(
+          source: state.currentFrom,
+          detailedByDefault: isCloudFavorite,
+          builder: (context, detailed, onViewChanged) {
+            if (widget.embedded) {
+              return Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                        if (!isBikaRanking && !isCloudFavorite)
+                          SourceListViewToggle(
+                            detailed: detailed,
+                            onChanged: onViewChanged,
+                          ),
+                        if (state.requiresFilter &&
+                            !isBikaRanking &&
+                            !isCloudFavorite)
+                          IconButton(
+                            tooltip: t.comicList.filter,
+                            icon: const Icon(Icons.filter_alt_outlined),
+                            onPressed: () => _openFilterDialog(context),
+                          ),
+                      ],
                     ),
-                    if (state.requiresFilter &&
-                        !isBikaRanking &&
-                        !isCloudFavorite)
-                      IconButton(
-                        tooltip: t.comicList.filter,
-                        icon: const Icon(Icons.filter_alt_outlined),
-                        onPressed: () => _openFilterDialog(context),
-                      ),
-                  ],
-                ),
-              ),
-              if (isCloudFavorite) _cloudToolbar(state),
-              if (isBikaRanking) _rankingPeriodBar(context, state),
-              Expanded(child: _buildBody(context, state)),
-            ],
-          );
-        }
+                  ),
+                  if (isCloudFavorite)
+                    _cloudToolbar(state, detailed, onViewChanged),
+                  if (isBikaRanking) _rankingPeriodBar(context, state),
+                  if (!isCloudFavorite) _filterSummary(state),
+                  Expanded(child: _buildBody(context, state, detailed)),
+                ],
+              );
+            }
 
-        return Scaffold(
-          appBar: AppBar(
-            title: Text(title),
-            actions: [
-              if (state.requiresFilter && !isBikaRanking && !isCloudFavorite)
-                IconButton(
-                  icon: const Icon(Icons.filter_alt),
-                  onPressed: () => _openFilterDialog(context),
-                ),
-            ],
-          ),
-          body: Column(
-            children: [
-              if (isCloudFavorite) _cloudToolbar(state),
-              if (isBikaRanking) _rankingPeriodBar(context, state),
-              Expanded(child: _buildBody(context, state)),
-            ],
-          ),
+            return Scaffold(
+              appBar: AppBar(
+                leading: const SourceBackButton(),
+                title: Text(title),
+                actions: [
+                  if (!isBikaRanking && !isCloudFavorite)
+                    SourceListViewToggle(
+                      detailed: detailed,
+                      onChanged: onViewChanged,
+                    ),
+                  if (state.requiresFilter &&
+                      !isBikaRanking &&
+                      !isCloudFavorite)
+                    SourceChromeIconButton(
+                      tooltip: t.comicList.filter,
+                      icon: Icons.filter_alt_outlined,
+                      symbol: 'line.3.horizontal.decrease',
+                      onPressed: () => _openFilterDialog(context),
+                    ),
+                  SourceMoreButton(source: state.currentFrom),
+                ],
+              ),
+              body: Column(
+                children: [
+                  if (isCloudFavorite)
+                    _cloudToolbar(state, detailed, onViewChanged),
+                  if (isBikaRanking) _rankingPeriodBar(context, state),
+                  if (!isCloudFavorite) _filterSummary(state),
+                  Expanded(child: _buildBody(context, state, detailed)),
+                ],
+              ),
+            );
+          },
         );
       },
+    );
+  }
+
+  Widget _filterSummary(ComicListState state) {
+    final bundle = state.filterBundle;
+    if (bundle == null) return const SizedBox.shrink();
+    final selected = <String>[];
+    for (final field in bundle.scheme.fields) {
+      final value = state.filterSelections[field.key];
+      if (value == null || value == bundle.defaultSelections[field.key]) {
+        continue;
+      }
+      final option = field.findOptionByValue(value);
+      if (option != null && option.value.isNotEmpty) {
+        selected.add('${field.label} · ${option.label}');
+      }
+    }
+    if (selected.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      height: 48,
+      child: Row(
+        children: [
+          Expanded(
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: selected.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, index) => Center(
+                child: ActionChip(
+                  label: Text(convertChineseForDisplay(selected[index])),
+                  onPressed: () => _openFilterDialog(context),
+                ),
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: t.comicList.clearFilters,
+            icon: const Icon(Icons.filter_alt_off_outlined),
+            onPressed: () => context
+                .read<ComicListCubit>()
+                .applyFilterSelections(bundle.defaultSelections),
+          ),
+        ],
+      ),
     );
   }
 
@@ -255,7 +333,7 @@ class _ComicListViewState extends State<_ComicListView>
     );
   }
 
-  Widget _buildBody(BuildContext context, ComicListState state) {
+  Widget _buildBody(BuildContext context, ComicListState state, bool detailed) {
     final currentFrom = state.currentFrom;
 
     if (currentFrom.isEmpty) {
@@ -324,13 +402,17 @@ class _ComicListViewState extends State<_ComicListView>
 
     final scene = state.scene;
     if (scene != null) {
-      return _buildSceneBody(state, scene);
+      return _buildSceneBody(state, scene, detailed);
     }
 
     return const SizedBox.shrink();
   }
 
-  Widget _buildSceneBody(ComicListState state, ComicListScene scene) {
+  Widget _buildSceneBody(
+    ComicListState state,
+    ComicListScene scene,
+    bool detailed,
+  ) {
     final request = scene.body.request!;
     final filterCore = state.resolvedFilterCore;
     final filterExtern = state.resolvedFilterExtern;
@@ -354,7 +436,7 @@ class _ComicListViewState extends State<_ComicListView>
           request.fnPath == 'getRankingData',
       cloudFavorite:
           widget.cloudFavoriteEntryPoint || _isCloudFavoriteScene(scene),
-      detailedView: _cloudDetailedView,
+      detailedView: detailed,
       blockedCategories: _blockedCategories,
     );
   }
@@ -387,10 +469,15 @@ class _ComicListViewState extends State<_ComicListView>
       return;
     }
 
-    final result = await showDialog<Map<String, String>>(
+    final result = await showModalBottomSheet<Map<String, String>>(
       context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      constraints: const BoxConstraints(maxWidth: 640),
+      clipBehavior: Clip.antiAlias,
       builder: (context) => PluginListFilterDialog(
         scheme: bundle.scheme,
+        defaultSelections: bundle.defaultSelections,
         initialSelections: cubit.state.filterSelections.isNotEmpty
             ? cubit.state.filterSelections
             : bundle.defaultSelections,

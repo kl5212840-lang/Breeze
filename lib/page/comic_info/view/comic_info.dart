@@ -1,3 +1,5 @@
+import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -27,10 +29,7 @@ import 'package:zephyr/util/permission.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
 import 'package:zephyr/widgets/error_view.dart';
-import 'package:zephyr/widgets/fluent_dropdown.dart';
 import 'package:zephyr/widgets/toast.dart';
-
-enum MenuOption { export }
 
 @RoutePage()
 class ComicInfoPage extends StatelessWidget {
@@ -182,35 +181,27 @@ class _ComicInfoState extends State<_ComicInfo>
     super.build(context);
     return Scaffold(
       appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.pop(),
-        ),
+        leading: SourceBackButton(onPressed: () => context.pop()),
         actions: [
-          const SizedBox(width: 50),
-          IconButton(
-            icon: const Icon(Icons.home),
+          SourceChromeIconButton(
+            tooltip: t.navigation.home,
+            icon: Icons.home_outlined,
+            symbol: 'house',
             onPressed: () => popToRoot(context),
           ),
-          Expanded(child: Container()),
-          if (_type == ComicEntryType.download)
-            FluentPopupMenuButton<MenuOption>(
-              icon: const Icon(Icons.more_vert),
-              onSelected: (MenuOption item) {
-                switch (item) {
-                  case MenuOption.export:
-                    _handleExport();
-                    break;
-                }
-              },
-              itemBuilder: (BuildContext context) => [
-                FluentPopupMenuItem<MenuOption>(
-                  value: MenuOption.export,
-                  leading: const Icon(Icons.save_alt),
-                  title: Text(t.comicInfo.exportComic),
+          SourceMoreButton(
+            source: widget.from,
+            actions: [
+              if (_type == ComicEntryType.download)
+                SourceMenuAction(
+                  id: 'export',
+                  label: t.comicInfo.exportComic,
+                  icon: Icons.save_alt,
+                  symbol: 'square.and.arrow.up',
+                  onSelected: _handleExport,
                 ),
-              ],
-            ),
+            ],
+          ),
         ],
       ),
       body: Stack(

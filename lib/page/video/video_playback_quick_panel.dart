@@ -35,6 +35,7 @@ class VideoPlaybackQuickPanel extends StatelessWidget {
     required this.onClose,
     required this.onFullSettings,
     required this.onWebsite,
+    required this.onExitSource,
     this.onEpisode,
     this.watchLater,
     this.siteBusy = false,
@@ -59,7 +60,7 @@ class VideoPlaybackQuickPanel extends StatelessWidget {
   final ValueChanged<double> onSpeed;
   final ValueChanged<int> onSource;
   final void Function(String, Object) onPreference;
-  final VoidCallback onMute, onClose, onFullSettings, onWebsite;
+  final VoidCallback onMute, onClose, onFullSettings, onWebsite, onExitSource;
   final ValueChanged<int> onSeek;
   final ValueChanged<NativeVideoCard>? onEpisode;
 
@@ -402,6 +403,11 @@ class VideoPlaybackQuickPanel extends StatelessWidget {
                             leading: const Icon(Icons.open_in_browser_rounded),
                             title: Text(t.videoPlayback.backToWeb),
                             onTap: onWebsite,
+                          ),
+                          ListTile(
+                            leading: const Icon(Icons.logout_rounded),
+                            title: Text(t.sourceShell.exitSource),
+                            onTap: onExitSource,
                           ),
                         ],
                       },

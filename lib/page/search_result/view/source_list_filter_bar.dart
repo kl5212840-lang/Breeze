@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
+import 'package:zephyr/page/source_shell/source_list_view_toggle.dart';
 
 /// Shared controls for source search and personal record lists.
 class SourceListFilterBar extends StatelessWidget {
@@ -17,9 +18,11 @@ class SourceListFilterBar extends StatelessWidget {
     this.viewToggleKey,
     this.pageLabel,
     this.onPageTap,
+    this.leading,
   });
 
   final List<String> categories;
+  final Widget? leading;
   final Set<String> blockedCategories;
   final ValueChanged<String> onCategoryTap;
   final VoidCallback? onClearBlockedCategories;
@@ -88,73 +91,91 @@ class SourceListFilterBar extends StatelessWidget {
               },
             ),
           ),
-        SizedBox(
-          height: 44,
+        ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 44),
           child: Row(
             children: [
               const SizedBox(width: 12),
+              if (leading != null) Flexible(flex: 3, child: leading!),
               if (blockedCategories.isNotEmpty &&
                   onClearBlockedCategories != null)
-                if (pageLabel != null)
-                  IconButton(
-                    tooltip: '清除屏蔽 (${blockedCategories.length})',
-                    onPressed: onClearBlockedCategories,
-                    icon: const Icon(Icons.filter_alt_off_outlined),
-                  )
-                else
-                  TextButton(
-                    onPressed: onClearBlockedCategories,
-                    child: Text('清除屏蔽 (${blockedCategories.length})'),
-                  )
+                IconButton(
+                  tooltip: '清除屏蔽 (${blockedCategories.length})',
+                  onPressed: onClearBlockedCategories,
+                  icon: const Icon(Icons.filter_alt_off_outlined),
+                )
               else if (categories.isNotEmpty)
-                Text(
-                  '点标签可屏蔽',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              if (pageLabel != null && onPageTap != null)
-                TextButton(
-                  style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 5),
-                    minimumSize: const Size(0, 40),
-                    visualDensity: VisualDensity.compact,
-                  ),
-                  onPressed: onPageTap,
-                  child: Text(pageLabel!),
-                ),
-              const Spacer(),
-              if (sortOptions.isNotEmpty)
-                PopupMenuButton<String>(
-                  tooltip: '排序',
-                  initialValue: sortValue,
-                  onSelected: onSortChanged,
-                  itemBuilder: (context) => [
-                    for (final option in sortOptions.entries)
-                      PopupMenuItem(
-                        value: option.key,
-                        child: Text(option.value),
-                      ),
-                  ],
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          sortOptions[sortValue] ?? sortOptions.values.first,
-                        ),
-                        const Icon(Icons.arrow_drop_down),
-                      ],
+                Flexible(
+                  child: Text(
+                    '点标签可屏蔽',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: scheme.onSurfaceVariant,
                     ),
                   ),
                 ),
-              IconButton(
+              if (pageLabel != null && onPageTap != null)
+                Flexible(
+                  flex: 2,
+                  child: Tooltip(
+                    message: pageLabel!,
+                    child: TextButton(
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 5),
+                        minimumSize: const Size(0, 44),
+                      ),
+                      onPressed: onPageTap,
+                      child: Text(
+                        pageLabel!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                ),
+              if (leading == null) const Spacer(),
+              if (sortOptions.isNotEmpty)
+                Flexible(
+                  flex: 2,
+                  child: PopupMenuButton<String>(
+                    tooltip: '排序',
+                    initialValue: sortValue,
+                    onSelected: onSortChanged,
+                    itemBuilder: (context) => [
+                      for (final option in sortOptions.entries)
+                        PopupMenuItem(
+                          value: option.key,
+                          child: Text(option.value),
+                        ),
+                    ],
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 44),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                sortOptions[sortValue] ??
+                                    sortOptions.values.first,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const Icon(Icons.arrow_drop_down, size: 20),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              SourceListViewToggle(
                 key: viewToggleKey,
-                tooltip: detailedView ? '切换网格' : '切换列表',
-                icon: Icon(detailedView ? Icons.grid_view : Icons.view_list),
-                onPressed: () => onViewChanged(!detailedView),
+                detailed: detailedView,
+                onChanged: onViewChanged,
               ),
               const SizedBox(width: 4),
             ],

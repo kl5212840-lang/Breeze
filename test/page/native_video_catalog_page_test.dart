@@ -1,3 +1,6 @@
+import 'package:zephyr/page/source_shell/source_return_preferences.dart';
+import 'package:zephyr/page/source_shell/source_diagnostic_preferences.dart';
+import 'package:zephyr/page/video/video_verification_gate.dart';
 import 'package:zephyr/page/video/video_personal_overview.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -7,6 +10,9 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+// Verify external browser dispatch without navigating to a real site.
+// ignore: depend_on_referenced_packages
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/native_video_catalog_page.dart';
@@ -22,12 +28,27 @@ import 'package:zephyr/page/video/video_search_filters.dart';
 import 'package:zephyr/page/video/video_search_page.dart';
 import 'package:zephyr/page/video/video_search_filter_panel.dart';
 import 'package:zephyr/page/video/video_card_metadata.dart';
+import 'package:zephyr/page/video/video_playback_quick_panel.dart';
+
+class _OfficialWebsiteLauncher extends UrlLauncherPlatform {
+  @override
+  Null get linkDelegate => null;
+
+  final launches = <({String url, PreferredLaunchMode mode})>[];
+
+  @override
+  Future<bool> launchUrl(String url, LaunchOptions options) async {
+    launches.add((url: url, mode: options.mode));
+    return true;
+  }
+}
 
 // Media boundary for route-return behavior, not a real-site acceptance.
 class _ReturnVideoPlatform extends VideoPlayerPlatform {
   final _events = <int, StreamController<VideoEvent>>{};
   int _id = 0;
   int playCount = 0;
+  int get activePlayers => _events.length;
   Duration position = Duration.zero;
 
   @override
@@ -113,6 +134,8 @@ class _WebPlatform extends InAppWebViewPlatform {
   Uri? currentUrl;
   final inspectionChanges = <bool>[];
   bool failInspection = false;
+  final verificationWindows = <Uri>[];
+  Completer<bool>? verificationWindowResult;
   String profileHref = '';
   bool signedOutEntry = true;
   int accountReads = 0;
@@ -221,12 +244,27 @@ class _WebDocumentState extends State<_WebDocument> {
 }
 
 class _WebController extends PlatformInAppWebViewController
-    implements VideoBrowserInspection {
+    implements VideoBrowserInspection, VideoBrowserVerificationWindow {
   _WebController(this.host)
     : super.implementation(
         const PlatformInAppWebViewControllerCreationParams(id: 'test'),
       );
   final _WebPlatform host;
+
+  @override
+  Future<bool> openVerificationWindow(Uri url) async {
+    host.verificationWindows.add(url);
+    return await host.verificationWindowResult?.future ?? false;
+  }
+
+  @override
+  Future<CallAsyncJavaScriptResult?> callAsyncJavaScript({
+    required String functionBody,
+    Map<String, dynamic> arguments = const {},
+    ContentWorld? contentWorld,
+  }) async => CallAsyncJavaScriptResult(
+    value: await evaluateJavascript(source: functionBody),
+  );
 
   @override
   Future<bool> setInspectionEnabled(bool enabled) async {
@@ -407,7 +445,25 @@ Future<void> _mount(
   List<Uri> externalAuthenticationEntries = const [],
   VideoFilterSchema? filters,
   Brightness brightness = Brightness.light,
+  bool nestedRoot = false,
+  Uri? initialUrl,
 }) async {
+  Widget withDiscoverRoot(Widget catalog) => !nestedRoot
+      ? catalog
+      : Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => Navigator.of(context).push<void>(
+                PageRouteBuilder<void>(
+                  transitionDuration: const Duration(milliseconds: 300),
+                  reverseTransitionDuration: const Duration(seconds: 2),
+                  pageBuilder: (_, _, _) => catalog,
+                ),
+              ),
+              child: const Text('Open fixture source'),
+            ),
+          ),
+        );
   await tester.pumpWidget(
     MaterialApp(
       theme: ThemeData(brightness: brightness),
@@ -417,50 +473,56 @@ Future<void> _mount(
         ).copyWith(textScaler: TextScaler.linear(textScale)),
         child: child!,
       ),
-      home: NativeVideoCatalogPage(
-        source: 'hanime-test',
-        title: 'Hanime1',
-        homeUrl: Uri.parse('https://hanime1.me/'),
-        catalogFnPath: 'catalog',
-        detailFnPath: 'detail',
-        playbackFnPath: 'playback',
-        selectors: const {},
-        nativeAccount: nativePersonal,
-        nativeSubscriptions: nativePersonal,
-        nativeAuth: nativeAuth,
-        externalAuthenticationEntries: externalAuthenticationEntries,
-        searchFilters: filters,
-        categories: categories,
-        tabs: [
-          NativeCatalogTab(
-            id: 'recommend',
-            title: '推荐',
-            url: Uri.parse('https://hanime1.me/'),
-            mode: 'catalog',
-          ),
-          NativeCatalogTab(
-            id: 'ranking',
-            title: '排行',
-            url: Uri.parse('https://hanime1.me/search?sort=views'),
-            mode: 'catalog',
-          ),
-          NativeCatalogTab(
-            id: 'subscriptions',
-            title: '订阅',
-            url: Uri.parse('https://hanime1.me/subscriptions'),
-            mode: nativePersonal ? 'catalog' : 'website',
-          ),
-          NativeCatalogTab(
-            id: 'account',
-            title: '我的',
-            url: Uri.parse('https://hanime1.me/login'),
-            mode: 'account',
-          ),
-        ],
-        pluginCall: plugin.call,
+      home: withDiscoverRoot(
+        NativeVideoCatalogPage(
+          source: 'hanime-test',
+          title: 'Hanime1',
+          homeUrl: Uri.parse('https://hanime1.me/'),
+          initialUrl: initialUrl,
+          catalogFnPath: 'catalog',
+          detailFnPath: 'detail',
+          playbackFnPath: 'playback',
+          selectors: const {},
+          nativeAccount: nativePersonal,
+          nativeSubscriptions: nativePersonal,
+          nativeAuth: nativeAuth,
+          externalAuthenticationEntries: externalAuthenticationEntries,
+          searchFilters: filters,
+          categories: categories,
+          tabs: [
+            NativeCatalogTab(
+              id: 'recommend',
+              title: '推荐',
+              url: Uri.parse('https://hanime1.me/'),
+              mode: 'catalog',
+            ),
+            NativeCatalogTab(
+              id: 'ranking',
+              title: '排行',
+              url: Uri.parse('https://hanime1.me/search?sort=views'),
+              mode: 'catalog',
+            ),
+            NativeCatalogTab(
+              id: 'subscriptions',
+              title: '订阅',
+              url: Uri.parse('https://hanime1.me/subscriptions'),
+              mode: nativePersonal ? 'catalog' : 'website',
+            ),
+            NativeCatalogTab(
+              id: 'account',
+              title: '我的',
+              url: Uri.parse('https://hanime1.me/login'),
+              mode: 'account',
+            ),
+          ],
+          pluginCall: plugin.call,
+        ),
       ),
     ),
   );
+  if (nestedRoot) {
+    await tester.tap(find.text('Open fixture source'));
+  }
   await _pump(tester);
 }
 
@@ -587,6 +649,52 @@ void main() {
       () => InAppWebViewPlatform.instance = original ?? _WebPlatform(),
     );
   });
+
+  testWidgets(
+    'official website opens declared home externally without changing the current page',
+    (tester) async {
+      final launcher = _OfficialWebsiteLauncher();
+      final originalLauncher = UrlLauncherPlatform.instance;
+      UrlLauncherPlatform.instance = launcher;
+      addTearDown(() => UrlLauncherPlatform.instance = originalLauncher);
+      await _mount(
+        tester,
+        plugin,
+        initialUrl: Uri.parse('https://hanime1.me/search?query=public-fixture'),
+      );
+      web.finishLastLoad();
+      await _pump(tester);
+      NativeVideoMenu menu() => tester.widget<NativeVideoMenu>(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is NativeVideoMenu &&
+              widget.options.containsKey('officialWebsite'),
+        ),
+      );
+      expect(
+        menu().options['officialWebsite'],
+        t.sourceShell.openOfficialWebsite,
+      );
+      expect(menu().optionIcons.containsKey('officialWebsite'), isTrue);
+      final loads = web.loads.toList();
+      final stops = web.stops;
+      final selected = menu().selected;
+      menu().onSelected('officialWebsite');
+      await _pump(tester);
+      expect(launcher.launches, [
+        (
+          url: 'https://hanime1.me/',
+          mode: PreferredLaunchMode.externalApplication,
+        ),
+      ]);
+      expect(web.loads, loads);
+      expect(web.stops, stops);
+      expect(menu().selected, selected);
+      expect(menu().options.keys, isNot(contains('diagnostics')));
+      expect(menu().options.keys, isNot(contains('inspection')));
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets(
     'official indexed-tag website URL restores native conditions and canonical paging',
@@ -1183,9 +1291,56 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets(
+    'diagnostic commands are opt-in and revocation closes inspection',
+    (tester) async {
+      await _mount(tester, plugin);
+      web.finishLastLoad();
+      await _pump(tester);
+      NativeVideoMenu menu() => tester.widget<NativeVideoMenu>(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is NativeVideoMenu &&
+              widget.tooltip == t.videoPlayback.websiteToggle,
+        ),
+      );
+      final initialLoads = web.loads.length;
+      expect(menu().options.keys, isNot(contains('diagnostics')));
+      expect(menu().options.keys, isNot(contains('inspection')));
+      // Even a stale native callback must not expose a disabled tool.
+      menu().onSelected('inspection');
+      menu().onSelected('diagnostics');
+      await _pump(tester);
+      expect(find.text(t.videoPlayback.browserInspectionPrompt), findsNothing);
+      expect(web.inspectionChanges, isEmpty);
+      await SourceDiagnosticPreferences.setEnabled('hanime-test', true);
+      await _pump(tester);
+      expect(menu().options.keys, containsAll(['diagnostics', 'inspection']));
+      menu().onSelected('inspection');
+      await _pump(tester);
+      await tester.tap(
+        find.widgetWithText(
+          TextButton,
+          t.videoPlayback.enableBrowserInspection,
+        ),
+      );
+      await _pump(tester);
+      expect(web.inspectionChanges, [true]);
+      await SourceDiagnosticPreferences.setEnabled('hanime-test', false);
+      await _pump(tester);
+      expect(web.inspectionChanges, [true, false]);
+      expect(menu().options.keys, isNot(contains('diagnostics')));
+      expect(menu().options.keys, isNot(contains('inspection')));
+      expect(menu().options.keys, containsAll(['tools', 'exit']));
+      expect(web.loads.length, initialLoads);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   testWidgets('inspection remains accessible after verification has passed', (
     tester,
   ) async {
+    await SourceDiagnosticPreferences.setEnabled('hanime-test', true);
     await _mount(tester, plugin);
     web.finishLastLoad();
     await _pump(tester);
@@ -1262,6 +1417,7 @@ void main() {
   testWidgets(
     'browser inspection needs consent and never reloads verification',
     (tester) async {
+      await SourceDiagnosticPreferences.setEnabled('hanime-test', true);
       web.challenge = true;
       await _mount(tester, plugin);
       web.finishLastLoad();
@@ -1296,6 +1452,7 @@ void main() {
   testWidgets('inspection errors leave the website and toggle unchanged', (
     tester,
   ) async {
+    await SourceDiagnosticPreferences.setEnabled('hanime-test', true);
     web.challenge = true;
     web.failInspection = true;
     await _mount(tester, plugin);
@@ -2441,6 +2598,8 @@ void main() {
   testWidgets(
     'personal identity and tabs survive pending, failed and stale tab responses',
     (tester) async {
+      // Compatibility mode retains the old return-to-first-tab behavior.
+      await SourceReturnPreferences.setMode(SourceReturnMode.stepByStep);
       final delayed = Completer<Map<String, dynamic>>();
       final account = {
         'status': 'signedIn',
@@ -3987,6 +4146,71 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets(
+    'player More exit cannot restore a catalog that is still animating out',
+    (tester) async {
+      final originalVideo = VideoPlayerPlatform.instance;
+      final media = _ReturnVideoPlatform();
+      VideoPlayerPlatform.instance = media;
+      addTearDown(() => VideoPlayerPlatform.instance = originalVideo);
+      plugin.playable = true;
+      // A cold detail entry has no fresh catalog cache to hide an unwanted
+      // restoration load after the player route completes.
+      await _mount(
+        tester,
+        plugin,
+        nestedRoot: true,
+        initialUrl: Uri.parse('https://hanime1.me/watch?v=1'),
+      );
+      final catalog = find.byType(NativeVideoCatalogPage);
+      final catalogState = tester.state(catalog);
+      final catalogRoute = ModalRoute.of(tester.element(catalog))!;
+      web.finishLastLoad();
+      await _pump(tester, 20);
+      expect(find.byType(NativeVideoPage), findsOneWidget);
+      expect(media.activePlayers, 1);
+      await tester.tap(find.byTooltip(t.videoPlayback.playbackSettings));
+      await _pump(tester, 3);
+      final panel = find.byType(VideoPlaybackQuickPanel);
+      final exit = find.widgetWithText(ListTile, t.sourceShell.exitSource);
+      await tester.scrollUntilVisible(
+        exit,
+        300,
+        scrollable: find
+            .descendant(of: panel, matching: find.byType(Scrollable))
+            .first,
+      );
+      await tester.pumpAndSettle();
+      final loads = web.loads.length;
+      final parses = plugin.calls.length;
+      await tester.tap(exit);
+      await tester.pump();
+      expect(
+        catalogState.mounted,
+        isTrue,
+        reason: 'inspect during the 2s exit transition',
+      );
+      expect(catalogRoute.isActive, isFalse);
+      expect(
+        web.loads,
+        hasLength(loads),
+        reason: 'a popped catalog must not restore home while still mounted',
+      );
+      expect(plugin.calls, hasLength(parses));
+      await _pump(tester, 25);
+      await tester.runAsync(() async {});
+      await tester.pump();
+      expect(find.text('Open fixture source'), findsOneWidget);
+      expect(find.byType(NativeVideoPage), findsNothing);
+      expect(find.byType(NativeVideoCatalogPage), findsNothing);
+      expect(media.activePlayers, 0);
+      expect(web.loads, hasLength(loads));
+      expect(plugin.calls, hasLength(parses));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   testWidgets('late source refresh cannot navigate after leaving the player', (
     tester,
   ) async {
@@ -4924,6 +5148,135 @@ void main() {
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     },
+  );
+  for (final retry in [false, true]) {
+    testWidgets(
+      'separate verification window pauses host observation and return retry=$retry is explicit',
+      (tester) async {
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(
+          SystemChannels.platform_views,
+          (_) async => null,
+        );
+        addTearDown(
+          () => messenger.setMockMethodCallHandler(
+            SystemChannels.platform_views,
+            null,
+          ),
+        );
+        web.challenge = true;
+        web.verificationWindowResult = Completer<bool>();
+        await _mount(tester, plugin);
+        web.finishLastLoad();
+        await _pump(tester);
+        final loads = web.loads.length;
+        expect(find.byType(VideoVerificationGate), findsOneWidget);
+        await tester.tap(
+          find.widgetWithText(FilledButton, t.videoPlayback.verificationWindow),
+        );
+        await _pump(tester);
+        expect(web.verificationWindows, [Uri.parse('https://hanime1.me/')]);
+        final reads = web.stateReads;
+        for (var tick = 0; tick < 4; tick++) {
+          await tester.pump(const Duration(seconds: 5));
+          await tester.pump();
+        }
+        expect(
+          web.stateReads,
+          reads,
+          reason: 'The original browser is not probed during the native window',
+        );
+        expect(web.loads.length, loads);
+        web.verificationWindowResult!.complete(retry);
+        await _pump(tester, 3);
+        expect(web.loads.length, loads + (retry ? 1 : 0));
+        if (retry) expect(web.loads.last, Uri.parse('https://hanime1.me/'));
+        await tester.pump(const Duration(seconds: 3));
+        await tester.pump();
+        expect(
+          web.stateReads,
+          greaterThan(reads),
+          reason: 'Observation resumes after the user returns',
+        );
+        expect(web.loads.length, loads + (retry ? 1 : 0));
+        expect(find.text(t.videoPlayback.verificationTitle), findsOneWidget);
+        expect(
+          web.creations,
+          1,
+          reason: 'The original browser and source state remain intact',
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+  }
+  testWidgets(
+    'verification observation keeps an opened UIKit actions menu usable',
+    (tester) async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const channel = MethodChannel('breeze.video.control.99001');
+      var dismissals = 0;
+      messenger.setMockMethodCallHandler(
+        SystemChannels.platform_views,
+        (_) async => null,
+      );
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'dismissMenu') dismissals++;
+        return null;
+      });
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(SystemChannels.platform_views, null);
+        messenger.setMockMethodCallHandler(channel, null);
+      });
+      web.challenge = true;
+      await _mount(tester, plugin);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.text(t.videoPlayback.verificationTitle), findsOneWidget);
+      final menuFinder = find.byWidgetPredicate(
+        (widget) =>
+            widget is NativeVideoMenu &&
+            widget.tooltip == t.videoPlayback.verificationActions,
+      );
+      final menu = tester.widget<NativeVideoMenu>(menuFinder);
+      final platformView = tester.widget<UiKitView>(
+        find.descendant(of: menuFinder, matching: find.byType(UiKitView)),
+      );
+      // Wire the real control's channel at the platform boundary. This tests
+      // the host's actual dismiss command, not just the menu widget's presence.
+      platformView.onPlatformViewCreated!(99001);
+      await tester.pump();
+      menu.onOpened!();
+      await tester.pump();
+      final reads = web.stateReads;
+      final loads = web.loads.length;
+      for (var tick = 0; tick < 4; tick++) {
+        await tester.pump(const Duration(seconds: 2));
+        await tester.pump();
+      }
+      expect(web.stateReads, greaterThan(reads));
+      expect(web.loads.length, loads);
+      expect(
+        dismissals,
+        0,
+        reason: 'Read-only verification polling must not dismiss the user menu',
+      );
+      web.params.onLoadStart!(web.wrapped, WebUri('https://hanime1.me/'));
+      await tester.pump();
+      expect(
+        dismissals,
+        1,
+        reason: 'A real main-document reload still dismisses the open menu',
+      );
+      menu.onClosed!();
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
   testWidgets(
     'UIKit catalog menu owns dismissal without a competing Flutter barrier',

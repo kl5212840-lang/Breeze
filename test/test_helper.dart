@@ -15,11 +15,14 @@ class TestObjectBoxHelper {
   static Directory? _tempDir;
   static ObjectBox? _objectBox;
 
+  static String get tempPath => _tempDir!.path;
+
   static Future<void> setUpTestObjectBox() async {
     _tempDir = await Directory.systemTemp.createTemp('breeze_test_');
     ObjectBox.resetForTests();
     _objectBox = await ObjectBox.create(dbRootPath: _tempDir!.path);
     objectbox = _objectBox!;
+    objectbox.userSettingBox.put(UserSetting());
     syncDeviceId = 'test_device';
   }
 

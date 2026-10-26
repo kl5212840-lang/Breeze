@@ -1,3 +1,4 @@
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/video/video_browse_theme.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
@@ -500,7 +501,10 @@ class _VideoPlaybackSettingsPageState extends State<VideoPlaybackSettingsPage> {
       child: PopScope(
         canPop: !_saving,
         child: Scaffold(
-          appBar: AppBar(title: Text(t.videoPlayback.playbackSettings)),
+          appBar: AppBar(
+            leading: widget.source == null ? null : const SourceBackButton(),
+            title: Text(t.videoPlayback.playbackSettings),
+          ),
           body: Column(
             children: [
               Align(

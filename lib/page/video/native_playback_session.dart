@@ -1,6 +1,7 @@
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/page/video/video_creator_reference.dart';
 import 'package:zephyr/page/video/video_public_metadata.dart';
+import 'package:zephyr/page/video/video_playback_identity.dart';
 
 /// Transient route return state, independent of persisted history/autoplay.
 typedef NativePlaybackReturnState = ({Duration position, bool playing});
@@ -32,9 +33,10 @@ class NativeVideoCard {
   final VideoCreatorReference? creator;
   final String subtitle;
   final String episodeLabel;
-  bool isCurrent(Uri page) =>
-      watchUrl.host == page.host &&
-      watchUrl.queryParameters['v'] == page.queryParameters['v'];
+  bool isCurrent(Uri page) {
+    final identity = videoPlaybackIdentity(watchUrl);
+    return identity != null && identity == videoPlaybackIdentity(page);
+  }
 
   /// Only an explicit episode or special-part token in the actual title.
   /// Bare numbers, video IDs and the card's list position are not evidence.

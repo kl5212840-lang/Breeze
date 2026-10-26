@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/comic_simplify_entry/selection_badge.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/type/pipe.dart';
@@ -127,10 +128,11 @@ class FolderShelfItem extends StatelessWidget {
                       ),
                     ),
                     // 选择指示器
-                    if (selectionMode)
-                      Positioned(
-                        top: 8,
-                        right: 8,
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: ComicSelectionBadge(
+                        visible: selectionMode,
                         child: AnimatedContainer(
                           duration: const Duration(milliseconds: 180),
                           width: 28,
@@ -163,6 +165,7 @@ class FolderShelfItem extends StatelessWidget {
                           ),
                         ),
                       ),
+                    ),
                   ],
                 ),
               ),

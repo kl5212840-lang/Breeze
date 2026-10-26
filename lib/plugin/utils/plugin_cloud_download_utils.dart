@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
@@ -15,7 +17,7 @@ import 'package:zephyr/util/json/json_value.dart';
 const _cloudPluginListDirectUrl =
     'https://raw.githubusercontent.com/deretame/Breeze-plugin-list/main/plugins_data.json';
 const _personalPluginListUrl =
-    'https://raw.githubusercontent.com/kl5212840-lang/Breeze-plugin-bika-personal/main/catalog/plugins_data.json';
+    'https://raw.githubusercontent.com/kl5212840-lang/Breeze-plugins/main/plugins_data.json';
 
 const cloudPluginListApi = 'https://api.windy-78.site/plugin-list';
 
@@ -28,20 +30,33 @@ const _cdnMirrors = [
   'https://cdn.jsdelivr.net/',
 ];
 
-const _ghCdnMirrors = [
-  'https://cdn.jsdmirror.com/',
-  'https://cdn.jsdmirror.cn/',
-  'https://jsd.onmicrosoft.cn/',
-  'https://cdn.jsdelivr.net/',
-];
+const _catalogCacheKey = 'plugin_store.catalog.v2';
+const _bundledCatalog = 'asset/plugins/personal_catalog.json';
 
-Future<String> fetchCloudPluginListWithCdnFallback() async {
-  final personalCatalog = _fetchPersonalPluginList();
-  final officialCatalog = await _fetchOfficialCloudPluginList();
-  return mergeCloudPluginCatalogPayloads(
-    officialCatalog,
-    await personalCatalog,
+Future<String> readCloudPluginCatalogFallback() async {
+  final bundled = await rootBundle.loadString(_bundledCatalog);
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final cached = prefs.getString(_catalogCacheKey);
+    return mergeCloudPluginCatalogPayloads(cached ?? '[]', bundled);
+  } catch (_) {
+    return bundled;
+  }
+}
+
+Future<String> fetchCloudPluginListWithCdnFallback({String? fallback}) async {
+  final payload = await loadCloudPluginCatalog(
+    official: _fetchOfficialCloudPluginList,
+    personal: _fetchPersonalPluginList,
+    fallback: fallback ?? await readCloudPluginCatalogFallback(),
   );
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_catalogCacheKey, payload);
+  } catch (error) {
+    logger.w('插件目录缓存写入失败', error: error);
+  }
+  return payload;
 }
 
 Future<String?> _fetchPersonalPluginList() async {
@@ -66,60 +81,37 @@ Future<String?> _fetchPersonalPluginList() async {
 
 Future<String> _fetchOfficialCloudPluginList() async {
   final client = WindHttp(
-    connectTimeout: const Duration(seconds: 8),
-    receiveTimeout: const Duration(seconds: 15),
+    connectTimeout: const Duration(seconds: 5),
+    receiveTimeout: const Duration(seconds: 8),
   );
-
-  try {
-    logger.d('尝试使用自建 API: $cloudPluginListApi');
-    final response = await client.fetch(
-      cloudPluginListApi,
-      headers: {'Accept': 'application/json, text/plain, */*'},
-    );
-    final body = response.text.trim();
-    if (response.ok && body.isNotEmpty) {
-      return body;
-    }
-  } catch (e, stackTrace) {
-    logger.w(
-      '自建 API 通道失败: $cloudPluginListApi',
-      error: e,
-      stackTrace: stackTrace,
-    );
-  }
-
-  var version = 'latest';
-
-  try {
-    final temp = await client.fetch(
-      'https://breeze-version.s3.bitiful.net/plugin-list-version.json',
-    );
-    final data = temp.json;
-    version = (data is Map ? data['version'] : null) ?? 'latest';
-  } catch (e) {
-    logger.e(e);
-    return fetchCloudPluginListPayload(_cloudPluginListDirectUrl);
-  }
-
-  for (final mirror in _ghCdnMirrors) {
-    final url =
-        '${mirror}gh/deretame/Breeze-plugin-list@$version/plugins_data.json';
-    logger.d('尝试使用 GitHub CDN 镜像: $url');
-    try {
-      final response = await client.fetch(
-        url,
-        headers: {'Accept': 'application/json, text/plain, */*'},
-      );
-      final body = response.text.trim();
-      if (response.ok && body.isNotEmpty) {
-        return body;
+  final result = Completer<String>();
+  final urls = [
+    cloudPluginListApi,
+    _cloudPluginListDirectUrl,
+    'https://cdn.jsdelivr.net/gh/deretame/Breeze-plugin-list@main/plugins_data.json',
+  ];
+  var remaining = urls.length;
+  for (final url in urls) {
+    unawaited(() async {
+      try {
+        final response = await client.fetch(
+          url,
+          headers: {'Accept': 'application/json'},
+        );
+        if (response.ok && decodeCloudPluginCatalog(response.text) != null) {
+          if (!result.isCompleted) result.complete(response.text.trim());
+        }
+      } catch (error) {
+        logger.w('插件目录通道不可用: $url', error: error);
+      } finally {
+        remaining--;
+        if (remaining == 0 && !result.isCompleted) {
+          result.completeError(StateError('官方插件目录暂不可用'));
+        }
       }
-    } catch (e, stackTrace) {
-      logger.w('CDN 镜像通道失败: $url', error: e, stackTrace: stackTrace);
-    }
+    }());
   }
-
-  return fetchCloudPluginListPayload(_cloudPluginListDirectUrl);
+  return result.future;
 }
 
 Future<String> fetchCloudPluginListPayload(String sourceUrl) async {

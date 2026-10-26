@@ -12,6 +12,8 @@ import 'package:zephyr/service/lifecycle/foreground_task/foreground_task_service
 import 'package:zephyr/widgets/fluent_dropdown.dart';
 import 'package:zephyr/widgets/gesture_lock.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/page/source_shell/source_return_preferences.dart';
+import 'package:zephyr/page/source_shell/source_return_mode_tile.dart';
 
 @RoutePage()
 class AppBehaviorSettingPage extends StatefulWidget {
@@ -66,6 +68,7 @@ class _AppBehaviorSettingPageState extends State<AppBehaviorSettingPage> {
   @override
   void initState() {
     super.initState();
+    SourceReturnPreferences.load();
     _loadDesktopCloseBehavior();
   }
 
@@ -91,6 +94,7 @@ class _AppBehaviorSettingPageState extends State<AppBehaviorSettingPage> {
             icon: Icons.settings_outlined,
           ),
           _splashPage(state, cubit),
+          const SourceReturnModeTile(),
           if (isDesktop) _desktopCloseBehaviorTile(),
           if (Platform.isAndroid) _androidKeepAlive(state, cubit),
           if (Platform.isAndroid) _backPressExit(state, cubit),

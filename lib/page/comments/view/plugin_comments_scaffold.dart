@@ -1,3 +1,5 @@
+import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'dart:io';
 
 import 'package:auto_route/auto_route.dart';
@@ -67,7 +69,11 @@ class _PluginCommentsScaffoldState extends State<PluginCommentsScaffold> {
             final cubit = context.read<CommentsCubit>();
             _commentsCubit = cubit;
             return Scaffold(
-              appBar: AppBar(title: Text(widget.comicTitle)),
+              appBar: AppBar(
+                leading: const SourceBackButton(),
+                title: Text(widget.comicTitle),
+                actions: [SourceMoreButton(source: widget.from)],
+              ),
               body: _buildBody(state, cubit),
               floatingActionButtonLocation:
                   context.watch<GlobalSettingCubit>().state.leftHandModeEnabled

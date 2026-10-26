@@ -1,3 +1,4 @@
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -271,11 +272,7 @@ class _ComicReadPageState extends State<_ComicReadPage>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    IconButton(
-                      tooltip: t.common.back,
-                      onPressed: () => context.pop(),
-                      icon: const Icon(Icons.arrow_back),
-                    ),
+                    SourceBackButton(onPressed: () => context.pop()),
                     const Expanded(
                       child: Center(child: CircularProgressIndicator()),
                     ),

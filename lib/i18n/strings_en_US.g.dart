@@ -84,6 +84,7 @@ class TranslationsEnUs extends Translations with BaseTranslations<AppLocale, Tra
 	@override late final _Translations$videoSearch$en_US videoSearch = _Translations$videoSearch$en_US._(_root);
 	@override late final _Translations$videoMetadata$en_US videoMetadata = _Translations$videoMetadata$en_US._(_root);
 	@override late final _Translations$videoPersonal$en_US videoPersonal = _Translations$videoPersonal$en_US._(_root);
+	@override late final _Translations$videoLibrary$en_US videoLibrary = _Translations$videoLibrary$en_US._(_root);
 }
 
 // Path: common
@@ -280,9 +281,9 @@ class _Translations$settings$en_US extends Translations$settings$zh_CN {
 	@override String get syncPluginsSubtitle => 'Sync plugin configuration and installation status';
 	@override String get manualSyncSection => 'Manual sync';
 	@override String get uploadToCloud => 'Upload to cloud';
-	@override String get uploadToCloudSubtitle => 'Use local data as the source of truth and overwrite the cloud';
+	@override String get uploadToCloudSubtitle => 'Use local settings and comics; merge video favorites';
 	@override String get downloadFromCloud => 'Download from cloud';
-	@override String get downloadFromCloudSubtitle => 'Use cloud data as the source of truth and apply it locally';
+	@override String get downloadFromCloudSubtitle => 'Apply cloud settings and comics; merge video favorites';
 	@override String get manualUpload => 'Upload now';
 	@override String get manualDownload => 'Sync now';
 	@override String get manualUploadSuccess => 'Uploaded to cloud';
@@ -1162,30 +1163,31 @@ class _Translations$about$en_US extends Translations$about$zh_CN {
 	@override String contributorsCount({required Object count}) => '${count}';
 	@override String contributionsTooltip({required Object login, required Object count}) => '${login} (${count} commits)';
 	@override String get disclaimer => 'Disclaimer';
-	@override String get disclaimerTitle => 'Open Source Disclaimer';
-	@override String get disclaimerItem1Title => '1. Nature and Statement';
-	@override String get disclaimerItem1Content => 'This edition is based on the open-source Breeze project and is provided "as-is". Its maintainers make no express or implied warranties regarding functionality, stability, security, or fitness for purpose.';
-	@override String get disclaimerItem2Title => '2. Limitation of Liability';
-	@override String get disclaimerItem2Content => 'The developer shall not be liable for any direct, indirect, special, incidental, or consequential damages arising from use, modification, or distribution of this project (including but not limited to direct use, secondary development, or integration into other projects). These damages may include but are not limited to data loss, device damage, business interruption, lost profits, or other economic losses.';
-	@override String get disclaimerItem3Title => '3. User Responsibility';
-	@override String get disclaimerItem3Content => 'Users should evaluate suitability and assume all risks when using this project. Users must ensure their use complies with applicable laws, regulations, and ethical standards. The developer is not responsible for consequences resulting from violations of laws or misuse.';
-	@override String get disclaimerItem4Title => '4. Third-Party Dependencies and Resources';
-	@override String get disclaimerItem4Content => 'This project may depend on or reference third-party libraries, tools, services, or other resources. The developer is not responsible for the content, functionality, security, or legality of these third-party resources. Users should evaluate and assume risks themselves.';
-	@override String get disclaimerItem5Title => '5. No Warranty';
-	@override String get disclaimerItem5Content => 'The developer expressly disclaims all warranties, including but not limited to: merchantability; fitness for a particular purpose; non-infringement; and error-free or uninterrupted operation.';
-	@override String get disclaimerItem6Title => '6. Modification and Termination';
-	@override String get disclaimerItem6Content => 'The developer reserves the right to modify, suspend, or terminate this project at any time without prior notice. The developer is not responsible for any consequences arising from such changes.';
-	@override String get disclaimerItem7Title => '7. Contributor Responsibility';
-	@override String get disclaimerItem7Content => 'If external contributions are accepted, contributors act in their personal capacity and do not represent the developer\'s views or positions. The developer is not responsible for contributor actions or content.';
-	@override String get disclaimerItem8Title => '8. Legal Compliance';
-	@override String get disclaimerItem8Content => 'Users must ensure their use complies with applicable laws and regulations. The developer is not responsible for consequences resulting from legal violations.';
-	@override String get disclaimerImportant => 'Important Notice';
-	@override String get disclaimerImportantContent => 'Please read and understand this disclaimer before using this project. If you do not agree with any term, stop using it immediately. Continued use constitutes acceptance of the entire disclaimer.';
+	@override String get disclaimerTitle => 'Usage and Disclaimer';
+	@override String get disclaimerItem1Title => '1. Project and plugins';
+	@override String get disclaimerItem1Content => 'This edition is based on the open-source Breeze project. Plugins independently connect to content sites. Unless explicitly stated otherwise, neither the app nor its plugins are official products of those sites or represent them.';
+	@override String get disclaimerItem2Title => '2. Content and copyright';
+	@override String get disclaimerItem2Content => 'Comics, videos, covers and descriptions come from third-party sites accessed by your selected plugin. Rights remain with their owners. Access through the app does not grant permission to download, copy or redistribute content.';
+	@override String get disclaimerItem3Title => '3. Accounts and third-party services';
+	@override String get disclaimerItem3Content => 'Sign-in, favorites, subscriptions and site verification are handled by the relevant plugin and site. Site account rules and service restrictions apply. Opening a website uses your system browser, whose sign-in state may differ from the app.';
+	@override String get disclaimerItem4Title => '4. Privacy and data';
+	@override String get disclaimerItem4Content => 'Plugins may process sign-in information, sessions and content requests to provide their features. Install only plugins you trust. Reading history, favorites and account data may be stored on your device and in backup or sync services you enable. Check diagnostic information for sensitive data before sharing it.';
+	@override String get disclaimerItem5Title => '5. Network and availability';
+	@override String get disclaimerItem5Content => 'Third-party sites, APIs, servers and verification rules can change. Content may expire or become temporarily unavailable. The app cannot guarantee third-party service availability. Back up important local data regularly.';
+	@override String get disclaimerItem6Title => '6. Permitted use';
+	@override String get disclaimerItem6Content => 'Follow applicable laws, site rules and age requirements. Make sure you have permission to access, download or share the content.';
+	@override String get disclaimerItem7Title => '7. Reporting issues';
+	@override String get disclaimerItem7Content => 'Contact the source site or rights holder about content, copyright or site-account issues. Report app and plugin defects to the relevant project. Redact accounts, passwords and other sensitive information from screenshots and logs before submitting them.';
+	@override String get disclaimerItem8Title => '8. Licenses and limits of liability';
+	@override String get disclaimerItem8Content => 'The software is provided as is, without a promise of uninterrupted, error-free operation or suitability for a particular purpose. Breeze and its components retain their respective open-source licenses. Warranty and liability limits follow those licenses and applicable law; this notice does not exclude liability that cannot lawfully be excluded.';
+	@override String get disclaimerImportant => 'About this notice';
+	@override String get disclaimerImportantContent => 'This notice explains the boundaries between the app and third-party services. It does not replace open-source licenses or site terms. You can review it anytime in About or plugin settings.';
 	@override String get checkUpdate => 'Check update';
 	@override String get alreadyLatest => 'Already latest version';
 	@override String get updateAvailable => 'New version available';
 	@override String get license => 'Open source licenses';
 	@override String get privacy => 'Privacy policy';
+	@override String get disclaimerSummary => 'Content sources, accounts and data';
 }
 
 // Path: oldHome
@@ -1323,6 +1325,17 @@ class _Translations$sourceShell$en_US extends Translations$sourceShell$zh_CN {
 	@override String get settings => 'Source settings';
 	@override String get exitSource => 'Exit';
 	@override String get exitSourceHint => 'Exit this source and return to Discover';
+	@override String get exitPlugin => 'Exit plugin';
+	@override String get navigationActions => 'Navigation and settings';
+	@override String get returnMode => 'Plugin back behavior';
+	@override String get returnModeDescription => 'By function skips tab-switch history. Step by step keeps it. Pages within a function still return one level at a time.';
+	@override String get returnByFunction => 'By function';
+	@override String get returnStepByStep => 'Step by step';
+	@override String get returnModeSaveFailed => 'Could not save back behavior. Try again.';
+	@override String get diagnosticTools => 'Page diagnostics';
+	@override String get diagnosticToolsDescription => 'Show page analysis and web inspection';
+	@override String get diagnosticToolsSaveFailed => 'Could not save diagnostic settings';
+	@override String get openOfficialWebsite => 'Open website';
 }
 
 // Path: searchResult
@@ -1362,6 +1375,18 @@ class _Translations$comicList$en_US extends Translations$comicList$zh_CN {
 	@override String levelCategory({required Object level}) => 'Level ${level}';
 	@override String get missingListConfig => 'Missing list request configuration';
 	@override String get missingFnPath => 'List request missing fnPath';
+	@override String get viewSaveFailed => 'Could not save display preference';
+	@override String get switchToGrid => 'Switch to grid';
+	@override String get switchToList => 'Switch to details';
+	@override String get searchOptions => 'Find an option';
+	@override String showAllOptions({required Object count}) => 'All ${count} options';
+	@override String get showFewerOptions => 'Show fewer options';
+	@override String get noMatchingOptions => 'No matching options';
+	@override String get activeFilters => 'Active filters';
+	@override String get clearFilters => 'Clear filters';
+	@override String aliases({required Object names}) => 'Also known as: ${names}';
+	@override String popularity({required Object count}) => 'Popularity ${count}';
+	@override String get scope => 'Search scope';
 }
 
 // Path: comicEntry
@@ -1584,10 +1609,13 @@ class _Translations$videoPlayback$en_US extends Translations$videoPlayback$zh_CN
 	@override String get catalogFallback => 'Native content could not load. Retry or open the website.';
 	@override String get verificationTitle => 'Website verification';
 	@override String get localWatchHistory => 'Local history';
-	@override String get verificationNote => 'Complete verification on the website. Your original page will resume when it succeeds.';
-	@override String get verificationSlow => 'Verification is taking longer than expected. Keep the same network exit. If Safari works on this network, copy diagnostics instead of repeatedly reloading.';
-	@override String get verificationStableNote => 'The website may request verification at any time. Use its own verification controls. Checking the result does not submit verification; reloading starts it over.';
+	@override String get verificationNote => 'Complete site verification in the verification window, then return.';
+	@override String get verificationSlow => 'Verification is unfinished. Try again, or enable Page diagnostics in plugin settings when troubleshooting.';
+	@override String get verificationStableNote => 'The requested page continues after verification.';
 	@override String get verificationActions => 'Verification';
+	@override String get verificationWindow => 'Start verification';
+	@override String get verificationWindowReturn => 'Return and continue';
+	@override String get verificationWindowHint => 'Complete site verification, then return to continue.';
 	@override String get verificationHelp => 'About verification';
 	@override String get enableBrowserInspection => 'Web inspector';
 	@override String get disableBrowserInspection => 'Stop inspector';
@@ -2146,6 +2174,120 @@ class _Translations$videoPersonal$en_US extends Translations$videoPersonal$zh_CN
 	@override String get emptyHistory => 'No watch history yet.';
 }
 
+// Path: videoLibrary
+class _Translations$videoLibrary$en_US extends Translations$videoLibrary$zh_CN {
+	_Translations$videoLibrary$en_US._(TranslationsEnUs root) : this._root = root, super.internal(root);
+
+	final TranslationsEnUs _root; // ignore: unused_field
+
+	// Translations
+	@override String get library => 'Library';
+	@override String get favorites => 'Favorites';
+	@override String get history => 'History';
+	@override String get searchHint => 'Search titles';
+	@override String get searchFavoritesHint => 'Search saved titles, cast or summaries';
+	@override String get searchCategoriesHint => 'Find a category';
+	@override String get all => 'All';
+	@override String get unfiled => 'Unfiled';
+	@override String get allTypes => 'All types';
+	@override String get allYears => 'All years';
+	@override String get categories => 'Categories';
+	@override String get year => 'Year';
+	@override String get clearFilters => 'Clear filters';
+	@override String results({required Object count}) => '${count} titles';
+	@override String get noResults => 'No titles found';
+	@override String get noResultsHint => 'Try another title or remove a filter';
+	@override String get appendFailed => 'Could not load more';
+	@override String get grid => 'Poster grid';
+	@override String get detailList => 'Detailed list';
+	@override String get display => 'Change view';
+	@override String get recentAdded => 'Recently saved';
+	@override String get titleOrder => 'Title';
+	@override String get yearOrder => 'Year';
+	@override String get sort => 'Sort';
+	@override String sourceViews({required Object count}) => 'Source views ${count}';
+	@override String sourceRating({required Object score, required Object count}) => 'Source rating ${score} · ${count} votes';
+	@override String get synopsis => 'Synopsis';
+	@override String get noSynopsis => 'No synopsis available';
+	@override String get starring => 'Cast';
+	@override String get director => 'Director';
+	@override String get region => 'Region';
+	@override String get language => 'Language';
+	@override String get released => 'Released';
+	@override String get resourceUpdated => 'Resource updated';
+	@override String availableEpisodes({required Object count}) => '${count} available episodes';
+	@override String plannedEpisodes({required Object count}) => '${count} planned episodes';
+	@override String get play => 'Play';
+	@override String get resume => 'Continue watching';
+	@override String get addFavorite => 'Save';
+	@override String get saved => 'Saved';
+	@override String get manageFavorite => 'Manage favorite';
+	@override String get removeFavorite => 'Remove favorite';
+	@override String get chooseFolders => 'Folders';
+	@override String get newFolder => 'New folder';
+	@override String get renameFolder => 'Rename folder';
+	@override String get deleteFolder => 'Delete folder';
+	@override String get folderName => 'Folder name';
+	@override String get folderDeleteHint => 'Only the folder is removed. Titles stay in All favorites.';
+	@override String get nameInvalid => 'Use 1–60 characters for the name';
+	@override String get duplicateFolder => 'A folder with this name already exists';
+	@override String get saveFailed => 'Could not save. Please retry.';
+	@override String get batchSelect => 'Select titles';
+	@override String selectedCount({required Object count}) => '${count} selected';
+	@override String get selectAll => 'Select all results';
+	@override String get classify => 'Organize';
+	@override String get removeSelected => 'Remove favorites';
+	@override String batchRemoveHint({required Object count}) => 'Remove ${count} selected titles from favorites?';
+	@override String get favoritesEmpty => 'No favorites yet';
+	@override String get favoritesEmptyHint => 'Save titles you enjoy and return anytime';
+	@override String get folderEmpty => 'This folder is empty';
+	@override String get historyEmpty => 'No watch history yet';
+	@override String get historyHint => 'Watch history is stored on this device';
+	@override String get clearHistory => 'Clear history';
+	@override String get clearHistoryConfirm => 'Clear watch history and resume positions for this source?';
+	@override String get syncSettings => 'Cloud sync settings';
+	@override String get syncNote => 'Breeze syncs favorites and folders. Watch history stays on this device.';
+	@override String get syncLocalOnly => 'Saved on this device. Configure cloud sync in Breeze.';
+	@override String get syncNow => 'Sync favorites';
+	@override String get syncing => 'Syncing';
+	@override String get syncFailed => 'Sync failed. Local favorites are safe.';
+	@override String get syncDone => 'Favorites synced';
+	@override String get openWebsite => 'View source page';
+	@override String get playSettings => 'Playback settings';
+	@override String get sourceSettings => 'Plugin settings';
+	@override String get exitSource => 'Back to plugins';
+	@override String get moreCategories => 'All categories';
+	@override String get mediaUnavailable => 'No episodes available';
+	@override String get refreshDetails => 'Refresh details';
+	@override String get continueWatching => 'Continue watching';
+	@override String get recentSearches => 'Recent searches';
+	@override String get folderSaveHint => 'Choose multiple folders, or leave unfiled.';
+	@override String get folderSaved => 'Folders saved';
+	@override String get viewFolder => 'Open folder';
+	@override String get allEpisodes => 'Episodes';
+	@override String get offlineFavoriteHint => 'Saved locally. Connect to play.';
+	@override String get updatedFirst => 'Recently updated';
+	@override String get filterUnavailable => 'This filter is not available from the source';
+	@override String get follow => 'Follow updates';
+	@override String get followed => 'Following';
+	@override String get following => 'Following';
+	@override String get hasUpdates => 'New episodes';
+	@override String get checkUpdates => 'Check updates';
+	@override String get checkingUpdates => 'Checking updates';
+	@override String newEpisodes({required Object count}) => '${count} new episodes';
+	@override String get followHint => 'Follow a title from its details to check for new episodes here.';
+	@override String get followEnabled => 'Saved to favorites. New episodes are checked when you open Favorites.';
+	@override String get updateCheckDone => 'Update check complete';
+	@override String get updateCheckFailed => 'Check incomplete. Saved titles and previous updates are safe.';
+	@override String get recent24Hours => 'Last 24 hours';
+	@override String get alternateTitle => 'Also known as';
+	@override String get genres => 'Genres';
+	@override String get writers => 'Writers';
+	@override String doubanRating({required Object score}) => 'Douban ${score}';
+	@override String get ratingSourceHint => 'Rating supplied by the resource site, not verified live with Douban';
+	@override String get syncMergeNote => 'Video favorites, folders and followed titles merge across devices. Watch history stays on this device.';
+}
+
 /// The flat map containing all translations for locale <en-US>.
 /// Only for edge cases! For simple maps, use the map function of this library.
 ///
@@ -2315,9 +2457,9 @@ extension on TranslationsEnUs {
 			'settings.syncPluginsSubtitle' => 'Sync plugin configuration and installation status',
 			'settings.manualSyncSection' => 'Manual sync',
 			'settings.uploadToCloud' => 'Upload to cloud',
-			'settings.uploadToCloudSubtitle' => 'Use local data as the source of truth and overwrite the cloud',
+			'settings.uploadToCloudSubtitle' => 'Use local settings and comics; merge video favorites',
 			'settings.downloadFromCloud' => 'Download from cloud',
-			'settings.downloadFromCloudSubtitle' => 'Use cloud data as the source of truth and apply it locally',
+			'settings.downloadFromCloudSubtitle' => 'Apply cloud settings and comics; merge video favorites',
 			'settings.manualUpload' => 'Upload now',
 			'settings.manualDownload' => 'Sync now',
 			'settings.manualUploadSuccess' => 'Uploaded to cloud',
@@ -3091,30 +3233,31 @@ extension on TranslationsEnUs {
 			'about.contributorsCount' => ({required Object count}) => '${count}',
 			'about.contributionsTooltip' => ({required Object login, required Object count}) => '${login} (${count} commits)',
 			'about.disclaimer' => 'Disclaimer',
-			'about.disclaimerTitle' => 'Open Source Disclaimer',
-			'about.disclaimerItem1Title' => '1. Nature and Statement',
-			'about.disclaimerItem1Content' => 'This edition is based on the open-source Breeze project and is provided "as-is". Its maintainers make no express or implied warranties regarding functionality, stability, security, or fitness for purpose.',
-			'about.disclaimerItem2Title' => '2. Limitation of Liability',
-			'about.disclaimerItem2Content' => 'The developer shall not be liable for any direct, indirect, special, incidental, or consequential damages arising from use, modification, or distribution of this project (including but not limited to direct use, secondary development, or integration into other projects). These damages may include but are not limited to data loss, device damage, business interruption, lost profits, or other economic losses.',
-			'about.disclaimerItem3Title' => '3. User Responsibility',
-			'about.disclaimerItem3Content' => 'Users should evaluate suitability and assume all risks when using this project. Users must ensure their use complies with applicable laws, regulations, and ethical standards. The developer is not responsible for consequences resulting from violations of laws or misuse.',
-			'about.disclaimerItem4Title' => '4. Third-Party Dependencies and Resources',
-			'about.disclaimerItem4Content' => 'This project may depend on or reference third-party libraries, tools, services, or other resources. The developer is not responsible for the content, functionality, security, or legality of these third-party resources. Users should evaluate and assume risks themselves.',
-			'about.disclaimerItem5Title' => '5. No Warranty',
-			'about.disclaimerItem5Content' => 'The developer expressly disclaims all warranties, including but not limited to: merchantability; fitness for a particular purpose; non-infringement; and error-free or uninterrupted operation.',
-			'about.disclaimerItem6Title' => '6. Modification and Termination',
-			'about.disclaimerItem6Content' => 'The developer reserves the right to modify, suspend, or terminate this project at any time without prior notice. The developer is not responsible for any consequences arising from such changes.',
-			'about.disclaimerItem7Title' => '7. Contributor Responsibility',
-			'about.disclaimerItem7Content' => 'If external contributions are accepted, contributors act in their personal capacity and do not represent the developer\'s views or positions. The developer is not responsible for contributor actions or content.',
-			'about.disclaimerItem8Title' => '8. Legal Compliance',
-			'about.disclaimerItem8Content' => 'Users must ensure their use complies with applicable laws and regulations. The developer is not responsible for consequences resulting from legal violations.',
-			'about.disclaimerImportant' => 'Important Notice',
-			'about.disclaimerImportantContent' => 'Please read and understand this disclaimer before using this project. If you do not agree with any term, stop using it immediately. Continued use constitutes acceptance of the entire disclaimer.',
+			'about.disclaimerTitle' => 'Usage and Disclaimer',
+			'about.disclaimerItem1Title' => '1. Project and plugins',
+			'about.disclaimerItem1Content' => 'This edition is based on the open-source Breeze project. Plugins independently connect to content sites. Unless explicitly stated otherwise, neither the app nor its plugins are official products of those sites or represent them.',
+			'about.disclaimerItem2Title' => '2. Content and copyright',
+			'about.disclaimerItem2Content' => 'Comics, videos, covers and descriptions come from third-party sites accessed by your selected plugin. Rights remain with their owners. Access through the app does not grant permission to download, copy or redistribute content.',
+			'about.disclaimerItem3Title' => '3. Accounts and third-party services',
+			'about.disclaimerItem3Content' => 'Sign-in, favorites, subscriptions and site verification are handled by the relevant plugin and site. Site account rules and service restrictions apply. Opening a website uses your system browser, whose sign-in state may differ from the app.',
+			'about.disclaimerItem4Title' => '4. Privacy and data',
+			'about.disclaimerItem4Content' => 'Plugins may process sign-in information, sessions and content requests to provide their features. Install only plugins you trust. Reading history, favorites and account data may be stored on your device and in backup or sync services you enable. Check diagnostic information for sensitive data before sharing it.',
+			'about.disclaimerItem5Title' => '5. Network and availability',
+			'about.disclaimerItem5Content' => 'Third-party sites, APIs, servers and verification rules can change. Content may expire or become temporarily unavailable. The app cannot guarantee third-party service availability. Back up important local data regularly.',
+			'about.disclaimerItem6Title' => '6. Permitted use',
+			'about.disclaimerItem6Content' => 'Follow applicable laws, site rules and age requirements. Make sure you have permission to access, download or share the content.',
+			'about.disclaimerItem7Title' => '7. Reporting issues',
+			'about.disclaimerItem7Content' => 'Contact the source site or rights holder about content, copyright or site-account issues. Report app and plugin defects to the relevant project. Redact accounts, passwords and other sensitive information from screenshots and logs before submitting them.',
+			'about.disclaimerItem8Title' => '8. Licenses and limits of liability',
+			'about.disclaimerItem8Content' => 'The software is provided as is, without a promise of uninterrupted, error-free operation or suitability for a particular purpose. Breeze and its components retain their respective open-source licenses. Warranty and liability limits follow those licenses and applicable law; this notice does not exclude liability that cannot lawfully be excluded.',
+			'about.disclaimerImportant' => 'About this notice',
+			'about.disclaimerImportantContent' => 'This notice explains the boundaries between the app and third-party services. It does not replace open-source licenses or site terms. You can review it anytime in About or plugin settings.',
 			'about.checkUpdate' => 'Check update',
 			'about.alreadyLatest' => 'Already latest version',
 			'about.updateAvailable' => 'New version available',
 			'about.license' => 'Open source licenses',
 			'about.privacy' => 'Privacy policy',
+			'about.disclaimerSummary' => 'Content sources, accounts and data',
 			'oldHome.title' => 'Home',
 			'oldHome.search' => 'Search',
 			'oldHome.hotSearch' => 'Hot Search',
@@ -3179,9 +3322,9 @@ extension on TranslationsEnUs {
 			'discover.title' => 'Discover',
 			'discover.search' => 'Search',
 			'discover.settings' => 'Settings',
-			'discover.pluginManagement' => 'Plugin Management',
 			_ => null,
 		} ?? switch (path) {
+			'discover.pluginManagement' => 'Plugin Management',
 			'discover.manage' => 'Manage',
 			'discover.listLayout' => 'List',
 			'discover.gridLayout' => 'Grid',
@@ -3209,6 +3352,17 @@ extension on TranslationsEnUs {
 			'sourceShell.settings' => 'Source settings',
 			'sourceShell.exitSource' => 'Exit',
 			'sourceShell.exitSourceHint' => 'Exit this source and return to Discover',
+			'sourceShell.exitPlugin' => 'Exit plugin',
+			'sourceShell.navigationActions' => 'Navigation and settings',
+			'sourceShell.returnMode' => 'Plugin back behavior',
+			'sourceShell.returnModeDescription' => 'By function skips tab-switch history. Step by step keeps it. Pages within a function still return one level at a time.',
+			'sourceShell.returnByFunction' => 'By function',
+			'sourceShell.returnStepByStep' => 'Step by step',
+			'sourceShell.returnModeSaveFailed' => 'Could not save back behavior. Try again.',
+			'sourceShell.diagnosticTools' => 'Page diagnostics',
+			'sourceShell.diagnosticToolsDescription' => 'Show page analysis and web inspection',
+			'sourceShell.diagnosticToolsSaveFailed' => 'Could not save diagnostic settings',
+			'sourceShell.openOfficialWebsite' => 'Open website',
 			'searchResult.enterPageNumber' => 'Enter page number',
 			'searchResult.pleaseEnterNumber' => 'Please enter a number',
 			'searchResult.returnToTop' => 'Return to top',
@@ -3230,6 +3384,18 @@ extension on TranslationsEnUs {
 			'comicList.levelCategory' => ({required Object level}) => 'Level ${level}',
 			'comicList.missingListConfig' => 'Missing list request configuration',
 			'comicList.missingFnPath' => 'List request missing fnPath',
+			'comicList.viewSaveFailed' => 'Could not save display preference',
+			'comicList.switchToGrid' => 'Switch to grid',
+			'comicList.switchToList' => 'Switch to details',
+			'comicList.searchOptions' => 'Find an option',
+			'comicList.showAllOptions' => ({required Object count}) => 'All ${count} options',
+			'comicList.showFewerOptions' => 'Show fewer options',
+			'comicList.noMatchingOptions' => 'No matching options',
+			'comicList.activeFilters' => 'Active filters',
+			'comicList.clearFilters' => 'Clear filters',
+			'comicList.aliases' => ({required Object names}) => 'Also known as: ${names}',
+			'comicList.popularity' => ({required Object count}) => 'Popularity ${count}',
+			'comicList.scope' => 'Search scope',
 			'comicEntry.updatedAt' => ({required Object time}) => 'Updated: ${time}',
 			'comicEntry.finished' => 'Finished',
 			'comicEntry.ongoing' => 'Ongoing',
@@ -3407,10 +3573,13 @@ extension on TranslationsEnUs {
 			'videoPlayback.catalogFallback' => 'Native content could not load. Retry or open the website.',
 			'videoPlayback.verificationTitle' => 'Website verification',
 			'videoPlayback.localWatchHistory' => 'Local history',
-			'videoPlayback.verificationNote' => 'Complete verification on the website. Your original page will resume when it succeeds.',
-			'videoPlayback.verificationSlow' => 'Verification is taking longer than expected. Keep the same network exit. If Safari works on this network, copy diagnostics instead of repeatedly reloading.',
-			'videoPlayback.verificationStableNote' => 'The website may request verification at any time. Use its own verification controls. Checking the result does not submit verification; reloading starts it over.',
+			'videoPlayback.verificationNote' => 'Complete site verification in the verification window, then return.',
+			'videoPlayback.verificationSlow' => 'Verification is unfinished. Try again, or enable Page diagnostics in plugin settings when troubleshooting.',
+			'videoPlayback.verificationStableNote' => 'The requested page continues after verification.',
 			'videoPlayback.verificationActions' => 'Verification',
+			'videoPlayback.verificationWindow' => 'Start verification',
+			'videoPlayback.verificationWindowReturn' => 'Return and continue',
+			'videoPlayback.verificationWindowHint' => 'Complete site verification, then return to continue.',
 			'videoPlayback.verificationHelp' => 'About verification',
 			'videoPlayback.enableBrowserInspection' => 'Web inspector',
 			'videoPlayback.disableBrowserInspection' => 'Stop inspector',
@@ -3667,6 +3836,8 @@ extension on TranslationsEnUs {
 			'videoCommunity.reply' => 'Reply',
 			'videoCommunity.overview' => 'Overview',
 			'videoCommunity.closeKeyboard' => 'Hide keyboard',
+			_ => null,
+		} ?? switch (path) {
 			'videoCommunity.dislike' => 'Dislike',
 			'videoCommunity.disliked' => 'Disliked',
 			'videoCommunity.noReplies' => 'No replies yet',
@@ -3694,8 +3865,6 @@ extension on TranslationsEnUs {
 			'videoAccount.login' => 'View site account',
 			'videoAccount.cloud' => 'Breeze cloud sync settings',
 			'videoAccount.backupDone' => 'Saved in plugin configuration. Use Breeze Sync plugins to upload.',
-			_ => null,
-		} ?? switch (path) {
 			'videoAccount.restored' => 'Written to this device’s browser. Open the site to confirm; expired sessions require login.',
 			'videoAccount.forgotten' => 'Local backup removed. Upload or sync plugins to update the cloud.',
 			'videoAccount.failed' => 'Could not complete. Retry; no automatic cloud upload or overwrite was performed.',
@@ -3825,6 +3994,111 @@ extension on TranslationsEnUs {
 			'videoPersonal.viewAll' => 'View all',
 			'videoPersonal.recentUnavailable' => 'History is unavailable. You can open the full list.',
 			'videoPersonal.emptyHistory' => 'No watch history yet.',
+			'videoLibrary.library' => 'Library',
+			'videoLibrary.favorites' => 'Favorites',
+			'videoLibrary.history' => 'History',
+			'videoLibrary.searchHint' => 'Search titles',
+			'videoLibrary.searchFavoritesHint' => 'Search saved titles, cast or summaries',
+			'videoLibrary.searchCategoriesHint' => 'Find a category',
+			'videoLibrary.all' => 'All',
+			'videoLibrary.unfiled' => 'Unfiled',
+			'videoLibrary.allTypes' => 'All types',
+			'videoLibrary.allYears' => 'All years',
+			'videoLibrary.categories' => 'Categories',
+			'videoLibrary.year' => 'Year',
+			'videoLibrary.clearFilters' => 'Clear filters',
+			'videoLibrary.results' => ({required Object count}) => '${count} titles',
+			'videoLibrary.noResults' => 'No titles found',
+			'videoLibrary.noResultsHint' => 'Try another title or remove a filter',
+			'videoLibrary.appendFailed' => 'Could not load more',
+			'videoLibrary.grid' => 'Poster grid',
+			'videoLibrary.detailList' => 'Detailed list',
+			'videoLibrary.display' => 'Change view',
+			'videoLibrary.recentAdded' => 'Recently saved',
+			'videoLibrary.titleOrder' => 'Title',
+			'videoLibrary.yearOrder' => 'Year',
+			'videoLibrary.sort' => 'Sort',
+			'videoLibrary.sourceViews' => ({required Object count}) => 'Source views ${count}',
+			'videoLibrary.sourceRating' => ({required Object score, required Object count}) => 'Source rating ${score} · ${count} votes',
+			'videoLibrary.synopsis' => 'Synopsis',
+			'videoLibrary.noSynopsis' => 'No synopsis available',
+			'videoLibrary.starring' => 'Cast',
+			'videoLibrary.director' => 'Director',
+			'videoLibrary.region' => 'Region',
+			'videoLibrary.language' => 'Language',
+			'videoLibrary.released' => 'Released',
+			'videoLibrary.resourceUpdated' => 'Resource updated',
+			'videoLibrary.availableEpisodes' => ({required Object count}) => '${count} available episodes',
+			'videoLibrary.plannedEpisodes' => ({required Object count}) => '${count} planned episodes',
+			'videoLibrary.play' => 'Play',
+			'videoLibrary.resume' => 'Continue watching',
+			'videoLibrary.addFavorite' => 'Save',
+			'videoLibrary.saved' => 'Saved',
+			'videoLibrary.manageFavorite' => 'Manage favorite',
+			'videoLibrary.removeFavorite' => 'Remove favorite',
+			'videoLibrary.chooseFolders' => 'Folders',
+			'videoLibrary.newFolder' => 'New folder',
+			'videoLibrary.renameFolder' => 'Rename folder',
+			'videoLibrary.deleteFolder' => 'Delete folder',
+			'videoLibrary.folderName' => 'Folder name',
+			'videoLibrary.folderDeleteHint' => 'Only the folder is removed. Titles stay in All favorites.',
+			'videoLibrary.nameInvalid' => 'Use 1–60 characters for the name',
+			'videoLibrary.duplicateFolder' => 'A folder with this name already exists',
+			'videoLibrary.saveFailed' => 'Could not save. Please retry.',
+			'videoLibrary.batchSelect' => 'Select titles',
+			'videoLibrary.selectedCount' => ({required Object count}) => '${count} selected',
+			'videoLibrary.selectAll' => 'Select all results',
+			'videoLibrary.classify' => 'Organize',
+			'videoLibrary.removeSelected' => 'Remove favorites',
+			'videoLibrary.batchRemoveHint' => ({required Object count}) => 'Remove ${count} selected titles from favorites?',
+			'videoLibrary.favoritesEmpty' => 'No favorites yet',
+			'videoLibrary.favoritesEmptyHint' => 'Save titles you enjoy and return anytime',
+			'videoLibrary.folderEmpty' => 'This folder is empty',
+			'videoLibrary.historyEmpty' => 'No watch history yet',
+			'videoLibrary.historyHint' => 'Watch history is stored on this device',
+			'videoLibrary.clearHistory' => 'Clear history',
+			'videoLibrary.clearHistoryConfirm' => 'Clear watch history and resume positions for this source?',
+			'videoLibrary.syncSettings' => 'Cloud sync settings',
+			'videoLibrary.syncNote' => 'Breeze syncs favorites and folders. Watch history stays on this device.',
+			'videoLibrary.syncLocalOnly' => 'Saved on this device. Configure cloud sync in Breeze.',
+			'videoLibrary.syncNow' => 'Sync favorites',
+			'videoLibrary.syncing' => 'Syncing',
+			'videoLibrary.syncFailed' => 'Sync failed. Local favorites are safe.',
+			'videoLibrary.syncDone' => 'Favorites synced',
+			'videoLibrary.openWebsite' => 'View source page',
+			'videoLibrary.playSettings' => 'Playback settings',
+			'videoLibrary.sourceSettings' => 'Plugin settings',
+			'videoLibrary.exitSource' => 'Back to plugins',
+			'videoLibrary.moreCategories' => 'All categories',
+			'videoLibrary.mediaUnavailable' => 'No episodes available',
+			'videoLibrary.refreshDetails' => 'Refresh details',
+			'videoLibrary.continueWatching' => 'Continue watching',
+			'videoLibrary.recentSearches' => 'Recent searches',
+			'videoLibrary.folderSaveHint' => 'Choose multiple folders, or leave unfiled.',
+			'videoLibrary.folderSaved' => 'Folders saved',
+			'videoLibrary.viewFolder' => 'Open folder',
+			'videoLibrary.allEpisodes' => 'Episodes',
+			'videoLibrary.offlineFavoriteHint' => 'Saved locally. Connect to play.',
+			'videoLibrary.updatedFirst' => 'Recently updated',
+			'videoLibrary.filterUnavailable' => 'This filter is not available from the source',
+			'videoLibrary.follow' => 'Follow updates',
+			'videoLibrary.followed' => 'Following',
+			'videoLibrary.following' => 'Following',
+			'videoLibrary.hasUpdates' => 'New episodes',
+			'videoLibrary.checkUpdates' => 'Check updates',
+			'videoLibrary.checkingUpdates' => 'Checking updates',
+			'videoLibrary.newEpisodes' => ({required Object count}) => '${count} new episodes',
+			'videoLibrary.followHint' => 'Follow a title from its details to check for new episodes here.',
+			'videoLibrary.followEnabled' => 'Saved to favorites. New episodes are checked when you open Favorites.',
+			'videoLibrary.updateCheckDone' => 'Update check complete',
+			'videoLibrary.updateCheckFailed' => 'Check incomplete. Saved titles and previous updates are safe.',
+			'videoLibrary.recent24Hours' => 'Last 24 hours',
+			'videoLibrary.alternateTitle' => 'Also known as',
+			'videoLibrary.genres' => 'Genres',
+			'videoLibrary.writers' => 'Writers',
+			'videoLibrary.doubanRating' => ({required Object score}) => 'Douban ${score}',
+			'videoLibrary.ratingSourceHint' => 'Rating supplied by the resource site, not verified live with Douban',
+			'videoLibrary.syncMergeNote' => 'Video favorites, folders and followed titles merge across devices. Watch history stays on this device.',
 			_ => null,
 		};
 	}

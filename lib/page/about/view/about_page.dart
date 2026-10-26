@@ -2,6 +2,7 @@ import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/widgets/plugin_usage_notice.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/utils/github_proxy.dart';
 
@@ -406,154 +407,12 @@ class _AboutPageState extends State<AboutPage> {
     );
   }
 
-  // --- 免责声明弹窗 ---
-  void _showDisclaimerDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: const Color(0xFF1E1E2C), // 深色弹窗背景
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(kBorderRadius),
-          side: const BorderSide(color: kAccentColor, width: 1), // 边框
-        ),
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 700, maxHeight: 600),
-          padding: const EdgeInsets.all(25),
-          child: Column(
-            children: [
-              // Header
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    t.about.disclaimer,
-                    style: const TextStyle(
-                      color: kAccentColor,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close, color: kSecondaryText),
-                    onPressed: () => Navigator.pop(ctx),
-                  ),
-                ],
-              ),
-              const Divider(color: Color(0x4D00FFFF)),
-
-              // Body (Scrollable)
-              Expanded(
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SizedBox(height: 10),
-                      Text(
-                        t.about.disclaimerTitle,
-                        style: const TextStyle(
-                          color: kAccentColor,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      SizedBox(height: 10),
-
-                      _DisclaimerItem(
-                        t.about.disclaimerItem1Title,
-                        t.about.disclaimerItem1Content,
-                      ),
-                      _DisclaimerItem(
-                        t.about.disclaimerItem2Title,
-                        t.about.disclaimerItem2Content,
-                      ),
-                      _DisclaimerItem(
-                        t.about.disclaimerItem3Title,
-                        t.about.disclaimerItem3Content,
-                      ),
-                      _DisclaimerItem(
-                        t.about.disclaimerItem4Title,
-                        t.about.disclaimerItem4Content,
-                      ),
-                      _DisclaimerItem(
-                        t.about.disclaimerItem5Title,
-                        t.about.disclaimerItem5Content,
-                      ),
-                      _DisclaimerItem(
-                        t.about.disclaimerItem6Title,
-                        t.about.disclaimerItem6Content,
-                      ),
-                      _DisclaimerItem(
-                        t.about.disclaimerItem7Title,
-                        t.about.disclaimerItem7Content,
-                      ),
-                      _DisclaimerItem(
-                        t.about.disclaimerItem8Title,
-                        t.about.disclaimerItem8Content,
-                      ),
-                      const SizedBox(height: 20),
-                      Text(
-                        t.about.disclaimerImportant,
-                        style: const TextStyle(
-                          color: kAccentColor,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      Text(
-                        t.about.disclaimerImportantContent,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  void _showDisclaimerDialog() => showPluginUsageNotice(context);
 
   Future<void> _launchURL(String url) async {
     final Uri uri = Uri.parse(url);
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
       logger.e("无法打开链接: $url");
     }
-  }
-}
-
-// 辅助组件：免责声明条目
-class _DisclaimerItem extends StatelessWidget {
-  final String title;
-  final String content;
-  const _DisclaimerItem(this.title, this.content);
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 15),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: kPrimaryText,
-              fontWeight: FontWeight.bold,
-              fontSize: 16,
-            ),
-          ),
-          const SizedBox(height: 5),
-          Text(
-            content,
-            style: const TextStyle(color: kSecondaryText, fontSize: 14),
-          ),
-        ],
-      ),
-    );
   }
 }

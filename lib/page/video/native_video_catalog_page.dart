@@ -7,6 +7,8 @@ import 'dart:convert';
 
 import 'package:zephyr/page/video/video_page_route.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:auto_route/auto_route.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -15,6 +17,11 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/page/video/video_native_navigation.dart';
+import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/page/source_shell/source_return_preferences.dart';
+import 'package:zephyr/page/source_shell/source_diagnostic_preferences.dart';
+import 'package:zephyr/page/source_shell/source_website.dart';
+import 'package:zephyr/page/video/video_verification_gate.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
 import 'package:zephyr/page/video/native_video_page.dart';
 import 'package:zephyr/page/video/video_site_access.dart';
@@ -159,8 +166,11 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   bool _inspecting = false;
   bool _detailVisible = false;
   bool _verificationReloading = false;
+  bool _verificationWindowActive = false;
   bool _inspectionEnabled = false;
   bool _inspectionChanging = false;
+  bool _diagnosticToolsEnabled = false;
+  int _diagnosticPreferenceEpoch = 0;
   bool _externalAuthenticationBusy = false;
   final _siteVerificationRequired = ValueNotifier<bool>(false);
   final _browserDiagnostics = VideoBrowserDiagnostics();
@@ -255,6 +265,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   VideoSourceOptions _sourceOptions = const VideoSourceOptions();
   VideoAccountService? _account;
   final _backStack = <_VideoLocation>[];
+  final _tabHistory = <String>[];
   final _detailParents = <String, _VideoLocation?>{};
   final _catalogCache = VideoCatalogCache();
   final _personalRecentCache =
@@ -276,7 +287,15 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       _inPersonalLibrary ||
       _requestedUrl.path == '/watch' && _watchOrigin != null ||
       _backStack.isNotEmpty ||
-      widget.tabs.isNotEmpty && _activeTab != widget.tabs.first.id;
+      SourceReturnPreferences.includesTabHistory && _previousTab != null;
+
+  NativeCatalogTab? get _previousTab =>
+      widget.tabs
+          .where((tab) => tab.id == _tabHistory.lastOrNull)
+          .firstOrNull ??
+      (widget.tabs.isNotEmpty && _activeTab != widget.tabs.first.id
+          ? widget.tabs.first
+          : null);
 
   _VideoLocation get _location => (
     uri: videoSiteDocumentUrl(_requestedUrl),
@@ -377,8 +396,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
             .where((tab) => tab.mode == 'account')
             .firstOrNull;
         if (account != null) await _openSiteAccount(account);
-      } else if (widget.tabs.isNotEmpty && _activeTab != widget.tabs.first.id) {
-        await _openTab(widget.tabs.first);
+      } else if (_previousTab case final NativeCatalogTab previous
+          when SourceReturnPreferences.includesTabHistory) {
+        if (_tabHistory.isNotEmpty) _tabHistory.removeLast();
+        await _openTab(previous, rememberTab: false, leaveChecked: true);
       } else if (mounted) {
         Navigator.of(context).pop();
       }
@@ -413,6 +434,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   @override
   void initState() {
     super.initState();
+    SourceReturnPreferences.changes.addListener(_onReturnModeChanged);
+    SourceDiagnosticPreferences.changes.addListener(_onDiagnosticToolsChanged);
+    unawaited(_readDiagnosticToolsPreference());
+    unawaited(SourceReturnPreferences.load());
     WidgetsBinding.instance.addObserver(this);
     _siteMonitor = Timer.periodic(const Duration(seconds: 5), (_) {
       // Active verification already has a short bounded observation loop.
@@ -422,6 +447,45 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         unawaited(_inspectSite());
       }
     });
+  }
+
+  void _onReturnModeChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onDiagnosticToolsChanged() =>
+      unawaited(_readDiagnosticToolsPreference());
+
+  Future<void> _readDiagnosticToolsPreference() async {
+    final epoch = ++_diagnosticPreferenceEpoch;
+    final enabled = await SourceDiagnosticPreferences.enabled(widget.source);
+    if (!mounted || epoch != _diagnosticPreferenceEpoch) return;
+    setState(() => _diagnosticToolsEnabled = enabled);
+    // Revoking the setting also revokes a live inspector session. Hiding a
+    // command alone must not leave the page inspectable in the background.
+    final browser = _web?.platform;
+    if (!enabled && _inspectionEnabled && browser is VideoBrowserInspection) {
+      try {
+        final actual = await (browser as VideoBrowserInspection)
+            .setInspectionEnabled(false)
+            .timeout(const Duration(seconds: 4));
+        if (mounted && identical(_web?.platform, browser)) {
+          setState(() => _inspectionEnabled = actual);
+        }
+      } catch (_) {
+        // The browser may already have been disposed with its route.
+      }
+    }
+  }
+
+  bool get _usesVerificationWindow =>
+      defaultTargetPlatform == TargetPlatform.iOS &&
+      _web?.platform is VideoBrowserVerificationWindow;
+
+  Future<void> _exitSource() async {
+    if (!await _allowLeaveAccount() || !mounted) return;
+    _dismissCatalogMenu();
+    exitSourceToDiscover(context);
   }
 
   @override
@@ -470,6 +534,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   }
 
   Future<VideoSiteState> _readSiteState({bool diagnostics = false}) async {
+    if (_verificationWindowActive) {
+      throw StateError('Verification window is active');
+    }
     final state = VideoSiteState.fromRaw(
       await _evaluate(
         videoSiteStateScript(widget.selectors, diagnostics: diagnostics),
@@ -489,6 +556,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
 
   Future<void> _inspectSite() async {
     if (!mounted ||
+        _verificationWindowActive ||
         !_foreground ||
         _web == null ||
         _inspecting ||
@@ -503,6 +571,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     try {
       final state = await _readSiteState();
       if (!mounted ||
+          _verificationWindowActive ||
           !_foreground ||
           epoch != _loadEpoch ||
           !videoSiteDocumentMatches(_requestedUrl, state.url)) {
@@ -548,10 +617,20 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   }
 
   void _showVerification(int epoch) {
-    if (!mounted || epoch != _loadEpoch || _personalVisible) return;
-    FocusScope.of(context).unfocus();
-    _accountFormKey.currentState?.clearSensitiveInputs();
-    _dismissCatalogMenu();
+    if (!mounted ||
+        _verificationWindowActive ||
+        epoch != _loadEpoch ||
+        _personalVisible) {
+      return;
+    }
+    // Read-only observation revisits this state every two seconds. Only the
+    // transition into verification owns focus/menu cleanup; repeating it would
+    // close the verification actions while the user is trying to use them.
+    if (!_verificationVisible) {
+      FocusScope.of(context).unfocus();
+      _accountFormKey.currentState?.clearSensitiveInputs();
+      _dismissCatalogMenu();
+    }
     _loadWatchdog?.cancel();
     _loadDeadline?.cancel();
     _deadlineEpoch = null;
@@ -640,6 +719,55 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       if (mounted) setState(() => _verificationStalled = true);
     } finally {
       _verificationReloading = false;
+    }
+  }
+
+  Future<void> _openVerificationWindow() async {
+    final browser = _web?.platform;
+    if (_verificationWindowActive ||
+        !_verificationVisible ||
+        defaultTargetPlatform != TargetPlatform.iOS ||
+        browser is! VideoBrowserVerificationWindow) {
+      return;
+    }
+    final epoch = _loadEpoch;
+    final target = _requestedUrl;
+    _dismissCatalogMenu();
+    setState(() => _verificationWindowActive = true);
+    _loadWatchdog?.cancel();
+    _loadDeadline?.cancel();
+    _deadlineEpoch = null;
+    _verificationDeadline?.cancel();
+    _verificationDeadline = null;
+    var retry = false;
+    try {
+      retry = await (browser as VideoBrowserVerificationWindow)
+          .openVerificationWindow(target);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(t.webview.loadFailed)));
+      }
+    } finally {
+      if (mounted) setState(() => _verificationWindowActive = false);
+    }
+    if (!mounted || epoch != _loadEpoch || target != _requestedUrl) return;
+    // Returning never means the provider accepted a challenge. Only the
+    // explicit retry choice reloads the original destination once.
+    _showVerification(epoch);
+    if (retry) {
+      try {
+        _documentLoading = true;
+        _browserDiagnostics.requested('user-verification-window-return');
+        await _web
+            ?.loadUrl(urlRequest: URLRequest(url: WebUri(target.toString())))
+            .timeout(const Duration(seconds: 5));
+      } catch (_) {
+        if (mounted && epoch == _loadEpoch) {
+          setState(() => _verificationStalled = true);
+        }
+      }
     }
   }
 
@@ -848,6 +976,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     await Navigator.of(context).push<void>(
       videoPageRoute(
         builder: (_) => PluginSettingsPage(
+          insideSource: true,
           from: widget.source,
           pluginUuid: widget.source,
           pluginRuntimeName: widget.source,
@@ -920,6 +1049,11 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
 
   @override
   void dispose() {
+    SourceReturnPreferences.changes.removeListener(_onReturnModeChanged);
+    SourceDiagnosticPreferences.changes.removeListener(
+      _onDiagnosticToolsChanged,
+    );
+    _diagnosticPreferenceEpoch++;
     _commentDrafts.clear();
     _creatorDirectoryReader?.dispose();
     _creatorResolver?.dispose();
@@ -1881,14 +2015,27 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     }
   }
 
-  Future<void> _openTab(NativeCatalogTab tab) async {
-    if (!await _allowLeaveAccount() || !mounted) return;
+  Future<void> _openTab(
+    NativeCatalogTab tab, {
+    bool rememberTab = true,
+    bool leaveChecked = false,
+  }) async {
+    if ((!leaveChecked && !await _allowLeaveAccount()) || !mounted) return;
     // A challenge belongs to the current browser session, not a catalog tab.
     // Stopping it to open another tab restarts the challenge and can prevent
     // an otherwise valid human interaction from finishing.
     if (_verificationVisible ||
         tab.id == _activeTab && (_busy || _refreshingCatalog)) {
       return;
+    }
+    if (rememberTab && tab.id != _activeTab) {
+      final previous = _tabHistory.indexOf(tab.id);
+      if (previous >= 0) {
+        _tabHistory.removeRange(previous, _tabHistory.length);
+      } else {
+        if (_tabHistory.length >= 30) _tabHistory.removeAt(0);
+        _tabHistory.add(_activeTab);
+      }
     }
     _accountEntryTabId = null;
     _authSubmissionStarted = false;
@@ -2265,6 +2412,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   }
 
   Future<VideoPageAnalysisResult> _analyzePage() async {
+    if (!_diagnosticToolsEnabled) throw StateError('Diagnostics disabled');
     final epoch = _loadEpoch;
     final page = _analysisPageTitle;
     // Refresh metadata at the user's request. No background network probes,
@@ -2291,7 +2439,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
             ? 'website'
             : 'native', 'page': videoSiteDiagnosticPath(_requestedUrl), 'pageFallback': videoSiteDocumentMatches(_websiteFallbackUrl, _requestedUrl), 'detailVisible': _detailVisible, 'returnPage': videoSiteDiagnosticPath(_watchOrigin?.uri)})}\n'
         '${_browserDiagnostics.report()}';
-    if (!mounted || epoch != _loadEpoch) throw StateError('Page changed');
+    if (!mounted || epoch != _loadEpoch || !_diagnosticToolsEnabled) {
+      throw StateError('Page changed or diagnostics disabled');
+    }
     return VideoPageAnalysisResult(
       mode: _websiteVisible
           ? t.videoPlayback.backToWeb
@@ -2308,17 +2458,26 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     );
   }
 
-  Future<void> _showPageAnalysis() => showVideoTaskSheet<void>(
-    context: context,
-    builder: (_) => VideoPageAnalysis(
-      analyze: _analyzePage,
-      onCopy: (report) => Clipboard.setData(ClipboardData(text: report)),
-    ),
-  );
+  Future<void> _showPageAnalysis() async {
+    if (!_diagnosticToolsEnabled) return;
+    await showVideoTaskSheet<void>(
+      context: context,
+      builder: (_) => VideoPageAnalysis(
+        analyze: _analyzePage,
+        onCopy: (report) async {
+          if (_diagnosticToolsEnabled) {
+            await Clipboard.setData(ClipboardData(text: report));
+          }
+        },
+      ),
+    );
+  }
 
   Future<void> _copyDiagnostic({String? report}) async {
+    if (!_diagnosticToolsEnabled) return;
     try {
       final text = report ?? (await _analyzePage()).report;
+      if (!_diagnosticToolsEnabled) return;
       await Clipboard.setData(ClipboardData(text: text));
     } catch (_) {
       if (mounted) {
@@ -2493,7 +2652,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     Uri? loadedUri, {
     VideoSiteState? observedState,
   }) async {
-    if (_personalVisible) return;
+    if (_verificationWindowActive || _personalVisible) return;
     if (!videoSiteDocumentMatches(_requestedUrl, loadedUri)) return;
     final uri = _requestedUrl;
     final epoch = _loadEpoch;
@@ -2501,7 +2660,12 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     _parsingEpoch = epoch;
     try {
       final state = observedState ?? await _readSiteState();
-      if (!mounted || epoch != _loadEpoch || _personalVisible) return;
+      if (!mounted ||
+          _verificationWindowActive ||
+          epoch != _loadEpoch ||
+          _personalVisible) {
+        return;
+      }
       if (!videoSiteDocumentMatches(uri, state.url)) {
         if (_verificationVisible) {
           _showVerification(epoch);
@@ -2803,12 +2967,22 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
               _detailVisible = false;
               operations?.dispose();
             });
+        // Explicit plugin exit can pop both routes in the same frame. A route
+        // remains mounted during its reverse transition; it must not restore
+        // the watch origin or start another selection after being popped.
+        if (!mounted ||
+            epoch != _loadEpoch ||
+            ModalRoute.of(context)?.isActive != true) {
+          return;
+        }
         // If the user left during a manual selection, finish that bounded read
         // before restoring the originating page; a late document cannot win.
         try {
           await episodeDocumentTask?.timeout(const Duration(seconds: 25));
         } catch (_) {}
-        if (mounted && epoch == _loadEpoch) {
+        if (mounted &&
+            epoch == _loadEpoch &&
+            ModalRoute.of(context)?.isActive == true) {
           if (verifyRequested) {
             _parsingEpoch = null;
             // Reveal the challenge already loaded during source refresh,
@@ -3211,12 +3385,12 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       return cached.videos;
     }
     final script = videoPersonalRecentScript(history, widget.selectors);
-    final web = _web?.platform;
-    final raw = await (web is VideoSiteBrowserController
-        ? web
-              .evaluateAsyncJavascript(script)
-              .timeout(const Duration(seconds: 9))
-        : _evaluate(script, timeoutSeconds: 9));
+    final web = _web;
+    if (web == null) throw StateError('WebView unavailable');
+    final raw = await videoBrowserReadAsync(
+      web,
+      script,
+    ).timeout(const Duration(seconds: 9));
     if (!mounted ||
         owner != _ownIdentityRoot ||
         epoch != _loadEpoch ||
@@ -4326,7 +4500,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         ? _watchOrigin ?? _backStack.lastOrNull
         : _backStack.lastOrNull;
     if (previous?.website == true || previous?.personal == true) return null;
-    final uri = previous?.uri ?? widget.tabs.firstOrNull?.url;
+    final uri = previous?.uri ?? _previousTab?.url;
     final data = uri == null ? null : _catalogCache[_catalogKey(uri)];
     if (data == null || uri == null) return null;
     return Scaffold(
@@ -4391,7 +4565,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   );
 
   Future<void> _toggleBrowserInspection() async {
-    if (_inspectionChanging) return;
+    if (_inspectionChanging || !_diagnosticToolsEnabled) return;
     final VideoBrowserInspection? controller = switch (_web?.platform) {
       VideoBrowserInspection browser => browser,
       _ => null,
@@ -4421,6 +4595,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         );
         if (!mounted ||
             confirmed != true ||
+            !_diagnosticToolsEnabled ||
             !identical(_web?.platform, controller)) {
           return;
         }
@@ -4429,6 +4604,13 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           .setInspectionEnabled(enabled)
           .timeout(const Duration(seconds: 4));
       if (!mounted || !identical(_web?.platform, controller)) return;
+      if (enabled && !_diagnosticToolsEnabled) {
+        final revoked = await controller.setInspectionEnabled(false);
+        if (mounted && identical(_web?.platform, controller)) {
+          setState(() => _inspectionEnabled = revoked);
+        }
+        return;
+      }
       setState(() => _inspectionEnabled = actual);
       if (actual != enabled) throw StateError('Inspection preference rejected');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -4520,6 +4702,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
 
   @override
   Widget build(BuildContext context) {
+    final officialWebsite =
+        sourceOfficialWebsite(widget.source) ??
+        validatedSourceWebsite(widget.homeUrl.toString());
     final tabIndex = widget.tabs.indexWhere((tab) => tab.id == _activeTab);
     final internalBack = !_verificationVisible && _canGoBackInside;
     final requiredBrowser =
@@ -4543,24 +4728,26 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
             children: [
               Scaffold(
                 appBar: AppBar(
-                  leading: NativeVideoIconButton(
-                    light: false,
-                    tooltip: internalBack || widget.initialUrl != null
-                        ? t.common.back
-                        : t.videoPlayback.closeSource,
-                    symbol: internalBack || widget.initialUrl != null
-                        ? 'chevron.left'
-                        : 'xmark',
-                    icon: internalBack || widget.initialUrl != null
-                        ? Icons.arrow_back_rounded
-                        : Icons.close_rounded,
-                    onPressed: () {
-                      if (_verificationVisible) {
-                        Navigator.of(context).pop();
-                      } else {
-                        unawaited(_goBackInside());
-                      }
-                    },
+                  leading: Center(
+                    child: NativeVideoIconButton(
+                      light: false,
+                      tooltip: internalBack || widget.initialUrl != null
+                          ? t.common.back
+                          : t.videoPlayback.closeSource,
+                      symbol: internalBack || widget.initialUrl != null
+                          ? 'chevron.left'
+                          : 'xmark',
+                      icon: internalBack || widget.initialUrl != null
+                          ? Icons.arrow_back_rounded
+                          : Icons.close_rounded,
+                      onPressed: () {
+                        if (_verificationVisible) {
+                          Navigator.of(context).pop();
+                        } else {
+                          unawaited(_goBackInside());
+                        }
+                      },
+                    ),
                   ),
                   titleSpacing: 0,
                   title:
@@ -4636,17 +4823,33 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                         if (_verificationVisible) ...{
                           'check': t.videoPlayback.checkVerification,
                           'reload': t.videoPlayback.reloadVerification,
+                          if (defaultTargetPlatform == TargetPlatform.iOS &&
+                              _web?.platform is VideoBrowserVerificationWindow)
+                            'verificationWindow':
+                                t.videoPlayback.verificationWindow,
                           'help': t.videoPlayback.verificationHelp,
                         },
-                        if (!_verificationVisible)
-                          'tools': t.videoCommunity.preferences,
-                        'diagnostics': t.videoPlayback.pageAnalysis,
-                        if (_web?.platform is VideoBrowserInspection)
+                        'tools': t.videoCommunity.preferences,
+                        if (officialWebsite != null)
+                          'officialWebsite': t.sourceShell.openOfficialWebsite,
+                        if (_diagnosticToolsEnabled)
+                          'diagnostics': t.videoPlayback.pageAnalysis,
+                        'exit': t.sourceShell.exitPlugin,
+                        if (_diagnosticToolsEnabled &&
+                            _web?.platform is VideoBrowserInspection)
                           'inspection': _inspectionEnabled
                               ? t.videoPlayback.disableBrowserInspection
                               : t.videoPlayback.enableBrowserInspection,
                       },
                       optionIcons: const {
+                        'officialWebsite': (
+                          icon: Icons.open_in_browser_outlined,
+                          symbol: 'safari',
+                        ),
+                        'exit': (
+                          icon: Icons.exit_to_app,
+                          symbol: 'rectangle.portrait.and.arrow.right',
+                        ),
                         'native': (
                           icon: Icons.grid_view_rounded,
                           symbol: 'square.grid.2x2',
@@ -4679,6 +4882,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                           icon: Icons.refresh_rounded,
                           symbol: 'arrow.clockwise',
                         ),
+                        'verificationWindow': (
+                          icon: Icons.open_in_new_rounded,
+                          symbol: 'arrow.up.right.square',
+                        ),
                         'help': (
                           icon: Icons.help_outline_rounded,
                           symbol: 'questionmark.circle',
@@ -4692,11 +4899,23 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                         }
                         unawaited(switch (value) {
                           'personal' => Future<void>.sync(_showPersonal),
-                          'tools' => _showTools(),
+                          'tools' =>
+                            _verificationVisible
+                                ? _openSettings()
+                                : _showTools(),
+                          'officialWebsite' =>
+                            officialWebsite == null
+                                ? Future<void>.value()
+                                : openSourceOfficialWebsite(
+                                    context,
+                                    officialWebsite,
+                                  ),
                           'check' => _onLoaded(_requestedUrl),
                           'reload' => _reloadVerification(),
+                          'verificationWindow' => _openVerificationWindow(),
                           'help' => _showVerificationHelp(),
                           'diagnostics' => _showPageAnalysis(),
+                          'exit' => _exitSource(),
                           'inspection' => _toggleBrowserInspection(),
                           'native' => _chooseDisplayMode(false),
                           'website' => _chooseDisplayMode(true),
@@ -4711,8 +4930,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                     Positioned.fill(
                       child: IgnorePointer(
                         ignoring:
+                            (_verificationVisible && _usesVerificationWindow) ||
                             !_verificationVisible &&
-                            (!_websiteVisible || _busy || _siteLoadFailed),
+                                (!_websiteVisible || _busy || _siteLoadFailed),
                         child: VideoSiteBrowser(
                           home: widget.homeUrl,
                           externalAuthenticationEntries:
@@ -4726,6 +4946,14 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                               javaScriptEnabled: true,
                               domStorageEnabled: true,
                               databaseEnabled: true,
+                              // This browser sits beneath the native catalog.
+                              // Keep Android in Flutter's texture compositor so
+                              // the catalog does not retain a stale surface.
+                              useHybridComposition:
+                                  defaultTargetPlatform ==
+                                      TargetPlatform.android
+                                  ? false
+                                  : null,
                               useShouldOverrideUrlLoading: true,
                             ),
                             onWebViewCreated: (controller) {
@@ -4742,6 +4970,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                               _challengeResponseUrl = null;
                               _browserDiagnostics.document('load-start', uri);
                               if (!_isFirstParty(uri)) return;
+                              // A real main-document navigation invalidates
+                              // the open menu even when verification stays
+                              // visible. Read-only observation does not.
+                              _dismissCatalogMenu();
                               _documentLoading = true;
                               _awaitingCommit = true;
                               _adoptWebsiteNavigation(uri);
@@ -4955,6 +5187,14 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                         ),
                       ),
                     ),
+                    if (_verificationVisible && _usesVerificationWindow)
+                      Positioned.fill(
+                        child: VideoVerificationGate(
+                          active: _verificationWindowActive,
+                          onVerify: () => unawaited(_openVerificationWindow()),
+                          onHelp: () => unawaited(_showVerificationHelp()),
+                        ),
+                      ),
                     if ((!_websiteVisible && !_verificationVisible) ||
                         _accountTaskReady ||
                         _recoveryReady)
@@ -5074,7 +5314,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                                       ),
                                     ],
                                   ),
-                                  if (_diagnostic != null)
+                                  if (_diagnosticToolsEnabled &&
+                                      _diagnostic != null)
                                     TextButton(
                                       onPressed: _copyDiagnostic,
                                       child: Text(
@@ -5095,7 +5336,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                         child: MaterialBanner(
                           content: Text(_message!),
                           actions: [
-                            if (_diagnostic != null)
+                            if (_diagnosticToolsEnabled && _diagnostic != null)
                               TextButton(
                                 onPressed: _copyDiagnostic,
                                 child: Text(t.videoPlayback.copyDiagnostic),

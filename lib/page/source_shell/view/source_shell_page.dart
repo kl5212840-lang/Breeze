@@ -12,6 +12,10 @@ import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/page/source_shell/models/source_shell_section.dart';
 import 'package:zephyr/page/source_shell/view/source_profile_content.dart';
+import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/page/source_shell/source_return_preferences.dart';
+import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/util/event/event.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
@@ -50,6 +54,8 @@ class _SourceShellPageState extends State<SourceShellPage> {
   @override
   void initState() {
     super.initState();
+    SourceReturnPreferences.changes.addListener(_onReturnModeChanged);
+    unawaited(SourceReturnPreferences.load());
     _profileBackController.addListener(_onProfileBackChanged);
     _sourceName = widget.sourceName;
     final plugin = PluginRegistryService.I.getByUuid(widget.source);
@@ -87,6 +93,7 @@ class _SourceShellPageState extends State<SourceShellPage> {
 
   @override
   void dispose() {
+    SourceReturnPreferences.changes.removeListener(_onReturnModeChanged);
     _profileBackController.removeListener(_onProfileBackChanged);
     _profileBackController.dispose();
     _pluginSubscription?.cancel();
@@ -100,6 +107,10 @@ class _SourceShellPageState extends State<SourceShellPage> {
     scheduleMicrotask(() {
       if (mounted) setState(() {});
     });
+  }
+
+  void _onReturnModeChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _openLogin() async {
@@ -123,6 +134,7 @@ class _SourceShellPageState extends State<SourceShellPage> {
       pluginUuid: widget.source,
       pluginRuntimeName: widget.source,
       pluginDisplayName: _sourceName,
+      insideSource: true,
     ),
   );
 
@@ -186,12 +198,13 @@ class _SourceShellPageState extends State<SourceShellPage> {
   void _goBack() {
     if (_profileCanGoBack) {
       _profileBackController.goBack();
-    } else if (_tabHistory.isNotEmpty) {
+    } else if (SourceReturnPreferences.includesTabHistory &&
+        _tabHistory.isNotEmpty) {
       setState(() => _selectedIndex = _tabHistory.removeLast());
     }
   }
 
-  void _exitSource() => Navigator.of(context).maybePop();
+  void _exitSource() => exitSourceToDiscover(context);
 
   Future<void> _routeSourceAction(Map<String, dynamic> action) =>
       DiscoverRouter.route(
@@ -205,13 +218,14 @@ class _SourceShellPageState extends State<SourceShellPage> {
     final sections = widget.sections;
     final showingProfile =
         sections.isNotEmpty && sections[_selectedIndex].profile;
-    final canGoBack = _profileCanGoBack || _tabHistory.isNotEmpty;
+    final canGoBack =
+        _profileCanGoBack ||
+        SourceReturnPreferences.includesTabHistory && _tabHistory.isNotEmpty;
     final backLabel = _profileCanGoBack
         ? _profileBackController.backLabel!
-        : _tabHistory.isNotEmpty
+        : SourceReturnPreferences.includesTabHistory && _tabHistory.isNotEmpty
         ? '${t.common.back} · ${sections[_tabHistory.last].title}'
         : null;
-    final colors = Theme.of(context).colorScheme;
     return PopScope(
       canPop: !canGoBack,
       onPopInvokedWithResult: (didPop, _) {
@@ -220,56 +234,42 @@ class _SourceShellPageState extends State<SourceShellPage> {
       child: Scaffold(
         appBar: AppBar(
           automaticallyImplyLeading: false,
-          leadingWidth: canGoBack ? 56 : 90,
-          leading: canGoBack
-              ? IconButton(
-                  tooltip: backLabel,
-                  icon: const Icon(Icons.arrow_back),
-                  onPressed: _goBack,
-                )
-              : Padding(
-                  padding: const EdgeInsets.only(left: 8),
-                  child: Center(
-                    child: Tooltip(
-                      message: t.sourceShell.exitSourceHint,
-                      child: TextButton.icon(
-                        onPressed: _exitSource,
-                        style: TextButton.styleFrom(
-                          foregroundColor: colors.onTertiaryContainer,
-                          backgroundColor: colors.tertiaryContainer,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          minimumSize: const Size(72, 36),
-                          visualDensity: VisualDensity.compact,
-                        ),
-                        icon: const Icon(Icons.exit_to_app, size: 18),
-                        label: Text(t.sourceShell.exitSource),
-                      ),
-                    ),
-                  ),
-                ),
+          leadingWidth: 56,
+          leading: SourceBackButton(
+            tooltip: backLabel,
+            onPressed: canGoBack ? _goBack : _exitSource,
+          ),
           title: Text(
             showingProfile ? '我的' : _sourceName,
             overflow: TextOverflow.ellipsis,
           ),
           actions: [
             if (!showingProfile)
-              IconButton(
+              SourceChromeIconButton(
                 tooltip: t.sourceShell.search,
-                icon: const Icon(Icons.search),
+                icon: Icons.search,
+                symbol: 'magnifyingglass',
                 onPressed: _openSearch,
               ),
             if (!showingProfile)
-              IconButton(
+              SourceChromeIconButton(
                 tooltip: t.sourceShell.account,
-                icon: const Icon(Icons.person_outline),
+                icon: Icons.person_outline,
+                symbol: 'person.crop.circle',
                 onPressed: _openAccount,
               ),
-            if (!showingProfile)
-              IconButton(
-                tooltip: t.sourceShell.settings,
-                icon: const Icon(Icons.settings_outlined),
-                onPressed: _openSettings,
-              ),
+            SourceMoreButton(
+              source: widget.source,
+              actions: [
+                SourceMenuAction(
+                  id: 'settings',
+                  label: t.sourceShell.settings,
+                  icon: Icons.settings_outlined,
+                  symbol: 'gearshape',
+                  onSelected: () => unawaited(_openSettings()),
+                ),
+              ],
+            ),
           ],
         ),
         body: sections.isEmpty
@@ -346,8 +346,24 @@ class _SourceShellPageState extends State<SourceShellPage> {
                       const SizedBox.shrink(),
                 ],
               ),
-        bottomNavigationBar: sections.length > 1
-            ? NavigationBar(
+        bottomNavigationBar: sections.length <= 1
+            ? null
+            : usesNativeSourceChrome(context)
+            ? VideoNativeNavigation(
+                items: [
+                  for (final section in sections)
+                    BottomNavigationBarItem(
+                      icon: Icon(section.icon),
+                      label: section.id == 'more'
+                          ? t.navigation.more
+                          : section.title,
+                    ),
+                ],
+                symbols: [for (final section in sections) _symbol(section)],
+                currentIndex: _selectedIndex,
+                onTap: _select,
+              )
+            : NavigationBar(
                 selectedIndex: _selectedIndex,
                 labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
                 onDestinationSelected: _select,
@@ -363,11 +379,22 @@ class _SourceShellPageState extends State<SourceShellPage> {
                           : section.title,
                     ),
                 ],
-              )
-            : null,
+              ),
       ),
     );
   }
+
+  String _symbol(SourceShellSection section) => switch (section.id) {
+    'recommend' => 'sparkles',
+    'newest' || 'latest' => 'clock',
+    'discover' => 'safari',
+    'navigation' || 'categories' => 'square.grid.2x2',
+    'rank' || 'ranking' => 'chart.bar',
+    'cloudFavorite' => 'bookmark',
+    'profile' => 'person.crop.circle',
+    'more' => 'square.grid.2x2',
+    _ => 'list.bullet',
+  };
 
   Widget _buildMoreActions(List<SourceShellAction> actions) {
     return ListView.separated(

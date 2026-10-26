@@ -41,6 +41,13 @@ class _SyncSettingPageState extends State<SyncSettingPage> {
           ),
           _syncServiceType(state, cubit),
           webdavSync(context, state.syncSetting.syncServiceType),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Text(
+              t.videoLibrary.syncMergeNote,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
           if (configuredSync) _autoSync(state, cubit),
           if (configuredSync && state.syncSetting.autoSync)
             _syncNotify(state, cubit),

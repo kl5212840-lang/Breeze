@@ -86,7 +86,7 @@ void main() {
           VideoShareStatus.failed,
         );
       }
-      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
       expect(
         await VideoSystemShare.share(
           video: Uri.parse('https://hanime1.me/watch?v=42'),
@@ -96,6 +96,26 @@ void main() {
         VideoShareStatus.unavailable,
       );
       expect(calls, 0);
+    },
+  );
+  test(
+    'Android uses the system chooser without asserting a completed share',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      MethodCall? received;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        received = call;
+        return 'presented';
+      });
+      expect(
+        await VideoSystemShare.share(
+          video: Uri.parse('https://hanime1.me/watch?v=42&private=omit'),
+          title: 'Title',
+          anchor: Rect.zero,
+        ),
+        VideoShareStatus.presented,
+      );
+      expect(received!.arguments['url'], 'https://hanime1.me/watch?v=42');
     },
   );
   test('missing plugin and platform errors stay explicit failures', () async {

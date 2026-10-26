@@ -1,3 +1,4 @@
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'dart:async';
 
 import 'package:zephyr/page/video/video_page_route.dart';
@@ -201,6 +202,7 @@ class _VideoCommunityPageState extends State<VideoCommunityPage> {
     appBar: widget.embedded
         ? null
         : AppBar(
+            leading: const SourceBackButton(),
             title: Text(widget.replyTitle ?? t.videoCommunity.comments),
             actions: [
               IconButton(

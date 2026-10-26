@@ -455,7 +455,7 @@ private final class VideoControlView: NSObject, FlutterPlatformView {
       : NSDirectionalEdgeInsets(top: 5, leading: 9, bottom: 5, trailing: 9)
     // Keep the UIButton/platform-view hit area intact. Only the visible plate
     // is inset, so a 44pt player control draws a 36pt material background.
-    // Catalog menus omit this argument and retain their native appearance.
+    // Icon-only menus share the same plate inset as adjacent icon buttons.
     let backgroundInset = min(4, max(0, (args["backgroundInset"] as? NSNumber)?.doubleValue ?? 0))
     config.background.backgroundInsets = NSDirectionalEdgeInsets(
       top: backgroundInset, leading: backgroundInset,
@@ -529,16 +529,22 @@ private final class VideoSharePresenter {
     }
   }
 
+  private func isPublicVideoPage(_ url: URL) -> Bool {
+    guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+    if url.path.range(of: "^/voddetail/[1-9][0-9]{0,14}\\.html$", options: .regularExpression) != nil {
+      return parts.query == nil || parts.query?.isEmpty == true
+    }
+    guard url.path == "/watch", let queries = parts.queryItems, queries.count == 1,
+          queries[0].name == "v", let id = queries[0].value else { return false }
+    return id.range(of: "^[0-9]+$", options: .regularExpression) != nil
+  }
+
   private func share(_ args: [String: Any], result: @escaping FlutterResult) {
     guard active == nil else { result("busy"); return }
     guard let raw = args["url"] as? String, raw.count <= 2000,
           let url = URL(string: raw), url.scheme == "https", url.host?.isEmpty == false,
           url.user == nil, url.password == nil, url.port == nil || url.port == 443,
-          url.path == "/watch", url.fragment == nil,
-          let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
-          let queries = parts.queryItems, queries.count == 1, queries[0].name == "v",
-          let id = queries[0].value, !id.isEmpty,
-          id.range(of: "^[0-9]+$", options: .regularExpression) != nil else {
+          url.fragment == nil, isPublicVideoPage(url) else {
       result("failed"); return
     }
     let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
