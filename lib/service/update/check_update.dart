@@ -33,14 +33,14 @@ Future<String> getAppVersion() async {
 }
 
 Future<GithubReleaseJson?> getCloudVersion() async {
-  if (Platform.isIOS) {
+  if (Platform.isIOS || Platform.isAndroid) {
     try {
       final release = await fetchReleaseData(
         'https://api.github.com/repos/kl5212840-lang/Breeze/releases/latest',
       );
       return GithubReleaseJson.fromJson(release);
     } catch (e, stackTrace) {
-      logger.w('无法获取本分支 iOS 更新信息', error: e, stackTrace: stackTrace);
+      logger.w('无法获取本分支更新信息', error: e, stackTrace: stackTrace);
       return null;
     }
   }

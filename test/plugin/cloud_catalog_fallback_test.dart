@@ -53,6 +53,7 @@ void main() {
           'manifest': {
             'uuid': 'f5387e66-9c58-4b8f-beb7-22a939f79e5d',
             'version': '9.0.0',
+            'releaseSeries': 1,
           },
         },
         {

@@ -44,9 +44,23 @@ fun findRustlsPlatformVerifierProject(): String {
 }
 
 val keystoreProperties = Properties()
-val keystorePropertiesFile = rootProject.file("key.properties")
+// Fork releases use their own stable key outside the repository. Never replace
+// the upstream git-crypt files or silently sign a release with the debug key.
+val signingPropertiesPath = providers.environmentVariable("BREEZE_ANDROID_SIGNING_PROPERTIES").orNull
+val keystorePropertiesFile = signingPropertiesPath?.let { File(it) } ?: rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
-    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+    val encrypted = keystorePropertiesFile.inputStream().use { input ->
+        val header = ByteArray(10)
+        input.read(header)
+        header.contentEquals(byteArrayOf(0) + "GITCRYPT".toByteArray() + byteArrayOf(0))
+    }
+    if (!encrypted) keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+}
+if (signingPropertiesPath != null) {
+    check(keystorePropertiesFile.isFile && listOf("keyAlias", "keyPassword", "storeFile", "storePassword")
+        .all { !keystoreProperties.getProperty(it).isNullOrBlank() }) {
+        "BREEZE_ANDROID_SIGNING_PROPERTIES must point to a complete private signing configuration."
+    }
 }
 
 android {

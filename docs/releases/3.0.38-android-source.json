@@ -1,0 +1,108 @@
+{
+  "publishedBaseline": {
+    "tag": "v3.0.37",
+    "apkSha256": "c7e4700945020fb55409e68cea7e34582da95ba2f13c9adc58251362020567f0",
+    "versionName": "3.0.37",
+    "versionCode": 4263,
+    "sourceInputCount": 839,
+    "overlays": [
+      {
+        "path": "AGENTS.md",
+        "sha256": "e81bcf0b8bbf8695eddf1f9dd5d59acdcdf9cac70cc0724bc7c5bfc7200f1c6d"
+      },
+      {
+        "path": "android/app/build.gradle.kts",
+        "sha256": "46f43ab33f9a17b115f841daa3bcf9d91d7c4222915f22c6821f8761ad81ed14"
+      },
+      {
+        "path": "android/app/src/main/kotlin/com/zephyr/breeze/MainActivity.kt",
+        "sha256": "72a86ae610ca71d7f8b7ccf1cf1de02d2378529e945fe46a25feab63b657a7ac"
+      },
+      {
+        "path": "android/app/src/main/kotlin/com/zephyr/breeze/VideoSystemActions.kt",
+        "sha256": "f1c67afe3d34d99db17a9dde9937e1a4f9422a00da7967fdce518e5204eb12ea"
+      },
+      {
+        "path": "asset/plugins/personal_catalog.json",
+        "sha256": "52442113c1d0a16f6322c0fccd90f633090608b3cd048b93379c8a74e17454d5"
+      },
+      {
+        "path": "lib/i18n/en_US.i18n.json",
+        "sha256": "e644fd963e106f333d6cdaa4c9c5c80b6a77e7f20f4a1717e0a07af389e03b88"
+      },
+      {
+        "path": "lib/i18n/strings.g.dart",
+        "sha256": "d8056d9d81fabbe521399aad953f03513628f6878518a8c179c439bb1afde46f"
+      },
+      {
+        "path": "lib/i18n/strings_en_US.g.dart",
+        "sha256": "757fdc0061e13ad09e785f2d49d09bb30e998e6913e40270d2d3b17c2e483383"
+      },
+      {
+        "path": "lib/i18n/strings_zh_CN.g.dart",
+        "sha256": "2af1e585344d1a41edec24c62856b233b61ed46ae4067ca35156ca4c42d4f5f8"
+      },
+      {
+        "path": "lib/i18n/zh_CN.i18n.json",
+        "sha256": "095194984e6575679bef63144668468b30ec505e7ac68e327e75acc8f4712b21"
+      },
+      {
+        "path": "lib/page/plugin_settings/widgets/plugin_settings_content.dart",
+        "sha256": "5db2c283376e7a7ac3b59f140a1f4227a0ff3fb4e926377e323c3217207b9fa6"
+      },
+      {
+        "path": "lib/page/setting/global/debug_setting_page.dart",
+        "sha256": "be6e322c79141695d9fa026a0f68d3372848b1293d27f4a0f307553dc3939974"
+      },
+      {
+        "path": "lib/page/setting/global/widgets.dart",
+        "sha256": "6e8f329bf32477d512953fba50d91c9d097ace6205f28bccabff605a9a2403a2"
+      },
+      {
+        "path": "lib/page/video/api_video_detail_page.dart",
+        "sha256": "e9c4fb8b9753f58be8ebde44424b170bc831c106d5022bad1db4994a3040823c"
+      },
+      {
+        "path": "lib/page/video/api_video_library_page.dart",
+        "sha256": "10ac3f0b820dbf5de84dc2ffdf8827e097dda35ec31a6073f0049fbf9fc9bf93"
+      },
+      {
+        "path": "lib/page/video/api_video_models.dart",
+        "sha256": "d4bc701e7d7508f47252d5ad51f8893d7b17ff50a1ee527f81e50e404fecd086"
+      },
+      {
+        "path": "lib/page/video/api_video_repository.dart",
+        "sha256": "0089aab889fa3492360edb8c933217f21b3231835db311018977a15fb27b4106"
+      },
+      {
+        "path": "lib/page/video/native_video_page.dart",
+        "sha256": "ebab001c7a5b9f9c1e3024426689317c7222f3086ae9ec577f463a00abdbb117"
+      },
+      {
+        "path": "lib/page/video/video_page_analysis.dart",
+        "sha256": "16710c95750817b4074474335b88a61e20809fa6b8c88ebbdb8962ecf565474e"
+      },
+      {
+        "path": "pubspec.yaml",
+        "sha256": "b3726f47450fadd5f4e079d497de5f387173ce644c3f37fd521dff20037a5636"
+      },
+      {
+        "path": "script/lint/check_video_ui_docs.py",
+        "sha256": "ada82fee89284ac71c0869827360ad26eb76e1d70f5dfad49b4f94c190cb9c0b"
+      },
+      {
+        "path": "lib/page/video/api_video_playback_diagnostics.dart",
+        "sha256": "6d45a256955154638c2ecd34454c20a2ad99c200e1d109bb3026801c967d5d72"
+      }
+    ]
+  },
+  "migrationSharedCommit": "781c097afcd962940589c68bbaf65a43d0001215",
+  "preservedNativeBinary": {
+    "source": "published 3.0.37 APK",
+    "member": "lib/arm64-v8a/libwaifu2x_cli.so",
+    "bytes": 14434296,
+    "sha256": "5dfcdb9f2c39c28265dc6f157cfc3aa439f9a77fe223ceb2f3236756492a084a"
+  },
+  "newVersionName": "3.0.38",
+  "newVersionCode": 4264
+}

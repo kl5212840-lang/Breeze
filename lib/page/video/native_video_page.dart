@@ -63,8 +63,19 @@ class NativeVideoPage extends StatefulWidget {
     this.onEpisodeChanged,
     this.detailBuilder,
     this.extraPlayerActions,
+    this.onOpenWebsite,
+    this.onPlaybackError,
+    this.extraFailureActions,
   });
 
+  final AsyncCallback? onOpenWebsite;
+  final ValueChanged<String>? onPlaybackError;
+  final List<Widget> Function(
+    BuildContext,
+    NativePlaybackSession,
+    ValueChanged<NativeVideoCard>,
+  )?
+  extraFailureActions;
   final NativePlaybackSession session;
   final Future<NativeEpisodeLoad> Function(Uri)? loadEpisode;
   final ValueChanged<NativeEpisodeLoad>? onEpisodeChanged;
@@ -1083,6 +1094,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         );
         return;
       }
+      widget.onPlaybackError?.call(error.toString());
       setState(() {
         _loading = false;
         _quickSection = null;
@@ -1177,6 +1189,9 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     if (_controller?.value.hasError == true && !_failed) {
       // Platform errors may replace the value with an uninitialized value
       // at 00:00. Keep the last good position captured before that error.
+      widget.onPlaybackError?.call(
+        _controller?.value.errorDescription ?? 'platform',
+      );
       _hideTimer?.cancel();
       setState(() {
         _quickSection = null;
@@ -1565,7 +1580,20 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     if (_leavingToSite) return;
     _leavingToSite = true;
     if (_fullscreen) await _setFullscreen(false);
-    if (mounted) Navigator.of(context).pop(true);
+    if (!mounted) return;
+    if (widget.onOpenWebsite case final open?) {
+      try {
+        await _controller
+            ?.pause()
+            .timeout(const Duration(seconds: 2))
+            .catchError((_) {});
+        if (mounted) await open();
+      } finally {
+        _leavingToSite = false;
+      }
+      return;
+    }
+    Navigator.of(context).pop(true);
   }
 
   void _exitSourceFromPlayer() {
@@ -2646,49 +2674,66 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                     ),
                   if (_failed)
                     Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            _verificationRequired
-                                ? t.videoPlayback.verificationRequired
-                                : t.videoPlayback.playFailed,
-                            style: const TextStyle(color: Colors.white),
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 8),
-                          Wrap(
-                            alignment: WrapAlignment.center,
-                            spacing: 8,
-                            children: [
-                              if (_verificationRequired &&
-                                  widget.onVerifySite != null)
-                                TextButton(
-                                  onPressed: () => unawaited(_verifySite()),
-                                  child: Text(
-                                    t.videoPlayback.continueVerification,
-                                  ),
-                                ),
-                              TextButton(
-                                onPressed: () => unawaited(_backToWeb()),
-                                child: Text(t.videoPlayback.backToWeb),
-                              ),
-                              TextButton(
-                                onPressed: () => unawaited(_retryPlayback()),
-                                child: Text(t.common.retry),
-                              ),
-                              if (_sourceIndex + 1 < _session.sources.length)
-                                TextButton(
-                                  onPressed: () => unawaited(
-                                    _retryPlayback(
-                                      nextSource: _sourceIndex + 1,
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(16, 44, 16, 8),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              _verificationRequired
+                                  ? t.videoPlayback.verificationRequired
+                                  : t.videoPlayback.playFailed,
+                              style: const TextStyle(color: Colors.white),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: 8),
+                            Wrap(
+                              alignment: WrapAlignment.center,
+                              spacing: 8,
+                              children: [
+                                if (_verificationRequired &&
+                                    widget.onVerifySite != null)
+                                  TextButton(
+                                    onPressed: () => unawaited(_verifySite()),
+                                    child: Text(
+                                      t.videoPlayback.continueVerification,
                                     ),
                                   ),
-                                  child: Text(t.videoPlayback.nextSource),
+                                TextButton(
+                                  onPressed: () => unawaited(_backToWeb()),
+                                  child: Text(
+                                    widget.onOpenWebsite == null
+                                        ? t.videoPlayback.backToWeb
+                                        : t.videoPlayback.openWebsitePlayer,
+                                  ),
                                 ),
-                            ],
-                          ),
-                        ],
+                                TextButton(
+                                  onPressed: () => unawaited(_retryPlayback()),
+                                  child: Text(t.common.retry),
+                                ),
+                                if (_sourceIndex + 1 < _session.sources.length)
+                                  TextButton(
+                                    onPressed: () => unawaited(
+                                      _retryPlayback(
+                                        nextSource: _sourceIndex + 1,
+                                      ),
+                                    ),
+                                    child: Text(t.videoPlayback.nextSource),
+                                  ),
+                              ],
+                            ),
+                            if (widget.extraFailureActions case final actions?)
+                              Wrap(
+                                alignment: WrapAlignment.center,
+                                spacing: 8,
+                                children: actions(
+                                  context,
+                                  _session,
+                                  _selectEpisode,
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                   if (_holdingFastForward && !_failed)

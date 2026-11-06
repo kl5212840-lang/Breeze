@@ -2101,11 +2101,11 @@ class Translations$plugin$zh_CN {
 	/// zh-CN: '彻底删除插件，并删除相关数据'
 	String get deletePluginSubtitle => '彻底删除插件，并删除相关数据';
 
-	/// zh-CN: '调试模式'
-	String get debugMode => '调试模式';
+	/// zh-CN: '开发调试'
+	String get debugMode => '开发调试';
 
-	/// zh-CN: '调试地址'
-	String get debugAddress => '调试地址';
+	/// zh-CN: '开发服务地址'
+	String get debugAddress => '开发服务地址';
 
 	/// zh-CN: '账号登录'
 	String get accountLogin => '账号登录';
@@ -2313,6 +2313,12 @@ class Translations$plugin$zh_CN {
 
 	/// zh-CN: '当前版本 $version'
 	String currentVersion({required Object version}) => '当前版本 ${version}';
+
+	/// zh-CN: '从开发服务加载插件；播放问题请使用页面诊断'
+	String get developmentDebugHint => '从开发服务加载插件；播放问题请使用页面诊断';
+
+	/// zh-CN: '请输入完整的 HTTP 或 HTTPS 开发服务地址'
+	String get invalidDebugAddress => '请输入完整的 HTTP 或 HTTPS 开发服务地址';
 }
 
 // Path: gestureLock
@@ -3463,8 +3469,8 @@ class Translations$sourceShell$zh_CN {
 	/// zh-CN: '页面诊断工具'
 	String get diagnosticTools => '页面诊断工具';
 
-	/// zh-CN: '显示页面分析和网页调试'
-	String get diagnosticToolsDescription => '显示页面分析和网页调试';
+	/// zh-CN: '在页面菜单显示分析与播放诊断'
+	String get diagnosticToolsDescription => '在页面菜单显示分析与播放诊断';
 
 	/// zh-CN: '无法保存诊断设置'
 	String get diagnosticToolsSaveFailed => '无法保存诊断设置';
@@ -3901,8 +3907,8 @@ class Translations$videoPlayback$zh_CN {
 
 	// Translations
 
-	/// zh-CN: '播放暂未成功，请重试或切换线路；也可在网页打开'
-	String get playFailed => '播放暂未成功，请重试或切换线路；也可在网页打开';
+	/// zh-CN: '播放暂未成功，请重试或选择其他播放方式'
+	String get playFailed => '播放暂未成功，请重试或选择其他播放方式';
 
 	/// zh-CN: '播放操作未成功，请重试。'
 	String get actionFailed => '播放操作未成功，请重试。';
@@ -4455,6 +4461,27 @@ class Translations$videoPlayback$zh_CN {
 
 	/// zh-CN: '登录备份'
 	String get accountBackup => '登录备份';
+
+	/// zh-CN: '官网播放'
+	String get openWebsitePlayer => '官网播放';
+
+	/// zh-CN: '备用网页播放'
+	String get backupWebPlayer => '备用网页播放';
+
+	/// zh-CN: '网页播放器'
+	String get webPlayers => '网页播放器';
+
+	/// zh-CN: '以下播放器使用同一资源线路，无法绕过媒体 CDN 故障。'
+	String get sameResource => '以下播放器使用同一资源线路，无法绕过媒体 CDN 故障。';
+
+	/// zh-CN: '此影片目前仅提供一条资源线路'
+	String get singleResourceLine => '此影片目前仅提供一条资源线路';
+
+	/// zh-CN: '播放诊断'
+	String get playbackAnalysis => '播放诊断';
+
+	/// zh-CN: '仅检查清单与分片连通性，不代表完整播放成功。目录、封面正常也不代表媒体 CDN 可达；请核对代理是否覆盖媒体域名及其端口。'
+	String get playbackProbeNote => '仅检查清单与分片连通性，不代表完整播放成功。目录、封面正常也不代表媒体 CDN 可达；请核对代理是否覆盖媒体域名及其端口。';
 }
 
 // Path: oldRanking
@@ -6548,8 +6575,8 @@ extension on Translations {
 			'plugin.pluginDeleted' => '插件已删除',
 			'plugin.executeFailed' => ({required Object error}) => '执行失败: ${error}',
 			'plugin.deletePluginSubtitle' => '彻底删除插件，并删除相关数据',
-			'plugin.debugMode' => '调试模式',
-			'plugin.debugAddress' => '调试地址',
+			'plugin.debugMode' => '开发调试',
+			'plugin.debugAddress' => '开发服务地址',
 			'plugin.accountLogin' => '账号登录',
 			'plugin.accountLoginSubtitle' => '前往登录',
 			'plugin.pluginDetail' => '插件详情',
@@ -6619,6 +6646,8 @@ extension on Translations {
 			'plugin.updateFailed' => ({required Object error}) => '更新失败: ${error}',
 			'plugin.uuidMismatch' => '插件 id 不一致，无法安装',
 			'plugin.currentVersion' => ({required Object version}) => '当前版本 ${version}',
+			'plugin.developmentDebugHint' => '从开发服务加载插件；播放问题请使用页面诊断',
+			'plugin.invalidDebugAddress' => '请输入完整的 HTTP 或 HTTPS 开发服务地址',
 			'gestureLock.gestureTitle' => '手势解锁',
 			'gestureLock.gestureHint' => '请绘制手势密码',
 			'gestureLock.pinTitle' => '输入 PIN',
@@ -6923,10 +6952,10 @@ extension on Translations {
 			'search.showErrors' => '显示错误',
 			'search.resultCount' => ({required Object count}) => '${count} 条',
 			'search.noResults' => '无结果',
-			'search.loadFailedForSource' => ({required Object source}) => '${source} 加载失败',
-			'discover.title' => '发现',
 			_ => null,
 		} ?? switch (path) {
+			'search.loadFailedForSource' => ({required Object source}) => '${source} 加载失败',
+			'discover.title' => '发现',
 			'discover.search' => '搜索',
 			'discover.settings' => '设置',
 			'discover.pluginManagement' => '插件管理',
@@ -6965,7 +6994,7 @@ extension on Translations {
 			'sourceShell.returnStepByStep' => '逐层返回',
 			'sourceShell.returnModeSaveFailed' => '返回方式保存失败，请重试',
 			'sourceShell.diagnosticTools' => '页面诊断工具',
-			'sourceShell.diagnosticToolsDescription' => '显示页面分析和网页调试',
+			'sourceShell.diagnosticToolsDescription' => '在页面菜单显示分析与播放诊断',
 			'sourceShell.diagnosticToolsSaveFailed' => '无法保存诊断设置',
 			'sourceShell.openOfficialWebsite' => '打开官网',
 			'searchResult.enterPageNumber' => '输入页数',
@@ -7090,7 +7119,7 @@ extension on Translations {
 			'webview.nativePlaybackUnavailable' => '此页面暂时无法原生播放，请继续使用网页播放器',
 			'webview.loadError' => ({required Object error}) => '加载失败（${error}）',
 			'webview.httpErrorStatus' => ({required Object statusCode}) => '服务器返回异常状态码：${statusCode}',
-			'videoPlayback.playFailed' => '播放暂未成功，请重试或切换线路；也可在网页打开',
+			'videoPlayback.playFailed' => '播放暂未成功，请重试或选择其他播放方式',
 			'videoPlayback.actionFailed' => '播放操作未成功，请重试。',
 			'videoPlayback.backToWeb' => '网页界面',
 			'videoPlayback.minimizeShort' => '缩小',
@@ -7275,6 +7304,13 @@ extension on Translations {
 			'videoPlayback.analysisPlaylist' => '播放清单',
 			'videoPlayback.analysisSitePage' => '站点页面',
 			'videoPlayback.accountBackup' => '登录备份',
+			'videoPlayback.openWebsitePlayer' => '官网播放',
+			'videoPlayback.backupWebPlayer' => '备用网页播放',
+			'videoPlayback.webPlayers' => '网页播放器',
+			'videoPlayback.sameResource' => '以下播放器使用同一资源线路，无法绕过媒体 CDN 故障。',
+			'videoPlayback.singleResourceLine' => '此影片目前仅提供一条资源线路',
+			'videoPlayback.playbackAnalysis' => '播放诊断',
+			'videoPlayback.playbackProbeNote' => '仅检查清单与分片连通性，不代表完整播放成功。目录、封面正常也不代表媒体 CDN 可达；请核对代理是否覆盖媒体域名及其端口。',
 			'oldRanking.bikaRanking' => '哔咔排行榜',
 			'oldRanking.jmRanking' => '禁漫排行榜',
 			'oldRanking.switchSource' => '切换',
@@ -7430,6 +7466,8 @@ extension on Translations {
 			'videoCommunity.addedToPlaylist' => '已加入',
 			'videoCommunity.notInPlaylist' => '未加入',
 			'videoCommunity.readPlaylistState' => '点击核查是否已加入',
+			_ => null,
+		} ?? switch (path) {
 			'videoCommunity.checkResult' => '核查结果',
 			'videoCommunity.noPlaylists' => '还没有播放清单，可以新建后收藏。',
 			'videoCommunity.share' => '分享',
@@ -7439,8 +7477,6 @@ extension on Translations {
 			'videoCommunity.commentsChanged' => '评论列表已更新，请刷新后继续。',
 			'videoCommunity.followShort' => '订阅',
 			'videoCommunity.reply' => '回复',
-			_ => null,
-		} ?? switch (path) {
 			'videoCommunity.overview' => '简介',
 			'videoCommunity.closeKeyboard' => '收起键盘',
 			'videoCommunity.dislike' => '点踩',

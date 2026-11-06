@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:zephyr/plugin/utils/plugin_version_utils.dart';
+import 'package:zephyr/plugin/utils/plugin_release_policy.dart';
 
 /// Only these explicitly managed forks may replace a matching official UUID.
 const managedPluginUuids = <String>{
@@ -50,11 +50,11 @@ String mergeCloudPluginCatalogPayloads(
     final original = originals[uuid];
     if (original != null) {
       if (!managedPluginUuids.contains(uuid)) continue;
-      final oldVersion = original['manifest']['version']?.toString() ?? '';
-      final newVersion = entry['manifest']['version']?.toString() ?? '';
+      final oldInfo = Map<String, dynamic>.from(original['manifest'] as Map);
+      final newInfo = Map<String, dynamic>.from(entry['manifest'] as Map);
       final sameChannel = original['repo'] == entry['repo'];
       independent.add(
-        sameChannel && compareVersion(oldVersion, newVersion) > 0
+        sameChannel && PluginReleasePolicy.compareCatalog(oldInfo, newInfo) > 0
             ? original
             : entry,
       );

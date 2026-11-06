@@ -58,9 +58,11 @@ class ApiVideoEpisode {
     required this.title,
     required this.url,
     required this.watchUrl,
+    this.webPlaybackUrls = const [],
   });
   final String id, title;
   final Uri url, watchUrl;
+  final List<Uri> webPlaybackUrls;
 }
 
 class ApiVideoLine {
@@ -168,6 +170,14 @@ class ApiVideoItem {
             title: title,
             url: url,
             watchUrl: canonical,
+            webPlaybackUrls: List.unmodifiable(
+              asJsonList(episode['webPlaybackUrls'])
+                  .take(3)
+                  .map(apiVideoHttps)
+                  .whereType<Uri>()
+                  .where((uri) => !uri.hasFragment)
+                  .toSet(),
+            ),
           ),
         );
       }
@@ -286,7 +296,11 @@ class ApiVideoItem {
       for (final e in lines.first.episodes) jsonEncode([lines.first.id, e.id]),
   };
 
-  NativePlaybackSession session(String lineId, String episodeId) {
+  NativePlaybackSession session(
+    String lineId,
+    String episodeId, {
+    List<NativePlaybackSource>? sources,
+  }) {
     final line = lines.where((x) => x.id == lineId).firstOrNull;
     final episode = line?.episodes.where((x) => x.id == episodeId).firstOrNull;
     if (line == null || episode == null) {
@@ -299,13 +313,15 @@ class ApiVideoItem {
       description: description,
       tags: const [],
       metadata: VideoPublicMetadata(viewCount: sourceViews),
-      sources: [
-        NativePlaybackSource(
-          url: episode.url,
-          label: line.label,
-          headers: const {},
-        ),
-      ],
+      sources:
+          sources ??
+          [
+            NativePlaybackSource(
+              url: episode.url,
+              label: line.label,
+              headers: const {},
+            ),
+          ],
       episodes: [
         for (final e in line.episodes)
           NativeVideoCard(

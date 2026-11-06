@@ -98,7 +98,7 @@ class PluginSettingsContent extends StatelessWidget {
     return [
       _buildVersionRow(),
       _buildUpdatePluginRow(),
-      _buildDebugModeRow(),
+      _buildDebugModeRow(context),
       if (debugEnabled) _buildDebugUrlRow(context),
       PluginSettingsFieldRow(
         title: t.about.disclaimer,
@@ -153,21 +153,48 @@ class PluginSettingsContent extends StatelessWidget {
     );
   }
 
-  Widget _buildDebugModeRow() {
+  Widget _buildDebugModeRow(BuildContext context) {
     return PluginSettingsFieldRow(
       title: t.plugin.debugMode,
-      subtitle: debugEnabled ? t.common.enabled : t.common.disabled,
+      subtitle: t.plugin.developmentDebugHint,
       trailing: Switch(
         value: debugEnabled,
         thumbIcon: kSettingSwitchThumbIcon,
         onChanged: deleted
             ? null
-            : (next) => onUpdateDebugConfig(enabled: next, url: debugUrl),
+            : (next) => _setDevelopmentDebug(context, next),
       ),
       onTap: deleted
           ? null
-          : () => onUpdateDebugConfig(enabled: !debugEnabled, url: debugUrl),
+          : () => _setDevelopmentDebug(context, !debugEnabled),
     );
+  }
+
+  Future<void> _setDevelopmentDebug(BuildContext context, bool enabled) async {
+    var url = debugUrl;
+    if (enabled && url.trim().isEmpty) {
+      final value = await _showInputDialog(
+        context,
+        title: t.plugin.debugAddress,
+        initialValue: '',
+        obscure: false,
+      );
+      if (value == null || value.trim().isEmpty) return;
+      url = value.trim();
+    }
+    if (!context.mounted) return;
+    if (enabled) {
+      final uri = Uri.tryParse(url);
+      if (uri == null ||
+          !['http', 'https'].contains(uri.scheme) ||
+          uri.host.isEmpty) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(t.plugin.invalidDebugAddress)));
+        return;
+      }
+    }
+    await onUpdateDebugConfig(enabled: enabled, url: url);
   }
 
   Widget _buildDebugUrlRow(BuildContext context) {

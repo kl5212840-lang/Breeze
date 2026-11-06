@@ -662,8 +662,8 @@
     "pluginDeleted": "插件已删除",
     "executeFailed": "执行失败: $error",
     "deletePluginSubtitle": "彻底删除插件，并删除相关数据",
-    "debugMode": "调试模式",
-    "debugAddress": "调试地址",
+    "debugMode": "开发调试",
+    "debugAddress": "开发服务地址",
     "accountLogin": "账号登录",
     "accountLoginSubtitle": "前往登录",
     "pluginDetail": "插件详情",
@@ -732,7 +732,9 @@
     "updateSuccess": "更新成功",
     "updateFailed": "更新失败: $error",
     "uuidMismatch": "插件 id 不一致，无法安装",
-    "currentVersion": "当前版本 $version"
+    "currentVersion": "当前版本 $version",
+    "developmentDebugHint": "从开发服务加载插件；播放问题请使用页面诊断",
+    "invalidDebugAddress": "请输入完整的 HTTP 或 HTTPS 开发服务地址"
   },
   "gestureLock": {
     "gestureTitle": "手势解锁",
@@ -1103,7 +1105,7 @@
     "returnStepByStep": "逐层返回",
     "returnModeSaveFailed": "返回方式保存失败，请重试",
     "diagnosticTools": "页面诊断工具",
-    "diagnosticToolsDescription": "显示页面分析和网页调试",
+    "diagnosticToolsDescription": "在页面菜单显示分析与播放诊断",
     "diagnosticToolsSaveFailed": "无法保存诊断设置",
     "openOfficialWebsite": "打开官网"
   },
@@ -1242,7 +1244,7 @@
     "httpErrorStatus": "服务器返回异常状态码：$statusCode"
   },
   "videoPlayback": {
-    "playFailed": "播放暂未成功，请重试或切换线路；也可在网页打开",
+    "playFailed": "播放暂未成功，请重试或选择其他播放方式",
     "actionFailed": "播放操作未成功，请重试。",
     "backToWeb": "网页界面",
     "minimizeShort": "缩小",
@@ -1426,7 +1428,14 @@
     "analysisVideo": "视频详情",
     "analysisPlaylist": "播放清单",
     "analysisSitePage": "站点页面",
-    "accountBackup": "登录备份"
+    "accountBackup": "登录备份",
+    "openWebsitePlayer": "官网播放",
+    "backupWebPlayer": "备用网页播放",
+    "webPlayers": "网页播放器",
+    "sameResource": "以下播放器使用同一资源线路，无法绕过媒体 CDN 故障。",
+    "singleResourceLine": "此影片目前仅提供一条资源线路",
+    "playbackAnalysis": "播放诊断",
+    "playbackProbeNote": "仅检查清单与分片连通性，不代表完整播放成功。目录、封面正常也不代表媒体 CDN 可达；请核对代理是否覆盖媒体域名及其端口。"
   },
   "oldRanking": {
     "bikaRanking": "哔咔排行榜",
