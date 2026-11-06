@@ -17,7 +17,7 @@ import 'package:zephyr/util/json/json_value.dart';
 const _cloudPluginListDirectUrl =
     'https://raw.githubusercontent.com/deretame/Breeze-plugin-list/main/plugins_data.json';
 const _personalPluginListUrl =
-    'https://raw.githubusercontent.com/kl5212840-lang/Breeze-plugins/main/plugins_data.json';
+    'https://raw.githubusercontent.com/kl5212840-lang/Breeze-plugins/main/catalog/v1/plugins_data.json';
 
 const cloudPluginListApi = 'https://api.windy-78.site/plugin-list';
 

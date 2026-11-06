@@ -45,6 +45,7 @@ class CloudPluginManifest {
     required this.updateUrl,
     required this.npmName,
     required this.githubRepository,
+    this.releaseMetadata = const {},
   });
 
   final String name;
@@ -56,6 +57,12 @@ class CloudPluginManifest {
   final String updateUrl;
   final String npmName;
   final String githubRepository;
+  final Map<String, dynamic> releaseMetadata;
+  Map<String, dynamic> get releaseInfo => {
+    ...releaseMetadata,
+    'uuid': uuid,
+    'version': version,
+  };
 
   factory CloudPluginManifest.fromJson(Map<String, dynamic> json) {
     return CloudPluginManifest(
@@ -69,6 +76,7 @@ class CloudPluginManifest {
       npmName: json['npmName']?.toString() ?? '',
       githubRepository:
           json['breeze-plugin-github-repository']?.toString().trim() ?? '',
+      releaseMetadata: Map<String, dynamic>.unmodifiable(json),
     );
   }
 
