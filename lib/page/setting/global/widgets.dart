@@ -111,6 +111,11 @@ Widget proxyAddressEdit(BuildContext context, String currentProxy) {
           content: TextFormField(
             initialValue: currentProxy,
             autofocus: true,
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            enableSuggestions: false,
+            smartDashesType: SmartDashesType.disabled,
+            smartQuotesType: SmartQuotesType.disabled,
             onChanged: (value) => inputValue = value.trim(),
             decoration: InputDecoration(
               hintText: t.settings.proxyHint,

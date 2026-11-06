@@ -802,7 +802,7 @@ class _Translations$plugin$en_US extends Translations$plugin$zh_CN {
 	@override String get pluginDeleted => 'Plugin deleted';
 	@override String executeFailed({required Object error}) => 'Execute failed: ${error}';
 	@override String get deletePluginSubtitle => 'Delete plugin and related data permanently';
-	@override String get debugMode => 'Debug mode';
+	@override String get debugMode => 'Development mode';
 	@override String get accountLoginSubtitle => 'Go to login';
 	@override String get accountLogin => 'Account login';
 	@override String get pluginDetail => 'Plugin detail';
@@ -872,6 +872,9 @@ class _Translations$plugin$en_US extends Translations$plugin$zh_CN {
 	@override String updateFailed({required Object error}) => 'Update failed: ${error}';
 	@override String get uuidMismatch => 'Plugin id mismatch, install rejected';
 	@override String currentVersion({required Object version}) => 'Current version ${version}';
+	@override String get debugAddress => 'Development server URL';
+	@override String get developmentDebugHint => 'Loads a plugin from a development server. Use page diagnostics for playback issues.';
+	@override String get invalidDebugAddress => 'Enter a complete HTTP or HTTPS development server URL';
 }
 
 // Path: gestureLock
@@ -1333,7 +1336,7 @@ class _Translations$sourceShell$en_US extends Translations$sourceShell$zh_CN {
 	@override String get returnStepByStep => 'Step by step';
 	@override String get returnModeSaveFailed => 'Could not save back behavior. Try again.';
 	@override String get diagnosticTools => 'Page diagnostics';
-	@override String get diagnosticToolsDescription => 'Show page analysis and web inspection';
+	@override String get diagnosticToolsDescription => 'Show page analysis and playback diagnostics in page menus';
 	@override String get diagnosticToolsSaveFailed => 'Could not save diagnostic settings';
 	@override String get openOfficialWebsite => 'Open website';
 }
@@ -1521,7 +1524,7 @@ class _Translations$videoPlayback$en_US extends Translations$videoPlayback$zh_CN
 	final TranslationsEnUs _root; // ignore: unused_field
 
 	// Translations
-	@override String get playFailed => 'Playback could not start. Retry or choose another source; opening the website is also available.';
+	@override String get playFailed => 'Playback has not started. Retry or use another playback option.';
 	@override String get actionFailed => 'Could not apply this playback control. Please try again.';
 	@override String get backToWeb => 'Website view';
 	@override String get minimizeShort => 'Details';
@@ -1706,6 +1709,13 @@ class _Translations$videoPlayback$en_US extends Translations$videoPlayback$zh_CN
 	@override String get analysisPlaylist => 'Playlist';
 	@override String get analysisSitePage => 'Website page';
 	@override String get accountBackup => 'Login backup';
+	@override String get openWebsitePlayer => 'Website player';
+	@override String get backupWebPlayer => 'Alternative web player';
+	@override String get webPlayers => 'Web players';
+	@override String get sameResource => 'These players use the same resource line and cannot bypass a media CDN outage.';
+	@override String get singleResourceLine => 'This title currently provides one resource line';
+	@override String get playbackAnalysis => 'Playback diagnostics';
+	@override String get playbackProbeNote => 'Checks playlist and segment connectivity, not complete playback. Catalogs and posters use separate hosts; check proxy coverage for the media host and port.';
 }
 
 // Path: oldRanking
@@ -2944,7 +2954,7 @@ extension on TranslationsEnUs {
 			'plugin.pluginDeleted' => 'Plugin deleted',
 			'plugin.executeFailed' => ({required Object error}) => 'Execute failed: ${error}',
 			'plugin.deletePluginSubtitle' => 'Delete plugin and related data permanently',
-			'plugin.debugMode' => 'Debug mode',
+			'plugin.debugMode' => 'Development mode',
 			'plugin.accountLoginSubtitle' => 'Go to login',
 			'plugin.accountLogin' => 'Account login',
 			'plugin.pluginDetail' => 'Plugin detail',
@@ -3014,6 +3024,9 @@ extension on TranslationsEnUs {
 			'plugin.updateFailed' => ({required Object error}) => 'Update failed: ${error}',
 			'plugin.uuidMismatch' => 'Plugin id mismatch, install rejected',
 			'plugin.currentVersion' => ({required Object version}) => 'Current version ${version}',
+			'plugin.debugAddress' => 'Development server URL',
+			'plugin.developmentDebugHint' => 'Loads a plugin from a development server. Use page diagnostics for playback issues.',
+			'plugin.invalidDebugAddress' => 'Enter a complete HTTP or HTTPS development server URL',
 			'gestureLock.gestureTitle' => 'Gesture unlock',
 			'gestureLock.gestureHint' => 'Draw gesture password',
 			'gestureLock.pinTitle' => 'Enter PIN',
@@ -3319,11 +3332,11 @@ extension on TranslationsEnUs {
 			'search.resultCount' => ({required Object count}) => '${count} results',
 			'search.noResults' => 'No results',
 			'search.loadFailedForSource' => ({required Object source}) => 'Failed to load ${source}',
+			_ => null,
+		} ?? switch (path) {
 			'discover.title' => 'Discover',
 			'discover.search' => 'Search',
 			'discover.settings' => 'Settings',
-			_ => null,
-		} ?? switch (path) {
 			'discover.pluginManagement' => 'Plugin Management',
 			'discover.manage' => 'Manage',
 			'discover.listLayout' => 'List',
@@ -3360,7 +3373,7 @@ extension on TranslationsEnUs {
 			'sourceShell.returnStepByStep' => 'Step by step',
 			'sourceShell.returnModeSaveFailed' => 'Could not save back behavior. Try again.',
 			'sourceShell.diagnosticTools' => 'Page diagnostics',
-			'sourceShell.diagnosticToolsDescription' => 'Show page analysis and web inspection',
+			'sourceShell.diagnosticToolsDescription' => 'Show page analysis and playback diagnostics in page menus',
 			'sourceShell.diagnosticToolsSaveFailed' => 'Could not save diagnostic settings',
 			'sourceShell.openOfficialWebsite' => 'Open website',
 			'searchResult.enterPageNumber' => 'Enter page number',
@@ -3485,7 +3498,7 @@ extension on TranslationsEnUs {
 			'webview.nativePlaybackUnavailable' => 'Native playback is unavailable for this page. Continue in the website player.',
 			'webview.loadError' => ({required Object error}) => 'Load failed (${error})',
 			'webview.httpErrorStatus' => ({required Object statusCode}) => 'Server returned abnormal status code: ${statusCode}',
-			'videoPlayback.playFailed' => 'Playback could not start. Retry or choose another source; opening the website is also available.',
+			'videoPlayback.playFailed' => 'Playback has not started. Retry or use another playback option.',
 			'videoPlayback.actionFailed' => 'Could not apply this playback control. Please try again.',
 			'videoPlayback.backToWeb' => 'Website view',
 			'videoPlayback.minimizeShort' => 'Details',
@@ -3670,6 +3683,13 @@ extension on TranslationsEnUs {
 			'videoPlayback.analysisPlaylist' => 'Playlist',
 			'videoPlayback.analysisSitePage' => 'Website page',
 			'videoPlayback.accountBackup' => 'Login backup',
+			'videoPlayback.openWebsitePlayer' => 'Website player',
+			'videoPlayback.backupWebPlayer' => 'Alternative web player',
+			'videoPlayback.webPlayers' => 'Web players',
+			'videoPlayback.sameResource' => 'These players use the same resource line and cannot bypass a media CDN outage.',
+			'videoPlayback.singleResourceLine' => 'This title currently provides one resource line',
+			'videoPlayback.playbackAnalysis' => 'Playback diagnostics',
+			'videoPlayback.playbackProbeNote' => 'Checks playlist and segment connectivity, not complete playback. Catalogs and posters use separate hosts; check proxy coverage for the media host and port.',
 			'oldRanking.bikaRanking' => 'Bika Ranking',
 			'oldRanking.jmRanking' => 'JM Ranking',
 			'oldRanking.switchSource' => 'Switch',
@@ -3826,6 +3846,8 @@ extension on TranslationsEnUs {
 			'videoCommunity.notInPlaylist' => 'Not added',
 			'videoCommunity.readPlaylistState' => 'Check whether this video is added',
 			'videoCommunity.checkResult' => 'Check result',
+			_ => null,
+		} ?? switch (path) {
 			'videoCommunity.noPlaylists' => 'No playlists yet. Create one to save this video.',
 			'videoCommunity.share' => 'Share',
 			'videoCommunity.shareUnavailable' => 'System sharing is unavailable on this device.',
@@ -3836,8 +3858,6 @@ extension on TranslationsEnUs {
 			'videoCommunity.reply' => 'Reply',
 			'videoCommunity.overview' => 'Overview',
 			'videoCommunity.closeKeyboard' => 'Hide keyboard',
-			_ => null,
-		} ?? switch (path) {
 			'videoCommunity.dislike' => 'Dislike',
 			'videoCommunity.disliked' => 'Disliked',
 			'videoCommunity.noReplies' => 'No replies yet',

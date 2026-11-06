@@ -661,7 +661,7 @@
     "pluginDeleted": "Plugin deleted",
     "executeFailed": "Execute failed: $error",
     "deletePluginSubtitle": "Delete plugin and related data permanently",
-    "debugMode": "Debug mode",
+    "debugMode": "Development mode",
     "accountLoginSubtitle": "Go to login",
     "accountLogin": "Account login",
     "pluginDetail": "Plugin detail",
@@ -730,7 +730,10 @@
     "updateSuccess": "Update successful",
     "updateFailed": "Update failed: $error",
     "uuidMismatch": "Plugin id mismatch, install rejected",
-    "currentVersion": "Current version $version"
+    "currentVersion": "Current version $version",
+    "debugAddress": "Development server URL",
+    "developmentDebugHint": "Loads a plugin from a development server. Use page diagnostics for playback issues.",
+    "invalidDebugAddress": "Enter a complete HTTP or HTTPS development server URL"
   },
   "gestureLock": {
     "gestureTitle": "Gesture unlock",
@@ -1101,7 +1104,7 @@
     "returnStepByStep": "Step by step",
     "returnModeSaveFailed": "Could not save back behavior. Try again.",
     "diagnosticTools": "Page diagnostics",
-    "diagnosticToolsDescription": "Show page analysis and web inspection",
+    "diagnosticToolsDescription": "Show page analysis and playback diagnostics in page menus",
     "diagnosticToolsSaveFailed": "Could not save diagnostic settings",
     "openOfficialWebsite": "Open website"
   },
@@ -1240,7 +1243,7 @@
     "httpErrorStatus": "Server returned abnormal status code: $statusCode"
   },
   "videoPlayback": {
-    "playFailed": "Playback could not start. Retry or choose another source; opening the website is also available.",
+    "playFailed": "Playback has not started. Retry or use another playback option.",
     "actionFailed": "Could not apply this playback control. Please try again.",
     "backToWeb": "Website view",
     "minimizeShort": "Details",
@@ -1424,7 +1427,14 @@
     "analysisVideo": "Video details",
     "analysisPlaylist": "Playlist",
     "analysisSitePage": "Website page",
-    "accountBackup": "Login backup"
+    "accountBackup": "Login backup",
+    "openWebsitePlayer": "Website player",
+    "backupWebPlayer": "Alternative web player",
+    "webPlayers": "Web players",
+    "sameResource": "These players use the same resource line and cannot bypass a media CDN outage.",
+    "singleResourceLine": "This title currently provides one resource line",
+    "playbackAnalysis": "Playback diagnostics",
+    "playbackProbeNote": "Checks playlist and segment connectivity, not complete playback. Catalogs and posters use separate hosts; check proxy coverage for the media host and port."
   },
   "oldRanking": {
     "bikaRanking": "Bika Ranking",

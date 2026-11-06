@@ -3,6 +3,9 @@ import 'dart:async';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
+import 'package:zephyr/page/source_shell/source_diagnostic_preferences.dart';
+import 'package:zephyr/page/video/video_page_analysis.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
@@ -41,13 +44,51 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
   late String _query = widget.initialQuery;
   int _tab = 0;
   bool _savingView = false;
+  bool _diagnostics = false;
+  int _diagnosticEpoch = 0;
   String get _viewKey =>
       'breeze.video.library.view.${widget.repository.source}';
   @override
   void initState() {
     super.initState();
     _readView();
+    SourceDiagnosticPreferences.changes.addListener(_readDiagnostics);
+    _readDiagnostics();
   }
+
+  @override
+  void dispose() {
+    _diagnosticEpoch++;
+    SourceDiagnosticPreferences.changes.removeListener(_readDiagnostics);
+    super.dispose();
+  }
+
+  Future<void> _readDiagnostics() async {
+    final epoch = ++_diagnosticEpoch;
+    final enabled = await SourceDiagnosticPreferences.enabled(
+      widget.repository.source,
+    );
+    if (mounted && epoch == _diagnosticEpoch) {
+      setState(() => _diagnostics = enabled);
+    }
+  }
+
+  Future<void> _analyzeLibrary() => showVideoTaskSheet<void>(
+    context: context,
+    builder: (_) => VideoPageAnalysis(
+      analyze: () async {
+        final page = await widget.repository.page(query: _query, refresh: true);
+        return VideoPageAnalysisResult(
+          mode: t.videoPlayback.nativeCatalog,
+          page: widget.title,
+          status: t.videoPlayback.analysisDisplayed,
+          report:
+              'Breeze API library\nsource: ${widget.repository.source}\nitems: ${page.items.length}\ncategories: ${page.categories.length}\nview: ${_mode.name}\nquery_present: ${_query.isNotEmpty}\nNo search text, history or account data included. Open a title for media connectivity checks.',
+        );
+      },
+      onCopy: (report) => Clipboard.setData(ClipboardData(text: report)),
+    ),
+  );
 
   Future<void> _readView() async {
     try {
@@ -160,6 +201,14 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
           SourceMoreButton(
             source: widget.repository.source,
             actions: [
+              if (_diagnostics)
+                SourceMenuAction(
+                  id: 'analysis',
+                  label: t.videoPlayback.pageAnalysis,
+                  icon: Icons.analytics_outlined,
+                  symbol: 'waveform.path.ecg',
+                  onSelected: () => unawaited(_analyzeLibrary()),
+                ),
               SourceMenuAction(
                 id: 'play',
                 label: t.videoLibrary.playSettings,

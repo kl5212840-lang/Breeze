@@ -111,7 +111,46 @@ class ApiVideoRepository {
         (episodeId != null && episodeId != selectedEpisode)) {
       throw const FormatException('Wrong episode returned');
     }
-    final session = item.session(selectedLine, selectedEpisode);
+    final original = item.session(selectedLine, selectedEpisode);
+    List<NativePlaybackSource>? sources;
+    if (raw.containsKey('sources')) {
+      final seen = <Uri>{};
+      sources = [];
+      for (final value in asJsonList(raw['sources']).take(8)) {
+        final source = asJsonMap(value);
+        final url = apiVideoHttps(source['url']);
+        if (url == null || !seen.add(url)) continue;
+        final headers = <String, String>{};
+        final rawHeaders = asJsonMap(source['headers']);
+        for (final name in ['Referer', 'Origin', 'User-Agent']) {
+          final value = apiVideoText(rawHeaders[name], 2000);
+          if (value.isEmpty || value.contains('\r') || value.contains('\n')) {
+            continue;
+          }
+          if (name != 'User-Agent' && apiVideoHttps(value)?.host != home.host) {
+            continue;
+          }
+          headers[name] = value;
+        }
+        sources.add(
+          NativePlaybackSource(
+            url: url,
+            label: apiVideoText(source['quality'], 100).isEmpty
+                ? original.sources.first.label
+                : apiVideoText(source['quality'], 100),
+            headers: Map.unmodifiable(headers),
+          ),
+        );
+      }
+      if (sources.isEmpty) {
+        throw const FormatException('No valid playback sources');
+      }
+    }
+    final session = item.session(
+      selectedLine,
+      selectedEpisode,
+      sources: sources,
+    );
     if (videoPlaybackIdentity(Uri.parse(apiVideoText(raw['watchUrl'], 4096))) !=
         session.watchUrl) {
       throw const FormatException('Episode identity mismatch');

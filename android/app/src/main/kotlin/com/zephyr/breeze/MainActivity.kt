@@ -48,6 +48,7 @@ class MainActivity: FlutterFragmentActivity() {
     private var volumeEventSink: EventChannel.EventSink? = null
     private var pendingFilePickerResult: MethodChannel.Result? = null
     private var pendingFilePickerDestPath: String? = null
+    private var videoSystemActions: VideoSystemActions? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         initRustlsPlatformVerifier(applicationContext)
@@ -75,6 +76,8 @@ class MainActivity: FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        videoSystemActions?.close()
+        videoSystemActions = VideoSystemActions(this, flutterEngine.dartExecutor.binaryMessenger)
         
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
@@ -236,6 +239,7 @@ class MainActivity: FlutterFragmentActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (videoSystemActions?.onActivityResult(requestCode, resultCode, data) == true) return
         if (requestCode == REQUEST_CODE_PICK_BACKUP_ZIP) {
             Log.i("FilePicker", "onActivityResult: resultCode=$resultCode, data=$data")
             val result = pendingFilePickerResult
@@ -260,6 +264,12 @@ class MainActivity: FlutterFragmentActivity() {
                 result?.success(null)
             }
         }
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        videoSystemActions?.close()
+        videoSystemActions = null
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 
     private fun saveForceEnableImpeller(enable: Boolean) {

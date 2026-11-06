@@ -7,8 +7,9 @@ class VideoPageAnalysisResult {
     required this.page,
     required this.status,
     required this.report,
+    this.details = '',
   });
-  final String mode, page, status, report;
+  final String mode, page, status, report, details;
 }
 
 /// Opened only by an explicit user action. Analysis reads a bounded metadata
@@ -128,6 +129,10 @@ class _VideoPageAnalysisState extends State<VideoPageAnalysis> {
           _row(t.videoPlayback.analysisPage, result.page),
           _row(t.videoPlayback.analysisState, result.status),
           const SizedBox(height: 12),
+          if (result.details.isNotEmpty) ...[
+            Text(result.details),
+            const SizedBox(height: 12),
+          ],
           Text(
             t.videoPlayback.analysisScope,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(

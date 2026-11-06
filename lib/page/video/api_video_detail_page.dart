@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/page/source_shell/source_diagnostic_preferences.dart';
+import 'package:zephyr/page/video/api_video_playback_diagnostics.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
@@ -42,10 +44,14 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage> {
   Uri? _currentWatch;
   final _candidateItems = <Uri, ApiVideoItem>{};
   bool _failed = false, _expanded = false, _saving = false;
-  int _epoch = 0, _libraryEpoch = 0;
+  int _epoch = 0, _libraryEpoch = 0, _diagnosticEpoch = 0;
+  bool _diagnostics = false;
+  String _platformError = '';
   @override
   void initState() {
     super.initState();
+    SourceDiagnosticPreferences.changes.addListener(_readDiagnostics);
+    _readDiagnostics();
     _store.addListener(_readLibrary);
     _readLibrary();
     _load();
@@ -55,8 +61,20 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage> {
   void dispose() {
     _epoch++;
     _libraryEpoch++;
+    _diagnosticEpoch++;
+    SourceDiagnosticPreferences.changes.removeListener(_readDiagnostics);
     _store.removeListener(_readLibrary);
     super.dispose();
+  }
+
+  Future<void> _readDiagnostics() async {
+    final epoch = ++_diagnosticEpoch;
+    final enabled = await SourceDiagnosticPreferences.enabled(
+      widget.repository.source,
+    );
+    if (mounted && epoch == _diagnosticEpoch) {
+      setState(() => _diagnostics = enabled);
+    }
   }
 
   Future<void> _readLibrary() async {
@@ -107,12 +125,15 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage> {
         /* Optional local history never blocks a real source. */
       }
       if (!mounted || epoch != _epoch) return;
-      final session = item.session(
-        target.queryParameters['line']!,
-        target.queryParameters['episode']!,
+      final playback = await widget.repository.session(
+        item.id,
+        lineId: target.queryParameters['line'],
+        episodeId: target.queryParameters['episode'],
       );
+      if (!mounted || epoch != _epoch) return;
+      final session = playback.session;
       setState(() {
-        _item = item;
+        _item = playback.item;
         _initialSession = session;
         _currentWatch = session.watchUrl;
       });
@@ -229,9 +250,106 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage> {
     }
   }
 
-  void _website() => context.pushRoute(
-    WebViewRoute(info: [_item.title, _item.detailUrl.toString()]),
-  );
+  ApiVideoEpisode? _episodeFor(NativePlaybackSession session) => _item.lines
+      .where((line) => line.id == session.watchUrl.queryParameters['line'])
+      .firstOrNull
+      ?.episodes
+      .where(
+        (episode) => episode.id == session.watchUrl.queryParameters['episode'],
+      )
+      .firstOrNull;
+
+  Future<void> _website() async {
+    final session = _initialSession;
+    final episode = session == null ? null : _episodeFor(session);
+    final selected =
+        _item.lines
+            .expand((line) => line.episodes)
+            .where((episode) => episode.watchUrl == _currentWatch)
+            .firstOrNull ??
+        episode;
+    final target = selected?.webPlaybackUrls.firstOrNull ?? _item.detailUrl;
+    await context.pushRoute(
+      WebViewRoute(info: [_item.title, target.toString()]),
+    );
+  }
+
+  Future<void> _webPlayers(NativePlaybackSession session) async {
+    final urls = _episodeFor(session)?.webPlaybackUrls ?? const <Uri>[];
+    final target = await showVideoTaskSheet<Uri>(
+      context: context,
+      builder: (sheet) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            title: Text(t.videoPlayback.webPlayers),
+            subtitle: Text(t.videoPlayback.sameResource),
+          ),
+          for (var i = 0; i < urls.length; i++)
+            ListTile(
+              leading: const Icon(Icons.open_in_browser_outlined),
+              title: Text(
+                i == 0
+                    ? t.videoPlayback.openWebsitePlayer
+                    : t.videoPlayback.backupWebPlayer,
+              ),
+              subtitle: Text(urls[i].host),
+              onTap: () => Navigator.of(sheet).pop(urls[i]),
+            ),
+          ListTile(
+            leading: const Icon(Icons.info_outline),
+            title: Text(t.sourceShell.openOfficialWebsite),
+            onTap: () => Navigator.of(sheet).pop(_item.detailUrl),
+          ),
+        ],
+      ),
+    );
+    if (mounted && target != null) {
+      await context.pushRoute(
+        WebViewRoute(info: [_item.title, target.toString()]),
+      );
+    }
+  }
+
+  Future<void> _chooseLine(
+    NativePlaybackSession session,
+    ValueChanged<NativeVideoCard> select,
+  ) async {
+    final target = await showVideoTaskSheet<NativeVideoCard>(
+      context: context,
+      builder: (sheet) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(title: Text(t.videoPlayback.source)),
+          for (final line in _item.lines)
+            ListTile(
+              title: Text(line.label),
+              selected: line.id == session.watchUrl.queryParameters['line'],
+              onTap: () {
+                final episode =
+                    line.episodes
+                        .where(
+                          (e) =>
+                              e.id ==
+                              session.watchUrl.queryParameters['episode'],
+                        )
+                        .firstOrNull ??
+                    line.episodes.first;
+                Navigator.of(sheet).pop(
+                  NativeVideoCard(
+                    title: episode.title,
+                    watchUrl: episode.watchUrl,
+                    coverUrl: _item.coverUrl,
+                  ),
+                );
+              },
+            ),
+        ],
+      ),
+    );
+    if (mounted && target != null) select(target);
+  }
+
   Widget _favoriteIcon({bool light = false}) => NativeVideoIconButton(
     light: light,
     tooltip: _library?.contains(widget.repository.source, _item.id) == true
@@ -279,6 +397,31 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage> {
       key: ValueKey('api-player.${_item.id}'),
       session: session,
       source: widget.repository.source,
+      onOpenWebsite: _website,
+      onPlaybackError: (error) => _platformError = error,
+      extraFailureActions: (context, current, select) => [
+        if (_item.lines.length > 1)
+          TextButton(
+            onPressed: () => _chooseLine(current, select),
+            child: Text(t.videoPlayback.source),
+          ),
+        if ((_episodeFor(current)?.webPlaybackUrls.length ?? 0) > 1)
+          TextButton(
+            onPressed: () => _webPlayers(current),
+            child: Text(t.videoPlayback.webPlayers),
+          ),
+        if (_diagnostics)
+          TextButton(
+            onPressed: () => showApiPlaybackAnalysis(
+              context,
+              source: widget.repository.source,
+              session: current,
+              lineCount: _item.lines.length,
+              platformError: _platformError,
+            ),
+            child: Text(t.videoPlayback.playbackAnalysis),
+          ),
+      ],
       loadEpisode: (target) => _loadEpisode(target),
       refreshSession: () async =>
           (await _loadEpisode(_currentWatch!, refresh: true)).session,
@@ -350,6 +493,16 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage> {
       key: PageStorageKey('api-detail.${_item.id}'),
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
       children: [
+        if (_item.lines.length == 1)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              t.videoPlayback.singleResourceLine,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colors.onSurfaceVariant,
+              ),
+            ),
+          ),
         Text(
           _item.title,
           style: theme.textTheme.titleLarge?.copyWith(
@@ -515,7 +668,9 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage> {
         Align(
           alignment: AlignmentDirectional.centerStart,
           child: TextButton.icon(
-            onPressed: _website,
+            onPressed: () => context.pushRoute(
+              WebViewRoute(info: [_item.title, _item.detailUrl.toString()]),
+            ),
             icon: const Icon(Icons.open_in_browser, size: 20),
             label: Text(t.videoLibrary.openWebsite),
           ),

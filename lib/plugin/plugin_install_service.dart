@@ -9,6 +9,7 @@ import 'package:zephyr/page/plugin_store/models/cloud_plugin_item.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/plugin/utils/plugin_cloud_download_utils.dart';
 import 'package:zephyr/plugin/utils/plugin_update_channel_utils.dart';
+import 'package:zephyr/plugin/utils/plugin_release_policy.dart';
 
 const _blockedPluginUuid = kDebugMode
     ? ''
@@ -41,16 +42,21 @@ class PluginInstallService {
       throw StateError('该插件未提供 updateUrl 或 npmName，无法下载');
     }
 
+    final beforeDownload = PluginRegistryService.I.getByUuid(pluginUuid);
     final script = await downloadFromJsdelivrOrGitHub(
       npmName: npmName,
       cloudVersion: item.manifest.version.trim(),
       updateUrl: updateUrl,
     );
+    PluginReleasePolicy.verifyScript(script, item.manifest.releaseInfo);
     return savePluginByScript(
       script,
       sourceLabel: '云端组件: ${item.repo}',
       allowReplaceExisting: true,
-      expectedUuid: expectedUuid,
+      expectedUuid: pluginUuid,
+      expectedRelease: item.manifest.releaseInfo,
+      protectLocalState: true,
+      expectedLocal: beforeDownload,
     );
   }
 
@@ -128,6 +134,9 @@ class PluginInstallService {
     required String sourceLabel,
     bool allowReplaceExisting = false,
     String? expectedUuid,
+    Map<String, dynamic>? expectedRelease,
+    bool protectLocalState = false,
+    PluginRuntimeState? expectedLocal,
   }) async {
     final normalizedScript = script.trim();
     if (normalizedScript.isEmpty) {
@@ -135,6 +144,9 @@ class PluginInstallService {
     }
 
     final info = await callGetInfoByGlobalQjs(normalizedScript);
+    if (expectedRelease != null) {
+      PluginReleasePolicy.verifyInfo(info, expectedRelease);
+    }
     final resolvedUuid = readUuidFromInfo(info);
     if (resolvedUuid.isEmpty) {
       throw StateError('getInfo 返回缺少 uuid');
@@ -150,6 +162,29 @@ class PluginInstallService {
     final getInfoJson = encodeGetInfoJson(info);
 
     final existing = PluginRegistryService.I.getByUuid(resolvedUuid);
+    if (protectLocalState) {
+      if (existing?.version != expectedLocal?.version ||
+          existing?.originScript != expectedLocal?.originScript ||
+          existing?.isDeleted != expectedLocal?.isDeleted ||
+          existing?.debug != expectedLocal?.debug) {
+        throw StateError('插件状态已更改，请重新检查后再安装');
+      }
+      if (existing != null &&
+          !existing.isDeleted &&
+          expectedRelease != null &&
+          (existing.debug ||
+              !PluginReleasePolicy.canUpgrade(
+                uuid: resolvedUuid,
+                localVersion: existing.version,
+                localScript: existing.originScript,
+                localInfo:
+                    PluginRegistryService.I.getCachedPluginInfo(resolvedUuid) ??
+                    const {},
+                remoteInfo: expectedRelease,
+              ))) {
+        throw StateError(t.plugin.localVersionNewer);
+      }
+    }
     if (!allowReplaceExisting) {
       _validateUuidNotDuplicated(resolvedUuid);
     }

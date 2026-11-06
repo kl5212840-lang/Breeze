@@ -127,6 +127,11 @@ class _DebugSettingPageState extends State<DebugSettingPage> {
             content: TextFormField(
               initialValue: logAddress,
               autofocus: true,
+              keyboardType: TextInputType.url,
+              autocorrect: false,
+              enableSuggestions: false,
+              smartDashesType: SmartDashesType.disabled,
+              smartQuotesType: SmartQuotesType.disabled,
               onChanged: (value) => inputValue = value.trim(),
               decoration: const InputDecoration(
                 hintText: 'https://example.com/log',

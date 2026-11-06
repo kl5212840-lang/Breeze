@@ -22,12 +22,19 @@ class CloudPluginManifestInternal {
     required this.version,
     required this.updateUrl,
     required this.npmName,
+    this.releaseMetadata = const {},
   });
 
   final String uuid;
   final String version;
   final String updateUrl;
   final String npmName;
+  final Map<String, dynamic> releaseMetadata;
+  Map<String, dynamic> get releaseInfo => {
+    ...releaseMetadata,
+    'uuid': uuid,
+    'version': version,
+  };
 
   factory CloudPluginManifestInternal.fromJson(Map<String, dynamic> json) {
     return CloudPluginManifestInternal(
@@ -35,6 +42,7 @@ class CloudPluginManifestInternal {
       version: json['version']?.toString().trim() ?? '',
       updateUrl: json['updateUrl']?.toString().trim() ?? '',
       npmName: json['npmName']?.toString().trim() ?? '',
+      releaseMetadata: Map<String, dynamic>.unmodifiable(json),
     );
   }
 }
