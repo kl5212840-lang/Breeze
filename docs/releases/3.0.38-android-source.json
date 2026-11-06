@@ -104,5 +104,11 @@
     "sha256": "5dfcdb9f2c39c28265dc6f157cfc3aa439f9a77fe223ceb2f3236756492a084a"
   },
   "newVersionName": "3.0.38",
-  "newVersionCode": 4264
+  "newVersionCode": 4264,
+  "flutterBuildNumber": 2264,
+  "buildArguments": [
+    "--release",
+    "--target-platform=android-arm64",
+    "--split-per-abi"
+  ]
 }
