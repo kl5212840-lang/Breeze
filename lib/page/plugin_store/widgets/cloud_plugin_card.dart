@@ -3,6 +3,7 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/plugin_store/models/cloud_plugin_item.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/plugin/utils/plugin_version_utils.dart';
+import 'package:zephyr/plugin/utils/plugin_release_policy.dart';
 import 'package:zephyr/widgets/plugin_icon.dart';
 
 class CloudPluginCard extends StatelessWidget {
@@ -28,9 +29,25 @@ class CloudPluginCard extends StatelessWidget {
         : null;
     final isInstalled = localState != null && !localState.isDeleted;
     final localVersion = localState?.version.trim() ?? '';
-    final versionDifference = isInstalled
-        ? compareVersion(manifest.version, localVersion)
-        : 1;
+    final localInfo =
+        PluginRegistryService.I.getCachedPluginInfo(manifest.uuid) ??
+        const <String, dynamic>{};
+    final canUpgrade =
+        isInstalled &&
+        !localState.debug &&
+        PluginReleasePolicy.canUpgrade(
+          uuid: manifest.uuid,
+          localVersion: localVersion,
+          localScript: localState.originScript,
+          localInfo: localInfo,
+          remoteInfo: manifest.releaseInfo,
+        );
+    final versionDifference = !isInstalled || canUpgrade
+        ? 1
+        : PluginReleasePolicy.series(localInfo) >
+              PluginReleasePolicy.series(manifest.releaseInfo)
+        ? -1
+        : compareVersion(manifest.version, localVersion).clamp(-1, 0);
     final canDownload = !isInstalled || versionDifference > 0;
     final downloadLabel = !isInstalled
         ? t.plugin.download

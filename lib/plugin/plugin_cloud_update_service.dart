@@ -9,6 +9,7 @@ import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/plugin/utils/plugin_cloud_download_utils.dart';
 import 'package:zephyr/plugin/utils/plugin_update_channel_utils.dart';
 import 'package:zephyr/plugin/utils/plugin_version_utils.dart';
+import 'package:zephyr/plugin/utils/plugin_release_policy.dart';
 import 'package:zephyr/util/json/json_value.dart';
 
 class PluginCloudUpdateService {
@@ -123,13 +124,28 @@ class PluginCloudUpdateService {
     }
   }
 
-  /// 插件设置「同步」：固定走 npm / updateUrl 自身通道。
+  /// 已知公开版本先完成系列迁移；普通更新使用插件自身通道。
   ///
   /// 返回是否实际下载并应用了新版本。
   Future<bool> syncPluginFromSelfChannel(String uuid) async {
     final local = PluginRegistryService.I.getByUuid(uuid);
     if (local == null || local.isDeleted) {
       throw StateError('插件不存在或已删除');
+    }
+
+    try {
+      final catalog = await _fetchCloudPluginCatalog();
+      for (final cloud in catalog) {
+        if (cloud.manifest.uuid == uuid &&
+            PluginReleasePolicy.series(cloud.manifest.releaseInfo) >
+                PluginReleasePolicy.series(
+                  PluginRegistryService.I.getCachedPluginInfo(uuid) ?? const {},
+                )) {
+          return await _tryUpdateFromCloudCatalog(local: local, cloud: cloud);
+        }
+      }
+    } catch (e, st) {
+      logger.w('读取插件更新目录失败，尝试原更新入口', error: e, stackTrace: st);
     }
 
     return _tryUpdateFromSelfChannel(
@@ -148,10 +164,7 @@ class PluginCloudUpdateService {
     if (updateUrl.isEmpty && npmName.isEmpty) {
       return false;
     }
-    if (!_shouldUpdateVersion(
-      localVersion: local.version,
-      remoteVersion: cloud.manifest.version,
-    )) {
+    if (!_canUpgrade(local, cloud.manifest.releaseInfo)) {
       return false;
     }
 
@@ -162,9 +175,9 @@ class PluginCloudUpdateService {
       cloudVersion: cloud.manifest.version,
       npmName: npmName,
       sourceLabel: '静默更新: ${cloud.repo}',
+      expectedInfo: cloud.manifest.releaseInfo,
     );
-    await _applyPluginUpdate(local: local, payload: payload);
-    return true;
+    return _applyPluginUpdate(local: local, payload: payload);
   }
 
   Future<bool> _tryUpdateFromSelfChannel({
@@ -180,15 +193,20 @@ class PluginCloudUpdateService {
       return false;
     }
 
-    final remoteVersion = await fetchSelfChannelLatestVersion(
+    final remoteInfo = await fetchSelfChannelLatestInfo(
       npmName: npmName,
       updateUrl: updateUrl,
     );
-    if (!forceWhenSameVersion &&
-        !_shouldUpdateVersion(
-          localVersion: local.version,
-          remoteVersion: remoteVersion,
-        )) {
+    final expectedInfo = {...remoteInfo, 'uuid': local.uuid};
+    final remoteVersion = expectedInfo['version'].toString();
+    if (!_canUpgrade(local, expectedInfo) &&
+        !(forceWhenSameVersion &&
+            PluginReleasePolicy.series(expectedInfo) ==
+                PluginReleasePolicy.series(
+                  PluginRegistryService.I.getCachedPluginInfo(local.uuid) ??
+                      const {},
+                ) &&
+            compareVersion(remoteVersion, local.version) == 0)) {
       return false;
     }
 
@@ -198,9 +216,9 @@ class PluginCloudUpdateService {
       updateUrl: updateUrl,
       remoteVersion: remoteVersion,
       sourceLabel: sourceLabel,
+      expectedInfo: expectedInfo,
     );
-    await _applyPluginUpdate(local: local, payload: payload);
-    return true;
+    return _applyPluginUpdate(local: local, payload: payload);
   }
 
   Future<_SelfUpdateChannel> _resolveSelfUpdateChannel(String uuid) async {
@@ -244,12 +262,16 @@ class PluginCloudUpdateService {
         .toList();
   }
 
-  bool _shouldUpdateVersion({
-    required String localVersion,
-    required String remoteVersion,
-  }) {
-    return compareVersion(remoteVersion, localVersion) > 0;
-  }
+  bool _canUpgrade(PluginRuntimeState local, Map<String, dynamic> remoteInfo) =>
+      !local.debug &&
+      PluginReleasePolicy.canUpgrade(
+        uuid: local.uuid,
+        localVersion: local.version,
+        localScript: local.originScript,
+        localInfo:
+            PluginRegistryService.I.getCachedPluginInfo(local.uuid) ?? const {},
+        remoteInfo: remoteInfo,
+      );
 
   Future<_PluginUpdatePayload> _downloadCloudPluginUpdateWithRetry({
     required String repo,
@@ -258,6 +280,7 @@ class PluginCloudUpdateService {
     required String cloudVersion,
     required String npmName,
     required String sourceLabel,
+    required Map<String, dynamic> expectedInfo,
   }) async {
     return _downloadWithRetry(
       expectedUuid: expectedUuid,
@@ -267,6 +290,7 @@ class PluginCloudUpdateService {
         remoteVersion: cloudVersion,
         updateUrl: updateUrl,
         sourceLabel: sourceLabel,
+        expectedInfo: expectedInfo,
       ),
     );
   }
@@ -277,6 +301,7 @@ class PluginCloudUpdateService {
     required String updateUrl,
     required String remoteVersion,
     required String sourceLabel,
+    required Map<String, dynamic> expectedInfo,
   }) async {
     return _downloadWithRetry(
       expectedUuid: expectedUuid,
@@ -286,6 +311,7 @@ class PluginCloudUpdateService {
         remoteVersion: remoteVersion,
         updateUrl: updateUrl,
         sourceLabel: sourceLabel,
+        expectedInfo: expectedInfo,
       ),
     );
   }
@@ -327,6 +353,7 @@ class PluginCloudUpdateService {
     required String remoteVersion,
     required String updateUrl,
     required String sourceLabel,
+    required Map<String, dynamic> expectedInfo,
   }) async {
     final script = await downloadPluginFromSelfChannel(
       npmName: npmName,
@@ -334,7 +361,9 @@ class PluginCloudUpdateService {
       remoteVersion: remoteVersion,
     );
 
+    PluginReleasePolicy.verifyScript(script, expectedInfo);
     final info = await callGetInfoByGlobalQjs(script);
+    PluginReleasePolicy.verifyInfo(info, expectedInfo);
     final resolvedUuid = readUuidFromInfo(info);
     if (resolvedUuid != expectedUuid) {
       throw StateError('更新脚本 uuid 不匹配，期望=$expectedUuid, 实际=$resolvedUuid');
@@ -350,7 +379,7 @@ class PluginCloudUpdateService {
     );
   }
 
-  Future<void> _applyPluginUpdate({
+  Future<bool> _applyPluginUpdate({
     required PluginRuntimeState local,
     required _PluginUpdatePayload payload,
   }) async {
@@ -360,25 +389,33 @@ class PluginCloudUpdateService {
         .query(PluginInfo_.uuid.equals(local.uuid))
         .build()
         .findFirst();
+    // A delete, local install or debug switch during a download wins over it.
+    if (found == null ||
+        found.isDeleted ||
+        found.version != local.version ||
+        found.originScript != local.originScript ||
+        found.debug != local.debug) {
+      return false;
+    }
     final now = DateTime.now().toUtc();
     final toSave = PluginInfo(
-      id: found?.id ?? 0,
+      id: found.id,
       uuid: payload.uuid,
       version: payload.version,
       originScript: payload.script,
-      insertedAt: found?.insertedAt ?? local.insertedAt,
+      insertedAt: found.insertedAt,
       updatedAt: now,
-      isEnabled: found?.isEnabled ?? local.isEnabled,
+      isEnabled: found.isEnabled,
       isDeleted: false,
       deletedAt: null,
       lastLoadSuccess: false,
       lastLoadError: null,
-      sortOrder: found?.sortOrder ?? local.sortOrder,
-      debug: found?.debug ?? local.debug,
-      debugUrl: found?.debugUrl ?? local.debugUrl,
+      sortOrder: found.sortOrder,
+      debug: found.debug,
+      debugUrl: found.debugUrl,
       getInfoJson: payload.getInfoJson.isNotEmpty
           ? payload.getInfoJson
-          : (found?.getInfoJson ?? ''),
+          : found.getInfoJson,
     );
     await PluginRegistryService.I.upsert(toSave);
 
@@ -396,7 +433,6 @@ class PluginCloudUpdateService {
         runtimeName: runtimeName,
       );
     }
-
     // 更新后再次刷新 getInfo 缓存（内存 + 持久化）。
     try {
       await PluginRegistryService.I.fetchPluginInfo(
@@ -406,6 +442,7 @@ class PluginCloudUpdateService {
     } catch (e, st) {
       logger.w('插件更新后回填信息失败: ${payload.uuid}', error: e, stackTrace: st);
     }
+    return true;
   }
 }
 
