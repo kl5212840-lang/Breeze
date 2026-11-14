@@ -1,17 +1,15 @@
 # Breeze
 
-> 本仓库是 [deretame/Breeze](https://github.com/deretame/Breeze) 的独立 fork，以下「本分支发布」仅代表本仓库维护的构建，不是上游官方发布。上游项目及其插件仍归原作者维护。
+本分支基于 [Breeze](https://github.com/breeze-project-org/Breeze)。
 
-## 本分支发布
+## 本分支下载
 
-当前版本为 **3.0.38**。请到 [Breeze v3.0.38](https://github.com/kl5212840-lang/Breeze/releases/tag/v3.0.38) 查看更新说明并下载。
+[3.0.38 发布说明](https://github.com/kl5212840-lang/Breeze/releases/tag/v3.0.38)
 
-- **iOS / iPadOS 15.0 及以上**：下载 IPA 后，使用自己的签名工具侧载。
-- **Android ARM64**：从本仓库的发布页下载 APK。若当前发布页尚无 APK，可继续使用 [3.0.37 ARM64 APK](https://github.com/kl5212840-lang/Breeze/releases/download/v3.0.37/Breeze-Android-v3.0.37-arm64-v8a.apk)。应用内更新仍使用上游渠道。
+- **iOS / iPadOS 15.0 及以上**。下载后需自行签名安装。[下载 IPA](https://github.com/kl5212840-lang/Breeze/releases/download/v3.0.38/Breeze-iOS-v3.0.38.ipa)
+- **Android 8.0 及以上（ARM64）**。本分支版本请从这里手动下载，应用内更新走上游渠道。[下载 APK](https://github.com/kl5212840-lang/Breeze/releases/download/v3.0.38/Breeze-Android-v3.0.38-arm64-v8a.apk)
 
-建议升级前备份应用数据。应用与插件分别更新，插件可在应用内「插件商店」安装或更新，源码和发布文件见 [Breeze-plugins](https://github.com/kl5212840-lang/Breeze-plugins)。
-
-其他平台的安装说明见下方上游指南。
+升级前建议备份应用数据。插件可在应用内「插件商店」安装和更新。[本分支插件仓库](https://github.com/kl5212840-lang/Breeze-plugins)
 
 ## 💖 鸣谢与赞助
 
@@ -63,7 +61,9 @@
 - **Android**: 确保 `local.properties` 中已指向正确的 SDK 路径。
 - **Windows/Linux**: 确保安装了 Visual Studio (C++) 或相应的 GCC 工具链，以支持 Rust 的本地编译。
 
-# 🚀 如何安装
+## 上游安装指南
+
+以下说明沿用上游项目。本分支的 iOS 和 Android 安装包见[本分支下载](#本分支下载)。
 
 ### 📱 Android/鸿蒙
 
@@ -187,7 +187,7 @@ brew uninstall --zap breeze
 
 ### 📱 iOS / iPadOS
 
-由于 iOS 系统的封闭性，未上架 App Store 的应用需要通过“侧载 (Sideloading)”并自行签名才能安装。本分支请前往[本仓库 Releases](https://github.com/kl5212840-lang/Breeze/releases)下载 `Breeze-iOS-v3.0.38.ipa`；若需要上游版本，请前往[上游 Releases](https://github.com/deretame/Breeze/releases)。可使用以下工具之一安装：
+从[上游发布页](https://github.com/breeze-project-org/Breeze/releases)下载上游 IPA 后，可使用下列工具安装。
 
 #### 🌟 推荐方案：AltStore
 
