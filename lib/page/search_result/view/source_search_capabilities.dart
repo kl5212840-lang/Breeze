@@ -1,34 +1,51 @@
+import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/page/search_result/view/source_list_categories.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 
 /// Plugin schemes own the meaning of sort values. Never label every source
 /// with the Bika order: JM uses the same numbers for different sort modes.
-final Map<String, Future<List<Map<String, dynamic>>>> _fieldCache = {};
+final _fieldCache =
+    <String, ({int owner, Future<List<Map<String, dynamic>>> fields})>{};
 
 Future<List<Map<String, dynamic>>> sourceAdvancedFields(String source) {
-  final id = source.trim();
+  final id = normalizePluginId(source);
   if (id.isEmpty) return Future.value(const []);
-  return _fieldCache.putIfAbsent(id, () async {
-    try {
-      final response = await callUnifiedComicPlugin(
-        pluginId: id,
-        fnPath: 'getAdvancedSearchScheme',
-        core: const <String, dynamic>{},
-        extern: const <String, dynamic>{},
-      );
-      final scheme = response['scheme'];
-      if (scheme is! Map) return const [];
-      final fields = scheme['fields'];
-      if (fields is! List) return const [];
-      return fields
-          .whereType<Map>()
-          .map((field) => Map<String, dynamic>.from(field))
-          .toList();
-    } catch (_) {
-      _fieldCache.remove(id);
-      return const [];
-    }
-  });
+  final owner = pluginSessionWriteFence.generation(id);
+  final cached = _fieldCache[id];
+  if (cached != null && cached.owner == owner) return cached.fields;
+
+  final fields = _loadAdvancedFields(id, owner);
+  _fieldCache[id] = (owner: owner, fields: fields);
+  return fields;
+}
+
+Future<List<Map<String, dynamic>>> _loadAdvancedFields(
+  String id,
+  int owner,
+) async {
+  try {
+    final response = await callUnifiedComicPlugin(
+      pluginId: id,
+      fnPath: 'getAdvancedSearchScheme',
+      core: const <String, dynamic>{},
+      extern: const <String, dynamic>{},
+      notifyUnauthorized: false,
+    );
+    if (pluginSessionWriteFence.generation(id) != owner) return const [];
+    final scheme = response['scheme'];
+    if (scheme is! Map) return const [];
+    final fields = scheme['fields'];
+    if (fields is! List) return const [];
+    return fields
+        .whereType<Map>()
+        .map((field) => Map<String, dynamic>.from(field))
+        .toList();
+  } catch (_) {
+    // An earlier runtime failure must not evict the replacement's schema.
+    if (_fieldCache[id]?.owner == owner) _fieldCache.remove(id);
+    return const [];
+  }
 }
 
 List<Map<String, dynamic>> uniqueAdvancedFields(
@@ -36,31 +53,34 @@ List<Map<String, dynamic>> uniqueAdvancedFields(
   List<Map<String, dynamic>> fields,
 ) {
   final hasQuickCategories = sourceQuickCategories(source).isNotEmpty;
-  final hasScope = sourceSearchScopeOptions(fields).isNotEmpty;
+  final scope = sourceSearchScope(fields);
   return fields.where((field) {
     final key = field['key']?.toString();
-    if (hasScope && key == 'q_type') return false;
+    if (scope != null && key == scope.field) return false;
     return !hasQuickCategories ||
         (key != 'sortBy' && key != 'blockedCategories');
   }).toList();
 }
 
-Map<String, String> sourceSearchScopeOptions(
+({String field, Map<String, String> options})? sourceSearchScope(
   List<Map<String, dynamic>> fields,
 ) {
   for (final field in fields) {
-    if (field['key'] != 'q_type' ||
+    final key = field['key'];
+    if (key is! String ||
+        !const {'q_type', 'main_tag'}.contains(key) ||
         field['kind'] != 'choice' ||
         field['options'] is! List) {
       continue;
     }
-    return {
+    final options = {
       for (final option in (field['options'] as List).whereType<Map>())
         if (option['label']?.toString().trim().isNotEmpty == true)
           option['value']?.toString() ?? '': option['label'].toString(),
     };
+    if (options.isNotEmpty) return (field: key, options: options);
   }
-  return const {};
+  return null;
 }
 
 Future<bool> hasUniqueAdvancedFields(String source) async {

@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 
 const PLUGIN_ASSETS: [(&str, &str); 2] = [
     (
-        "https://cdn.jsdelivr.net/npm/breeze-plugin-jm-comic@latest/dist/breeze-plugin-jm-comic.bundle.cjs",
+        "https://cdn.jsdelivr.net/npm/breeze-plugin-jm-comic@0.1.0/dist/breeze-plugin-jm-comic.bundle.cjs",
         "jm-comic.bundle.cjs",
     ),
     (
-        "https://cdn.jsdelivr.net/npm/breeze-plugin-bika-comic@latest/dist/breeze-plugin-bika-comic.bundle.cjs",
+        "https://cdn.jsdelivr.net/npm/breeze-plugin-bika-comic@0.1.4/dist/breeze-plugin-bika-comic.bundle.cjs",
         "bika-comic.bundle.cjs",
     ),
 ];

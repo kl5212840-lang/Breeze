@@ -1,7 +1,7 @@
 name: zephyr
 description: "使用Flutter开发的漫画阅读应用，使用插件提供漫画源支持。"
 publish_to: none
-version: 3.0.37+2265
+version: 3.0.38+2483
 
 environment:
   sdk: ^3.12.0
@@ -37,6 +37,9 @@ dependencies:
   easy_refresh: ^4.0.0 # UI: 下拉刷新
   scrollview_observer: ^1.26.3 # UI: 滚动监听
   material_ui: ^1.0.1 # UI: Flutter 官方 Material 组件
+  material_color_utilities: ^0.13.0 # UI: 感知色阶与主题对比度
+  cupertino_ui: ^1.1.3 # 转场边界沿用 material_ui 已使用的 Cupertino 实现
+  cupertino_icons: ^1.0.8 # 主导航使用配对的 Cupertino 图标
 
   # 网络通信与内容解析
   flutter_inappwebview: ^6.1.5 # 网络: 内嵌 WebView
@@ -80,6 +83,7 @@ dependencies:
 
   # 安全、工具与运行时
   encrypter_plus: ^5.1.0 # 安全: AES/RSA 加密
+  pointycastle: ^4.0.0 # Authenticated backup protection
   crypto: ^3.0.6 # 安全: 摘要与哈希
   cbor: ^6.5.1 # 序列化: Rust/Dart 二进制数据交换
   uuid: ^4.4.2 # 工具: UUID 生成
@@ -99,12 +103,11 @@ dependencies:
   coreml_upscale: # MacOS/iOS 超分
     path: packages/coreml_upscale
   flutter_sticky_header: ^0.8.0 # UI: 分组吸顶组头
+  visibility_detector: ^0.4.0+2 # UI: 图片与阅读页可见性
 
 dev_dependencies:
   # 测试与规范
   flutter_test:
-    sdk: flutter
-  integration_test:
     sdk: flutter
   flutter_lints: ^6.0.0 # 规范: 官方 Lint 规则
   video_player_platform_interface: ^6.9.0 # 测试: 原生播放控件假平台
@@ -122,6 +125,10 @@ dev_dependencies:
   flutter_launcher_icons: # 发布: 启动图标生成
   flutter_native_splash: # 发布: 启动画面生成
 
+  path_provider_platform_interface: any
+  shared_preferences_platform_interface: any
+  url_launcher_platform_interface: any
+  analyzer: any
 dependency_overrides:
   meta: ^1.19.0
   permission_handler_windows:
@@ -157,9 +164,13 @@ flutter:
     - asset/image/bika_image/cat_latest.jpg
     - asset/image/bika_image/cat_leaderboard.jpg
     - asset/image/bika_image/cat_random.jpg
+    - asset/image/bika_experience/pica_splash_2_5.png
+    - asset/image/bika_experience/loading.gif
+    - asset/image/bika_experience/loading-first-frame.png
+    - asset/image/bika_experience/icon_exclamation_error.png
+    - asset/image/bika_experience/icon_empty.png
     - asset/image/assets/default_cover.png
-    - test/fixtures/copy_comic.bundle.cjs.br
-    - .env.proxy
+    - asset/image/switch_style/
 objectbox:
   # Writes objectbox-model.json and objectbox.g.dart to lib/custom (and test/custom).
   output_dir:
@@ -178,6 +189,7 @@ flutter_launcher_icons:
   image_path: "macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_1024.png"
 
 flutter_native_splash:
+  ios: false # The iOS launch storyboard and adaptive color are maintained natively.
   color: "#ffffff"
   image: "macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_1024.png"
   fullscreen: true

@@ -2,20 +2,22 @@ import 'package:zephyr/page/video/native_playback_session.dart';
 
 enum VideoEpisodeOrder { ascending, descending, site, manual }
 
-/// One session's queue. Only reliable episode tokens change the default order;
+/// One session's display order. Only reliable episode tokens change the default order;
 /// video IDs, dates and quality numbers never determine narrative order.
 class VideoEpisodeSequence {
   VideoEpisodeSequence(
     List<NativeVideoCard> cards, {
     VideoEpisodeOrder order = VideoEpisodeOrder.ascending,
-  }) : this._(_unique(cards), order, null);
+  }) : this._(_unique(cards), order, null, order);
   VideoEpisodeSequence._(
     this.original,
     this.order,
     List<NativeVideoCard>? manual,
+    this._playbackOrder,
   ) : items = List.unmodifiable(manual ?? _ordered(original, order));
   final List<NativeVideoCard> original, items;
   final VideoEpisodeOrder order;
+  final VideoEpisodeOrder _playbackOrder;
   bool get numbered => _canSort(original);
   static bool _canSort(List<NativeVideoCard> cards) {
     if (cards.isEmpty ||
@@ -26,7 +28,7 @@ class VideoEpisodeSequence {
     final explicit = cards
         .map(
           (c) => RegExp(
-            r'第\s*[^集話话]{1,6}[集話话]|\b(?:Episode|Ep\.?)\s*[0-9]',
+            r'第\s*[^集話话]{1,6}[集話话]|\b(?:Episode|Ep\.?)\s*[0-9]|(?:^|[·\s])[0-9０-９]{1,4}\s*[集話话]\s*$',
             caseSensitive: false,
           ).hasMatch(c.title),
         )
@@ -48,17 +50,51 @@ class VideoEpisodeSequence {
     return names.length == 1;
   }
 
+  /// Keep an explicit display order when recovery changes the same work's line.
+  VideoEpisodeSequence reconciled(List<NativeVideoCard> cards) {
+    final next = VideoEpisodeSequence._(
+      _unique(cards),
+      order,
+      null,
+      _playbackOrder,
+    );
+    if (order != VideoEpisodeOrder.manual) return next;
+    final remaining = [...next.original];
+    final arranged = <NativeVideoCard>[];
+    for (final previous in items) {
+      final index = remaining.indexWhere(
+        (card) =>
+            card.watchUrl == previous.watchUrl ||
+            (numbered &&
+                next.numbered &&
+                number(card.title) != null &&
+                number(card.title) == number(previous.title)),
+      );
+      if (index >= 0) arranged.add(remaining.removeAt(index));
+    }
+    return VideoEpisodeSequence._(next.original, order, [
+      ...arranged,
+      ...remaining,
+    ], _playbackOrder);
+  }
+
   VideoEpisodeSequence sorted(VideoEpisodeOrder value) =>
       VideoEpisodeSequence._(
         original,
         value,
         value == VideoEpisodeOrder.manual ? items : null,
+        _playbackOrder,
       );
   VideoEpisodeSequence moved(int oldIndex, int newIndex) {
     final next = [...items];
     if (newIndex > oldIndex) newIndex--;
     next.insert(newIndex, next.removeAt(oldIndex));
-    return VideoEpisodeSequence._(original, VideoEpisodeOrder.manual, next);
+    return VideoEpisodeSequence._(
+      original,
+      VideoEpisodeOrder.manual,
+      next,
+      _playbackOrder,
+    );
   }
 
   static List<NativeVideoCard> _unique(List<NativeVideoCard> cards) =>
@@ -88,8 +124,14 @@ class VideoEpisodeSequence {
       RegExp('[０-９]'),
       (m) => String.fromCharCode(m[0]!.codeUnitAt(0) - 0xff10 + 0x30),
     );
+    // Some sources omit 第 but use an otherwise exact episode label. Keep
+    // this anchored so a duration such as “共12集” or “12集合集” cannot match.
+    final short = RegExp(
+      r'(?:^|[·\s])([0-9]{1,4})\s*[集話话]\s*$',
+    ).firstMatch(text);
+    if (short != null) return int.tryParse(short[1]!);
     final explicit = RegExp(
-      r'第\s*([0-9〇零一二两三四五六七八九十百]{1,6})\s*[集話话]|\b(?:Episode\s*|Ep\.?\s*)([0-9]{1,3})(?![0-9.])',
+      r'第\s*([0-9〇零一二两三四五六七八九十百]{1,6})\s*[集話话]|\b(?:Episode\s*|Ep\.?\s*)([0-9]{1,4})(?![0-9.])',
       caseSensitive: false,
     ).allMatches(text).toList();
     if (explicit.length > 1) return null;
@@ -103,7 +145,7 @@ class VideoEpisodeSequence {
       }
       final value = m[1] ?? m[2]!;
       final integer = int.tryParse(value);
-      if (integer != null) return integer <= 999 ? integer : null;
+      if (integer != null) return integer <= 9999 ? integer : null;
       const digits = {
         '〇': 0,
         '零': 0,
@@ -149,10 +191,15 @@ class VideoEpisodeSequence {
 
   int indexOf(Uri current) =>
       items.indexWhere((card) => card.isCurrent(current));
+  List<NativeVideoCard> get playbackItems => _ordered(original, _playbackOrder);
+  int playbackIndexOf(Uri current) =>
+      playbackItems.indexWhere((card) => card.isCurrent(current));
   NativeVideoCard? adjacent(Uri current, int direction) {
-    final index = indexOf(current), next = indexOf(current) + direction;
-    return index < 0 || direction.abs() != 1 || next < 0 || next >= items.length
+    final queue = playbackItems;
+    final index = queue.indexWhere((card) => card.isCurrent(current));
+    final next = index + direction;
+    return index < 0 || direction.abs() != 1 || next < 0 || next >= queue.length
         ? null
-        : items[next];
+        : queue[next];
   }
 }

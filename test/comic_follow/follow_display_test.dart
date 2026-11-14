@@ -65,9 +65,9 @@ void main() {
   });
 
   test('followReadProgress clamps', () {
-    expect(followReadProgress(readOrder: 5, detectedTotal: 10), 0.5);
-    expect(followReadProgress(readOrder: 0, detectedTotal: 10), 0);
-    expect(followReadProgress(readOrder: 12, detectedTotal: 10), 1.0);
-    expect(followReadProgress(readOrder: 5, detectedTotal: 0), 0);
+    expect(followReadProgress(chapterPosition: 5, detectedTotal: 10), 0.5);
+    expect(followReadProgress(chapterPosition: 0, detectedTotal: 10), 0);
+    expect(followReadProgress(chapterPosition: 12, detectedTotal: 10), 1.0);
+    expect(followReadProgress(chapterPosition: 5, detectedTotal: 0), 0);
   });
 }

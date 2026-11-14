@@ -1,9 +1,15 @@
+import '../../test_helper.dart';
+import 'sync_installed_fixture.dart';
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/network/sync/comic_sync_core.dart';
 import 'package:zephyr/network/sync/video_library_sync.dart';
+import 'package:zephyr/network/sync/sync_payload_compatibility.dart';
+import 'package:zephyr/network/sync/sync_service.dart';
 import 'package:zephyr/page/video/api_video_models.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
 
@@ -47,10 +53,14 @@ ApiVideoItem film(String id) => ApiVideoItem(
 );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(TestObjectBoxHelper.setUpTestObjectBox);
+  tearDownAll(TestObjectBoxHelper.tearDownTestObjectBox);
   late VideoLibraryStore a, b;
   late _Remote remote;
-  setUp(() {
+  setUp(() async {
     SharedPreferences.setMockInitialValues({});
+    await installSyncPlugins(['ikun']);
     a = VideoLibraryStore(deviceId: 'device-A', storageKey: 'sync.A');
     b = VideoLibraryStore(deviceId: 'device-B', storageKey: 'sync.B');
     remote = _Remote();
@@ -59,6 +69,75 @@ void main() {
     a.dispose();
     b.dispose();
   });
+  test(
+    'the library command waits for a local backup and reads settings at execution',
+    () async {
+      await a.setFavorite('ikun', film('7'), true);
+      final started = Completer<void>(), release = Completer<void>();
+      final backup = runExclusiveStorageOperation(() async {
+        started.complete();
+        await release.future;
+      });
+      await started.future;
+      var settings = const GlobalSettingState(dynamicColor: false);
+      GlobalSettingState? adapterSettings;
+      final sync = syncVideoLibrary(
+        readState: () => settings,
+        store: a,
+        codec: codec,
+        createAdapter: (state) {
+          adapterSettings = state;
+          return remote;
+        },
+      );
+      try {
+        await Future<void>.delayed(Duration.zero);
+        expect(adapterSettings, isNull);
+        expect(remote.files, isEmpty);
+        settings = settings.copyWith(dynamicColor: true);
+      } finally {
+        release.complete();
+        await backup;
+      }
+      expect(await sync, isTrue);
+      expect(adapterSettings?.dynamicColor, isTrue);
+      expect(remote.files.keys.single, contains('video_library_'));
+    },
+  );
+  test(
+    'portable video metadata keeps CMS click and rating evidence without local artists',
+    () async {
+      final item = ApiVideoItem.fromJson({
+        'id': '77',
+        'title': 'CMS work',
+        'detailUrl': 'https://www.ikunzy.com/voddetail/77.html',
+        'sourceViews': 0,
+        'sourceViewsKind': 'clicks',
+        'sourceRating': 8.5,
+        'sourceRatingCount': 2,
+        'sourceRatingCountConsistent': false,
+      }, home: Uri.parse('https://www.ikunzy.com/'));
+      await a.setFavorite('ikun', item, true);
+      const localDownloadKey = 'breeze.local.video.download-details.v2';
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(localDownloadKey, 'offline artist marker');
+      await VideoLibrarySync.run(remote, store: a, codec: codec);
+      final cloud = utf8.decode(remote.files.values.single);
+      expect(cloud, isNot(contains('offline artist marker')));
+      expect(cloud, isNot(contains(localDownloadKey)));
+      await VideoLibrarySync.run(remote, store: b, codec: codec, upload: false);
+      final snapshot = await b.read();
+      final stored = snapshot.favorites[VideoLibraryStore.itemKey('ikun', '77')]!
+          .data['item'] as Map;
+      expect(stored, containsPair('sourceViews', 0));
+      expect(stored, containsPair('sourceViewsKind', 'clicks'));
+      expect(stored, containsPair('sourceRating', 8.5));
+      expect(stored, containsPair('sourceRatingCount', 2));
+      expect(stored, containsPair('sourceRatingCountConsistent', false));
+      expect(prefs.getString(localDownloadKey), 'offline artist marker');
+    },
+  );
+
   test(
     'existing adapter transfers favorites, folder IDs and memberships',
     () async {
@@ -138,7 +217,7 @@ void main() {
       remote.files[path] = utf8.encode(jsonEncode(payload));
       await expectLater(
         VideoLibrarySync.run(remote, store: a, codec: codec),
-        throwsFormatException,
+        throwsA(isA<SyncCompatibilityException>()),
       );
       expect((await a.read()).contains('ikun', '7'), isTrue);
     },

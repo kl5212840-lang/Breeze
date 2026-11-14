@@ -57,6 +57,7 @@ Widget buildReadModeSlot({
       return _buildColumnSingleImage(
         context: context,
         item: singleItem,
+        slotIndex: slotIndex,
         containerWidth: containerWidth,
         contentWidth: contentWidth,
         backgroundColor: backgroundColor,
@@ -124,6 +125,7 @@ Widget buildReadModeSlot({
 Widget _buildColumnSingleImage({
   required BuildContext context,
   required ReadModeSlotItem item,
+  required int slotIndex,
   required double containerWidth,
   required double contentWidth,
   required Color backgroundColor,
@@ -154,8 +156,9 @@ Widget _buildColumnSingleImage({
             entry: entry,
             comicId: comicId,
             from: from,
-            slotIndex: entry.chapterPageIndex ?? item.entryIndex,
+            slotIndex: slotIndex,
             cacheIndex: cacheIndex,
+            displayNumber: (entry.chapterPageIndex ?? item.entryIndex) + 1,
             isColumn: true,
           ),
         ),
@@ -252,11 +255,13 @@ Widget _buildColumnDoublePageImage({
                 entry: left.entry,
                 comicId: comicId,
                 from: from,
-                slotIndex: left.entry.chapterPageIndex ?? left.entryIndex,
+                slotIndex: slotIndex,
                 cacheIndex: _resolveImageCacheIndex(
                   left.entry,
                   left.entryIndex,
                 ),
+                displayNumber:
+                    (left.entry.chapterPageIndex ?? left.entryIndex) + 1,
                 isColumn: true,
               )
             : const SizedBox.shrink(),
@@ -270,11 +275,13 @@ Widget _buildColumnDoublePageImage({
                 entry: right.entry,
                 comicId: comicId,
                 from: from,
-                slotIndex: right.entry.chapterPageIndex ?? right.entryIndex,
+                slotIndex: slotIndex,
                 cacheIndex: _resolveImageCacheIndex(
                   right.entry,
                   right.entryIndex,
                 ),
+                displayNumber:
+                    (right.entry.chapterPageIndex ?? right.entryIndex) + 1,
                 isColumn: true,
               )
             : const SizedBox.shrink(),

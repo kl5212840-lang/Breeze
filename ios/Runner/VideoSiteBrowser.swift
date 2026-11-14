@@ -86,14 +86,28 @@ struct VideoSiteNavigationPolicy {
 }
 
 /// Standard WebKit browser for video sources. No user scripts, JS bridge,
-/// console wrappers, custom UA, cookie import or TLS exceptions are installed.
+/// console wrappers, custom UA or TLS exceptions are installed. Explicit
+/// account-cookie access is bounded to this view's source and actual store.
 final class VideoSiteBrowserFactory: NSObject, FlutterPlatformViewFactory {
+  private static var backgroundDocuments: [ObjectIdentifier: (VideoSiteBrowserView, Int)] = [:]
+  fileprivate static func retainBackground(_ browser: VideoSiteBrowserView) {
+    let key = ObjectIdentifier(browser)
+    backgroundDocuments[key] = (browser, (backgroundDocuments[key]?.1 ?? 0) + 1)
+  }
+  fileprivate static func releaseBackground(_ browser: VideoSiteBrowserView) -> Bool {
+    let key = ObjectIdentifier(browser)
+    guard let retained = backgroundDocuments[key] else { return false }
+    if retained.1 <= 1 { backgroundDocuments.removeValue(forKey: key) }
+    else { backgroundDocuments[key] = (browser, retained.1 - 1) }
+    return true
+  }
   private static let browsers = NSMapTable<WKWebView, VideoSiteBrowserView>(keyOptions: .weakMemory, valueOptions: .weakMemory)
-  private let messenger: FlutterBinaryMessenger
-  init(messenger: FlutterBinaryMessenger) { self.messenger = messenger }
+  private let registrar: FlutterPluginRegistrar
+  init(registrar: FlutterPluginRegistrar) { self.registrar = registrar }
   func createArgsCodec() -> FlutterMessageCodec & NSObjectProtocol { FlutterStandardMessageCodec.sharedInstance() }
   func create(withFrame frame: CGRect, viewIdentifier viewId: Int64, arguments args: Any?) -> FlutterPlatformView {
-    let browser = VideoSiteBrowserView(frame: frame, id: viewId, args: args, messenger: messenger)
+    let browser = VideoSiteBrowserView(frame: frame, id: viewId, args: args, messenger: registrar.messenger(),
+      presentationHost: { [registrar] in registrar.viewController })
     Self.browsers.setObject(browser, forKey: browser.view() as? WKWebView)
     return browser
   }
@@ -106,6 +120,25 @@ final class VideoSiteBrowserFactory: NSObject, FlutterPlatformViewFactory {
             browsers.object(forKey: web)?.isForHost(host) == true else { return nil }
       return web
     }
+  }
+}
+
+/// The data WKWebView can intentionally be offstage. Presentation belongs to
+/// this Flutter engine's live view controller, never to a global/key window or
+/// the hidden browser's responder chain. Resolve again after asynchronous work.
+enum VideoVerificationPresentation {
+  static func presenter(from host: UIViewController?) -> UIViewController? {
+    guard let host, let window = host.viewIfLoaded?.window,
+          !host.isBeingDismissed, !host.isBeingPresented else { return nil }
+    var controller = host
+    while let presented = controller.presentedViewController {
+      guard !controller.isBeingDismissed, !controller.isBeingPresented else { return nil }
+      controller = presented
+    }
+    guard controller.viewIfLoaded?.window === window,
+          !controller.isBeingDismissed, !controller.isBeingPresented,
+          !(controller is UIAlertController) else { return nil }
+    return controller
   }
 }
 
@@ -148,10 +181,10 @@ private final class VideoVerificationWindowController: UIViewController {
   private let hint: String
   private var completion: ((String) -> Void)?
 
-  init(url: URL, title: String, returnTitle: String, hint: String,
+  init(url: URL, title: String, returnTitle: String, hint: String, store: WKWebsiteDataStore,
        completion: @escaping (String) -> Void) {
     let configuration = WKWebViewConfiguration()
-    configuration.websiteDataStore = .default()
+    configuration.websiteDataStore = store
     browser = WKWebView(frame: .zero, configuration: configuration)
     destination = url
     self.returnTitle = returnTitle
@@ -199,8 +232,15 @@ private final class VideoVerificationWindowController: UIViewController {
 
 private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavigationDelegate, WKUIDelegate, WKHTTPCookieStoreObserver {
   private let web: WKWebView
+  private let presentationHost: () -> UIViewController?
+  private let networkLease: OmoNetworkLease?
+  private let networkUnavailable: Bool
   private let channel: FlutterMethodChannel
   private let host: String
+  private let accountCookiePolicy: VideoSiteAccountCookiePolicy?
+  private var accountCookieAccess = VideoSiteAccountCookieAccess()
+  private var accountCookiesBusy = false
+  private var accountCookieQueue: [() -> Void] = []
   private let dialogConfirm: String
   private let dialogCancel: String
   private let verificationWindowTitle: String
@@ -226,7 +266,9 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
   private var events: [[String: Any]] = []
   private var navigationDecisions: [[String: Any]] = []
 
-  init(frame: CGRect, id: Int64, args: Any?, messenger: FlutterBinaryMessenger) {
+  init(frame: CGRect, id: Int64, args: Any?, messenger: FlutterBinaryMessenger,
+       presentationHost: @escaping () -> UIViewController?) {
+    self.presentationHost = presentationHost
     let arguments = args as? [String: Any] ?? [:]
     let raw = arguments["home"] as? String ?? ""
     host = URL(string: raw)?.host ?? ""
@@ -238,14 +280,36 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
     verificationWindowReturn = arguments["verificationWindowReturn"] as? String ?? "Return and retry"
     verificationWindowHint = arguments["verificationWindowHint"] as? String ?? "Verify manually using this session."
     let configuration = WKWebViewConfiguration()
-    configuration.websiteDataStore = .default()
+    let rawContext = arguments["networkContext"]
+    let context = rawContext is NSNull ? nil : rawContext
+    let contextLease = (context as? String).flatMap { OmoNetwork.shared.lease($0) }
+    let scopedHome = URL(string: raw).map { contextLease?.isFirstParty($0) == true } ?? false
+    networkLease = contextLease
+    networkUnavailable = context != nil && !scopedHome
+    let cookieSource = arguments["source"] as? String
+    let cookieSourceMatches = contextLease == nil || contextLease?.sourceIdentifier == cookieSource?.lowercased()
+    accountCookiePolicy = !networkUnavailable && cookieSourceMatches
+      ? (try? VideoSiteAccountCookiePolicy(home: URL(string: raw), source: cookieSource)) : nil
+    if let contextLease { configuration.websiteDataStore = contextLease.store }
+    else if networkUnavailable { configuration.websiteDataStore = .nonPersistent() }
+    else { configuration.websiteDataStore = .default() }
     configuration.allowsInlineMediaPlayback = true
     web = WKWebView(frame: frame, configuration: configuration)
+    // Offstage data sessions do not submit a PlatformViewLayer, so Flutter's
+    // compositor has no reason to assign their UIKit frame. Keep a real DOM
+    // viewport even before this same WKWebView is first shown for verification.
+    if let width = arguments["viewportWidth"] as? NSNumber,
+       let height = arguments["viewportHeight"] as? NSNumber,
+       width.doubleValue.isFinite, height.doubleValue.isFinite,
+       width.doubleValue > 0, height.doubleValue > 0 {
+      web.frame = CGRect(x: 0, y: 0, width: width.doubleValue, height: height.doubleValue)
+    }
     // WebKit may return "" instead of nil even before any navigation. Neither
     // means an override is configured. Never assign an invented Safari UA.
     initialOverride = web.customUserAgent ?? ""
     channel = FlutterMethodChannel(name: "breeze.video.browser.\(id)", binaryMessenger: messenger)
     super.init()
+    web.overrideUserInterfaceStyle = arguments["dark"] as? Bool == true ? .dark : .light
     web.navigationDelegate = self
     web.uiDelegate = self
     web.configuration.websiteDataStore.httpCookieStore.add(self)
@@ -253,7 +317,48 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
     channel.setMethodCallHandler { [weak self] call, result in
       guard let self = self else { result(nil); return }
       let args = call.arguments as? [String: Any] ?? [:]
+      guard !self.networkUnavailable else {
+        result(FlutterError(code: "NETWORK_CLOSED", message: "Source network session unavailable", details: nil)); return
+      }
       switch call.method {
+      case "accountCookieContext":
+        guard let policy = self.accountCookiePolicy,
+          args["source"] as? String == policy.source,
+          let rawOrigin = args["origin"] as? String, let origin = URL(string: rawOrigin), policy.accepts(origin),
+          args["viewToken"] == nil || args["viewToken"] as? String == self.accountCookieAccess.viewToken else {
+          result(self.cookieFailure("COOKIE_CONTEXT_CLOSED")); return
+        }
+        do {
+          let token = try self.accountCookieAccess.open()
+          result(["source": policy.source, "origin": policy.origin, "token": token,
+            "viewToken": self.accountCookieAccess.viewToken])
+        } catch { result(self.cookieFailure("COOKIE_CONTEXT_CLOSED")) }
+      case "accountCookiesRead", "accountCookiesSet", "accountCookiesDelete":
+        self.accountCookies(call.method, args: args, result: result)
+      case "accountCookiesClose":
+        guard let token = args["token"] as? String else { result(false); return }
+        self.accountCookieAccess.close(token)
+        result(true)
+      case "accountCookiesDispose":
+        guard let token = args["viewToken"] as? String else { result(false); return }
+        result(self.accountCookieAccess.dispose(token))
+      case "retainBackground":
+        VideoSiteBrowserFactory.retainBackground(self)
+        result(true)
+      case "releaseBackground":
+        result(VideoSiteBrowserFactory.releaseBackground(self))
+      case "appearance":
+        let style: UIUserInterfaceStyle = args["dark"] as? Bool == true ? .dark : .light
+        self.web.overrideUserInterfaceStyle = style
+        self.verificationWindow?.overrideUserInterfaceStyle = style
+        result(nil)
+      case "viewport":
+        if let width = args["width"] as? NSNumber, let height = args["height"] as? NSNumber,
+           width.doubleValue.isFinite, height.doubleValue.isFinite,
+           width.doubleValue > 0, height.doubleValue > 0 {
+          self.web.bounds.size = CGSize(width: width.doubleValue, height: height.doubleValue)
+        }
+        result(nil)
       case "externalAuthenticationEntries":
         self.externalAuthentication.update(args["entries"] as? [String] ?? [])
         result(nil)
@@ -266,6 +371,11 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
         self.pendingURL = url
         self.web.load(URLRequest(url: url)); result(nil)
       case "stop": self.record("command-stop"); self.web.stopLoading(); result(nil)
+      case "reload":
+        guard let url = self.web.url, self.allowed(url, main: true) else {
+          result(FlutterError(code: "URL_REJECTED", message: "Invalid video site URL", details: nil)); return
+        }
+        self.web.reload(); result(nil)
       case "url": result(self.web.url?.absoluteString)
       case "canGoBack": result(self.web.canGoBack)
       case "goBack": self.web.goBack(); result(nil)
@@ -310,6 +420,90 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
       }
     }
     urlObserver = web.observe(\.url, options: [.new]) { [weak self] _, _ in self?.emit("history") }
+  }
+
+  private func cookieFailure(_ code: String) -> FlutterError {
+    FlutterError(code: code, message: "Source account cookie operation could not be completed", details: nil)
+  }
+
+  private func accountCookies(_ method: String, args: [String: Any], result: @escaping FlutterResult) {
+    guard let policy = accountCookiePolicy, let token = args["token"] as? String,
+      accountCookieAccess.live(token, generation: accountCookieAccess.generation),
+      let rawOrigin = args["origin"] as? String, let origin = URL(string: rawOrigin), policy.accepts(origin),
+      networkLease == nil || networkLease?.isFirstParty(origin) == true else {
+      result(cookieFailure("COOKIE_CONTEXT_CLOSED")); return
+    }
+    let requested: HTTPCookie?
+    do {
+      if method == "accountCookiesRead" { requested = nil }
+      else { requested = try policy.cookie(args["cookie"] as? [String: Any] ?? [:], origin: origin) }
+    } catch { result(cookieFailure("COOKIE_REJECTED")); return }
+    if accountCookiesBusy {
+      guard accountCookieQueue.count < 16 else { result(cookieFailure("COOKIE_BUSY")); return }
+      accountCookieQueue.append { self.accountCookies(method, args: args, result: result) }
+      return
+    }
+    accountCookiesBusy = true
+    let generation = accountCookieAccess.generation
+    // This exact view's store is authoritative, including source-scoped Omo
+    // routing stores. Never replace it with WKWebsiteDataStore.default().
+    let store = web.configuration.websiteDataStore.httpCookieStore
+    func live() -> Bool { self.accountCookieAccess.live(token, generation: generation) }
+    func finish(_ value: Any) {
+      self.accountCookiesBusy = false; result(value)
+      self.drainAccountCookies()
+    }
+    store.getAllCookies { all in
+      guard live() else { finish(self.cookieFailure("COOKIE_STALE")); return }
+      guard let requested else {
+        do { finish(try policy.export(all)) }
+        catch { finish(self.cookieFailure("COOKIE_REJECTED")) }
+        return
+      }
+      let matches = all.filter { policy.key($0) == policy.key(requested) }
+      guard matches.count <= 1, matches.first.map({ policy.wire($0) != nil }) ?? true else {
+        finish(self.cookieFailure("COOKIE_REJECTED")); return
+      }
+      let original = matches.first
+      let deleting = method == "accountCookiesDelete"
+      if deleting {
+        guard let original else { finish(true); return }
+        // A stale deletion must not remove a freshly issued site session.
+        guard policy.same(original, requested) else { finish(self.cookieFailure("COOKIE_STALE")); return }
+      }
+      let applied: HTTPCookie
+      do { applied = try policy.cookie(args["cookie"] as? [String: Any] ?? [:],
+        origin: origin, existingDomain: original?.domain) }
+      catch { finish(self.cookieFailure("COOKIE_REJECTED")); return }
+      let verify = {
+        store.getAllCookies { after in
+          let current = after.filter { policy.key($0) == policy.key(applied) }
+          if !live() {
+            // Only compensate the value written by this closed visit. If the
+            // site/new visit already replaced it, leave that newer value alone.
+            let unchanged = policy.canCompensate(current: after, applied: applied, deleting: deleting)
+            guard unchanged else { finish(self.cookieFailure("COOKIE_STALE")); return }
+            let reverted = { finish(self.cookieFailure("COOKIE_STALE")) }
+            if let original { store.setCookie(original, completionHandler: reverted) }
+            else if let current = current.first { store.delete(current, completionHandler: reverted) }
+            else { reverted() }
+            return
+          }
+          let verified = deleting ? current.isEmpty : current.count == 1 && policy.same(current[0], applied)
+          if verified { finish(true) } else { finish(self.cookieFailure("COOKIE_UNVERIFIED")) }
+        }
+      }
+      if deleting, let original { store.delete(original, completionHandler: verify) }
+      else { store.setCookie(applied, completionHandler: verify) }
+    }
+  }
+
+  private func drainAccountCookies() {
+    guard !accountCookiesBusy, !accountCookieQueue.isEmpty else { return }
+    let next = accountCookieQueue.removeFirst()
+    next()
+    // Stale queued leases are rejected synchronously and release no busy slot.
+    if !accountCookiesBusy { drainAccountCookies() }
   }
 
   func view() -> UIView { web }
@@ -364,28 +558,22 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
   }
 
   private func presentVerificationWindow(url: URL, result: @escaping FlutterResult) {
-    guard verificationWindow == nil, verificationPause == nil,
-          web.window != nil, dismissSiteDialog == nil else {
-      result(FlutterError(code: "UNAVAILABLE", message: "Verification window unavailable", details: nil)); return
+    guard verificationWindow == nil, verificationPause == nil, dismissSiteDialog == nil else {
+      record("verification-window-busy")
+      result(FlutterError(code: "BUSY", message: "Verification window already active", details: nil)); return
     }
-    var responder: UIResponder? = web
-    while responder != nil && !(responder is UIViewController) { responder = responder?.next }
-    guard var controller = responder as? UIViewController else {
+    guard VideoVerificationPresentation.presenter(from: presentationHost()) != nil else {
+      record("verification-window-host-unavailable")
       result(FlutterError(code: "UNAVAILABLE", message: "Verification window unavailable", details: nil)); return
-    }
-    while let presented = controller.presentedViewController { controller = presented }
-    guard !controller.isBeingDismissed, !controller.isBeingPresented,
-          !(controller is UIAlertController) else {
-      result(FlutterError(code: "BUSY", message: "Wait for the current presentation", details: nil)); return
     }
     // Commit a local empty document first, so the old challenge cannot keep
     // running JavaScript or updating the shared store behind the comparison.
     // The visible return button explicitly requests one normal site reload.
-    let pause = VideoVerificationPauseDelegate { [weak self, weak controller] committed in
+    let pause = VideoVerificationPauseDelegate { [weak self] committed in
       guard let self = self else { result("cancelled"); return }
       self.verificationPause = nil
       self.web.navigationDelegate = nil
-      guard committed, let controller = controller, self.web.window != nil else {
+      guard committed, let controller = VideoVerificationPresentation.presenter(from: self.presentationHost()) else {
         self.web.navigationDelegate = self
         self.web.uiDelegate = self
         self.record("verification-window-unavailable")
@@ -396,7 +584,7 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
       }
       self.record("verification-window-source-paused")
       let content = VideoVerificationWindowController(url: url, title: self.verificationWindowTitle,
-        returnTitle: self.verificationWindowReturn, hint: self.verificationWindowHint) { [weak self] value in
+        returnTitle: self.verificationWindowReturn, hint: self.verificationWindowHint, store: self.web.configuration.websiteDataStore) { [weak self] value in
           self?.verificationWindow = nil
           self?.web.navigationDelegate = self
           self?.web.uiDelegate = self
@@ -404,6 +592,7 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
           result(value)
         }
       let navigation = UINavigationController(rootViewController: content)
+      navigation.overrideUserInterfaceStyle = self.web.overrideUserInterfaceStyle
       navigation.modalPresentationStyle = .fullScreen
       self.verificationWindow = navigation
       self.record("verification-window-opened")
@@ -419,7 +608,8 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
   }
 
   private func allowed(_ url: URL, main: Bool) -> Bool {
-    VideoSiteNavigationPolicy(host: host).rejectionReason(for: url, main: main) == nil
+    guard !networkUnavailable else { return false }
+    return VideoSiteNavigationPolicy(host: host).rejectionReason(for: url, main: main) == nil
   }
 
   private func recordNavigation(_ action: WKNavigationAction, url: URL, main: Bool) {
@@ -502,6 +692,7 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
       guard let self = self, self.documentGeneration == generation, let agent = value as? String else { return }
       if let previous = self.documentAgent, previous != agent { self.documentAgentChanged = true }
       self.documentAgent = agent
+      OmoNetwork.shared.observeUserAgent(agent, store: webView.configuration.websiteDataStore)
     }
   }
 
@@ -585,6 +776,7 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
     while let presented = controller.presentedViewController { controller = presented }
     guard !controller.isBeingDismissed, !(controller is UIAlertController) else { completion(nil); return }
     let alert = UIAlertController(title: host, message: message, preferredStyle: .alert)
+    alert.overrideUserInterfaceStyle = web.overrideUserInterfaceStyle
     if asksText { alert.addTextField { $0.text = defaultText } }
     var finished = false
     let finish: (String?) -> Void = { [weak self] value in

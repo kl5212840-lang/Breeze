@@ -1,4 +1,13 @@
 import 'dart:convert';
+import 'package:zephyr/network/http/plugin/unified_plugin_envelope.dart';
+import 'package:zephyr/service/plugin_account_authentication.dart';
+import 'package:zephyr/util/json/json_value.dart';
+import 'package:zephyr/page/comic_list/cubit/jm_collection_snapshots.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/widgets/comic_entry/models/models.dart';
+
+import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
+import 'package:zephyr/page/comic_info/models/plugin_action_login.dart';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/main.dart';
@@ -12,78 +21,109 @@ import 'package:zephyr/util/path_util.dart';
 import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart';
 import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/widgets/breeze_switch.dart';
+
+UnifiedComicFavorite? _findLocalFavorite(String key) {
+  final query = objectbox.unifiedFavoriteBox
+      .query(UnifiedComicFavorite_.uniqueKey.equals(key))
+      .build();
+  try {
+    return query.findFirst();
+  } finally {
+    query.close();
+  }
+}
 
 Future<bool> isLocalComicCollected({
   required String from,
   required String comicId,
 }) async {
-  final pluginId = (from).trim();
-  final key = '$pluginId:$comicId';
-  final unified = objectbox.unifiedFavoriteBox
-      .query(UnifiedComicFavorite_.uniqueKey.equals(key))
-      .build()
-      .findFirst();
-  final collected = unified != null && unified.deleted == false;
-  if (collected) {
-    _repairFavoriteCoverPathIfNeeded(unified);
-  }
-  return collected;
+  final key = '${from.trim()}:$comicId';
+  final favorite = _findLocalFavorite(key);
+  if (favorite == null || favorite.deleted) return false;
+  if (_repairedFavoriteCover(favorite) == null) return true;
+  return objectbox.store.runInTransaction(TxMode.write, () {
+    final current = _findLocalFavorite(key);
+    if (current == null || current.deleted) return false;
+    if (_repairedFavoriteCover(current) case final cover?) {
+      // A cache path repair carries no change to the user's favorite intent.
+      current.cover = cover;
+      objectbox.unifiedFavoriteBox.put(current);
+    }
+    return true;
+  });
 }
 
-Future<bool> toggleLocalComicFavorite({
+/// Apply the confirmed intent even if another page or sync has already
+/// changed this favorite. Store the item and its links in one transaction.
+Future<({bool collected, bool changed})> setLocalComicFavorite({
   required String from,
   required NormalComicAllInfo normalInfo,
-  bool showToast = true,
+  required bool collected,
 }) async {
   final comicInfo = normalInfo.comicInfo;
-  final pluginId = (from).trim();
+  final pluginId = from.trim();
   final key = '$pluginId:${comicInfo.id}';
-  final now = DateTime.now().toUtc();
-  final unified = objectbox.unifiedFavoriteBox
-      .query(UnifiedComicFavorite_.uniqueKey.equals(key))
-      .build()
-      .findFirst();
-
-  if (unified != null && unified.deleted == false) {
-    unified.deleted = true;
-    unified.updatedAt = now;
-    objectbox.unifiedFavoriteBox.put(unified);
-    ComicLinkService.removeComicFromAll(key, ComicFolderType.favorite);
-    if (showToast) {
-      // showSuccessToast('已取消本地收藏');
+  return objectbox.store.runInTransaction(TxMode.write, () {
+    final now = DateTime.now().toUtc();
+    if (!collected) {
+      final query = objectbox.unifiedFavoriteBox
+          .query(UnifiedComicFavorite_.comicId.equals(comicInfo.id))
+          .build();
+      final records = <UnifiedComicFavorite>[];
+      try {
+        records.addAll(
+          query.find().where((row) => row.source.trim() == pluginId),
+        );
+      } finally {
+        query.close();
+      }
+      final existing = _findLocalFavorite(key);
+      if (existing != null && !records.any((row) => row.id == existing.id)) {
+        records.add(existing);
+      }
+      final live = records.where((row) => !row.deleted).toList();
+      for (final row in live) {
+        row
+          ..deleted = true
+          ..updatedAt = now;
+      }
+      if (live.isNotEmpty) objectbox.unifiedFavoriteBox.putMany(live);
+      for (final storedKey in {key, ...records.map((row) => row.uniqueKey)}) {
+        ComicLinkService.removeComicFromAll(
+          storedKey,
+          ComicFolderType.favorite,
+        );
+      }
+      return (collected: false, changed: live.isNotEmpty);
     }
-    return false;
-  }
+    final existing = _findLocalFavorite(key);
+    final wasCollected = existing != null && !existing.deleted;
+    if (wasCollected) return (collected: true, changed: false);
 
-  final createdAt = unified?.createdAt ?? now;
-  final coverMap = _comicImageToMap(comicInfo.cover);
-
-  objectbox.unifiedFavoriteBox.put(
-    UnifiedComicFavorite(
-      id: unified?.id ?? 0,
-      uniqueKey: key,
-      source: pluginId,
-      comicId: comicInfo.id,
-      title: comicInfo.title,
-      description: comicInfo.description,
-      cover: jsonEncode(coverMap),
-      creator: jsonEncode(_creatorToMap(comicInfo.creator)),
-      titleMeta: jsonEncode(comicInfo.titleMeta.map(_titleMetaToMap).toList()),
-      metadata: jsonEncode(comicInfo.metadata.map(_metadataToMap).toList()),
-      createdAt: createdAt,
-      updatedAt: now,
-      deleted: false,
-      schemaVersion: 2,
-    ),
-  );
-
-  // 新收藏默认添加一条根目录链接
-  ComicLinkService.addComic(key, null, ComicFolderType.favorite);
-
-  if (showToast) {
-    // showSuccessToast('成功收藏到本地');
-  }
-  return true;
+    objectbox.unifiedFavoriteBox.put(
+      UnifiedComicFavorite(
+        id: existing?.id ?? 0,
+        uniqueKey: key,
+        source: pluginId,
+        comicId: comicInfo.id,
+        title: comicInfo.title,
+        description: comicInfo.description,
+        cover: jsonEncode(_comicImageToMap(comicInfo.cover)),
+        creator: jsonEncode(_creatorToMap(comicInfo.creator)),
+        titleMeta: jsonEncode(
+          comicInfo.titleMeta.map(_titleMetaToMap).toList(),
+        ),
+        metadata: jsonEncode(comicInfo.metadata.map(_metadataToMap).toList()),
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+        deleted: false,
+        schemaVersion: 2,
+      ),
+    );
+    ComicLinkService.addComic(key, null, ComicFolderType.favorite);
+    return (collected: true, changed: true);
+  });
 }
 
 Map<String, dynamic> _comicImageToMap(ComicImage image) {
@@ -100,26 +140,26 @@ Map<String, dynamic> _comicImageToMap(ComicImage image) {
   });
 }
 
-void _repairFavoriteCoverPathIfNeeded(UnifiedComicFavorite favorite) {
+String? _repairedFavoriteCover(UnifiedComicFavorite favorite) {
   final coverRaw = favorite.cover.trim();
   if (coverRaw.isEmpty) {
-    return;
+    return null;
   }
 
   Map<String, dynamic> coverMap;
   try {
     final decoded = jsonDecode(coverRaw);
     if (decoded is! Map) {
-      return;
+      return null;
     }
     coverMap = Map<String, dynamic>.from(decoded);
   } catch (_) {
-    return;
+    return null;
   }
 
   final currentPath = coverMap['path']?.toString().trim() ?? '';
   if (currentPath.isNotEmpty) {
-    return;
+    return null;
   }
 
   final repairedPath = _resolveImagePath(
@@ -128,13 +168,11 @@ void _repairFavoriteCoverPathIfNeeded(UnifiedComicFavorite favorite) {
     rawPath: currentPath,
   );
   if (repairedPath.isEmpty) {
-    return;
+    return null;
   }
 
   coverMap['path'] = repairedPath;
-  favorite.cover = jsonEncode(sanitizeDynamic(coverMap));
-  favorite.updatedAt = DateTime.now().toUtc();
-  objectbox.unifiedFavoriteBox.put(favorite);
+  return jsonEncode(sanitizeDynamic(coverMap));
 }
 
 String _resolveImagePath({
@@ -194,6 +232,7 @@ Future<bool> toggleCloudComicFavorite({
   String? pluginId,
   required String comicId,
   required bool currentStatus,
+  NormalComicAllInfo? snapshotInfo,
   bool legacyAllowCollected = true,
   String legacyAllowCollectedReason = '',
   String? collectionTargetId,
@@ -211,6 +250,7 @@ Future<bool> toggleCloudComicFavorite({
               : FavoriteWorkflowAction.removeAll)
         : FavoriteWorkflowAction.add,
     currentStatus: currentStatus,
+    snapshotInfo: snapshotInfo,
     legacyAllowCollected: legacyAllowCollected,
     legacyAllowCollectedReason: legacyAllowCollectedReason,
     collectionTargetId: collectionTargetId,
@@ -226,6 +266,77 @@ Future<bool> toggleCloudComicFavorite({
   return favorited;
 }
 
+typedef FavoriteWorkflowPluginCall =
+    Future<Map<String, dynamic>> Function({
+      required String pluginId,
+      required String fnPath,
+      required Map<String, dynamic> core,
+      required Map<String, dynamic> extern,
+    });
+
+Future<Map<String, dynamic>> _callFavoriteWorkflowPlugin({
+  required String pluginId,
+  required String fnPath,
+  required Map<String, dynamic> core,
+  required Map<String, dynamic> extern,
+}) => callUnifiedComicPlugin(
+  pluginId: pluginId,
+  fnPath: fnPath,
+  core: core,
+  extern: extern,
+  // The originating action owns its sign-in prompt; keep the source underneath.
+  notifyUnauthorized: false,
+);
+
+UnifiedComicListItem _collectionSnapshotItem(
+  String source,
+  NormalComicAllInfo info,
+) {
+  final comic = info.comicInfo;
+  final metadata = [
+    for (final m in comic.metadata)
+      UnifiedComicMetadata(
+        type: m.type,
+        name: m.name,
+        value: m.value.map((v) => v.name).toList(),
+      ),
+  ];
+  final missing = info.extern['fieldsMissing'];
+  if (missing is List &&
+      !missing.contains('tags') &&
+      !metadata.any((m) => m.type == 'tags' || m.type == 'tag')) {
+    metadata.add(const UnifiedComicMetadata(type: 'tags', name: '', value: []));
+  }
+  return UnifiedComicListItem(
+    source: source,
+    id: comic.id,
+    title: comic.title,
+    subtitle: '',
+    finished: false,
+    likesCount: info.totalLikes,
+    viewsCount: info.totalViews,
+    updatedAt: DateTime.now().toUtc().toIso8601String(),
+    cover: UnifiedComicCover(
+      id: comic.cover.id,
+      url: comic.cover.url,
+      path: comic.cover.path,
+      extern: const {},
+    ),
+    metadata: metadata,
+    raw: {'description': comic.description},
+    extern: const {},
+  );
+}
+
+class _CloudFavoriteAction {
+  const _CloudFavoriteAction(this.intent, this.future);
+  final String intent;
+  final Future<FavoriteWorkflowExecutionResult> future;
+}
+
+final _cloudFavoriteActions = <String, _CloudFavoriteAction>{};
+int _cloudFavoriteOperationSerial = 0;
+
 Future<FavoriteWorkflowExecutionResult> executeCloudFavoriteWorkflow({
   required BuildContext context,
   required String from,
@@ -233,26 +344,167 @@ Future<FavoriteWorkflowExecutionResult> executeCloudFavoriteWorkflow({
   required String comicId,
   required FavoriteWorkflowAction action,
   required bool currentStatus,
+  NormalComicAllInfo? snapshotInfo,
   bool legacyAllowCollected = true,
   String legacyAllowCollectedReason = '',
   String? collectionTargetId,
   String? collectionTargetName,
+  FavoriteWorkflowPluginCall? invokePlugin,
+}) {
+  final source = (pluginId?.trim().isNotEmpty ?? false)
+      ? pluginId!.trim()
+      : from.trim();
+  final generation = pluginSessionWriteFence.generation(source);
+  final key = '$source:$generation:$comicId';
+  final intent = jsonEncode([
+    action.wireName,
+    collectionTargetId,
+    collectionTargetName,
+  ]);
+  final pending = _cloudFavoriteActions[key];
+  // Repeated taps join the same write. A distinct explicit intent waits for the
+  // preceding result and uses its confirmed status, never a stale button value.
+  if (pending?.intent == intent) return pending!.future;
+  Future<FavoriteWorkflowExecutionResult> run() async {
+    var status = currentStatus;
+    if (pending != null) {
+      final previous = await pending.future;
+      if (previous.status != FavoriteWorkflowStatus.completed) return previous;
+      status = previous.favorited ?? status;
+    }
+    if (!context.mounted ||
+        generation != pluginSessionWriteFence.generation(source) ||
+        pluginSessionWriteFence.isChanging(source)) {
+      return const FavoriteWorkflowExecutionResult(
+        status: FavoriteWorkflowStatus.cancelled,
+      );
+    }
+    return _executeCloudFavoriteWorkflow(
+      context: context,
+      from: from,
+      pluginId: source,
+      comicId: comicId,
+      action: action,
+      currentStatus: status,
+      snapshotInfo: snapshotInfo,
+      legacyAllowCollected: legacyAllowCollected,
+      legacyAllowCollectedReason: legacyAllowCollectedReason,
+      collectionTargetId: collectionTargetId,
+      collectionTargetName: collectionTargetName,
+      invokePlugin: invokePlugin,
+    );
+  }
+
+  final task = run();
+  final entry = _CloudFavoriteAction(intent, task);
+  _cloudFavoriteActions[key] = entry;
+  void release() {
+    if (identical(_cloudFavoriteActions[key], entry))
+      _cloudFavoriteActions.remove(key);
+  }
+
+  // Observe both terminal paths without creating an unhandled error Future.
+  task.then<void>(
+    (_) => release(),
+    onError: (Object _, StackTrace __) => release(),
+  );
+  return task;
+}
+
+Future<FavoriteWorkflowExecutionResult> _executeCloudFavoriteWorkflow({
+  required BuildContext context,
+  required String from,
+  String? pluginId,
+  required String comicId,
+  required FavoriteWorkflowAction action,
+  required bool currentStatus,
+  NormalComicAllInfo? snapshotInfo,
+  bool legacyAllowCollected = true,
+  String legacyAllowCollectedReason = '',
+  String? collectionTargetId,
+  String? collectionTargetName,
+  FavoriteWorkflowPluginCall? invokePlugin,
 }) async {
   final resolvedPluginId = (pluginId?.trim().isNotEmpty ?? false)
       ? pluginId!.trim()
       : from.trim();
+  final targetId = collectionTargetId?.trim() ?? '';
+  final targetFolder = targetId.isEmpty ? null : targetId;
+  final snapshots = JmCollectionSnapshots.instance;
+  final account = snapshots.accountScope(resolvedPluginId);
+  final generation = pluginSessionWriteFence.generation(resolvedPluginId);
+  final operation = ++_cloudFavoriteOperationSerial;
+  var commitStep = 0;
+  String? recorded;
+  var snapshotStatus = currentStatus;
+  Future<void> record(
+    bool next,
+    bool _,
+    String? movedToFolder, {
+    String? addedToFolder,
+  }) async {
+    final identity = '$next|${movedToFolder ?? ''}|${addedToFolder ?? ''}';
+    if (account == null || recorded == identity) return;
+    recorded = identity;
+    try {
+      await snapshots.mutate(
+        source: resolvedPluginId,
+        account: account,
+        generation: generation,
+        id: comicId,
+        operationId: '$operation:${++commitStep}',
+        favorited: next,
+        previouslyFavorited: snapshotStatus,
+        item: snapshotInfo == null
+            ? null
+            : _collectionSnapshotItem(resolvedPluginId, snapshotInfo),
+        movedToFolder: movedToFolder,
+        addedToFolder: addedToFolder,
+        removedFromFolder: action == FavoriteWorkflowAction.removeFromTarget
+            ? collectionTargetId
+            : null,
+      );
+      snapshotStatus = next;
+    } catch (_) {
+      /* A local cache failure cannot undo the confirmed site action. */
+    }
+  }
+
   try {
-    return await _runFavoriteWorkflow(
+    final result = await _runFavoriteWorkflow(
       context: context,
+      invokePlugin: invokePlugin ?? _callFavoriteWorkflowPlugin,
       pluginId: resolvedPluginId,
       comicId: comicId,
       action: action,
       currentStatus: currentStatus,
       collectionTargetId: collectionTargetId,
       collectionTargetName: collectionTargetName,
+      onCommitted: (next) => record(
+        next,
+        currentStatus,
+        action == FavoriteWorkflowAction.move ? targetFolder : null,
+        addedToFolder: action == FavoriteWorkflowAction.add
+            ? targetFolder
+            : null,
+      ),
     );
+    return result;
   } catch (error) {
-    if (!_isMissingFavoriteWorkflowFunction(error)) {
+    if (error is FavoriteWorkflowIncompleteException &&
+        error.result.committed &&
+        error.result.favorited is bool) {
+      await record(
+        error.result.favorited!,
+        currentStatus,
+        action == FavoriteWorkflowAction.move ? targetFolder : null,
+        addedToFolder: action == FavoriteWorkflowAction.add
+            ? targetFolder
+            : null,
+      );
+    }
+    if (error is PluginLoginRequiredException ||
+        !_isMissingFavoriteWorkflowFunction(error)) {
       rethrow;
     }
     if (!legacyAllowCollected ||
@@ -266,16 +518,19 @@ Future<FavoriteWorkflowExecutionResult> executeCloudFavoriteWorkflow({
       comicId: comicId,
       action: action,
       currentStatus: currentStatus,
+      recordSnapshot: record,
     );
   }
 }
 
 Future<FavoriteWorkflowExecutionResult> _runFavoriteWorkflow({
   required BuildContext context,
+  required FavoriteWorkflowPluginCall invokePlugin,
   required String pluginId,
   required String comicId,
   required FavoriteWorkflowAction action,
   required bool currentStatus,
+  required Future<void> Function(bool) onCommitted,
   String? collectionTargetId,
   String? collectionTargetName,
 }) async {
@@ -287,7 +542,7 @@ Future<FavoriteWorkflowExecutionResult> _runFavoriteWorkflow({
     target['name'] = collectionTargetName!.trim();
   }
 
-  var response = await callUnifiedComicPlugin(
+  var response = await invokePlugin(
     pluginId: pluginId,
     fnPath: 'startFavoriteAction',
     core: {
@@ -301,6 +556,13 @@ Future<FavoriteWorkflowExecutionResult> _runFavoriteWorkflow({
 
   for (var step = 0; step < 16; step++) {
     final result = FavoriteWorkflowResult.fromJson(response);
+    // A confirmed no-op (already absent on the site) also supersedes a stale
+    // local snapshot. Preserve committed=false: no write was performed.
+    if ((result.committed ||
+            result.status == FavoriteWorkflowStatus.completed) &&
+        result.favorited is bool) {
+      await onCommitted(result.favorited!);
+    }
     switch (result.status) {
       case FavoriteWorkflowStatus.completed:
         return _toExecutionResult(result);
@@ -309,6 +571,15 @@ Future<FavoriteWorkflowExecutionResult> _runFavoriteWorkflow({
       case FavoriteWorkflowStatus.cancelled:
         final executionResult = _toExecutionResult(result);
         if (result.status == FavoriteWorkflowStatus.failed) {
+          // Some plugins return a caught unauthorized envelope as failed.message.
+          // Preserve that explicit type rather than guessing from human text.
+          if (!result.committed) {
+            final login = pluginActionLoginRequirement(
+              result.message,
+              pluginId: pluginId,
+            );
+            if (login != null) throw login;
+          }
           final message = result.message?.trim() ?? '';
           throw StateError(
             message.isNotEmpty ? message : t.error.executionFailed,
@@ -329,8 +600,8 @@ Future<FavoriteWorkflowExecutionResult> _runFavoriteWorkflow({
             ),
           );
         }
-        final userInput = await _showFavoriteWorkflowInput(context, input);
-        response = await callUnifiedComicPlugin(
+        final userInput = await showFavoriteWorkflowInput(context, input);
+        response = await invokePlugin(
           pluginId: pluginId,
           fnPath: 'continueFavoriteAction',
           core: {
@@ -364,8 +635,14 @@ Future<FavoriteWorkflowExecutionResult> _runLegacyFavoriteWorkflow({
   required String comicId,
   required FavoriteWorkflowAction action,
   required bool currentStatus,
+  required Future<void> Function(
+    bool next,
+    bool previous,
+    String? movedToFolder,
+  )
+  recordSnapshot,
 }) async {
-  final data = await callUnifiedComicPlugin(
+  final data = await _callFavoriteWorkflowPlugin(
     pluginId: pluginId,
     fnPath: 'toggleFavorite',
     core: {'comicId': comicId, 'currentFavorite': currentStatus},
@@ -376,6 +653,7 @@ Future<FavoriteWorkflowExecutionResult> _runLegacyFavoriteWorkflow({
     throw StateError(t.comicInfo.pluginInvalidFavorited);
   }
 
+  await recordSnapshot(favorited, currentStatus, null);
   final nextStep = data['nextStep']?.toString() ?? 'none';
   if (action != FavoriteWorkflowAction.add ||
       !favorited ||
@@ -411,6 +689,7 @@ Future<FavoriteWorkflowExecutionResult> _runLegacyFavoriteWorkflow({
     comicId: comicId,
     folder: selectedFolder,
   );
+  await recordSnapshot(favorited, favorited, selectedFolder.id);
   showSuccessToast(t.comicInfo.addedToFolder(name: selectedFolder.name));
   return FavoriteWorkflowExecutionResult(
     status: FavoriteWorkflowStatus.completed,
@@ -428,7 +707,7 @@ bool _isMissingFavoriteWorkflowFunction(Object error) {
           message.contains('undefined'));
 }
 
-Future<Map<String, dynamic>?> _showFavoriteWorkflowInput(
+Future<Map<String, dynamic>?> showFavoriteWorkflowInput(
   BuildContext context,
   FavoriteWorkflowInput input,
 ) {
@@ -449,128 +728,135 @@ Future<Map<String, dynamic>?> _showFavoriteWorkflowSelect(
       .where((option) => option.selected)
       .map((option) => option.id)
       .toSet();
-  final createController = TextEditingController();
   final result = await showDialog<Map<String, dynamic>>(
     context: context,
-    builder: (dialogContext) {
-      return StatefulBuilder(
-        builder: (ctx, setState) {
-          final createdName = createController.text.trim();
-          final canConfirm =
-              !input.required || selected.isNotEmpty || createdName.isNotEmpty;
-          return AlertDialog(
-            title: Text(input.title ?? t.comicInfo.addToCustomFolder),
-            content: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.sizeOf(ctx).height * 0.6,
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (input.description?.isNotEmpty ?? false)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: Text(input.description!),
-                      ),
-                    if (input.options.isNotEmpty)
-                      input.isMultiple
-                          ? Column(
-                              children: input.options.map((option) {
-                                return CheckboxListTile(
-                                  value: selected.contains(option.id),
-                                  title: Text(option.label),
-                                  subtitle: option.description == null
-                                      ? null
-                                      : Text(option.description!),
-                                  contentPadding: EdgeInsets.zero,
-                                  onChanged: (value) {
-                                    setState(() {
-                                      if (value == true) {
-                                        selected.add(option.id);
-                                      } else {
-                                        selected.remove(option.id);
-                                      }
-                                      createController.clear();
-                                    });
-                                  },
-                                );
-                              }).toList(),
-                            )
-                          : RadioGroup<String>(
-                              groupValue: selected.isEmpty
-                                  ? null
-                                  : selected.first,
-                              onChanged: (value) {
-                                setState(() {
-                                  selected
-                                    ..clear()
-                                    ..add(value!);
-                                  createController.clear();
-                                });
-                              },
-                              child: Column(
+    builder: (_) => _FavoriteWorkflowInputControllers(
+      builder: (dialogContext, controllers) {
+        final createController = controllers.putIfAbsent(
+          'create',
+          TextEditingController.new,
+        );
+        return StatefulBuilder(
+          builder: (ctx, setState) {
+            final createdName = createController.text.trim();
+            final canConfirm =
+                !input.required ||
+                selected.isNotEmpty ||
+                createdName.isNotEmpty;
+            return AlertDialog(
+              title: Text(input.title ?? t.comicInfo.addToCustomFolder),
+              content: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(ctx).height * 0.6,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (input.description?.isNotEmpty ?? false)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: Text(input.description!),
+                        ),
+                      if (input.options.isNotEmpty)
+                        input.isMultiple
+                            ? Column(
                                 children: input.options.map((option) {
-                                  return RadioListTile<String>(
-                                    value: option.id,
+                                  return CheckboxListTile(
+                                    value: selected.contains(option.id),
                                     title: Text(option.label),
                                     subtitle: option.description == null
                                         ? null
                                         : Text(option.description!),
                                     contentPadding: EdgeInsets.zero,
+                                    onChanged: (value) {
+                                      setState(() {
+                                        if (value == true) {
+                                          selected.add(option.id);
+                                        } else {
+                                          selected.remove(option.id);
+                                        }
+                                        createController.clear();
+                                      });
+                                    },
                                   );
                                 }).toList(),
+                              )
+                            : RadioGroup<String>(
+                                groupValue: selected.isEmpty
+                                    ? null
+                                    : selected.first,
+                                onChanged: (value) {
+                                  setState(() {
+                                    selected
+                                      ..clear()
+                                      ..add(value!);
+                                    createController.clear();
+                                  });
+                                },
+                                child: Column(
+                                  children: input.options.map((option) {
+                                    return RadioListTile<String>(
+                                      value: option.id,
+                                      title: Text(option.label),
+                                      subtitle: option.description == null
+                                          ? null
+                                          : Text(option.description!),
+                                      contentPadding: EdgeInsets.zero,
+                                    );
+                                  }).toList(),
+                                ),
                               ),
-                            ),
-                    if (input.allowCreate) ...[
-                      if (input.options.isNotEmpty) const Divider(),
-                      TextField(
-                        controller: createController,
-                        decoration: InputDecoration(
-                          labelText: input.createField?.label ?? '新建收藏夹',
-                          hintText: input.createField?.placeholder,
+                      if (input.allowCreate) ...[
+                        if (input.options.isNotEmpty) const Divider(),
+                        TextField(
+                          controller: createController,
+                          decoration: InputDecoration(
+                            labelText: input.createField?.label ?? '新建收藏夹',
+                            hintText: input.createField?.placeholder,
+                          ),
+                          onChanged: (_) {
+                            setState(() {
+                              selected.clear();
+                            });
+                          },
                         ),
-                        onChanged: (_) {
-                          setState(() {
-                            selected.clear();
-                          });
-                        },
-                      ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: Text(t.common.cancel),
-              ),
-              FilledButton(
-                onPressed: canConfirm
-                    ? () {
-                        final value = input.isMultiple
-                            ? selected.toList()
-                            : selected.isEmpty
-                            ? null
-                            : selected.first;
-                        Navigator.pop(dialogContext, {
-                          if (input.key?.isNotEmpty ?? false) 'key': input.key,
-                          'value': value,
-                          if (createdName.isNotEmpty) 'created': createdName,
-                        });
-                      }
-                    : null,
-                child: Text(t.common.confirm),
-              ),
-            ],
-          );
-        },
-      );
-    },
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: Text(t.common.cancel),
+                ),
+                FilledButton(
+                  onPressed: canConfirm
+                      ? () {
+                          final value = input.isMultiple
+                              ? selected.toList()
+                              : selected.isEmpty
+                              ? null
+                              : selected.first;
+                          Navigator.pop(dialogContext, {
+                            if (input.key?.isNotEmpty ?? false)
+                              'key': input.key,
+                            'value': value,
+                            if (createdName.isNotEmpty) 'created': createdName,
+                          });
+                        }
+                      : null,
+                  child: Text(t.common.confirm),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    ),
   );
-  createController.dispose();
   return result;
 }
 
@@ -578,51 +864,55 @@ Future<Map<String, dynamic>?> _showFavoriteWorkflowText(
   BuildContext context,
   FavoriteWorkflowInput input,
 ) async {
-  final controller = TextEditingController();
   final result = await showDialog<Map<String, dynamic>>(
     context: context,
-    builder: (dialogContext) {
-      return StatefulBuilder(
-        builder: (ctx, setState) {
-          final canConfirm =
-              !input.required || controller.text.trim().isNotEmpty;
-          return AlertDialog(
-            title: Text(input.title ?? ''),
-            content: TextField(
-              controller: controller,
-              autofocus: true,
-              decoration: InputDecoration(hintText: input.description),
-              onChanged: (_) => setState(() {}),
-              onSubmitted: (_) {
-                if (canConfirm) {
-                  Navigator.pop(dialogContext, {
-                    if (input.key?.isNotEmpty ?? false) 'key': input.key,
-                    'value': controller.text,
-                  });
-                }
-              },
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: Text(t.common.cancel),
+    builder: (_) => _FavoriteWorkflowInputControllers(
+      builder: (dialogContext, controllers) {
+        final controller = controllers.putIfAbsent(
+          'text',
+          TextEditingController.new,
+        );
+        return StatefulBuilder(
+          builder: (ctx, setState) {
+            final canConfirm =
+                !input.required || controller.text.trim().isNotEmpty;
+            return AlertDialog(
+              title: Text(input.title ?? ''),
+              content: TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: InputDecoration(hintText: input.description),
+                onChanged: (_) => setState(() {}),
+                onSubmitted: (_) {
+                  if (canConfirm) {
+                    Navigator.pop(dialogContext, {
+                      if (input.key?.isNotEmpty ?? false) 'key': input.key,
+                      'value': controller.text,
+                    });
+                  }
+                },
               ),
-              FilledButton(
-                onPressed: canConfirm
-                    ? () => Navigator.pop(dialogContext, {
-                        if (input.key?.isNotEmpty ?? false) 'key': input.key,
-                        'value': controller.text,
-                      })
-                    : null,
-                child: Text(t.common.confirm),
-              ),
-            ],
-          );
-        },
-      );
-    },
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: Text(t.common.cancel),
+                ),
+                FilledButton(
+                  onPressed: canConfirm
+                      ? () => Navigator.pop(dialogContext, {
+                          if (input.key?.isNotEmpty ?? false) 'key': input.key,
+                          'value': controller.text,
+                        })
+                      : null,
+                  child: Text(t.common.confirm),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    ),
   );
-  controller.dispose();
   return result;
 }
 
@@ -658,7 +948,6 @@ Future<Map<String, dynamic>?> _showFavoriteWorkflowForm(
   BuildContext context,
   FavoriteWorkflowInput input,
 ) async {
-  final controllers = <String, TextEditingController>{};
   final values = <String, dynamic>{};
   for (final field in input.fields) {
     if (field.defaultValue != null) {
@@ -687,16 +976,21 @@ Future<Map<String, dynamic>?> _showFavoriteWorkflowForm(
   Widget buildField(
     FavoriteWorkflowField field,
     void Function(void Function()) setState,
+    Map<String, TextEditingController> controllers,
   ) {
     switch (field.type) {
       case 'switch':
       case 'confirm':
-        return SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: Text(field.label),
-          subtitle: field.description == null ? null : Text(field.description!),
-          value: values[field.key] == true,
-          onChanged: (value) => setState(() => values[field.key] = value),
+        return BreezeSwitchListTile(
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            title: Text(field.label),
+            subtitle: field.description == null
+                ? null
+                : Text(field.description!),
+            value: values[field.key] == true,
+            onChanged: (value) => setState(() => values[field.key] = value),
+          ),
         );
       case 'choice':
         return RadioGroup<String>(
@@ -767,84 +1061,95 @@ Future<Map<String, dynamic>?> _showFavoriteWorkflowForm(
             labelText: field.label,
             hintText: field.placeholder,
           ),
-          onChanged: (value) => values[field.key] = value,
+          onChanged: (value) => setState(() => values[field.key] = value),
         );
     }
   }
 
   final result = await showDialog<Map<String, dynamic>>(
     context: context,
-    builder: (dialogContext) {
-      return StatefulBuilder(
-        builder: (ctx, setState) {
-          return AlertDialog(
-            title: Text(input.title ?? t.common.confirm),
-            content: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.sizeOf(ctx).height * 0.65,
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (input.description != null)
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: Text(input.description!),
+    builder: (_) => _FavoriteWorkflowInputControllers(
+      builder: (dialogContext, controllers) {
+        return StatefulBuilder(
+          builder: (ctx, setState) {
+            return AlertDialog(
+              title: Text(input.title ?? t.common.confirm),
+              content: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.sizeOf(ctx).height * 0.65,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (input.description != null)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: Text(input.description!),
+                          ),
+                        ),
+                      ...input.fields.map(
+                        (field) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: buildField(field, setState, controllers),
                         ),
                       ),
-                    ...input.fields.map(
-                      (field) => Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: buildField(field, setState),
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: Text(t.common.cancel),
-              ),
-              FilledButton(
-                onPressed: isValid()
-                    ? () => Navigator.pop(dialogContext, {
-                        'values': Map<String, dynamic>.from(values),
-                      })
-                    : null,
-                child: Text(t.common.confirm),
-              ),
-            ],
-          );
-        },
-      );
-    },
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: Text(t.common.cancel),
+                ),
+                FilledButton(
+                  onPressed: isValid()
+                      ? () => Navigator.pop(dialogContext, {
+                          'values': Map<String, dynamic>.from(values),
+                        })
+                      : null,
+                  child: Text(t.common.confirm),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    ),
   );
-  for (final controller in controllers.values) {
-    controller.dispose();
-  }
   return result;
 }
 
-Future<bool> toggleCloudComicLike({
-  required String from,
-  required String comicId,
-  required bool currentStatus,
-}) async {
-  final data = await callUnifiedComicPlugin(
-    from: from,
-    fnPath: 'toggleLike',
-    core: {'comicId': comicId, 'currentLiked': currentStatus},
-    extern: const <String, dynamic>{},
-  );
-  if (data['liked'] is! bool) {
-    throw StateError(t.comicInfo.pluginInvalidLiked);
+// A popped route remains mounted while its reverse transition runs. Keep text
+// controllers with the dialog subtree, rather than the completed route Future.
+class _FavoriteWorkflowInputControllers extends StatefulWidget {
+  const _FavoriteWorkflowInputControllers({required this.builder});
+
+  final Widget Function(BuildContext, Map<String, TextEditingController>)
+  builder;
+
+  @override
+  State<_FavoriteWorkflowInputControllers> createState() =>
+      _FavoriteWorkflowInputControllersState();
+}
+
+class _FavoriteWorkflowInputControllersState
+    extends State<_FavoriteWorkflowInputControllers> {
+  final _controllers = <String, TextEditingController>{};
+
+  @override
+  void dispose() {
+    for (final controller in _controllers.values) {
+      controller.dispose();
+    }
+    super.dispose();
   }
-  return data['liked'] as bool;
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, _controllers);
 }
 
 Future<List<_FavoriteFolder>> _listCloudFavoriteFolders(String from) async {
@@ -870,7 +1175,7 @@ Future<void> _moveCloudFavoriteToFolder({
   required String comicId,
   required _FavoriteFolder folder,
 }) async {
-  await callUnifiedComicPlugin(
+  final result = await callUnifiedComicPlugin(
     from: from,
     fnPath: 'moveFavoriteToFolder',
     core: {
@@ -880,6 +1185,12 @@ Future<void> _moveCloudFavoriteToFolder({
     },
     extern: const <String, dynamic>{},
   );
+  requireSuccessfulPluginEnvelope(result);
+  if (from == PluginAccountAuthenticationService.jm &&
+      result['ok'] != true &&
+      asJsonMap(result['data'])['ok'] != true) {
+    throw StateError(t.error.operationFailed);
+  }
 }
 
 Future<_FavoriteFolder?> _showFolderSelectionDialog(

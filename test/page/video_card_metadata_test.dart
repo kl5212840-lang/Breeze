@@ -15,6 +15,8 @@ void main() {
         'viewCountRaw': '1.2万次',
         'ratingPercentRaw': '99%',
         'publishedRelative': '• 2天前',
+        'positiveVotes': 860,
+        'totalVotes': 900,
       });
       await tester.pumpWidget(
         MaterialApp(
@@ -45,12 +47,15 @@ void main() {
           ),
         ),
       );
-      expect(find.text('01:24'), findsOneWidget);
+      expect(find.text('1:24'), findsOneWidget);
       expect(find.text(t.videoPlayback.currentEpisode), findsOneWidget);
       expect(find.text('Author · 2天前'), findsOneWidget);
       expect(
         find.text(
-          '${t.videoMetadata.views(value: '1.2万次')} · ${t.videoMetadata.rating(value: '99%')}',
+          '${t.videoMetadata.views(value: '1.2万次')} · '
+          '${t.videoMetadata.rating(value: '99%')} · '
+          '${t.videoMetadata.positiveVotes(count: 860)} · '
+          '${t.videoMetadata.totalVotes(count: 900)}',
         ),
         findsOneWidget,
       );
@@ -93,6 +98,21 @@ void main() {
       expect(find.text(t.videoMetadata.totalVotes(count: 103)), findsOneWidget);
       expect(
         find.text(t.videoMetadata.negativeVotes(count: 3)),
+        findsOneWidget,
+      );
+      await mount(
+        const VideoInteractionState(
+          totalVotes: 109,
+          positiveVotes: 107,
+          negativeVotes: 2,
+          ratingPercentRaw: '99%',
+        ),
+      );
+      expect(find.text(t.videoMetadata.rating(value: '98%')), findsNothing);
+      expect(find.text(t.videoMetadata.rating(value: '99%')), findsOneWidget);
+      expect(find.text(t.videoMetadata.totalVotes(count: 109)), findsOneWidget);
+      expect(
+        find.text(t.videoMetadata.negativeVotes(count: 2)),
         findsOneWidget,
       );
       expect(find.text('97%'), findsNothing);

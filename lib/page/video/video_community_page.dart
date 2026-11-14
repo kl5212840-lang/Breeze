@@ -1,7 +1,6 @@
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'dart:async';
 
-import 'package:zephyr/page/video/video_page_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_site_operations.dart';
@@ -30,12 +29,13 @@ class VideoCommunityPage extends StatefulWidget {
     this.replyTitle,
     this.embedded = false,
     this.editing = false,
+    this.inline = false,
   });
   final VideoSiteOperations operations;
   final VoidCallback onLogin;
   final VoidCallback? onWebsite;
   final String? replyId, replyTitle;
-  final bool embedded, editing;
+  final bool embedded, editing, inline;
 
   @override
   State<VideoCommunityPage> createState() => _VideoCommunityPageState();
@@ -49,33 +49,54 @@ class _VideoCommunityPageState extends State<VideoCommunityPage> {
   String? _revision, _blockedText, _postGate;
   String? _error, _status;
   List<VideoSiteComment> _items = const [];
+  final Set<String> _expandedReplies = {};
+  int _requestEpoch = 0;
   bool get _editing =>
       widget.editing || MediaQuery.viewInsetsOf(context).bottom > 0;
 
   @override
   void initState() {
     super.initState();
-    final draft = widget.operations.commentDraft(widget.replyId);
-    _text.text = draft.text;
-    _blockedText = draft.unconfirmed ? draft.text : null;
-    _text.addListener(_retainDraft);
+    _restoreDraft();
     unawaited(_load());
   }
 
   @override
+  void didUpdateWidget(covariant VideoCommunityPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.operations == widget.operations &&
+        oldWidget.replyId == widget.replyId) {
+      return;
+    }
+    _requestEpoch++;
+    _posting = _loadingMore = _canPost = false;
+    _nextOffset = null;
+    _revision = _postGate = _status = null;
+    _items = const [];
+    _expandedReplies.clear();
+    _restoreDraft();
+    unawaited(_load());
+  }
+
+  void _restoreDraft() {
+    final draft = widget.operations.commentDraft(widget.replyId);
+    _text.text = draft.text;
+    _blockedText = draft.unconfirmed ? draft.text : null;
+  }
+
+  bool _ownsRequest(int epoch, VideoSiteOperations operations) =>
+      mounted && epoch == _requestEpoch && operations == widget.operations;
+
+  @override
   void dispose() {
-    widget.operations.retainCommentDraft(
-      widget.replyId,
-      _text.text,
-      unconfirmed: _blockedText != null,
-    );
-    _text.removeListener(_retainDraft);
+    _requestEpoch++;
     _text.dispose();
     super.dispose();
   }
 
-  void _retainDraft() {
-    if (_blockedText != null && _text.text != _blockedText) {
+  void _retainDraft(String text) {
+    if (_blockedText case final blocked?) {
+      if (text.trim() == blocked.trim()) return;
       _blockedText = null;
       if (mounted && _status == 'unconfirmed') {
         setState(() {
@@ -84,27 +105,41 @@ class _VideoCommunityPageState extends State<VideoCommunityPage> {
         });
       }
     }
-    widget.operations.retainCommentDraft(
-      widget.replyId,
-      _text.text,
-      unconfirmed: _blockedText != null,
-    );
+    widget.operations.retainCommentDraft(widget.replyId, text);
   }
 
   Future<void> _load() async {
     if (_posting || _loadingMore) return;
+    final epoch = ++_requestEpoch;
     setState(() {
       _loading = true;
       _error = null;
     });
-    final result = await widget.operations.readComments(
-      replyId: widget.replyId,
-    );
-    if (!mounted) return;
+    final operations = widget.operations;
+    final replyId = widget.replyId;
+    while (operations.busy) {
+      await operations.whenIdle;
+      if (!_ownsRequest(epoch, operations)) return;
+    }
+    if (!_ownsRequest(epoch, operations)) return;
+    final result = await operations.readComments(replyId: replyId);
+    if (!_ownsRequest(epoch, operations)) return;
+    if (!operations.ownsCommentSession) {
+      _invalidateCommentSession();
+      return;
+    }
     setState(() {
       _loading = false;
       _status = result.status.name;
       if (result.value case final thread?) {
+        if (_blockedText case final blocked?) {
+          final draft = widget.operations.commentDraft(widget.replyId);
+          if (!draft.unconfirmed &&
+              (draft.text.isEmpty || draft.text.trim() == blocked.trim())) {
+            _blockedText = null;
+            if (draft.text.isEmpty) _text.clear();
+          }
+        }
         _items = thread.items;
         _canPost = thread.canPost;
         _postGate = thread.postGate;
@@ -121,18 +156,31 @@ class _VideoCommunityPageState extends State<VideoCommunityPage> {
   }
 
   Future<void> _loadMore() async {
+    final epoch = _requestEpoch;
     final offset = _nextOffset;
     if (_loading || _posting || _loadingMore || offset == null) return;
     setState(() {
       _loadingMore = true;
       _error = null;
     });
-    final result = await widget.operations.readComments(
-      replyId: widget.replyId,
+    final operations = widget.operations;
+    final replyId = widget.replyId;
+    final revision = _revision;
+    while (operations.busy) {
+      await operations.whenIdle;
+      if (!_ownsRequest(epoch, operations)) return;
+    }
+    if (!_ownsRequest(epoch, operations)) return;
+    final result = await operations.readComments(
+      replyId: replyId,
       offset: offset,
-      revision: _revision,
+      revision: revision,
     );
-    if (!mounted) return;
+    if (!_ownsRequest(epoch, operations)) return;
+    if (!operations.ownsCommentSession) {
+      _invalidateCommentSession();
+      return;
+    }
     setState(() {
       _loadingMore = false;
       if (result.value case final thread?
@@ -153,11 +201,28 @@ class _VideoCommunityPageState extends State<VideoCommunityPage> {
     });
   }
 
+  void _invalidateCommentSession() {
+    setState(() {
+      _loading = _loadingMore = _posting = _canPost = false;
+      _items = const [];
+      _nextOffset = null;
+      _expandedReplies.clear();
+      _blockedText = null;
+      _text.clear();
+      _status = 'changed';
+      _error = videoOperationMessage('changed');
+    });
+  }
+
   Future<void> _post() async {
+    final operations = widget.operations;
+    final epoch = _requestEpoch;
     final text = _text.text.trim();
     if (_loading ||
         _loadingMore ||
         _posting ||
+        !_canPost ||
+        !operations.ownsCommentSession ||
         _blockedText != null ||
         text.isEmpty ||
         text.length > 5000) {
@@ -167,30 +232,30 @@ class _VideoCommunityPageState extends State<VideoCommunityPage> {
       _posting = true;
       _error = null;
     });
-    final result = await widget.operations.submitComment(
-      text,
+    final submitted = _text.text;
+    final result = await operations.submitComment(
+      submitted,
       replyId: widget.replyId,
     );
-    if (!mounted) return;
+    if (!_ownsRequest(epoch, operations)) return;
+    if (!operations.ownsCommentSession) {
+      _invalidateCommentSession();
+      return;
+    }
     setState(() {
       _posting = false;
       _status = result.status.name;
       if (result.value case final thread?) {
         _blockedText = null;
-        _text.clear();
+        if (_text.text == submitted) _text.clear();
         _items = thread.items;
         _nextOffset = thread.nextOffset;
         _revision = thread.revision;
         _canPost = thread.canPost;
         _postGate = thread.postGate;
       } else {
-        if (result.writeUnconfirmed) {
-          _blockedText = _text.text;
-          widget.operations.retainCommentDraft(
-            widget.replyId,
-            _text.text,
-            unconfirmed: true,
-          );
+        if (result.writeUnconfirmed && _text.text == submitted) {
+          _blockedText = submitted;
         }
         _error = videoOperationMessage(_status ?? 'network');
       }
@@ -198,61 +263,100 @@ class _VideoCommunityPageState extends State<VideoCommunityPage> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: widget.embedded
-        ? null
-        : AppBar(
-            leading: const SourceBackButton(),
-            title: Text(widget.replyTitle ?? t.videoCommunity.comments),
-            actions: [
-              IconButton(
-                tooltip: t.common.refresh,
-                onPressed: _loading || _loadingMore || _posting ? null : _load,
-                icon: const Icon(Icons.refresh_rounded),
+  Widget build(BuildContext context) => widget.inline
+      ? _body(context)
+      : Scaffold(
+          appBar: widget.embedded
+              ? null
+              : AppBar(
+                  leading: const SourceBackButton(),
+                  title: Text(widget.replyTitle ?? t.videoCommunity.comments),
+                  actions: [
+                    IconButton(
+                      tooltip: t.common.refresh,
+                      onPressed: _loading || _loadingMore || _posting
+                          ? null
+                          : _load,
+                      icon: const Icon(Icons.refresh_rounded),
+                    ),
+                  ],
+                ),
+          body: _body(context),
+        );
+
+  Widget _threadContent(Widget child) =>
+      widget.inline ? child : Expanded(child: child);
+
+  Widget _refreshable(Widget list) => widget.embedded && !widget.inline
+      ? RefreshIndicator(
+          onRefresh: () async {
+            if (!_loading && !_loadingMore && !_posting && !_editing) {
+              await _load();
+            }
+          },
+          child: list,
+        )
+      : list;
+
+  Widget _body(BuildContext context) => SafeArea(
+    top: false,
+    bottom: !widget.inline,
+    child: LayoutBuilder(
+      builder: (context, constraints) => Column(
+        mainAxisSize: widget.inline ? MainAxisSize.min : MainAxisSize.max,
+        children: [
+          if (widget.inline)
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  widget.replyTitle ?? t.videoCommunity.replies,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
               ),
-            ],
-          ),
-    body: SafeArea(
-      top: false,
-      child: LayoutBuilder(
-        builder: (context, constraints) => Column(
-          children: [
-            if (widget.embedded)
-              SizedBox(
-                height: _editing ? 0 : null,
-                child: _editing
-                    ? const SizedBox.shrink()
-                    : Align(
-                        alignment: AlignmentDirectional.centerEnd,
-                        child: IconButton(
-                          tooltip: t.common.refresh,
-                          onPressed: _loading || _loadingMore || _posting
-                              ? null
-                              : _load,
-                          icon: const Icon(Icons.refresh_rounded),
+            ),
+          if (_loading) const LinearProgressIndicator(),
+          _threadContent(
+            _items.isEmpty && !_loading && _error == null
+                ? Center(
+                    child: Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          widget.replyId == null
+                              ? t.videoCommunity.noComments
+                              : t.videoCommunity.noReplies,
                         ),
-                      ),
-              ),
-            if (_loading) const LinearProgressIndicator(),
-            Expanded(
-              child: _items.isEmpty && !_loading && _error == null
-                  ? Center(
-                      child: Text(
-                        widget.replyId == null
-                            ? t.videoCommunity.noComments
-                            : t.videoCommunity.noReplies,
-                      ),
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.all(16),
+                        if (widget.embedded && !widget.inline)
+                          IconButton(
+                            tooltip: t.common.refresh,
+                            onPressed: _posting || _editing ? null : _load,
+                            icon: const Icon(Icons.refresh_rounded),
+                          ),
+                      ],
+                    ),
+                  )
+                : _refreshable(
+                    ListView.separated(
+                      shrinkWrap: widget.inline,
+                      physics: widget.inline
+                          ? const NeverScrollableScrollPhysics()
+                          : widget.embedded
+                          ? const AlwaysScrollableScrollPhysics()
+                          : null,
+                      padding: widget.inline
+                          ? const EdgeInsetsDirectional.only(
+                              start: 8,
+                              bottom: 6,
+                            )
+                          : const EdgeInsets.fromLTRB(16, 8, 16, 12),
                       itemCount:
                           _items.length +
                           (_error == null ? 0 : 1) +
                           (_nextOffset == null ? 0 : 1),
-                      separatorBuilder: (_, _) => const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 12),
-                        child: Divider(),
-                      ),
+                      separatorBuilder: (_, _) =>
+                          const Divider(height: 17, indent: 48),
                       itemBuilder: (context, index) {
                         if (_error != null && index == 0) {
                           return Column(
@@ -305,151 +409,233 @@ class _VideoCommunityPageState extends State<VideoCommunityPage> {
                           );
                         }
                         final item = _items[itemIndex];
-                        return Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            ClipOval(
-                              child: SizedBox(
-                                width: 36,
-                                height: 36,
-                                child: VideoThumbnail(
-                                  url: item.avatar,
-                                  referrer: widget.operations.page,
+                        return Builder(
+                          builder: (itemContext) => Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              ClipOval(
+                                child: SizedBox(
+                                  width: 36,
+                                  height: 36,
+                                  child: VideoThumbnail(
+                                    url: item.avatar,
+                                    referrer: widget.operations.page,
+                                  ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    item.author,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.titleSmall,
-                                  ),
-                                  if (item.time.isNotEmpty)
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
                                     Text(
-                                      item.time,
-                                      style: Theme.of(
-                                        context,
-                                      ).textTheme.bodySmall,
+                                      item.author,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelLarge
+                                          ?.copyWith(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.onSurfaceVariant,
+                                          ),
                                     ),
-                                  const SizedBox(height: 6),
-                                  SelectableText(item.text),
-                                  if (item.id.isNotEmpty)
-                                    TextButton(
-                                      onPressed: _posting || _loadingMore
-                                          ? null
-                                          : () => Navigator.of(context)
-                                                .push<void>(
-                                                  videoPageRoute(
-                                                    builder: (_) =>
-                                                        VideoCommunityPage(
-                                                          operations:
-                                                              widget.operations,
-                                                          onLogin:
-                                                              widget.onLogin,
-                                                          onWebsite:
-                                                              widget.onWebsite,
-                                                          replyId: item.id,
-                                                          replyTitle: t
-                                                              .videoCommunity
-                                                              .replies,
-                                                        ),
+                                    const SizedBox(height: 4),
+                                    SelectableText(item.text),
+                                    if (item.time.isNotEmpty ||
+                                        item.id.isNotEmpty)
+                                      Wrap(
+                                        spacing: 8,
+                                        crossAxisAlignment:
+                                            WrapCrossAlignment.center,
+                                        children: [
+                                          if (item.time.isNotEmpty)
+                                            Text(
+                                              item.time,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodySmall
+                                                  ?.copyWith(
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurfaceVariant,
                                                   ),
-                                                ),
-                                      child: Text(t.videoCommunity.viewReplies),
-                                    ),
-                                ],
+                                            ),
+                                          if (item.id.isNotEmpty &&
+                                              !_expandedReplies.contains(
+                                                item.id,
+                                              ))
+                                            TextButton(
+                                              key: ValueKey(
+                                                'video-comment-replies.${item.id}',
+                                              ),
+                                              style: TextButton.styleFrom(
+                                                minimumSize: const Size(44, 44),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 6,
+                                                    ),
+                                              ),
+                                              onPressed:
+                                                  _posting || _loadingMore
+                                                  ? null
+                                                  : () => setState(() {
+                                                      if (!_expandedReplies.add(
+                                                        item.id,
+                                                      ))
+                                                        _expandedReplies.remove(
+                                                          item.id,
+                                                        );
+                                                    }),
+                                              child: Text(
+                                                t.videoCommunity.viewReplies,
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    if (_expandedReplies.contains(item.id)) ...[
+                                      VideoCommunityPage(
+                                        key: ValueKey(
+                                          'video-inline-replies.${item.id}',
+                                        ),
+                                        operations: widget.operations,
+                                        onLogin: widget.onLogin,
+                                        onWebsite: widget.onWebsite,
+                                        replyId: item.id,
+                                        replyTitle: t.videoCommunity.replies,
+                                        embedded: true,
+                                        inline: true,
+                                      ),
+                                      Align(
+                                        alignment:
+                                            AlignmentDirectional.centerEnd,
+                                        child: TextButton(
+                                          key: ValueKey(
+                                            'video-comment-replies.${item.id}',
+                                          ),
+                                          style: TextButton.styleFrom(
+                                            minimumSize: const Size(44, 44),
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 6,
+                                            ),
+                                          ),
+                                          onPressed: _posting || _loadingMore
+                                              ? null
+                                              : () {
+                                                  unawaited(
+                                                    Scrollable.ensureVisible(
+                                                      itemContext,
+                                                      alignmentPolicy:
+                                                          ScrollPositionAlignmentPolicy
+                                                              .keepVisibleAtStart,
+                                                    ),
+                                                  );
+                                                  setState(
+                                                    () => _expandedReplies
+                                                        .remove(item.id),
+                                                  );
+                                                },
+                                          child: Text(
+                                            t.comments.collapseReplies,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         );
                       },
                     ),
-            ),
-            if (!_loading && !_canPost && _error == null && _postGate != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(switch (_postGate) {
-                        'siteVerification' =>
-                          t.videoCommunity.postVerificationOnly,
-                        'login' => t.videoCommunity.loginToPost,
-                        _ => t.videoCommunity.publishingUnavailable,
-                      }, style: Theme.of(context).textTheme.bodySmall),
+                  ),
+          ),
+          if (!widget.inline &&
+              !_loading &&
+              !_canPost &&
+              _error == null &&
+              _postGate != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(switch (_postGate) {
+                      'siteVerification' =>
+                        t.videoCommunity.postVerificationOnly,
+                      'login' => t.videoCommunity.loginToPost,
+                      _ => t.videoCommunity.publishingUnavailable,
+                    }, style: Theme.of(context).textTheme.bodySmall),
+                  ),
+                  if (_postGate == 'login')
+                    TextButton(
+                      onPressed: widget.onLogin,
+                      child: Text(t.videoCommunity.login),
+                    )
+                  else if (widget.onWebsite != null)
+                    TextButton(
+                      onPressed: widget.onWebsite,
+                      child: Text(t.videoPlayback.backToWeb),
                     ),
-                    if (_postGate == 'login')
-                      TextButton(
-                        onPressed: widget.onLogin,
-                        child: Text(t.videoCommunity.login),
-                      )
-                    else if (widget.onWebsite != null)
-                      TextButton(
-                        onPressed: widget.onWebsite,
-                        child: Text(t.videoPlayback.backToWeb),
+                ],
+              ),
+            ),
+          if (_canPost)
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: widget.inline
+                    ? 260
+                    : constraints.maxHeight * (_editing ? .9 : .6),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: SingleChildScrollView(
+                        child: TextField(
+                          controller: _text,
+                          onChanged: _retainDraft,
+                          enabled: !_posting,
+                          minLines: 1,
+                          maxLines: 4,
+                          maxLength: 5000,
+                          decoration: InputDecoration(
+                            labelText: t.videoCommunity.writeComment,
+                          ),
+                        ),
                       ),
+                    ),
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: AlignmentDirectional.centerEnd,
+                      child: FilledButton(
+                        onPressed:
+                            _loading ||
+                                _loadingMore ||
+                                _posting ||
+                                _blockedText != null ||
+                                const {
+                                  'unconfirmed',
+                                  'login',
+                                  'verification',
+                                  'changed',
+                                }.contains(_status)
+                            ? null
+                            : _post,
+                        child: Text(
+                          _posting
+                              ? t.videoCommunity.submitting
+                              : t.videoCommunity.post,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
-            if (_canPost)
-              ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: constraints.maxHeight * (_editing ? .9 : .6),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Flexible(
-                        child: SingleChildScrollView(
-                          child: TextField(
-                            controller: _text,
-                            enabled: !_posting,
-                            minLines: 1,
-                            maxLines: 4,
-                            maxLength: 5000,
-                            decoration: InputDecoration(
-                              labelText: t.videoCommunity.writeComment,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Align(
-                        alignment: AlignmentDirectional.centerEnd,
-                        child: FilledButton(
-                          onPressed:
-                              _loading ||
-                                  _loadingMore ||
-                                  _posting ||
-                                  _blockedText != null ||
-                                  const {
-                                    'unconfirmed',
-                                    'login',
-                                    'verification',
-                                    'changed',
-                                  }.contains(_status)
-                              ? null
-                              : _post,
-                          child: Text(
-                            _posting
-                                ? t.videoCommunity.submitting
-                                : t.videoCommunity.post,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-          ],
-        ),
+            ),
+        ],
       ),
     ),
   );

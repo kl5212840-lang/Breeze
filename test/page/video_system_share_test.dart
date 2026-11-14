@@ -131,4 +131,31 @@ void main() {
     );
     expect(await share(), VideoShareStatus.failed);
   });
+  test(
+    'all source detail page families use the same canonical native share contract',
+    () async {
+      final sent = <String>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        sent.add(call.arguments['url'] as String);
+        return 'shared';
+      });
+      for (final path in [
+        '/anime/023c74a87da31be14245e313.html',
+        '/index.php/vod/detail/id/7.html',
+        '/vod/7/',
+        '/voddetail/7.html',
+        '/videos/QC-BT-123',
+      ]) {
+        expect(
+          await VideoSystemShare.share(
+            video: Uri.parse('https://source.example$path?token=private'),
+            title: 'Title',
+            anchor: Rect.zero,
+          ),
+          VideoShareStatus.shared,
+        );
+        expect(sent.last, 'https://source.example$path');
+      }
+    },
+  );
 }

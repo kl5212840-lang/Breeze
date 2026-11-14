@@ -26,13 +26,12 @@ Widget buildReadModeImage({
     return const SizedBox.shrink();
   }
 
-  final resolvedChapterId = entry.doc!.storageChapterId.trim().isNotEmpty
-      ? entry.doc!.storageChapterId
-      : entry.chapterId!;
-
   return ReadImageWidget(
     key: ValueKey((
+      from,
+      comicId,
       entry.chapterId,
+      entry.doc!.storageChapterId,
       entry.chapterOrder,
       entry.chapterPageIndex,
       entry.doc!.fileServer,
@@ -43,13 +42,18 @@ Widget buildReadModeImage({
       url: entry.doc!.fileServer,
       path: entry.doc!.path,
       cartoonId: comicId,
-      chapterId: resolvedChapterId,
+      chapterId: entry.chapterId!,
+      storageChapterId: entry.doc!.storageChapterId,
       pictureType: PictureType.page,
       extern: entry.doc!.extern,
     ),
+    useDownloads: ReaderDecodedImageScope.of(context)?.offline == true,
     index: slotIndex,
     cacheIndex: cacheIndex,
     displayNumber: displayNumber,
+    chapterPage: entry.chapterPageIndex == null
+        ? null
+        : entry.chapterPageIndex! + 1,
     isColumn: isColumn,
     imageAlignment: imageAlignment,
   );

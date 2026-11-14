@@ -4,13 +4,14 @@
 
 ## 本分支发布
 
-当前先提供 **iOS / iPadOS 未签名 IPA**。请到[本仓库 Releases](https://github.com/kl5212840-lang/Breeze/releases)下载 `Breeze-iOS-v3.0.37.ipa`，使用自己的签名工具侧载；它不是 App Store 安装包，也不能直接点开安装。安装前建议备份应用数据。
+当前版本为 **3.0.38**。请到 [Breeze v3.0.38](https://github.com/kl5212840-lang/Breeze/releases/tag/v3.0.38) 查看更新说明并下载。
 
-本分支维护的哔咔漫画+、禁漫天堂+、拷贝漫画、Hanime1 和 iKun 资源，统一在 [Breeze-plugins](https://github.com/kl5212840-lang/Breeze-plugins) 管理源码、商店目录及发布文件。请在应用「插件商店」安装或更新；原 UUID 和配置保持兼容。iKun 提供原生影视片库、检索、文件夹收藏与多线路播放。
+- **iOS / iPadOS 15.0 及以上**：下载 IPA 后，使用自己的签名工具侧载。
+- **Android ARM64**：从本仓库的发布页下载 APK。若当前发布页尚无 APK，可继续使用 [3.0.37 ARM64 APK](https://github.com/kl5212840-lang/Breeze/releases/download/v3.0.37/Breeze-Android-v3.0.37-arm64-v8a.apk)。应用内更新仍使用上游渠道。
 
-客户端与插件分别更新。本次最终发布统一命名为 v3.0.37，内部构建号为 2262；此前本 fork 的 v3.0.36–v3.0.42 编号作为内部测试迭代归档，Release 页只保留最终版。原始分叉基线为上游 v3.0.35，发布说明以当前上游 v3.0.36 为功能对照。
+建议升级前备份应用数据。应用与插件分别更新，插件可在应用内「插件商店」安装或更新，源码和发布文件见 [Breeze-plugins](https://github.com/kl5212840-lang/Breeze-plugins)。
 
-下方 Android、Windows、macOS、Linux 等跨平台安装说明沿用上游项目的发布渠道；本 fork 暂未提供这些平台的安装包。
+其他平台的安装说明见下方上游指南。
 
 ## 💖 鸣谢与赞助
 
@@ -186,7 +187,7 @@ brew uninstall --zap breeze
 
 ### 📱 iOS / iPadOS
 
-由于 iOS 系统的封闭性，未上架 App Store 的应用需要通过“侧载 (Sideloading)”并自行签名才能安装。本分支请前往[本仓库 Releases](https://github.com/kl5212840-lang/Breeze/releases)下载 `Breeze-iOS-v3.0.37.ipa`；若需要上游版本，请前往[上游 Releases](https://github.com/deretame/Breeze/releases)。可使用以下工具之一安装：
+由于 iOS 系统的封闭性，未上架 App Store 的应用需要通过“侧载 (Sideloading)”并自行签名才能安装。本分支请前往[本仓库 Releases](https://github.com/kl5212840-lang/Breeze/releases)下载 `Breeze-iOS-v3.0.38.ipa`；若需要上游版本，请前往[上游 Releases](https://github.com/deretame/Breeze/releases)。可使用以下工具之一安装：
 
 #### 🌟 推荐方案：AltStore
 

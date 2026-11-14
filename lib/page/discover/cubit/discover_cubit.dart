@@ -5,6 +5,15 @@ import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/widgets/toast.dart';
 
+typedef _PluginInfoKey = ({
+  bool enabled,
+  bool deleted,
+  bool debug,
+  String? debugUrl,
+  String version,
+  String script,
+});
+
 /// 单个插件 info 的加载状态。
 class DiscoverPluginInfoState {
   const DiscoverPluginInfoState({this.loading = true, this.error, this.data});
@@ -31,22 +40,22 @@ class DiscoverState {
   const DiscoverState({
     this.plugins = const {},
     this.infoStates = const {},
-    this.togglingUuids = const {},
+    this.pendingEnabled = const {},
   });
 
   final Map<String, PluginRuntimeState> plugins;
   final Map<String, DiscoverPluginInfoState> infoStates;
-  final Set<String> togglingUuids;
+  final Map<String, bool> pendingEnabled;
 
   DiscoverState copyWith({
     Map<String, PluginRuntimeState>? plugins,
     Map<String, DiscoverPluginInfoState>? infoStates,
-    Set<String>? togglingUuids,
+    Map<String, bool>? pendingEnabled,
   }) {
     return DiscoverState(
       plugins: plugins ?? this.plugins,
       infoStates: infoStates ?? this.infoStates,
-      togglingUuids: togglingUuids ?? this.togglingUuids,
+      pendingEnabled: pendingEnabled ?? this.pendingEnabled,
     );
   }
 }
@@ -62,9 +71,15 @@ class DiscoverCubit extends Cubit<DiscoverState> {
   final PluginRegistryService _service;
   late final StreamSubscription<Map<String, PluginRuntimeState>> _subscription;
 
-  final Set<String> _loadingUuids = <String>{};
-  final Set<String> _togglingUuids = <String>{};
-  final Map<String, String> _cacheKeys = <String, String>{};
+  final Map<String, ({_PluginInfoKey key, int sequence})> _requests = {};
+  int _requestSequence = 0;
+  final Map<String, _PluginInfoKey> _cacheKeys = {};
+  final Map<String, Future<void>> _infoTasks = {};
+  Future<bool>? _reloadTask;
+  bool get refreshing => _reloadTask != null;
+  final _retainedFailures = <String>{};
+  String? get refreshError =>
+      _retainedFailures.isEmpty ? null : t.common.loadingFailed;
 
   /// 当前默认插件源：优先已启用，否则取首个可见插件。
   String get currentFrom {
@@ -80,12 +95,10 @@ class DiscoverCubit extends Cubit<DiscoverState> {
   ///
   /// 开启时会初始化插件运行时并执行 [init]；关闭时会立即销毁当前运行时。
   Future<void> toggleEnabled(String uuid, bool enabled) async {
-    if (_togglingUuids.contains(uuid)) {
-      return;
-    }
-
-    _togglingUuids.add(uuid);
-    _emitToggling();
+    if (isClosed || state.pendingEnabled.containsKey(uuid)) return;
+    emit(
+      state.copyWith(pendingEnabled: {...state.pendingEnabled, uuid: enabled}),
+    );
 
     try {
       await _service.setEnabled(uuid, enabled);
@@ -96,39 +109,80 @@ class DiscoverCubit extends Cubit<DiscoverState> {
             : t.discover.pluginCloseFailed(error: e),
       );
     } finally {
-      _togglingUuids.remove(uuid);
-      _emitToggling();
+      if (!isClosed) {
+        // Reconcile the displayed value and release the switch together. A
+        // delayed registry stream event must not send the thumb back first.
+        final remaining = {...state.pendingEnabled}..remove(uuid);
+        _syncPluginsAndLoad(pendingEnabled: remaining);
+      }
     }
-  }
-
-  void _emitToggling() {
-    if (isClosed) {
-      return;
-    }
-    emit(state.copyWith(togglingUuids: Set<String>.from(_togglingUuids)));
   }
 
   /// 初始加载，与 [reload] 区别是不清空缓存，仅补齐缺失的 info。
   void load() => _syncPluginsAndLoad();
 
   /// 重新加载所有可见插件的 info。
-  Future<void> reload() async {
-    _cacheKeys.clear();
-    emit(state.copyWith(infoStates: const {}));
+  Future<bool> reload() {
+    if (isClosed) {
+      return Future.value(false);
+    }
+    final pending = _reloadTask;
+    if (pending != null) {
+      return pending;
+    }
+    final task = _reload();
+    _reloadTask = task;
+    return task.whenComplete(() {
+      if (identical(_reloadTask, task)) {
+        _reloadTask = null;
+      }
+    });
+  }
+
+  Future<bool> _reload() async {
+    _retainedFailures.clear();
     _syncPluginsAndLoad();
+    final expected = {
+      for (final plugin in state.plugins.values)
+        plugin.uuid: _pluginInfoCacheKey(plugin),
+    };
+    final retained = Map<String, DiscoverPluginInfoState>.from(
+      state.infoStates,
+    );
+    for (final uuid in expected.keys) {
+      retained[uuid] = (retained[uuid] ?? const DiscoverPluginInfoState())
+          .copyWith(loading: retained[uuid]?.data == null);
+    }
+    emit(state.copyWith(infoStates: retained));
+    await Future.wait([
+      for (final uuid in expected.keys) _loadPluginInfo(uuid),
+    ]);
+    return !isClosed &&
+        expected.entries.every((entry) {
+          final current = _service.getByUuid(entry.key);
+          final info = state.infoStates[entry.key];
+          return current != null &&
+              _pluginInfoCacheKey(current) == entry.value &&
+              info?.loading == false &&
+              info?.error == null &&
+              !_retainedFailures.contains(entry.key);
+        });
   }
 
   /// 强制重新加载指定插件的 info。
   Future<void> retryLoadInfo(String uuid) async {
-    _cacheKeys.remove(uuid);
+    _requests.remove(uuid);
+    _retainedFailures.remove(uuid);
     final infoStates = Map<String, DiscoverPluginInfoState>.from(
       state.infoStates,
-    )..remove(uuid);
+    );
+    infoStates[uuid] = (infoStates[uuid] ?? const DiscoverPluginInfoState())
+        .copyWith(loading: infoStates[uuid]?.data == null);
     emit(state.copyWith(infoStates: infoStates));
     await _loadPluginInfo(uuid);
   }
 
-  void _syncPluginsAndLoad() {
+  void _syncPluginsAndLoad({Map<String, bool>? pendingEnabled}) {
     final snapshot = _service.snapshot;
     final visiblePlugins = _service.sortPlugins(
       snapshot.values.where((plugin) => !plugin.isDeleted),
@@ -140,7 +194,7 @@ class DiscoverCubit extends Cubit<DiscoverState> {
     final newInfoStates = Map<String, DiscoverPluginInfoState>.from(
       state.infoStates,
     );
-    final newCacheKeys = <String, String>{};
+    final newCacheKeys = <String, _PluginInfoKey>{};
 
     for (final entry in plugins.entries) {
       final uuid = entry.key;
@@ -148,14 +202,22 @@ class DiscoverCubit extends Cubit<DiscoverState> {
       final cacheKey = _pluginInfoCacheKey(pluginState);
       final previousCacheKey = _cacheKeys[uuid];
 
-      final bundleChanged =
+      final contextChanged =
           previousCacheKey != null && previousCacheKey != cacheKey;
-      if (bundleChanged) {
+      final bundleChanged =
+          previousCacheKey != null && !_sameBundle(previousCacheKey, cacheKey);
+      final pendingWithoutData =
+          _requests.containsKey(uuid) && newInfoStates[uuid]?.data == null;
+      if (contextChanged) _requests.remove(uuid);
+      // An enabled switch invalidates pending runtime work, but the displayed
+      // metadata still describes the same bundle and keeps the card stable.
+      if (bundleChanged || (contextChanged && pendingWithoutData)) {
         newInfoStates.remove(uuid);
       }
       newCacheKeys[uuid] = cacheKey;
 
-      if (!newInfoStates.containsKey(uuid) && !_loadingUuids.contains(uuid)) {
+      if (!newInfoStates.containsKey(uuid) &&
+          _requests[uuid]?.key != cacheKey) {
         // Persisted getInfo belongs to the previous bundle after an update.
         final cached = bundleChanged
             ? null
@@ -178,6 +240,8 @@ class DiscoverCubit extends Cubit<DiscoverState> {
     // 清理已删除插件的 info 状态。
     for (final uuid in state.infoStates.keys.toList()) {
       if (!plugins.containsKey(uuid)) {
+        _requests.remove(uuid);
+        _retainedFailures.remove(uuid);
         newInfoStates.remove(uuid);
       }
     }
@@ -186,49 +250,96 @@ class DiscoverCubit extends Cubit<DiscoverState> {
       ..clear()
       ..addAll(newCacheKeys);
 
-    emit(state.copyWith(plugins: plugins, infoStates: newInfoStates));
+    emit(
+      state.copyWith(
+        plugins: plugins,
+        infoStates: newInfoStates,
+        pendingEnabled: pendingEnabled,
+      ),
+    );
   }
 
-  Future<void> _loadPluginInfo(String uuid) async {
-    if (_loadingUuids.contains(uuid)) {
-      return;
+  Future<void> _loadPluginInfo(String uuid) {
+    final plugin = _service.getByUuid(uuid);
+    if (plugin == null || plugin.isDeleted || isClosed) {
+      return Future.value();
     }
-    _loadingUuids.add(uuid);
+    if (_requests[uuid]?.key == _pluginInfoCacheKey(plugin)) {
+      return _infoTasks[uuid] ?? Future.value();
+    }
+    final task = _readPluginInfo(uuid);
+    _infoTasks[uuid] = task;
+    return task.whenComplete(() {
+      if (identical(_infoTasks[uuid], task)) {
+        _infoTasks.remove(uuid);
+      }
+    });
+  }
+
+  Future<void> _readPluginInfo(String uuid) async {
+    final plugin = _service.getByUuid(uuid);
+    if (plugin == null || plugin.isDeleted) return;
+    final key = _pluginInfoCacheKey(plugin);
+    if (_requests[uuid]?.key == key) return;
+    final request = (key: key, sequence: ++_requestSequence);
+    _requests[uuid] = request;
+    bool isCurrent() {
+      final current = _service.getByUuid(uuid);
+      return !isClosed &&
+          _requests[uuid] == request &&
+          current != null &&
+          _pluginInfoCacheKey(current) == key;
+    }
 
     try {
       final data = await _service.fetchPluginInfo(
         uuid: uuid,
         runtimeName: uuid,
       );
-      if (!isClosed) {
+      if (isCurrent()) {
         final infoStates = Map<String, DiscoverPluginInfoState>.from(
           state.infoStates,
         )..[uuid] = DiscoverPluginInfoState(loading: false, data: data);
         emit(state.copyWith(infoStates: infoStates));
       }
     } catch (e) {
+      if (!isCurrent()) return;
       final pluginState = _service.getByUuid(uuid);
       if (pluginState?.debug == true) {
         showErrorToast(t.discover.pluginDebugLoadFailed(error: e));
       }
-      if (!isClosed) {
+      if (isCurrent()) {
+        final retained = state.infoStates[uuid]?.data;
+        if (retained != null) _retainedFailures.add(uuid);
         final infoStates =
             Map<String, DiscoverPluginInfoState>.from(state.infoStates)
               ..[uuid] = DiscoverPluginInfoState(
                 loading: false,
-                error: e.toString(),
+                error: retained == null ? e.toString() : null,
+                data: retained,
               );
         emit(state.copyWith(infoStates: infoStates));
       }
     } finally {
-      _loadingUuids.remove(uuid);
+      if (_requests[uuid] == request) _requests.remove(uuid);
     }
   }
 
-  String _pluginInfoCacheKey(PluginRuntimeState state) {
-    return '${state.isDeleted}|${state.debug}|${state.debugUrl ?? ''}|'
-        '${state.version}|${state.originScript.hashCode}';
-  }
+  bool _sameBundle(_PluginInfoKey a, _PluginInfoKey b) =>
+      a.deleted == b.deleted &&
+      a.debug == b.debug &&
+      a.debugUrl == b.debugUrl &&
+      a.version == b.version &&
+      a.script == b.script;
+
+  _PluginInfoKey _pluginInfoCacheKey(PluginRuntimeState state) => (
+    enabled: state.isEnabled,
+    deleted: state.isDeleted,
+    debug: state.debug,
+    debugUrl: state.debugUrl,
+    version: state.version,
+    script: state.originScript,
+  );
 
   @override
   Future<void> close() async {

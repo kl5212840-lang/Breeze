@@ -27,6 +27,7 @@ class DownloadAssetStore {
     required String chapterId,
     String storageChapterId = '',
     required this.pictureType,
+    this.cacheVariant = '',
   }) : from = from.trim(),
        path = path.trim(),
        cartoonId = cartoonId.trim(),
@@ -39,6 +40,10 @@ class DownloadAssetStore {
   final String chapterId;
   final String storageChapterId;
   final PictureType pictureType;
+
+  /// Distinguishes different online bytes for the same downloaded asset ID.
+  final String cacheVariant;
+  static final _invalidLegacyPathChars = RegExp(r'[/\\\x00]');
 
   bool get isCover => pictureType == PictureType.cover;
 
@@ -62,18 +67,23 @@ class DownloadAssetStore {
   }
 
   /// 仅返回下载目录中的候选项。第一个是新布局，后面是已确认存在过的旧布局。
-  Future<List<DownloadAssetCandidate>> downloadCandidates() async {
+  Future<List<DownloadAssetCandidate>> downloadCandidates({
+    bool forRemoval = false,
+  }) async {
     if (path.isEmpty) return const [];
 
     final root = await getDownloadPath();
+    final result = <DownloadAssetCandidate>[
+      _canonicalCandidate(root, DownloadAssetLocation.canonicalDownload),
+    ];
+    if (!isLegacyPathSegment(from)) return result;
+
     final normalizedPath = normalizeStoredAssetPath(path);
     final pathHash = encodePath(path: path);
     final normalizedPathHash = encodePath(path: normalizedPath);
     final cartoonHash = encodePath(path: cartoonId);
     final chapterKeys = <String>{effectiveChapterId};
     if (chapterId.isNotEmpty) chapterKeys.add(chapterId);
-
-    final result = <DownloadAssetCandidate>[await canonicalDownloadCandidate()];
 
     void addLegacy(String candidatePath) {
       if (isWithinRoot(root, candidatePath) &&
@@ -88,6 +98,9 @@ class DownloadAssetStore {
     }
 
     // c703e334 以前的编码布局：from 未 hash，且包含 original。
+    bool rawIdIsSafe(String value) =>
+        isLegacyPathSegment(value) ||
+        (!forRemoval && value.split('/').every(isLegacyPathSegment));
     for (final legacyChapterId in chapterKeys) {
       final encodedChapter = encodePath(path: legacyChapterId);
       addLegacy(
@@ -112,15 +125,19 @@ class DownloadAssetStore {
         );
       }
 
-      // 未编码的历史布局只使用安全的 basename，不让旧输入重新成为路径结构。
-      addLegacy(
-        _buildLegacyFilePath(
-          root,
-          cartoonSegment: cartoonId,
-          chapterSegment: legacyChapterId,
-          fileName: normalizedPath,
-        ),
-      );
+      // Older nested IDs can still be read, but are not deletion authority.
+      if (rawIdIsSafe(cartoonId) &&
+          (isCover || rawIdIsSafe(legacyChapterId)) &&
+          isLegacyPathSegment(normalizedPath)) {
+        addLegacy(
+          _buildLegacyFilePath(
+            root,
+            cartoonSegment: cartoonId,
+            chapterSegment: legacyChapterId,
+            fileName: normalizedPath,
+          ),
+        );
+      }
     }
 
     return result;
@@ -206,12 +223,20 @@ class DownloadAssetStore {
     String root,
     DownloadAssetLocation location,
   ) {
+    final normalizedPath = normalizeStoredAssetPath(path);
+    final variantCache =
+        location == DownloadAssetLocation.canonicalCache &&
+        cacheVariant.isNotEmpty;
+    // A normalized legacy path cannot contain the variant separator.
+    final identity = variantCache
+        ? '$cacheVariant/$normalizedPath'
+        : normalizedPath;
     final segments = <String>[
       root,
       encodePath(path: from),
       encodePath(path: cartoonId),
       encodePath(path: effectiveChapterId),
-      encodePath(path: normalizeStoredAssetPath(path)),
+      encodePath(path: identity),
     ];
     final candidate = file_path.joinAll(segments);
     if (!isWithinRoot(root, candidate)) {
@@ -265,8 +290,7 @@ class DownloadAssetStore {
 
   /// 按 doc path 逐个删除已落盘的章节散图（取消下载时用）。
   ///
-  /// 只删 canonical 下载路径命中的文件；共享目录（如 EH 的 Gallery）下
-  /// 其他章节的文件不受影响。
+  /// 只删 canonical 下载路径命中的文件，调用方须先排除其他章节引用的路径。
   static Future<void> deleteDownloadedFiles({
     required String from,
     required String cartoonId,
@@ -397,6 +421,14 @@ class DownloadAssetStore {
     return normalizedCandidate == normalizedRoot ||
         normalizedCandidate.startsWith('$normalizedRoot${file_path.separator}');
   }
+
+  static bool isLegacyPathSegment(String value) =>
+      value.isNotEmpty &&
+      value != '.' &&
+      value != '..' &&
+      !value.contains(_invalidLegacyPathChars) &&
+      file_path.basename(value) == value &&
+      !file_path.isAbsolute(value);
 }
 
 /// 取消任务时只清理该任务写入的临时文件，不触碰已经提交的历史图片。

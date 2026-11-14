@@ -1,5 +1,12 @@
+import 'package:zephyr/widgets/native_material_surface.dart';
+import 'package:zephyr/page/video/native_video_controls.dart';
+import 'package:zephyr/page/search/widget/search_field_decoration.dart';
 import 'package:zephyr/page/video/video_browse_theme.dart';
 import 'dart:async';
+import 'package:zephyr/widgets/compact_filter_choice.dart';
+import 'package:zephyr/widgets/filter_option_favorites.dart';
+import 'package:zephyr/widgets/year_filter_picker.dart';
+import 'package:zephyr/widgets/selection_choice_grid.dart';
 
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
@@ -24,10 +31,12 @@ class VideoSearchFilterPanel extends StatefulWidget {
     required this.initial,
     required this.schema,
     required this.readSchema,
+    this.source,
     this.initialSection = VideoFilterSection.genre,
     this.onSchema,
     this.onCancelRead,
   });
+  final String? source;
   final VideoSearchFilters initial;
   final VideoFilterSchema schema;
   final VideoFilterSection initialSection;
@@ -40,6 +49,7 @@ class VideoSearchFilterPanel extends StatefulWidget {
 
 class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
     with TickerProviderStateMixin {
+  FilterOptionFavorites? _favorites;
   late VideoSearchFilters _draft = widget.initial;
   late VideoFilterSchema _schema = widget.schema;
   late TabController _tabs;
@@ -52,6 +62,9 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
   String? _error;
   String? _group;
   bool _selectedOnly = false;
+  int? _visibleSection;
+  Object? _tagGridKey;
+  ({double extent, double width, int rows})? _tagGridMetrics;
   bool get _invalidYear =>
       _customDate &&
       _year.text.isNotEmpty &&
@@ -68,7 +81,13 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
       _year.text = date[1] ?? '';
       _month = int.tryParse(date[2] ?? '');
     }
-    _tagSearch.addListener(_searchTags);
+    _tagSearch.addListener(_refresh);
+    if (widget.source case final source?) {
+      final favorites = FilterOptionFavorites(
+        'source-filter|$source|hanime-video',
+      );
+      _favorites = favorites..addListener(_refresh);
+    }
   }
 
   @override
@@ -93,6 +112,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
   @override
   void dispose() {
     widget.onCancelRead?.call();
+    _favorites?.dispose();
     _tabs.dispose();
     _query.dispose();
     _tagSearch.dispose();
@@ -100,11 +120,14 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
     super.dispose();
   }
 
-  void _searchTags() {
+  void _refresh() {
     if (mounted) setState(() {});
   }
 
   void _tabChanged() {
+    if (_visibleSection != _tabs.index) {
+      setState(() => _visibleSection = _tabs.index);
+    }
     if (_tabs.index == VideoFilterSection.tags.index &&
         _schema.tagGroups.isEmpty &&
         !_loading &&
@@ -157,7 +180,9 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
     );
   });
 
-  Widget _single(VideoFilterSection section) {
+  static const _customDateChoice = '__breeze_custom_date__';
+
+  Widget _single(BuildContext context, VideoFilterSection section) {
     final value = switch (section) {
       VideoFilterSection.genre => _draft.genre,
       VideoFilterSection.sort => _draft.sort,
@@ -166,77 +191,106 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
       _ => '',
     };
     final choices = _schema.options[section.name] ?? const [];
+    final options = {for (final choice in choices) choice.value: choice.label};
+    final ordered = options;
+    final customDate =
+        section == VideoFilterSection.date && _schema.customDate && _customDate;
+    final years = {
+      '': t.videoFilters.allYears,
+      if (customDate)
+        for (final year
+            in (_schema.years
+                .where((value) => RegExp(r'^\d{4}$').hasMatch(value))
+                .toSet()
+                .toList()
+              ..sort((a, b) => b.compareTo(a))))
+          year: year,
+    };
+    final months = {
+      '': t.videoFilters.allMonths,
+      if (customDate)
+        for (var month = 1; month <= 12; month++)
+          '$month': t.videoFilters.month(value: month),
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (choices.isEmpty) Text(t.videoFilters.optionsUnavailable),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final option in choices)
-              ChoiceChip(
-                label: Text(option.label),
-                selected: value == option.value && !_customFor(section),
-                chipAnimationStyle: VideoMotion.chip(context),
-                showCheckmark: false,
-                onSelected: (_) => _set(section, option.value),
-              ),
-            if (value.isNotEmpty &&
-                !_customFor(section) &&
-                !choices.any((choice) => choice.value == value))
-              InputChip(label: Text(value), onDeleted: () => _set(section, '')),
-          ],
-        ),
-        if (section == VideoFilterSection.date && _schema.customDate) ...[
-          const SizedBox(height: 24),
-          ChoiceChip(
-            label: Text(t.videoFilters.yearMonth),
-            selected: _customDate,
-            showCheckmark: false,
-            onSelected: (_) => _setMonth(),
+        if (section == VideoFilterSection.date)
+          CompactFilterChoice(
+            keyPrefix: 'video-filter.date',
+            label: videoFilterTitle(section),
+            options: {
+              ...ordered,
+              if (value.isNotEmpty &&
+                  !customDate &&
+                  !options.containsKey(value))
+                value: value,
+              if (_schema.customDate)
+                _customDateChoice: _customDate && value.isNotEmpty
+                    ? '${t.videoFilters.yearMonth} · $value'
+                    : t.videoFilters.yearMonth,
+            },
+            selected: customDate ? _customDateChoice : value,
+            searchHint: t.videoFilters.date,
+            onSelected: (picked) => picked == _customDateChoice
+                ? _setMonth()
+                : _set(section, picked),
+          )
+        else ...[
+          SelectionChoiceGrid<String>(
+            options: ordered,
+            value: value,
+            optionKey: (value) => ValueKey(
+              'video-filter.${section.name}.${value.isEmpty ? 'all' : value}',
+            ),
+            onChanged: (value) => _set(section, value),
           ),
+          if (value.isNotEmpty &&
+              !_customFor(section) &&
+              !choices.any((choice) => choice.value == value))
+            InputChip(label: Text(value), onDeleted: () => _set(section, '')),
+        ],
+        if (section == VideoFilterSection.date && _schema.customDate) ...[
           if (_customDate) ...[
             const SizedBox(height: 12),
-            TextField(
-              controller: _year,
-              keyboardType: TextInputType.number,
-              inputFormatters: [
-                FilteringTextInputFormatter.digitsOnly,
-                LengthLimitingTextInputFormatter(4),
-              ],
-              decoration: InputDecoration(
-                labelText: t.videoFilters.year,
-                hintText: t.videoFilters.allYears,
-                errorText: _invalidYear ? t.videoFilters.invalidYear : null,
-              ),
-              onChanged: (_) => _setMonth(),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              children: [
-                ChoiceChip(
-                  label: Text(t.videoFilters.allMonths),
-                  selected: _month == null,
-                  showCheckmark: false,
-                  onSelected: (_) {
-                    _month = null;
-                    _setMonth();
-                  },
+            if (years.length > 1)
+              YearFilterPicker(
+                keyPrefix: 'video-filter.year',
+                label: t.videoFilters.year,
+                options: years,
+                selected: _year.text,
+                onSelected: (value) {
+                  _year.text = value;
+                  _setMonth();
+                },
+              )
+            else
+              TextField(
+                key: const ValueKey('video-filter.custom-year'),
+                controller: _year,
+                keyboardType: TextInputType.number,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(4),
+                ],
+                decoration: InputDecoration(
+                  labelText: t.videoFilters.year,
+                  hintText: t.videoFilters.allYears,
+                  errorText: _invalidYear ? t.videoFilters.invalidYear : null,
                 ),
-                for (var month = 1; month <= 12; month++)
-                  ChoiceChip(
-                    label: Text(t.videoFilters.month(value: month)),
-                    selected: _month == month,
-                    showCheckmark: false,
-                    onSelected: (_) {
-                      _month = month;
-                      _setMonth();
-                    },
-                  ),
-              ],
+                onChanged: (_) => _setMonth(),
+              ),
+            const SizedBox(height: 12),
+            CompactFilterChoice(
+              keyPrefix: 'video-filter.month',
+              label: t.videoFilters.yearMonth,
+              options: months,
+              selected: _month?.toString() ?? '',
+              onSelected: (picked) {
+                _month = int.tryParse(picked);
+                _setMonth();
+              },
             ),
           ],
         ],
@@ -255,26 +309,27 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
   bool _customFor(VideoFilterSection section) =>
       section == VideoFilterSection.date && _customDate;
 
-  Widget _tagSearchField() => TextField(
-    key: const ValueKey('video-filter.tag-search'),
-    controller: _tagSearch,
-    textInputAction: TextInputAction.done,
-    onSubmitted: (_) => FocusScope.of(context).unfocus(),
-    decoration: InputDecoration(
-      isDense: true,
-      prefixIcon: const Icon(Icons.search_rounded),
-      hintText: t.videoFilters.searchTags,
-      suffixIcon: _tagSearch.text.isEmpty
-          ? null
-          : IconButton(
-              tooltip: t.common.clear,
-              icon: const Icon(Icons.cancel_rounded, size: 20),
-              onPressed: _tagSearch.clear,
-            ),
+  Widget _tagSearchField(BuildContext context) => SearchFieldSurface(
+    child: TextField(
+      key: const ValueKey('video-filter.tag-search'),
+      controller: _tagSearch,
+      textInputAction: TextInputAction.done,
+      onSubmitted: (_) => FocusScope.of(context).unfocus(),
+      decoration: searchFieldDecoration(
+        context,
+        hintText: t.videoFilters.searchTags,
+        suffixIcon: _tagSearch.text.isEmpty
+            ? null
+            : IconButton(
+                tooltip: t.common.clear,
+                icon: const Icon(Icons.cancel_rounded, size: 20),
+                onPressed: _tagSearch.clear,
+              ),
+      ),
     ),
   );
 
-  Widget _tags() {
+  List<VideoFilterChoice> _tagChoices() {
     final query = _tagSearch.text.trim().toLowerCase();
     final groups = _schema.tagGroups;
     final current = groups.containsKey(_group)
@@ -302,8 +357,98 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
             .toList();
     final seen = <String>{};
     choices.removeWhere((choice) => !seen.add(choice.value));
+    return _favorites
+            ?.order('tags', choices, (choice) => choice.value)
+            .toList() ??
+        choices;
+  }
+
+  ({double extent, double width, int rows}) _tagGrid(
+    BuildContext context,
+    double width,
+    List<VideoFilterChoice> choices,
+  ) {
+    final scale = MediaQuery.textScalerOf(context);
+    final starWidth = _favorites == null ? 0.0 : 44.0;
+    final maxWidth = (160.0 + starWidth) * (scale.scale(14) / 14).clamp(1, 1.8);
+    final available = (width - 32).clamp(1.0, double.infinity);
+    final columns = (available / (maxWidth + 8)).ceil().clamp(1, 100);
+    final cellWidth = (available - (columns - 1) * 8) / columns;
+    var extent = 48.0;
+    final style =
+        Theme.of(context).chipTheme.labelStyle ??
+        Theme.of(context).textTheme.labelLarge;
+    final direction = Directionality.of(context);
+    final key = (
+      width,
+      style,
+      scale,
+      direction,
+      choices.length,
+      Object.hashAll(choices.map((choice) => choice.label)),
+    );
+    if (key == _tagGridKey && _tagGridMetrics != null) {
+      return _tagGridMetrics!;
+    }
+    for (final choice in choices) {
+      final label =
+          TextPainter(
+            text: TextSpan(text: choice.label, style: style),
+            textDirection: direction,
+            textScaler: scale,
+            maxLines: 2,
+            ellipsis: '…',
+          )..layout(
+            maxWidth: (cellWidth - 44 - starWidth).clamp(1.0, double.infinity),
+          );
+      final needed = label.height + 20;
+      if (needed > extent) extent = needed;
+      label.dispose();
+    }
+    final metrics = (
+      extent: extent,
+      width: maxWidth,
+      rows: (choices.length / columns).ceil(),
+    );
+    _tagGridKey = key;
+    _tagGridMetrics = metrics;
+    return metrics;
+  }
+
+  Widget _tags() {
+    final query = _tagSearch.text.trim().toLowerCase();
+    final groups = _schema.tagGroups;
+    final current = groups.containsKey(_group)
+        ? _group
+        : groups.keys.firstOrNull;
+    final choices = _tagChoices();
+    final knownTags = _selectedOnly && _favorites != null
+        ? {
+            for (final group in groups.values)
+              for (final option in group) option.value,
+          }
+        : null;
     return LayoutBuilder(
       builder: (context, constraints) {
+        final grid = _tagGrid(context, constraints.maxWidth, choices);
+        final inputLine = TextPainter(
+          text: TextSpan(
+            text: 'M',
+            style: Theme.of(context).textTheme.bodyLarge,
+          ),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+        )..layout();
+        final inputHeight = inputLine.height + 24 + 8;
+        inputLine.dispose();
+        // At large text sizes above a small keyboard, keep the real input
+        // scrollable rather than shrinking it or overflowing the pinned actions.
+        if (constraints.maxHeight < inputHeight) {
+          return SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: _tagSearchField(context),
+          );
+        }
         final compact =
             constraints.maxHeight < 340 ||
             MediaQuery.textScalerOf(context).scale(14) > 22;
@@ -317,7 +462,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                 16,
                 compact ? 4 : 8,
               ),
-              child: _tagSearchField(),
+              child: _tagSearchField(context),
             ),
             if (compact && constraints.maxHeight >= 180)
               SizedBox(
@@ -340,26 +485,10 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                         ),
                       ),
                     ),
-                    for (final any in [false, true])
+                    for (final option in _tagMatchChoices(context))
                       Padding(
                         padding: const EdgeInsetsDirectional.only(end: 8),
-                        child: Center(
-                          child: ChoiceChip(
-                            label: Text(
-                              any
-                                  ? t.videoFilters.anyMatch
-                                  : t.videoFilters.allMatch,
-                            ),
-                            selected: _draft.anyTag == any,
-                            onSelected: (_) => setState(
-                              () => _draft = _draft.copyWith(
-                                anyTag: any,
-                                page: 1,
-                              ),
-                            ),
-                            chipAnimationStyle: _chipMotion(context),
-                          ),
-                        ),
+                        child: Center(child: option),
                       ),
                     if (!_selectedOnly && query.isEmpty)
                       for (final group in groups.keys)
@@ -417,21 +546,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                 child: Wrap(
                   spacing: 8,
                   runSpacing: 4,
-                  children: [
-                    for (final any in [false, true])
-                      ChoiceChip(
-                        label: Text(
-                          any
-                              ? t.videoFilters.anyMatch
-                              : t.videoFilters.allMatch,
-                        ),
-                        selected: _draft.anyTag == any,
-                        onSelected: (_) => setState(
-                          () => _draft = _draft.copyWith(anyTag: any, page: 1),
-                        ),
-                        chipAnimationStyle: _chipMotion(context),
-                      ),
-                  ],
+                  children: [..._tagMatchChoices(context)],
                 ),
               ),
               if (!_selectedOnly && query.isEmpty && groups.isNotEmpty)
@@ -495,20 +610,15 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                       keyboardDismissBehavior:
                           ScrollViewKeyboardDismissBehavior.onDrag,
                       gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-                        maxCrossAxisExtent:
-                            160 *
-                            (MediaQuery.textScalerOf(context).scale(14) / 14)
-                                .clamp(1, 1.8),
-                        mainAxisExtent:
-                            MediaQuery.textScalerOf(context).scale(14) * 2.6 +
-                            24,
+                        maxCrossAxisExtent: grid.width,
+                        mainAxisExtent: grid.extent,
                         crossAxisSpacing: 8,
                         mainAxisSpacing: 8,
                       ),
                       itemCount: choices.length,
                       itemBuilder: (context, index) {
                         final choice = choices[index];
-                        return LayoutBuilder(
+                        final chip = LayoutBuilder(
                           builder: (context, cell) => Align(
                             alignment: AlignmentDirectional.centerStart,
                             child: Tooltip(
@@ -561,6 +671,23 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                             ),
                           ),
                         );
+                        final favorites = _favorites;
+                        if (favorites == null) return chip;
+                        final known = knownTags?.contains(choice.value) ?? true;
+                        return Row(
+                          key: ValueKey(choice.value),
+                          children: [
+                            Expanded(child: chip),
+                            known
+                                ? favorites.star(
+                                    context,
+                                    'tags',
+                                    choice.value,
+                                    choice.label,
+                                  )
+                                : const SizedBox(width: 44),
+                          ],
+                        );
                       },
                     ),
             ),
@@ -570,16 +697,34 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
     );
   }
 
+  Iterable<Widget> _tagMatchChoices(BuildContext context) sync* {
+    // Match mode is a fixed control, distinct from collectible tag values.
+    for (final any in [false, true]) {
+      yield ChoiceChip(
+        label: Text(any ? t.videoFilters.anyMatch : t.videoFilters.allMatch),
+        selected: _draft.anyTag == any,
+        onSelected: (_) =>
+            setState(() => _draft = _draft.copyWith(anyTag: any, page: 1)),
+        chipAnimationStyle: _chipMotion(context),
+      );
+    }
+  }
+
   ChipAnimationStyle _chipMotion(BuildContext context) =>
       VideoMotion.chip(context);
 
-  Widget _queryMode() => Column(
+  Widget _queryMode(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      TextField(
-        controller: _query,
-        decoration: InputDecoration(labelText: t.videoPlayback.searchVideos),
-        onChanged: (value) => _draft = _draft.copyWith(query: value, page: 1),
+      SearchFieldSurface(
+        child: TextField(
+          controller: _query,
+          decoration: searchFieldDecoration(
+            context,
+            hintText: t.videoPlayback.searchVideos,
+          ),
+          onChanged: (value) => _draft = _draft.copyWith(query: value, page: 1),
+        ),
       ),
       const SizedBox(height: 16),
       Wrap(
@@ -592,7 +737,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                 author ? t.videoFilters.authors : t.videoFilters.videos,
               ),
               selected: _draft.author == author,
-              chipAnimationStyle: VideoMotion.chip(context),
+              chipAnimationStyle: _chipMotion(context),
               showCheckmark: false,
               onSelected: (_) => setState(
                 () => _draft = _draft.copyWith(author: author, page: 1),
@@ -629,158 +774,195 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
     final keyboard = MediaQuery.viewInsetsOf(context).bottom > 0;
     return Theme(
       data: videoBrowseTheme(Theme.of(context)),
-      child: Scaffold(
-        primary: false,
-        resizeToAvoidBottomInset: false,
-        backgroundColor: Colors.transparent,
-        body: SafeArea(
-          top: false,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                child: Row(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+          final tags = _tabs.index == VideoFilterSection.tags.index;
+          final grid = _tagGrid(context, constraints.maxWidth, _tagChoices());
+          // Small groups should not stretch to a nearly full-screen sheet. Large
+          // groups still get the available viewport and retain lazy grid scrolling.
+          final desired = tags
+              ? 340 * scale + grid.rows * (grid.extent + 8) + 40
+              : (_customDate && _tabs.index == VideoFilterSection.date.index
+                        ? 640.0
+                        : 420.0) *
+                    scale;
+          return SizedBox(
+            key: const ValueKey('video-filter.panel'),
+            height: desired.clamp(0.0, constraints.maxHeight),
+            child: Scaffold(
+              primary: false,
+              resizeToAvoidBottomInset: false,
+              backgroundColor: Colors.transparent,
+              body: SafeArea(
+                top: false,
+                child: Column(
                   children: [
-                    Expanded(
-                      child: keyboard
-                          ? PopupMenuButton<VideoFilterSection>(
-                              tooltip: t.videoFilters.allFilters,
-                              onSelected: (section) {
-                                _tabs.index = section.index;
-                                setState(() {});
-                              },
-                              itemBuilder: (_) => [
-                                for (final section in VideoFilterSection.values)
-                                  PopupMenuItem(
-                                    value: section,
-                                    child: Text(videoFilterTitle(section)),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: keyboard
+                                ? PopupMenuButton<VideoFilterSection>(
+                                    tooltip: t.videoFilters.allFilters,
+                                    onSelected: (section) {
+                                      _tabs.index = section.index;
+                                      setState(() {});
+                                    },
+                                    itemBuilder: (_) => [
+                                      for (final section
+                                          in VideoFilterSection.values)
+                                        PopupMenuItem(
+                                          value: section,
+                                          child: Text(
+                                            videoFilterTitle(section),
+                                          ),
+                                        ),
+                                    ],
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 4,
+                                      ),
+                                      child: Text(
+                                        videoFilterTitle(
+                                          VideoFilterSection.values[_tabs
+                                              .index],
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.titleMedium,
+                                      ),
+                                    ),
+                                  )
+                                : Padding(
+                                    padding: const EdgeInsets.all(12),
+                                    child: Text(
+                                      t.videoFilters.title,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.titleMedium,
+                                    ),
                                   ),
-                              ],
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 4,
-                                ),
-                                child: Text(
-                                  videoFilterTitle(
-                                    VideoFilterSection.values[_tabs.index],
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(
-                                    context,
-                                  ).textTheme.titleMedium,
-                                ),
-                              ),
-                            )
-                          : Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Text(
-                                t.videoFilters.title,
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
-                            ),
-                    ),
-                    if (keyboard)
-                      IconButton(
-                        tooltip: t.videoFilters.closeKeyboard,
-                        onPressed: () => FocusScope.of(context).unfocus(),
-                        icon: const Icon(Icons.keyboard_hide_rounded),
-                      )
-                    else
-                      Tooltip(
-                        message: t.videoFilters.clearAll,
-                        child: TextButton(
-                          onPressed: () => _reset(all: true),
-                          child: Text(t.videoFilters.reset),
-                        ),
-                      ),
-                    IconButton(
-                      tooltip: t.common.cancel,
-                      onPressed: _cancel,
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ],
-                ),
-              ),
-              if (!keyboard)
-                TabBar(
-                  controller: _tabs,
-                  isScrollable: true,
-                  tabAlignment: TabAlignment.start,
-                  tabs: [
-                    for (final section in VideoFilterSection.values)
-                      Tab(text: videoFilterTitle(section)),
-                  ],
-                ),
-              Expanded(
-                child: TabBarView(
-                  physics: keyboard
-                      ? const NeverScrollableScrollPhysics()
-                      : null,
-                  controller: _tabs,
-                  children: [
-                    for (final section in VideoFilterSection.values)
-                      section == VideoFilterSection.tags
-                          ? _tags()
-                          : ListView(
-                              key: PageStorageKey(
-                                'video-filter.${section.name}',
-                              ),
-                              keyboardDismissBehavior:
-                                  ScrollViewKeyboardDismissBehavior.onDrag,
-                              padding: const EdgeInsets.all(16),
-                              children: [
-                                section == VideoFilterSection.query
-                                    ? _queryMode()
-                                    : _single(section),
-                              ],
-                            ),
-                  ],
-                ),
-              ),
-              const Divider(height: 1),
-              Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: keyboard ? 0 : 8,
-                ),
-                child: Row(
-                  children: [
-                    if (keyboard)
-                      IconButton(
-                        key: const ValueKey('video-filter.reset'),
-                        tooltip: t.videoFilters.clearFilters,
-                        onPressed: _reset,
-                        icon: const Icon(Icons.filter_alt_off_outlined),
-                      )
-                    else
-                      Expanded(
-                        child: Align(
-                          alignment: AlignmentDirectional.centerStart,
-                          child: TextButton(
-                            key: const ValueKey('video-filter.reset'),
-                            onPressed: _reset,
-                            child: Text(t.videoFilters.clearFilters),
                           ),
+                          if (keyboard)
+                            IconButton(
+                              tooltip: t.videoFilters.closeKeyboard,
+                              onPressed: () => FocusScope.of(context).unfocus(),
+                              icon: const Icon(Icons.keyboard_hide_rounded),
+                            )
+                          else
+                            Tooltip(
+                              message: t.videoFilters.clearAll,
+                              child: TextButton(
+                                onPressed: () => _reset(all: true),
+                                child: Text(t.videoFilters.reset),
+                              ),
+                            ),
+                          IconButton(
+                            tooltip: t.common.cancel,
+                            onPressed: _cancel,
+                            icon: const Icon(Icons.close_rounded),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (!keyboard)
+                      TabBar(
+                        controller: _tabs,
+                        isScrollable: true,
+                        tabAlignment: TabAlignment.start,
+                        labelStyle: Theme.of(context).textTheme.labelLarge
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                        unselectedLabelStyle: Theme.of(
+                          context,
+                        ).textTheme.labelLarge,
+                        tabs: [
+                          for (final section in VideoFilterSection.values)
+                            Tab(text: videoFilterTitle(section)),
+                        ],
+                      ),
+                    Expanded(
+                      child: NativeMaterialSurface(
+                        key: const ValueKey('video-filter.readable-content'),
+                        radius: 0,
+                        readableContent: true,
+                        systemStyle: VideoControlAppearance.usesSystem(context),
+                        child: TabBarView(
+                          physics: keyboard
+                              ? const NeverScrollableScrollPhysics()
+                              : null,
+                          controller: _tabs,
+                          children: [
+                            for (final section in VideoFilterSection.values)
+                              section == VideoFilterSection.tags
+                                  ? _tags()
+                                  : ListView(
+                                      key: PageStorageKey(
+                                        'video-filter.${section.name}',
+                                      ),
+                                      keyboardDismissBehavior:
+                                          ScrollViewKeyboardDismissBehavior
+                                              .onDrag,
+                                      padding: const EdgeInsets.all(16),
+                                      children: [
+                                        section == VideoFilterSection.query
+                                            ? _queryMode(context)
+                                            : _single(context, section),
+                                      ],
+                                    ),
+                          ],
                         ),
                       ),
-                    if (keyboard) const Spacer(),
-                    FilledButton(
-                      key: const ValueKey('video-filter.apply'),
-                      onPressed: _invalidYear ? null : _apply,
-                      child: Text(
-                        keyboard
-                            ? t.videoFilters.applyShort
-                            : t.videoFilters.apply,
+                    ),
+                    const Divider(height: 1),
+                    Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: keyboard ? 0 : 8,
+                      ),
+                      child: Row(
+                        children: [
+                          if (keyboard)
+                            IconButton(
+                              key: const ValueKey('video-filter.reset'),
+                              tooltip: t.videoFilters.clearFilters,
+                              onPressed: _reset,
+                              icon: const Icon(Icons.filter_alt_off_outlined),
+                            )
+                          else
+                            Expanded(
+                              child: Align(
+                                alignment: AlignmentDirectional.centerStart,
+                                child: TextButton(
+                                  key: const ValueKey('video-filter.reset'),
+                                  onPressed: _reset,
+                                  child: Text(t.videoFilters.clearFilters),
+                                ),
+                              ),
+                            ),
+                          if (keyboard) const Spacer(),
+                          FilledButton(
+                            key: const ValueKey('video-filter.apply'),
+                            onPressed: _invalidYear ? null : _apply,
+                            child: Text(
+                              keyboard
+                                  ? t.videoFilters.applyShort
+                                  : t.videoFilters.apply,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
               ),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -883,19 +1065,29 @@ class VideoSearchFilterBar extends StatelessWidget {
 }
 
 /// Small, single-choice task: selecting an option commits only this field.
-class VideoQuickFilterPanel extends StatelessWidget {
+class VideoQuickFilterPanel extends StatefulWidget {
   const VideoQuickFilterPanel({
     super.key,
     required this.section,
     required this.initial,
     required this.schema,
+    this.source,
   });
   final VideoFilterSection section;
   final VideoSearchFilters initial;
   final VideoFilterSchema schema;
+  final String? source;
 
   @override
+  State<VideoQuickFilterPanel> createState() => _VideoQuickFilterPanelState();
+}
+
+class _VideoQuickFilterPanelState extends State<VideoQuickFilterPanel> {
+  @override
   Widget build(BuildContext context) {
+    final section = widget.section;
+    final initial = widget.initial;
+    final schema = widget.schema;
     final value = switch (section) {
       VideoFilterSection.genre => initial.genre,
       VideoFilterSection.sort => initial.sort,
@@ -903,7 +1095,8 @@ class VideoQuickFilterPanel extends StatelessWidget {
       VideoFilterSection.duration => initial.duration,
       _ => '',
     };
-    final choices = schema.options[section.name] ?? const [];
+    final options = schema.options[section.name] ?? const [];
+    final choices = options;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -936,15 +1129,22 @@ class VideoQuickFilterPanel extends StatelessWidget {
                   child: Text(t.videoFilters.optionsUnavailable),
                 ),
               for (final choice in choices)
-                Semantics(
-                  selected: choice.value == value,
-                  child: ListTile(
-                    title: Text(choice.label),
-                    trailing: choice.value == value
-                        ? const Icon(Icons.check_rounded)
-                        : null,
-                    onTap: () => Navigator.of(context).pop(choice.value),
-                  ),
+                Row(
+                  key: ValueKey(choice.value),
+                  children: [
+                    Expanded(
+                      child: Semantics(
+                        selected: choice.value == value,
+                        child: ListTile(
+                          title: Text(choice.label),
+                          trailing: choice.value == value
+                              ? const Icon(Icons.check_rounded)
+                              : null,
+                          onTap: () => Navigator.of(context).pop(choice.value),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               if (value.isNotEmpty &&
                   !choices.any((choice) => choice.value == value))
@@ -1008,12 +1208,6 @@ class VideoActiveFilters extends StatelessWidget {
     entries.addAll(
       filters.tags.map((tag) => (label: tag, next: filters.removeTag(tag))),
     );
-    if (filters.query.isNotEmpty) {
-      entries.add((
-        label: filters.query,
-        next: filters.change(VideoFilterSection.query, ''),
-      ));
-    }
     if (filters.author) {
       entries.add((
         label: t.videoFilters.authors,

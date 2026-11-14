@@ -11,11 +11,32 @@ class NativePlaybackSource {
     required this.url,
     required this.label,
     required this.headers,
+    this.localResourceId,
   });
 
+  /// Set only by the app's managed-resource reader, never plugin wire data.
+  final String? localResourceId;
   final Uri url;
   final String label;
   final Map<String, String> headers;
+}
+
+/// A site's resource line is distinct from resolved media alternatives. A null
+/// target means this line has no unambiguous match for the current episode.
+class NativeVideoResourceLine {
+  const NativeVideoResourceLine({
+    required this.id,
+    required this.label,
+    required this.current,
+    this.target,
+    this.detail = '',
+    this.resolving = false,
+  });
+  final String id, label;
+  final bool current;
+  final NativeVideoCard? target;
+  final String detail;
+  final bool resolving;
 }
 
 class NativeVideoCard {
@@ -76,6 +97,7 @@ class NativePlaybackSession {
     required this.tags,
     this.coverUrl,
     this.episodes = const [],
+    this.sitePlaylist,
     this.related = const [],
     this.creatorName = '',
     this.creatorUrl,
@@ -92,6 +114,10 @@ class NativePlaybackSession {
   final List<String> tags;
   final Uri? coverUrl;
   final List<NativeVideoCard> episodes;
+  // Null denotes the legacy or verified episode contract.
+  final List<NativeVideoCard>? sitePlaylist;
+  bool get isSitePlaylist => sitePlaylist != null;
+  List<NativeVideoCard> get playbackEntries => sitePlaylist ?? episodes;
   final List<NativeVideoCard> related;
   final String creatorName;
   final Uri? creatorUrl;
@@ -99,6 +125,27 @@ class NativePlaybackSession {
   final VideoCreatorReference? uploader;
   final Map<String, Uri> tagTargets;
   final VideoPublicMetadata metadata;
+
+  /// Renew only media transport; the selected episode and public detail stay
+  /// stable while a failure-only fallback URL is checked.
+  NativePlaybackSession withSources(List<NativePlaybackSource> sources) =>
+      NativePlaybackSession(
+        title: title,
+        watchUrl: watchUrl,
+        sources: List.unmodifiable(sources),
+        description: description,
+        tags: tags,
+        coverUrl: coverUrl,
+        episodes: episodes,
+        sitePlaylist: sitePlaylist,
+        related: related,
+        creatorName: creatorName,
+        creatorUrl: creatorUrl,
+        creator: creator,
+        uploader: uploader,
+        tagTargets: tagTargets,
+        metadata: metadata,
+      );
 
   static NativePlaybackSession fromPluginResponse(
     Map<String, dynamic> response, {
@@ -238,7 +285,12 @@ class NativePlaybackSession {
       tags: tags,
       tagTargets: Map.unmodifiable(tagTargets),
       coverUrl: coverUrl,
-      episodes: cards('episodes'),
+      episodes: detail['sequenceKind'] == 'sitePlaylist'
+          ? const []
+          : cards('episodes'),
+      sitePlaylist: detail['sequenceKind'] == 'sitePlaylist'
+          ? cards('playlist')
+          : null,
       related: cards('related'),
       metadata: VideoPublicMetadata.fromWire(detail),
       // The artist and uploader remain distinct, including unresolved profiles.

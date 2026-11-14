@@ -54,6 +54,9 @@ _DownloadTaskJson _$DownloadTaskJsonFromJson(Map<String, dynamic> json) =>
               .toList() ??
           const <String>[],
       attempt: (json['attempt'] as num?)?.toInt() ?? 0,
+      queuedAt: (json['queuedAt'] as num?)?.toInt(),
+      nextRetryAt: (json['nextRetryAt'] as num?)?.toInt(),
+      retryRounds: (json['retryRounds'] as num?)?.toInt() ?? 0,
       lastErrorCode: json['lastErrorCode'] as String? ?? '',
       lastErrorMessage: json['lastErrorMessage'] as String? ?? '',
     );
@@ -72,6 +75,9 @@ Map<String, dynamic> _$DownloadTaskJsonToJson(_DownloadTaskJson instance) =>
       'totalImages': instance.totalImages,
       'imagePaths': instance.imagePaths,
       'attempt': instance.attempt,
+      'queuedAt': ?instance.queuedAt,
+      'nextRetryAt': ?instance.nextRetryAt,
+      'retryRounds': instance.retryRounds,
       'lastErrorCode': instance.lastErrorCode,
       'lastErrorMessage': instance.lastErrorMessage,
     };

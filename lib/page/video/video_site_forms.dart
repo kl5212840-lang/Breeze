@@ -47,7 +47,21 @@ const videoAuthMetadataScript = r'''
       return u.origin === location.origin && !u.username && !u.password && !u.search && !u.hash && u.pathname === path ? [u.href] : [];
     } catch (_) { return []; }
   })[0] || '';
+  const errors = Array.from(document.querySelectorAll('.invalid-feedback, .help-block, .alert-danger'))
+    .filter(n => !n.hidden && getComputedStyle(n).display !== 'none').slice(0, 8);
+  // Read only visible validation nodes; no raw DOM text or field value crosses
+  // into Dart/plugins. Remove reflected inputs before classifying a reason.
+  let errorText = errors.map(n => (n.textContent || '').slice(0, 400)).join(' ').toLowerCase();
+  for (const input of inputs) { if (input.value) errorText = errorText.split(input.value.toLowerCase()).join(''); }
+  let errorKind = 'unknown';
+  if (/captcha|verification|turnstile|验证码|驗證碼|人机验证/.test(errorText)) errorKind = 'verification';
+  else if (/too many (?:(?:login|sign[ -]?in) )?(requests|attempts)|rate.limit|请求.{0,8}频繁|請求.{0,8}頻繁/.test(errorText)) errorKind = 'rateLimited';
+  else if (/(account|账号|帳號).{0,20}(disabled|suspended|banned|locked|停用|封禁|冻结)/.test(errorText)) errorKind = 'accountRestricted';
+  else if (/(client|客户端|客戶端).{0,20}(restricted|blocked|限制|不支持)/.test(errorText)) errorKind = 'clientRestricted';
+  else if (/invalid credentials|(?:invalid|incorrect|wrong) (?:email or password|username or password)|credentials (?:do not|don't) match|(?:账号|帳號|賬號|用户名|用戶名).{0,15}(?:密码|密碼).{0,10}(?:错误|錯誤|不匹配|不正确)/.test(errorText)) errorKind = 'credentials';
   return { supported, mode, remember: !!form.querySelector('input[type="checkbox"][name="remember"]'),
+    errorKind,
+
     recoveryUrl:realLink('/password/reset'), googleUrl:realLink('/auth/google'),
     confirmation: names.includes('password_confirmation'),
     failed: !!form.querySelector('[aria-invalid="true"]') || Array.from(document.querySelectorAll('.invalid-feedback, .help-block, .alert-danger'))
@@ -143,5 +157,37 @@ String videoRecoverySubmitScript({required Uri page, required String email}) =>
   if (submitter?.disabled) return 'invalid';
   if (submitter) form.requestSubmit(submitter); else form.requestSubmit();
   return 'submitted';
+})()
+''';
+
+/// Fresh first-party identity, not the previous document's rendered header.
+/// Only public identity leaves the existing authenticated source store.
+String videoSiteFreshAccountScript(Uri origin) =>
+    '''
+(async () => {
+  const origin = ${jsonEncode(origin.origin)};
+  if (location.origin !== origin) return null;
+  const response = await fetch(origin + '/', {credentials:'include',cache:'no-store',redirect:'error'});
+  if (response.status === 401) return {status:'signedOut'};
+  if (!response.ok || new URL(response.url).origin !== origin) return null;
+  const text = await response.text(); if (text.length > 2000000) return null;
+  const doc = new DOMParser().parseFromString(text,'text/html');
+  if (doc.querySelector('iframe[src*="challenges.cloudflare.com"], .cf-turnstile, #challenge-running') ||
+      /just a moment|checking your browser/i.test(doc.title)) return null;
+  const matches = Array.from(doc.querySelectorAll('a#user-modal-trigger[href], #user-modal-trigger a[href]')).flatMap(node => {
+    try { const u = new URL(node.getAttribute('href'),origin);
+      const m = /^\\/user\\/(\\d+)\\/?\$/.exec(u.pathname);
+      if (u.origin !== origin || u.username || u.password || u.search || u.hash || !m) return [];
+      return [{id:m[1],label:(node.textContent || '').trim().slice(0,120)}];
+    } catch (_) { return []; }
+  });
+  const ids = [...new Set(matches.map(p => p.id))];
+  if (ids.length === 1) return matches.find(p => p.id === ids[0]);
+  const login = Array.from(doc.querySelectorAll('a[href]')).some(node => {
+    try { const u = new URL(node.getAttribute('href'),origin);
+      return u.origin === origin && u.pathname === '/login' && !u.search && !u.hash;
+    } catch (_) { return false; }
+  });
+  return !ids.length && login ? {status:'signedOut'} : null;
 })()
 ''';

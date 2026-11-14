@@ -30,20 +30,31 @@ bool isEntryBlockedByCategory(
   Set<String> blockedCategories,
 ) {
   if (blockedCategories.isEmpty) return false;
-  final categories = entry
-      .metadataValues('categories')
+  final categories = entry.metadata
+      .where((field) => field.type == 'categories' || field.type == 'category')
+      .expand((field) => field.value)
       .map((value) => value.toString().trim())
       .where((value) => value.isNotEmpty)
       .expand((value) => value.split(RegExp(r'[,，、·|/]')))
-      .map((value) => convertChineseForDisplay(value.trim()).toLowerCase())
+      .map((value) => value.trim().toLowerCase())
       .where((value) => value.isNotEmpty)
       .toList();
   if (categories.isEmpty) return false;
   final blocked = blockedCategories
-      .map((value) => convertChineseForDisplay(value.trim()).toLowerCase())
+      .map((value) => value.trim().toLowerCase())
       .toSet();
-  return categories.any(blocked.contains);
+  if (categories.any(blocked.contains)) return true;
+
+  // A display preference must not change saved category matches. Fold the
+  // source values consistently while retaining their original stored identity.
+  final aliases = blocked.map(_categoryAlias).toSet();
+  return categories.any(
+    (category) => aliases.contains(_categoryAlias(category)),
+  );
 }
+
+String _categoryAlias(String value) =>
+    value.codeUnits.every((unit) => unit < 128) ? value : t2s(value);
 
 List<UnifiedComicListItem> filterEntriesByBlockedCategories(
   Iterable<UnifiedComicListItem> entries,

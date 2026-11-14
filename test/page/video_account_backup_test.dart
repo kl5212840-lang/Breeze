@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zephyr/page/video/video_account_backup.dart';
 
 final _origin = Uri.parse('https://hanime1.me/');
+const _omoSource = 'ccc2fe17-c0a8-4fd8-a596-835772686404';
 Map<String, dynamic> _cookie(
   String name, {
   String domain = 'hanime1.me',
@@ -56,6 +57,126 @@ class _Cookies implements VideoAccountCookies {
 }
 
 void main() {
+  test(
+    'only declared Omo authentication cookies retain their real browser attributes and first-party domain',
+    () {
+      final origin = Uri.parse('https://www.omofuna.com');
+      final rows = [
+        for (final name in ['user_id', 'user_name', 'user_check'])
+          {
+            ..._cookie(name, domain: '.omofuna.com', httpOnly: false),
+            'secure': false,
+          },
+      ];
+      final raw = {
+        'version': 1,
+        'origin': origin.origin,
+        'cookies': [
+          ...rows,
+          {
+            ..._cookie('cf_clearance', domain: 'www.omofuna.com'),
+            'secure': false,
+          },
+          _cookie('PHPSESSID', domain: 'www.omofuna.com'),
+        ],
+      };
+      final saved = VideoAccountBackup.parse(raw, origin, source: _omoSource)!;
+      expect(saved.cookies, rows);
+      final authOnly = {...raw, 'cookies': rows};
+      expect(VideoAccountBackup.parse(authOnly, origin), isNull);
+      expect(
+        VideoAccountBackup.parse(authOnly, origin, source: 'unknown-source'),
+        isNull,
+      );
+      expect(
+        VideoAccountBackup.parse(raw, origin)!.cookies.single['name'],
+        'PHPSESSID',
+        reason:
+            'unrelated sources retain their existing strict HttpOnly session policy',
+      );
+      for (final domain in [
+        'evil.omofuna.com',
+        'omofuna.com.evil.test',
+        'com',
+      ]) {
+        expect(
+          VideoAccountBackup.parse(
+            {
+              ...raw,
+              'cookies': [
+                for (final row in rows) {...row, 'domain': domain},
+              ],
+            },
+            origin,
+            source: _omoSource,
+          ),
+          isNull,
+        );
+      }
+      expect(
+        VideoAccountBackup.parse(
+          {...raw, 'cookies': rows.take(2).toList()},
+          origin,
+          source: _omoSource,
+        ),
+        isNull,
+        reason:
+            'a partial user_id/name group is not a portable authenticated session',
+      );
+    },
+  );
+  for (final fail in [false, true]) {
+    test(
+      'Omo restore preserves cookie flags and unrelated verification state, rollback=$fail',
+      () async {
+        final origin = Uri.parse('https://www.omofuna.com');
+        List<Map<String, dynamic>> group(String account) => [
+          for (final name in ['user_id', 'user_name', 'user_check'])
+            {
+              ..._cookie(
+                name,
+                domain: '.omofuna.com',
+                value: '$account-$name',
+                httpOnly: false,
+              ),
+              'secure': false,
+            },
+        ];
+        final previous = group('A'), target = group('B');
+        final provider = _cookie('cf_clearance', domain: 'www.omofuna.com');
+        final cookies = _Cookies()
+          ..values.addAll([...previous, provider])
+          ..failNextSet = fail;
+        final service = VideoAccountService(
+          source: _omoSource,
+          origin: origin,
+          cookies: cookies,
+          call: (_, _) async => {},
+          readFn: 'read',
+          saveFn: 'save',
+          forgetFn: 'forget',
+        );
+        final snapshot = VideoAccountBackup.parse(
+          {'version': 1, 'origin': origin.origin, 'cookies': target},
+          origin,
+          source: _omoSource,
+        )!;
+        if (fail) {
+          await expectLater(service.restore(snapshot), throwsStateError);
+        } else {
+          await service.restore(snapshot);
+        }
+        expect(
+          cookies.values.where((row) => row['name'] != 'cf_clearance'),
+          unorderedEquals(fail ? previous : target),
+        );
+        expect(
+          cookies.values.where((row) => row['name'] == 'cf_clearance').single,
+          provider,
+        );
+      },
+    );
+  }
   for (final failedStep in ['cleanup', 'first-restore']) {
     test(
       'rollback attempts remaining account entries after $failedStep fails',

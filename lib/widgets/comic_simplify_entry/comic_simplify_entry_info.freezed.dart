@@ -16,7 +16,7 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$ComicSimplifyEntryInfo {
 
-@JsonKey(name: "title") String get title;@JsonKey(name: "id") String get id;@JsonKey(name: "fileServer") String get fileServer;@JsonKey(name: "path") String get path;@JsonKey(name: "pictureType") PictureType get pictureType;@JsonKey(name: "source") String get source;@JsonKey(name: "from") String get from;
+@JsonKey(name: "title") String get title;@JsonKey(name: "description") String get description;@JsonKey(name: "detailMetadata") String get detailMetadata; int get detailViewCount; int get detailPopularity;@JsonKey(name: "id") String get id;@JsonKey(name: "fileServer") String get fileServer;@JsonKey(name: "path") String get path;@JsonKey(name: "pictureType") PictureType get pictureType;@JsonKey(name: "source") String get source;@JsonKey(name: "from") String get from;
 /// Create a copy of ComicSimplifyEntryInfo
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -30,20 +30,20 @@ $ComicSimplifyEntryInfoCopyWith<ComicSimplifyEntryInfo> get copyWith => _$ComicS
 @override
 bool operator ==(Object other) {
   final _this = this as ComicSimplifyEntryInfo;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is ComicSimplifyEntryInfo&&(identical(other.title, _this.title) || other.title == _this.title)&&(identical(other.id, _this.id) || other.id == _this.id)&&(identical(other.fileServer, _this.fileServer) || other.fileServer == _this.fileServer)&&(identical(other.path, _this.path) || other.path == _this.path)&&(identical(other.pictureType, _this.pictureType) || other.pictureType == _this.pictureType)&&(identical(other.source, _this.source) || other.source == _this.source)&&(identical(other.from, _this.from) || other.from == _this.from));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is ComicSimplifyEntryInfo&&(identical(other.title, _this.title) || other.title == _this.title)&&(identical(other.description, _this.description) || other.description == _this.description)&&(identical(other.detailMetadata, _this.detailMetadata) || other.detailMetadata == _this.detailMetadata)&&(identical(other.detailViewCount, _this.detailViewCount) || other.detailViewCount == _this.detailViewCount)&&(identical(other.detailPopularity, _this.detailPopularity) || other.detailPopularity == _this.detailPopularity)&&(identical(other.id, _this.id) || other.id == _this.id)&&(identical(other.fileServer, _this.fileServer) || other.fileServer == _this.fileServer)&&(identical(other.path, _this.path) || other.path == _this.path)&&(identical(other.pictureType, _this.pictureType) || other.pictureType == _this.pictureType)&&(identical(other.source, _this.source) || other.source == _this.source)&&(identical(other.from, _this.from) || other.from == _this.from));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
   final _this = this as ComicSimplifyEntryInfo;
-  return Object.hash(runtimeType,_this.title,_this.id,_this.fileServer,_this.path,_this.pictureType,_this.source,_this.from);
+  return Object.hash(runtimeType,_this.title,_this.description,_this.detailMetadata,_this.detailViewCount,_this.detailPopularity,_this.id,_this.fileServer,_this.path,_this.pictureType,_this.source,_this.from);
 }
 
 @override
 String toString() {
   final _this = this as ComicSimplifyEntryInfo;
-  return 'ComicSimplifyEntryInfo(title: ${_this.title}, id: ${_this.id}, fileServer: ${_this.fileServer}, path: ${_this.path}, pictureType: ${_this.pictureType}, source: ${_this.source}, from: ${_this.from})';
+  return 'ComicSimplifyEntryInfo(title: ${_this.title}, description: ${_this.description}, detailMetadata: ${_this.detailMetadata}, detailViewCount: ${_this.detailViewCount}, detailPopularity: ${_this.detailPopularity}, id: ${_this.id}, fileServer: ${_this.fileServer}, path: ${_this.path}, pictureType: ${_this.pictureType}, source: ${_this.source}, from: ${_this.from})';
 }
 
 
@@ -54,7 +54,7 @@ abstract mixin class $ComicSimplifyEntryInfoCopyWith<$Res>  {
   factory $ComicSimplifyEntryInfoCopyWith(ComicSimplifyEntryInfo value, $Res Function(ComicSimplifyEntryInfo) _then) = _$ComicSimplifyEntryInfoCopyWithImpl;
 @useResult
 $Res call({
-@JsonKey(name: "title") String title,@JsonKey(name: "id") String id,@JsonKey(name: "fileServer") String fileServer,@JsonKey(name: "path") String path,@JsonKey(name: "pictureType") PictureType pictureType,@JsonKey(name: "source") String source,@JsonKey(name: "from") String from
+@JsonKey(name: "title") String title,@JsonKey(name: "description") String description,@JsonKey(name: "detailMetadata") String detailMetadata, int detailViewCount, int detailPopularity,@JsonKey(name: "id") String id,@JsonKey(name: "fileServer") String fileServer,@JsonKey(name: "path") String path,@JsonKey(name: "pictureType") PictureType pictureType,@JsonKey(name: "source") String source,@JsonKey(name: "from") String from
 });
 
 
@@ -71,10 +71,14 @@ class _$ComicSimplifyEntryInfoCopyWithImpl<$Res>
 
 /// Create a copy of ComicSimplifyEntryInfo
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? title = null,Object? id = null,Object? fileServer = null,Object? path = null,Object? pictureType = null,Object? source = null,Object? from = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? title = null,Object? description = null,Object? detailMetadata = null,Object? detailViewCount = null,Object? detailPopularity = null,Object? id = null,Object? fileServer = null,Object? path = null,Object? pictureType = null,Object? source = null,Object? from = null,}) {
   return _then(ComicSimplifyEntryInfo(
 title: null == title ? _self.title : title // ignore: cast_nullable_to_non_nullable
-as String,id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
+as String,description: null == description ? _self.description : description // ignore: cast_nullable_to_non_nullable
+as String,detailMetadata: null == detailMetadata ? _self.detailMetadata : detailMetadata // ignore: cast_nullable_to_non_nullable
+as String,detailViewCount: null == detailViewCount ? _self.detailViewCount : detailViewCount // ignore: cast_nullable_to_non_nullable
+as int,detailPopularity: null == detailPopularity ? _self.detailPopularity : detailPopularity // ignore: cast_nullable_to_non_nullable
+as int,id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,fileServer: null == fileServer ? _self.fileServer : fileServer // ignore: cast_nullable_to_non_nullable
 as String,path: null == path ? _self.path : path // ignore: cast_nullable_to_non_nullable
 as String,pictureType: null == pictureType ? _self.pictureType : pictureType // ignore: cast_nullable_to_non_nullable
@@ -165,10 +169,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(name: "title")  String title, @JsonKey(name: "id")  String id, @JsonKey(name: "fileServer")  String fileServer, @JsonKey(name: "path")  String path, @JsonKey(name: "pictureType")  PictureType pictureType, @JsonKey(name: "source")  String source, @JsonKey(name: "from")  String from)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(name: "title")  String title, @JsonKey(name: "description")  String description, @JsonKey(name: "detailMetadata")  String detailMetadata,  int detailViewCount,  int detailPopularity, @JsonKey(name: "id")  String id, @JsonKey(name: "fileServer")  String fileServer, @JsonKey(name: "path")  String path, @JsonKey(name: "pictureType")  PictureType pictureType, @JsonKey(name: "source")  String source, @JsonKey(name: "from")  String from)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _ComicSimplifyEntryInfo() when $default != null:
-return $default(_that.title,_that.id,_that.fileServer,_that.path,_that.pictureType,_that.source,_that.from);case _:
+return $default(_that.title,_that.description,_that.detailMetadata,_that.detailViewCount,_that.detailPopularity,_that.id,_that.fileServer,_that.path,_that.pictureType,_that.source,_that.from);case _:
   return orElse();
 
 }
@@ -186,10 +190,10 @@ return $default(_that.title,_that.id,_that.fileServer,_that.path,_that.pictureTy
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(name: "title")  String title, @JsonKey(name: "id")  String id, @JsonKey(name: "fileServer")  String fileServer, @JsonKey(name: "path")  String path, @JsonKey(name: "pictureType")  PictureType pictureType, @JsonKey(name: "source")  String source, @JsonKey(name: "from")  String from)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(name: "title")  String title, @JsonKey(name: "description")  String description, @JsonKey(name: "detailMetadata")  String detailMetadata,  int detailViewCount,  int detailPopularity, @JsonKey(name: "id")  String id, @JsonKey(name: "fileServer")  String fileServer, @JsonKey(name: "path")  String path, @JsonKey(name: "pictureType")  PictureType pictureType, @JsonKey(name: "source")  String source, @JsonKey(name: "from")  String from)  $default,) {final _that = this;
 switch (_that) {
 case _ComicSimplifyEntryInfo():
-return $default(_that.title,_that.id,_that.fileServer,_that.path,_that.pictureType,_that.source,_that.from);case _:
+return $default(_that.title,_that.description,_that.detailMetadata,_that.detailViewCount,_that.detailPopularity,_that.id,_that.fileServer,_that.path,_that.pictureType,_that.source,_that.from);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -206,10 +210,10 @@ return $default(_that.title,_that.id,_that.fileServer,_that.path,_that.pictureTy
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(name: "title")  String title, @JsonKey(name: "id")  String id, @JsonKey(name: "fileServer")  String fileServer, @JsonKey(name: "path")  String path, @JsonKey(name: "pictureType")  PictureType pictureType, @JsonKey(name: "source")  String source, @JsonKey(name: "from")  String from)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(name: "title")  String title, @JsonKey(name: "description")  String description, @JsonKey(name: "detailMetadata")  String detailMetadata,  int detailViewCount,  int detailPopularity, @JsonKey(name: "id")  String id, @JsonKey(name: "fileServer")  String fileServer, @JsonKey(name: "path")  String path, @JsonKey(name: "pictureType")  PictureType pictureType, @JsonKey(name: "source")  String source, @JsonKey(name: "from")  String from)?  $default,) {final _that = this;
 switch (_that) {
 case _ComicSimplifyEntryInfo() when $default != null:
-return $default(_that.title,_that.id,_that.fileServer,_that.path,_that.pictureType,_that.source,_that.from);case _:
+return $default(_that.title,_that.description,_that.detailMetadata,_that.detailViewCount,_that.detailPopularity,_that.id,_that.fileServer,_that.path,_that.pictureType,_that.source,_that.from);case _:
   return null;
 
 }
@@ -221,10 +225,14 @@ return $default(_that.title,_that.id,_that.fileServer,_that.path,_that.pictureTy
 @JsonSerializable()
 
 class _ComicSimplifyEntryInfo implements ComicSimplifyEntryInfo {
-  const _ComicSimplifyEntryInfo({@JsonKey(name: "title") required this.title, @JsonKey(name: "id") required this.id, @JsonKey(name: "fileServer") required this.fileServer, @JsonKey(name: "path") required this.path, @JsonKey(name: "pictureType") required this.pictureType, @JsonKey(name: "source") this.source = '', @JsonKey(name: "from") required this.from});
+  const _ComicSimplifyEntryInfo({@JsonKey(name: "title") required this.title, @JsonKey(name: "description") this.description = '', @JsonKey(name: "detailMetadata") this.detailMetadata = '', this.detailViewCount = 0, this.detailPopularity = 0, @JsonKey(name: "id") required this.id, @JsonKey(name: "fileServer") required this.fileServer, @JsonKey(name: "path") required this.path, @JsonKey(name: "pictureType") required this.pictureType, @JsonKey(name: "source") this.source = '', @JsonKey(name: "from") required this.from});
   factory _ComicSimplifyEntryInfo.fromJson(Map<String, dynamic> json) => _$ComicSimplifyEntryInfoFromJson(json);
 
 @override@JsonKey(name: "title") final  String title;
+@override@JsonKey(name: "description") final  String description;
+@override@JsonKey(name: "detailMetadata") final  String detailMetadata;
+@override@JsonKey() final  int detailViewCount;
+@override@JsonKey() final  int detailPopularity;
 @override@JsonKey(name: "id") final  String id;
 @override@JsonKey(name: "fileServer") final  String fileServer;
 @override@JsonKey(name: "path") final  String path;
@@ -245,18 +253,18 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _ComicSimplifyEntryInfo&&(identical(other.title, title) || other.title == title)&&(identical(other.id, id) || other.id == id)&&(identical(other.fileServer, fileServer) || other.fileServer == fileServer)&&(identical(other.path, path) || other.path == path)&&(identical(other.pictureType, pictureType) || other.pictureType == pictureType)&&(identical(other.source, source) || other.source == source)&&(identical(other.from, from) || other.from == from));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _ComicSimplifyEntryInfo&&(identical(other.title, title) || other.title == title)&&(identical(other.description, description) || other.description == description)&&(identical(other.detailMetadata, detailMetadata) || other.detailMetadata == detailMetadata)&&(identical(other.detailViewCount, detailViewCount) || other.detailViewCount == detailViewCount)&&(identical(other.detailPopularity, detailPopularity) || other.detailPopularity == detailPopularity)&&(identical(other.id, id) || other.id == id)&&(identical(other.fileServer, fileServer) || other.fileServer == fileServer)&&(identical(other.path, path) || other.path == path)&&(identical(other.pictureType, pictureType) || other.pictureType == pictureType)&&(identical(other.source, source) || other.source == source)&&(identical(other.from, from) || other.from == from));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
-    return Object.hash(runtimeType,title,id,fileServer,path,pictureType,source,from);
+    return Object.hash(runtimeType,title,description,detailMetadata,detailViewCount,detailPopularity,id,fileServer,path,pictureType,source,from);
 }
 
 @override
 String toString() {
-    return 'ComicSimplifyEntryInfo(title: $title, id: $id, fileServer: $fileServer, path: $path, pictureType: $pictureType, source: $source, from: $from)';
+    return 'ComicSimplifyEntryInfo(title: $title, description: $description, detailMetadata: $detailMetadata, detailViewCount: $detailViewCount, detailPopularity: $detailPopularity, id: $id, fileServer: $fileServer, path: $path, pictureType: $pictureType, source: $source, from: $from)';
 }
 
 
@@ -267,7 +275,7 @@ abstract mixin class _$ComicSimplifyEntryInfoCopyWith<$Res> implements $ComicSim
   factory _$ComicSimplifyEntryInfoCopyWith(_ComicSimplifyEntryInfo value, $Res Function(_ComicSimplifyEntryInfo) _then) = __$ComicSimplifyEntryInfoCopyWithImpl;
 @override @useResult
 $Res call({
-@JsonKey(name: "title") String title,@JsonKey(name: "id") String id,@JsonKey(name: "fileServer") String fileServer,@JsonKey(name: "path") String path,@JsonKey(name: "pictureType") PictureType pictureType,@JsonKey(name: "source") String source,@JsonKey(name: "from") String from
+@JsonKey(name: "title") String title,@JsonKey(name: "description") String description,@JsonKey(name: "detailMetadata") String detailMetadata, int detailViewCount, int detailPopularity,@JsonKey(name: "id") String id,@JsonKey(name: "fileServer") String fileServer,@JsonKey(name: "path") String path,@JsonKey(name: "pictureType") PictureType pictureType,@JsonKey(name: "source") String source,@JsonKey(name: "from") String from
 });
 
 
@@ -284,10 +292,14 @@ class __$ComicSimplifyEntryInfoCopyWithImpl<$Res>
 
 /// Create a copy of ComicSimplifyEntryInfo
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? title = null,Object? id = null,Object? fileServer = null,Object? path = null,Object? pictureType = null,Object? source = null,Object? from = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? title = null,Object? description = null,Object? detailMetadata = null,Object? detailViewCount = null,Object? detailPopularity = null,Object? id = null,Object? fileServer = null,Object? path = null,Object? pictureType = null,Object? source = null,Object? from = null,}) {
   return _then(_ComicSimplifyEntryInfo(
 title: null == title ? _self.title : title // ignore: cast_nullable_to_non_nullable
-as String,id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
+as String,description: null == description ? _self.description : description // ignore: cast_nullable_to_non_nullable
+as String,detailMetadata: null == detailMetadata ? _self.detailMetadata : detailMetadata // ignore: cast_nullable_to_non_nullable
+as String,detailViewCount: null == detailViewCount ? _self.detailViewCount : detailViewCount // ignore: cast_nullable_to_non_nullable
+as int,detailPopularity: null == detailPopularity ? _self.detailPopularity : detailPopularity // ignore: cast_nullable_to_non_nullable
+as int,id: null == id ? _self.id : id // ignore: cast_nullable_to_non_nullable
 as String,fileServer: null == fileServer ? _self.fileServer : fileServer // ignore: cast_nullable_to_non_nullable
 as String,path: null == path ? _self.path : path // ignore: cast_nullable_to_non_nullable
 as String,pictureType: null == pictureType ? _self.pictureType : pictureType // ignore: cast_nullable_to_non_nullable

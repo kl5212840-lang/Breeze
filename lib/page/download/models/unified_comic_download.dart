@@ -52,6 +52,9 @@ class UnifiedComicDownloadStoredChapter {
     this.storageChapterId = '',
     this.groupTitle = '',
     this.images = const [],
+    this.downloadApiHost = '',
+    this.downloadImageHost = '',
+    this.completedAt,
   });
 
   final String id;
@@ -62,9 +65,15 @@ class UnifiedComicDownloadStoredChapter {
   final String storageChapterId;
   final String groupTitle;
   final List<UnifiedComicDownloadImage> images;
+  final String downloadApiHost;
+  final String downloadImageHost;
+
+  /// When this chapter was last successfully published to the offline index.
+  final DateTime? completedAt;
 
   factory UnifiedComicDownloadStoredChapter.fromMap(Map<String, dynamic> map) {
     final rawImages = (map['images'] as List?) ?? const [];
+    final completedAt = map['completedAt'];
     return UnifiedComicDownloadStoredChapter(
       id: map['id']?.toString() ?? '',
       name: map['name']?.toString() ?? '',
@@ -73,6 +82,11 @@ class UnifiedComicDownloadStoredChapter {
       taskChapterId: map['taskChapterId']?.toString() ?? '',
       storageChapterId: map['storageChapterId']?.toString() ?? '',
       groupTitle: map['groupTitle']?.toString() ?? '',
+      downloadApiHost: map['downloadApiHost']?.toString() ?? '',
+      downloadImageHost: map['downloadImageHost']?.toString() ?? '',
+      completedAt: completedAt is String
+          ? DateTime.tryParse(completedAt)?.toUtc()
+          : null,
       images: rawImages
           .whereType<Map>()
           .map(
@@ -91,6 +105,10 @@ class UnifiedComicDownloadStoredChapter {
     'taskChapterId': taskChapterId,
     'storageChapterId': storageChapterId,
     'groupTitle': groupTitle,
+    if (downloadApiHost.isNotEmpty) 'downloadApiHost': downloadApiHost,
+    if (downloadImageHost.isNotEmpty) 'downloadImageHost': downloadImageHost,
+    if (completedAt case final time?)
+      'completedAt': time.toUtc().toIso8601String(),
     'images': images.map((image) => image.toMap()).toList(),
   };
 }
@@ -292,6 +310,30 @@ List<DownloadChapter> resolveDownloadChapters(UnifiedComicDownload comic) {
   }
 
   return mainChapters;
+}
+
+/// Build both download-center representations from a single decode.
+({
+  List<UnifiedComicDownloadStoredChapter> stored,
+  List<DownloadChapter> download,
+})
+resolveDownloadChapterViews(UnifiedComicDownload comic) {
+  const adapter = DownloadChapterAdapter();
+  final raw = _decodeListOfMaps(comic.chapters);
+  final stored = raw.map(UnifiedComicDownloadStoredChapter.fromMap).toList();
+  final download = raw.map(adapter.fromStoredMap).toList();
+  final hasStored = stored.any((chapter) => chapter.images.isNotEmpty);
+  final hasDownload = download.any((chapter) => chapter.images.isNotEmpty);
+  if (hasStored && hasDownload) return (stored: stored, download: download);
+  final fallback = _decodeStoredChaptersFromDetailJson(comic.detailJson);
+  return (
+    stored: hasStored || fallback.isEmpty ? stored : fallback,
+    download: hasDownload || fallback.isEmpty
+        ? download
+        : fallback
+              .map((chapter) => adapter.fromStoredMap(chapter.toMap()))
+              .toList(),
+  );
 }
 
 /// 从在线详情构建全量章节目录快照（只含身份 + 顺序，不含图片）。

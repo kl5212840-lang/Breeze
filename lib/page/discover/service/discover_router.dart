@@ -6,6 +6,7 @@ import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/comic_list/models/comic_list_scene.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/json/json_value.dart';
@@ -19,6 +20,9 @@ import 'package:zephyr/page/video/video_search_page.dart';
 import 'package:zephyr/page/video/video_site_browser.dart';
 import 'package:zephyr/page/video/api_video_library_page.dart';
 import 'package:zephyr/page/video/api_video_repository.dart';
+import 'package:zephyr/page/video/api_video_models.dart';
+import 'package:zephyr/page/video/api_video_filter_panel.dart';
+import 'package:zephyr/page/video/video_playback_identity.dart';
 
 import 'package:zephyr/page/discover/view/plugin_function_dialog.dart';
 
@@ -39,6 +43,14 @@ class DiscoverRouter {
         payload['nativeSearch'] != true) {
       return null;
     }
+    // Explicit API capabilities override the older nativeSearch opt-in. Keep
+    // omitted capabilities on the protocol 1 default, and catalog contracts as-is.
+    if (action['type'] == 'openVideoLibrary' &&
+        !ApiVideoCapabilities.fromJson(
+          asJsonMap(payload['capabilities']),
+        ).canSearch) {
+      return null;
+    }
     return {
       ...action,
       'payload': {...payload, 'openSearch': true},
@@ -49,6 +61,7 @@ class DiscoverRouter {
     BuildContext context, {
     required Map<String, dynamic> action,
     required String currentFrom,
+    String? accountLoginUsername,
   }) async {
     final type = action['type']?.toString() ?? '';
 
@@ -62,7 +75,11 @@ class DiscoverRouter {
       case 'openWeb':
         await _openWeb(context, asJsonMap(action['payload']));
       case 'openVideoCatalog':
-        await _openVideoCatalog(context, asJsonMap(action['payload']));
+        await _openVideoCatalog(
+          context,
+          asJsonMap(action['payload']),
+          accountLoginUsername: accountLoginUsername,
+        );
       case 'openVideoLibrary':
         await _openVideoLibrary(context, asJsonMap(action['payload']));
       case 'openPluginFunction':
@@ -163,8 +180,9 @@ class DiscoverRouter {
 
   static Future<void> _openVideoCatalog(
     BuildContext context,
-    Map<String, dynamic> payload,
-  ) async {
+    Map<String, dynamic> payload, {
+    String? accountLoginUsername,
+  }) async {
     final source = _sourceFromString(payload['source']?.toString());
     final homeUrl = Uri.tryParse(payload['url']?.toString() ?? '');
     final selectors = asJsonMap(
@@ -255,18 +273,51 @@ class DiscoverRouter {
         ? null
         : VideoFilterSchema.fromWire(asJsonMap(payload['searchFilters']));
     Uri? initialUrl;
+    if (payload['initialWatchUrl'] is String) {
+      final requested = Uri.tryParse(payload['initialWatchUrl'] as String);
+      final watch = requested == null ? null : videoPlaybackIdentity(requested);
+      if (watch == null ||
+          watch.origin != homeUrl.origin ||
+          watch.path != '/watch') {
+        return;
+      }
+      initialUrl = watch;
+    }
+    if (payload['initialAccountLogin'] == true) {
+      if (payload['nativeAuth'] != true) return;
+      final declared = tabs
+          .where(
+            (tab) =>
+                tab.mode == 'account' &&
+                tab.url.origin == homeUrl.origin &&
+                tab.url.path == '/login' &&
+                !tab.url.hasQuery &&
+                !tab.url.hasFragment,
+          )
+          .toList();
+      if (declared.length != 1) return;
+      initialUrl = declared.single.url;
+    }
+    final initialQuery = apiVideoText(payload['initialQuery'], 100);
+    var keywordScope = parseKeywordSearchScope(payload['initialKeywordScope']);
+    if (initialQuery.isNotEmpty && payload['nativeSearch'] == true) {
+      initialUrl = VideoSearchFilters(query: initialQuery).toUri(homeUrl);
+      unawaited(
+        VideoSearchHistory.add(source, initialQuery).catchError((Object _) {}),
+      );
+    }
     if (payload['openSearch'] == true) {
       if (payload['nativeSearch'] != true) return;
-      final result = await Navigator.of(context, rootNavigator: true)
-          .push<VideoSearchFilters>(
-            videoPageRoute(
-              builder: (_) => VideoSearchPage(
-                source: source,
-                initial: const VideoSearchFilters(),
-                authorEnabled: schema != null,
-              ),
-            ),
-          );
+      final result = await _readVideoSearch(
+        context,
+        VideoSearchPage(
+          source: source,
+          initial: const VideoSearchFilters(),
+          authorEnabled: schema != null,
+          initialScope: keywordScope ?? KeywordSearchScope.all,
+          onSubmitScope: (value) => keywordScope = value,
+        ),
+      );
       if (result == null || !context.mounted) return;
       initialUrl = result.toUri(homeUrl);
       unawaited(
@@ -283,6 +334,15 @@ class DiscoverRouter {
           title: payload['title']?.toString() ?? 'Video',
           homeUrl: homeUrl,
           initialUrl: initialUrl,
+          accountLoginUsername:
+              payload['initialAccountLogin'] == true &&
+                  initialUrl?.path == '/login'
+              ? accountLoginUsername
+              : null,
+          initialKeywordScope: keywordScope,
+          returnToCallerAfterPlayback:
+              initialUrl?.path == '/watch' &&
+              payload['fromDownloadDetails'] == true,
           catalogFnPath: path('catalogFnPath'),
           detailFnPath: path('detailFnPath'),
           playbackFnPath: path('playbackFnPath'),
@@ -308,6 +368,20 @@ class DiscoverRouter {
     );
   }
 
+  static Future<VideoSearchFilters?> _readVideoSearch(
+    BuildContext context,
+    VideoSearchPage page,
+  ) async {
+    final origin = ModalRoute.of(context);
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = videoPageRoute<VideoSearchFilters>(builder: (_) => page);
+    final result = await navigator.push(route);
+    if (result == null) return null;
+    // The pop result arrives before the outgoing route leaves the overlay.
+    await route.completed;
+    return context.mounted && origin?.isCurrent != false ? result : null;
+  }
+
   static Future<void> _openVideoLibrary(
     BuildContext context,
     Map<String, dynamic> payload,
@@ -318,7 +392,7 @@ class DiscoverRouter {
     final function = RegExp(
       r'^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$',
     );
-    if (payload['protocol'] != 1 ||
+    if (!const {1, 2}.contains(payload['protocol']) ||
         source.isEmpty ||
         home == null ||
         home.scheme != 'https' ||
@@ -330,33 +404,76 @@ class DiscoverRouter {
         )) {
       return;
     }
-    var query = '';
-    if (payload['openSearch'] == true) {
-      if (payload['nativeSearch'] != true) return;
-      final result = await Navigator.of(context, rootNavigator: true)
-          .push<VideoSearchFilters>(
-            videoPageRoute(
-              builder: (_) => VideoSearchPage(
-                source: source,
-                initial: const VideoSearchFilters(),
-                authorEnabled: false,
-                hint: t.videoLibrary.searchHint,
-              ),
-            ),
-          );
+    final capabilities = ApiVideoCapabilities.fromJson(
+      asJsonMap(payload['capabilities']),
+    );
+    final openSearch = payload['openSearch'] == true;
+    final nativeSearch = payload['nativeSearch'] == true;
+    if (openSearch && (!nativeSearch || !capabilities.canSearch)) return;
+    var query = nativeSearch ? apiVideoText(payload['initialQuery'], 100) : '';
+    var filters = VideoSearchFilters(query: query);
+    var keywordScope = parseKeywordSearchScope(payload['initialKeywordScope']);
+    final searchTask =
+        capabilities.search == 'full' &&
+        !capabilities.browserCatalog &&
+        (openSearch || query.isNotEmpty);
+    if (query.isNotEmpty) {
+      unawaited(
+        VideoSearchHistory.add(source, query).catchError((Object _) {}),
+      );
+    }
+    if (openSearch && !searchTask) {
+      final result = await _readVideoSearch(
+        context,
+        VideoSearchPage(
+          source: source,
+          initial: const VideoSearchFilters(),
+          authorEnabled: false,
+          initialScope: keywordScope ?? KeywordSearchScope.all,
+          onSubmitScope: (value) => keywordScope = value,
+          scopeHint: capabilities.search == 'website'
+              ? t.videoLibrary.officialSearchHint
+              : null,
+          filterBuilder: apiVideoKeywordFilterBuilder(
+            capabilities,
+            source: source,
+            namespace: capabilities.itemNamespace,
+          ),
+          hint: capabilities.searchHint.isEmpty
+              ? t.videoLibrary.searchHint
+              : capabilities.searchHint,
+        ),
+      );
       if (result == null || !context.mounted) return;
       query = result.query;
+      filters = result;
       unawaited(
         VideoSearchHistory.add(source, query).catchError((Object _) {}),
       );
     }
     if (!context.mounted) return;
+    final resume = payload['bookshelfResume'];
+    final watch = resume is String
+        ? videoPlaybackIdentity(Uri.tryParse(resume) ?? Uri())
+        : null;
     await Navigator.of(context, rootNavigator: true).push<void>(
       videoPageRoute(
+        settings: const RouteSettings(name: apiVideoLibraryRouteName),
         builder: (_) => ApiVideoLibraryPage(
+          forDownloadRecovery: payload['forDownloadRecovery'] == true,
+          requireExactResume:
+              payload['fromDownloadDetails'] == true && watch != null,
+          bookshelfItem: asJsonMap(payload['bookshelfItem']).isEmpty
+              ? null
+              : ApiVideoItem.fromJson(
+                  asJsonMap(payload['bookshelfItem']),
+                  home: home,
+                ),
+          bookshelfResume: watch,
           repository: ApiVideoRepository(
             source: source,
             home: home,
+            capabilities: capabilities,
             catalogFn: path('catalogFnPath'),
             detailFn: path('detailFnPath'),
             playbackFn: path('playbackFnPath'),
@@ -366,6 +483,10 @@ class DiscoverRouter {
           ),
           title: payload['title']?.toString() ?? 'Video',
           initialQuery: query,
+          initialFilters: filters,
+          initialKeywordScope: keywordScope,
+          searchTask: searchTask,
+          initialSection: payload['initialSection'] == 'me' ? 'me' : 'discover',
         ),
       ),
     );
@@ -456,6 +577,7 @@ class DiscoverRouter {
       ComicListRoute(
         title: title ?? t.oldHome.cloudFavorite,
         sceneSource: source,
+        jmCollection: payload['jmCollection'] == true,
         sceneBundleFnPath: 'getCloudFavoriteSceneBundle',
         sceneBundleFnPathFallback: 'get_cloud_favorite_scene_bundle',
       ),

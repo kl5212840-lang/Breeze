@@ -10,8 +10,21 @@ abstract final class SourceReturnPreferences {
   static int _revision = 0;
   static Future<void> _writes = Future<void>.value();
 
+  @visibleForTesting
+  static void resetForTests() {
+    // Each widget test owns a separate preference store and FakeAsync zone.
+    // Invalidate work from an earlier fixture before replacing its write queue.
+    _revision++;
+    _writes = Future<void>.value();
+    changes.value = SourceReturnMode.byFunction;
+  }
+
   static bool get includesTabHistory =>
       changes.value == SourceReturnMode.stepByStep;
+
+  static Future<void> flush() async {
+    await _writes.catchError((Object _) {});
+  }
 
   static Future<void> load() async {
     final revision = _revision;

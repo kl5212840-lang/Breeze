@@ -21,6 +21,65 @@ Map<String, dynamic> listFunction(String id, String title, String fnPath) => {
 };
 
 void main() {
+  test(
+    'video and profile presentation declarations are optional and typed',
+    () {
+      for (final declaration in [null, 'true', 1, true, false]) {
+        final sections = SourceShellSection.fromPluginInfo({
+          'breezeVideoModules': [
+            {
+              'type': 'openVideoLibrary',
+              'payload': {
+                'title': '电影',
+                'url': 'https://video.fixture/',
+                'protocol': 2,
+                'catalogFnPath': 'catalog',
+                'detailFnPath': 'detail',
+                'playbackFnPath': 'play',
+              },
+            },
+          ],
+          'breezeExperience': {
+            'profileTab': true,
+            'videoBrowseOnly': ?declaration,
+            'profileVideoRecords': ?declaration,
+          },
+        }, 'fixture-retired-independent-source');
+        final video = sections.singleWhere((value) => value.videoGroup);
+        final profile = sections.singleWhere((value) => value.profile);
+        expect(video.videoBrowseOnly, declaration is bool ? declaration : null);
+        expect(profile.profileVideoRecords, declaration == true);
+        expect(profile.legacySources, isEmpty);
+      }
+    },
+  );
+
+  test(
+    'profile check-in evidence source is explicit and old metadata keeps its default',
+    () {
+      for (final declaration in [
+        null,
+        'serverCalendar',
+        'serverProfile',
+        'unknown',
+      ]) {
+        final profile = SourceShellSection.fromPluginInfo({
+          'breezeExperience': {
+            'profileTab': true,
+            'profileCheckinFunction': 'checkInToday',
+            'profileCheckinStatusFunction': 'getCheckinStatus',
+            'profileCheckinStatusSource': ?declaration,
+          },
+        }, 'third-party-source').single;
+        expect(
+          profile.profileCheckinStatusSource,
+          declaration == 'serverProfile' ? 'serverProfile' : 'serverCalendar',
+        );
+        expect(profile.profileCheckinStatusFunction, 'getCheckinStatus');
+      }
+    },
+  );
+
   test('navigation and ranking use distinct section icons', () {
     const navigation = SourceShellSection.function(
       id: 'navigation',

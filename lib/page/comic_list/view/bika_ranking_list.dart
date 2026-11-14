@@ -1,3 +1,8 @@
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'dart:math' as math;
+import 'package:zephyr/page/video/video_native_navigation.dart';
+import 'package:zephyr/page/bookshelf/models/shelf_facets.dart';
+import 'package:zephyr/page/bookshelf/widgets/shelf_filter_sheet.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/config/router/router.gr.dart';
@@ -9,9 +14,11 @@ import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/cover.dart';
+import 'package:zephyr/widgets/work_list_divider.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 
 /// The ranked feed uses the source's leaderboard count, not lifetime views.
-class BikaRankingList extends StatelessWidget {
+class BikaRankingList extends StatefulWidget {
   const BikaRankingList({
     super.key,
     required this.entries,
@@ -32,68 +39,196 @@ class BikaRankingList extends StatelessWidget {
   final ScrollController? controller;
 
   @override
+  State<BikaRankingList> createState() => _BikaRankingListState();
+}
+
+class _BikaRankingListState extends State<BikaRankingList> {
+  ShelfFacetSelection _filters = const ShelfFacetSelection();
+  bool _openingFilters = false;
+  int _revision = 0;
+
+  ShelfFacetEntry _facet(UnifiedComicListItem entry) {
+    Set<String> values(List<String> types) => {
+      for (final type in types)
+        for (final value in entry.metadataValues(type))
+          if (value.toString().trim().isNotEmpty) value.toString().trim(),
+    };
+    return ShelfFacetEntry(
+      key: entry.id,
+      source: entry.source,
+      searchText: entry.title.toLowerCase(),
+      fields: {
+        'category': values(['categories', 'category']),
+        'author': values(['author']),
+        'tags': values(['tags', 'tag']),
+      }..removeWhere((_, values) => values.isEmpty),
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant BikaRankingList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.entries, widget.entries)) _revision++;
+  }
+
+  Future<void> _editFilters() async {
+    if (_openingFilters || widget.isLoadingMore) return;
+    _openingFilters = true;
+    final revision = _revision;
+    try {
+      final result = await showShelfFilterSheet(
+        context,
+        entries: widget.entries.map(_facet).toList(),
+        initial: _filters,
+        preferenceKey:
+            'bika.ranking|${widget.entries.firstOrNull?.source ?? ''}',
+        scopeLabel: t.bikaRanking.filterLoaded,
+        currentFolder: null,
+        hierarchical: false,
+      );
+      if (mounted && revision == _revision && result != null) {
+        setState(() => _filters = result);
+      }
+    } finally {
+      _openingFilters = false;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // Keep the source's order and original positions after local filtering.
+    final visible = widget.entries.indexed
+        .where(
+          (row) =>
+              shelfFacetMatches(_facet(row.$2), _filters, currentFolder: null),
+        )
+        .toList();
+    final rankStyle = Theme.of(
+      context,
+    ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700);
+    final rankMeasure = TextPainter(
+      text: TextSpan(
+        text: '8' * math.max(2, widget.entries.length.toString().length),
+        style: rankStyle,
+      ),
+      textScaler: MediaQuery.textScalerOf(context),
+      textDirection: Directionality.of(context),
+    )..layout();
+    final rankWidth = math.max(24.0, rankMeasure.width.ceilToDouble());
+    rankMeasure.dispose();
     return CustomScrollView(
-      controller: controller,
+      controller: widget.controller,
       physics: const AlwaysScrollableScrollPhysics(),
       slivers: [
-        SliverList.builder(
-          itemCount: entries.length,
-          itemBuilder: (context, index) =>
-              _RankingTile(entry: entries[index], rank: index + 1),
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsetsDirectional.fromSTEB(
+              CollectionToolbarMetrics.sourceContentInset,
+              0,
+              CollectionToolbarMetrics.sourceContentInset,
+              4,
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    t.bikaRanking.loadedScope(
+                      loaded: widget.entries.length,
+                      shown: visible.length,
+                    ),
+                    key: const ValueKey('bika-ranking.loaded-scope'),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                SourceFilterIconButton(
+                  key: const ValueKey('bika-ranking.filters'),
+                  bare: false,
+                  tooltip: _filters.isActive
+                      ? t.comicList.activeFilters
+                      : t.bikaRanking.filterLoaded,
+                  active: _filters.isActive,
+                  onPressed: widget.isLoadingMore ? null : _editFilters,
+                ),
+              ],
+            ),
+          ),
         ),
-        if (hasReachedMax)
+        if (visible.isEmpty)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Center(child: Text(t.bikaRanking.noLoadedMatches)),
+            ),
+          ),
+        SliverList.builder(
+          itemCount: visible.length,
+          itemBuilder: (context, index) => WorkListRow(
+            divided: index + 1 < visible.length,
+            inset: 12,
+            child: _RankingTile(
+              entry: visible[index].$2,
+              rank: visible[index].$1 + 1,
+              rankWidth: rankWidth,
+            ),
+          ),
+        ),
+        if (widget.hasReachedMax && visible.isNotEmpty)
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(24),
               child: Center(child: Text(t.oldHome.noMore)),
             ),
           ),
-        if (isLoadingMore)
+        if (widget.isLoadingMore)
           const SliverToBoxAdapter(child: Center(child: BottomLoader())),
-        if (loadMoreFailed)
+        if (widget.loadMoreFailed)
           SliverToBoxAdapter(
             child: Center(
               child: TextButton(
-                onPressed: onRetryLoadMore,
+                onPressed: widget.onRetryLoadMore,
                 child: Text(t.oldHome.loadMoreFailed),
               ),
             ),
           ),
-        if (!hasReachedMax && !isLoadingMore && !loadMoreFailed)
+        if (!widget.hasReachedMax &&
+            !widget.isLoadingMore &&
+            !widget.loadMoreFailed)
           SliverToBoxAdapter(
             child: Center(
               child: TextButton.icon(
-                onPressed: onLoadMore,
+                onPressed: widget.onLoadMore,
                 icon: const Icon(Icons.keyboard_arrow_down_rounded),
                 label: Text(t.oldHome.loadMore),
               ),
             ),
           ),
+        SliverToBoxAdapter(
+          child: SizedBox(height: NativeNavigationInset.scrollBottom(context)),
+        ),
       ],
     );
   }
 }
 
 class _RankingTile extends StatelessWidget {
-  const _RankingTile({required this.entry, required this.rank});
+  const _RankingTile({
+    required this.entry,
+    required this.rank,
+    required this.rankWidth,
+  });
 
   final UnifiedComicListItem entry;
   final int rank;
+  final double rankWidth;
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
     final categories = entry.metadataValues('categories').join(' · ');
     final count =
         entry.raw['leaderboardCount'] ?? entry.raw['leaderboard_count'];
     final creator = entry.extern['rankingCreator'] == true;
-    final rankColor = switch (rank) {
-      1 => const Color(0xFFE9A800),
-      2 => const Color(0xFFD486A8),
-      3 => const Color(0xFFC75D7B),
-      _ => colors.onSurfaceVariant,
-    };
+    final colors = Theme.of(context).colorScheme;
+    final rankColor = rank <= 3 ? colors.primary : colors.onSurfaceVariant;
     return InkWell(
       onTap: () => creator
           ? context.pushRoute(
@@ -119,20 +254,18 @@ class _RankingTile extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 32,
-              height: 110,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: rank <= 3 ? rankColor : colors.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                '$rank',
-                style: TextStyle(
-                  color: rank <= 3 ? Colors.white : colors.onSurface,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 18,
+            SizedBox(
+              width: rankWidth,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(
+                  '$rank',
+                  textAlign: TextAlign.center,
+                  key: ValueKey('bika-ranking.rank.$rank'),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    color: rank <= 3 ? colors.primary : colors.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ),
@@ -188,11 +321,17 @@ class _RankingTile extends StatelessWidget {
                       ),
                     ],
                     const SizedBox(height: 10),
-                    if (count != null || creator)
+                    if (creator
+                        ? entry.raw['comicsUploaded'] != null
+                        : count != null)
                       Text(
                         creator
-                            ? '上传作品  ${entry.raw['comicsUploaded'] ?? 0}'
-                            : '指名次数  $count',
+                            ? t.bikaRanking.uploadedCount(
+                                count: entry.raw['comicsUploaded'].toString(),
+                              )
+                            : t.bikaRanking.nominationCount(
+                                count: count.toString(),
+                              ),
                         style: TextStyle(
                           color: rankColor,
                           fontSize: 13,

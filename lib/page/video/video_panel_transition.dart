@@ -1,5 +1,31 @@
 import 'package:material_ui/material_ui.dart';
 
+/// Depth belongs near the sidebar; the main video stays clear at the left.
+class VideoPanelScrim extends StatelessWidget {
+  const VideoPanelScrim({super.key, this.side, this.progress = 1});
+  final bool? side;
+  final double progress;
+  @override
+  Widget build(BuildContext context) => IgnorePointer(
+    child: ExcludeSemantics(
+      child: LayoutBuilder(
+        builder: (context, bounds) {
+          final landscape = side ?? bounds.maxWidth > bounds.maxHeight;
+          return DecoratedBox(
+            key: const ValueKey('video-panel.scrim'),
+            decoration: BoxDecoration(
+              color: landscape
+                  ? null
+                  : Colors.black.withValues(alpha: .32 * progress),
+            ),
+            child: const SizedBox.expand(),
+          );
+        },
+      ),
+    ),
+  );
+}
+
 /// One reversible controller owns the panel and scrim. Closing then reopening
 /// reverses from the current frame; no delayed removal can dismiss a new panel.
 class VideoPanelTransition extends StatefulWidget {
@@ -53,17 +79,20 @@ class _VideoPanelTransitionState extends State<VideoPanelTransition>
       }
       final value = Curves.easeOutCubic.transform(_controller.value);
       return IgnorePointer(
-        ignoring: !widget.open,
+        ignoring: _controller.isDismissed,
         child: ExcludeSemantics(
           excluding: !widget.open,
           child: BlockSemantics(
             child: Stack(
               fit: StackFit.expand,
               children: [
+                Positioned.fill(
+                  child: VideoPanelScrim(side: widget.side, progress: value),
+                ),
                 ModalBarrier(
-                  dismissible: true,
-                  color: Colors.black.withValues(alpha: .42 * value),
-                  onDismiss: widget.onDismiss,
+                  dismissible: widget.open,
+                  color: Colors.transparent,
+                  onDismiss: widget.open ? widget.onDismiss : null,
                   semanticsLabel: MaterialLocalizations.of(
                     context,
                   ).modalBarrierDismissLabel,
@@ -76,7 +105,10 @@ class _VideoPanelTransitionState extends State<VideoPanelTransition>
                         : widget.side
                         ? Offset(32 * (1 - value), 0)
                         : Offset(0, 32 * (1 - value)),
-                    child: FocusScope(child: widget.child),
+                    child: IgnorePointer(
+                      ignoring: !widget.open,
+                      child: FocusScope(child: widget.child),
+                    ),
                   ),
                 ),
               ],

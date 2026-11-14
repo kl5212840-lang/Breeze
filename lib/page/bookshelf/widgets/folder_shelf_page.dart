@@ -1,38 +1,60 @@
+import 'package:zephyr/widgets/pull_refresh_feedback.dart';
+import 'package:zephyr/widgets/collection_cover_fit.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_detailed_content.dart';
+import 'package:zephyr/widgets/work_list_divider.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_content_layout.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_content_toolbar.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_actions_scope.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_help.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_return_to_top.dart';
+import 'package:zephyr/page/video/video_native_navigation.dart';
+import 'package:zephyr/page/bookshelf/models/shelf_delete_prompt.dart';
+import 'package:zephyr/widgets/action_feedback.dart';
+import 'package:zephyr/widgets/collection_cover_privacy.dart';
 import 'dart:async';
 import 'dart:io';
 
 import 'package:collection/collection.dart';
 import 'package:file_selector/file_selector.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:flutter_speed_dial/flutter_speed_dial.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:path/path.dart' as p;
-import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
 import 'package:zephyr/object_box/model.dart';
+import 'package:zephyr/service/reader/reader_history_service.dart';
 import 'package:zephyr/page/bookshelf/bloc/folder_shelf_bloc.dart';
 import 'package:zephyr/page/bookshelf/cubit/bookshelf_search_cubit.dart';
 import 'package:zephyr/page/bookshelf/cubit/search_status.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/bookshelf/method/method.dart';
 import 'package:zephyr/page/bookshelf/models/shelf_page_mode.dart';
+import 'package:zephyr/page/bookshelf/models/shelf_facets.dart';
+import 'package:zephyr/page/bookshelf/service/shelf_facet_adapters.dart';
+import 'package:zephyr/page/bookshelf/widgets/shelf_filter_sheet.dart';
+import 'package:zephyr/service/collection_view_preferences.dart';
 import 'package:zephyr/page/bookshelf/models/shelf_back_action.dart';
 import 'package:zephyr/page/bookshelf/service/comic_folder_service.dart';
-import 'package:zephyr/page/bookshelf/service/comic_link_service.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_empty_view.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_grid_shimmer.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_loading_view.dart';
 import 'package:zephyr/page/bookshelf/widgets/folder_shelf_item.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_folder_picker.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry.dart';
-import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_grid.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_info.dart';
+import 'package:zephyr/widgets/comic_entry/comic_record_time.dart';
+import 'package:zephyr/widgets/comic_entry/models/models.dart';
 import 'package:zephyr/widgets/fluent_dropdown.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/widgets/folder_cover_menu.dart';
+import 'package:zephyr/service/folder_cover_service.dart';
+import 'package:zephyr/service/local_appearance_images.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_selection_toolbar.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_floating_selection_actions.dart';
 
 class FolderShelfBackController extends ChangeNotifier {
   bool _isRoot = true;
@@ -69,31 +91,45 @@ class FolderShelfPage extends StatelessWidget {
   const FolderShelfPage({
     super.key,
     required this.mode,
+    this.keywordScope = KeywordSearchScope.all,
     this.refreshSignal = 0,
     this.isActive = true,
+    this.showReturnToTop = false,
     this.backController,
     this.handleRouteBack = true,
+    this.onSelectionChanged,
+    this.sourceNames = const {},
   });
 
   final ShelfPageMode mode;
+  final KeywordSearchScope keywordScope;
+  final Map<String, String> sourceNames;
   final int refreshSignal;
   final bool isActive;
+  final bool showReturnToTop;
   final FolderShelfBackController? backController;
   final bool handleRouteBack;
+  final ValueChanged<bool>? onSelectionChanged;
 
   @override
   Widget build(BuildContext context) {
     final search = context.read<BookshelfSearchCubit>().state.stateOf(mode);
     return BlocProvider(
-      create: (_) =>
-          FolderShelfBloc(mode: mode)
-            ..add(FolderShelfLoadRequested(search: search)),
+      create: (_) => FolderShelfBloc(
+        mode: mode,
+        active: isActive,
+        keywordScope: keywordScope,
+      )..add(FolderShelfLoadRequested(search: search)),
       child: _FolderShelfPageContent(
         refreshSignal: refreshSignal,
         search: search,
+        keywordScope: keywordScope,
         isActive: isActive,
+        showReturnToTop: showReturnToTop,
         backController: backController,
         handleRouteBack: handleRouteBack,
+        onSelectionChanged: onSelectionChanged,
+        sourceNames: sourceNames,
       ),
     );
   }
@@ -103,16 +139,24 @@ class _FolderShelfPageContent extends StatefulWidget {
   const _FolderShelfPageContent({
     required this.refreshSignal,
     required this.search,
+    required this.keywordScope,
     required this.isActive,
+    required this.showReturnToTop,
     required this.backController,
     required this.handleRouteBack,
+    required this.onSelectionChanged,
+    required this.sourceNames,
   });
 
+  final Map<String, String> sourceNames;
   final int refreshSignal;
   final SearchStatusState search;
+  final KeywordSearchScope keywordScope;
   final bool isActive;
+  final bool showReturnToTop;
   final FolderShelfBackController? backController;
   final bool handleRouteBack;
+  final ValueChanged<bool>? onSelectionChanged;
 
   @override
   State<_FolderShelfPageContent> createState() =>
@@ -126,11 +170,173 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
 
   LocalHistoryEntry? _backEntry;
   bool _removingBackEntry = false;
-  String? _lastPath;
+  bool _batchWorking = false;
+  BookshelfContentView _view = BookshelfContentView.grid;
+  int _lastActionRevision = 0;
+  bool _openingFilter = false;
+  int _filterScopeEpoch = 0;
+  Object? _pullScope, _failedPullScope;
+  final _refreshIndicator = GlobalKey<RefreshIndicatorState>();
+  int _viewEpoch = 0;
+  String _loadedViewScope = '';
+
+  Object _refreshScope(FolderShelfState state) => (
+    state.mode,
+    state.currentPath,
+    widget.search,
+    state.facets,
+    widget.keywordScope,
+  );
+
+  bool get _pullRefreshing =>
+      _pullScope == _refreshScope(context.read<FolderShelfBloc>().state);
+
+  Future<PullRefreshResult> _refreshFromPull() async {
+    if (!widget.isActive || _batchWorking || _pullRefreshing) {
+      return PullRefreshResult.ignored;
+    }
+    final bloc = context.read<FolderShelfBloc>();
+    final before = bloc.state;
+    final scope = _refreshScope(before);
+    final hadSnapshot = bloc.hasCurrentSnapshot;
+    setState(() => _pullScope = scope);
+    try {
+      final committed = await bloc.refresh();
+      if (!mounted || !widget.isActive || scope != _refreshScope(bloc.state)) {
+        return PullRefreshResult.ignored;
+      }
+      final after = bloc.state;
+      setState(
+        () =>
+            _failedPullScope = !committed && after.error != null ? scope : null,
+      );
+      if (!committed) return PullRefreshResult.ignored;
+      if (!hadSnapshot || !_sameShelfRows(before, after)) {
+        return PullRefreshResult.updated;
+      }
+      return PullRefreshResult.unchanged;
+    } finally {
+      if (mounted && _pullScope == scope) setState(() => _pullScope = null);
+    }
+  }
+
+  String get _viewScope {
+    final mode = context.read<FolderShelfBloc>().state.mode.name;
+    if (context.getInheritedWidgetOfExactType<BookshelfActionsScope>() !=
+        null) {
+      return 'public|comic|$mode';
+    }
+    final sources = [...widget.search.sources]..sort();
+    return 'plugin|${sources.join(',')}|comic|$mode';
+  }
+
+  Future<void> _restoreView() async {
+    final epoch = ++_viewEpoch, scope = _viewScope;
+    _loadedViewScope = scope;
+    try {
+      final value = await CollectionViewPreferences.read(scope);
+      if (!mounted || epoch != _viewEpoch || scope != _viewScope) return;
+      setState(
+        () => _view = value == 'list'
+            ? BookshelfContentView.list
+            : BookshelfContentView.grid,
+      );
+    } catch (_) {
+      // Keep the visible layout if this optional preference cannot be read.
+    }
+  }
+
+  Future<void> _toggleView() async {
+    final scope = _viewScope, previous = _view;
+    final epoch = ++_viewEpoch;
+    final next = previous == BookshelfContentView.grid
+        ? BookshelfContentView.list
+        : BookshelfContentView.grid;
+    setState(() => _view = next);
+    try {
+      await CollectionViewPreferences.write(scope, next.name);
+    } catch (_) {
+      if (!mounted || epoch != _viewEpoch || scope != _viewScope) return;
+      setState(() => _view = previous);
+      await _restoreView();
+      if (mounted && scope == _viewScope) showErrorToast(t.error.saveFailed);
+    }
+  }
+
+  Future<void> _openFacetFilter(FolderShelfState state) async {
+    if (!widget.isActive ||
+        _openingFilter ||
+        state.isLoading ||
+        state.selectionMode) {
+      return;
+    }
+    _openingFilter = true;
+    final epoch = _filterScopeEpoch;
+    bool isCurrent() =>
+        mounted && widget.isActive && epoch == _filterScopeEpoch;
+    try {
+      final index = loadComicShelfFacetIndex(type: _folderTypeOf(state.mode));
+      final search = context.read<BookshelfSearchCubit>().state.stateOf(
+        state.mode,
+      );
+      final query = _normalizeSearchText(search.keyword);
+      final entries = index.entries
+          .where(
+            (entry) =>
+                (search.sources.isEmpty ||
+                    search.sources.contains(entry.source)) &&
+                (query.isEmpty ||
+                    (widget.keywordScope == KeywordSearchScope.title
+                            ? _normalizeSearchText(
+                                index.comics[entry.key]?.title ?? '',
+                              )
+                            : entry.searchText)
+                        .contains(query)),
+          )
+          .toList();
+      final result = await showShelfFilterSheet(
+        context,
+        entries: entries,
+        initial: query.isNotEmpty && !state.facets.isActive
+            ? state.facets.copyWith(scope: ShelfFacetScope.all)
+            : state.facets,
+        preferenceKey: state.mode == ShelfPageMode.favorite
+            ? 'comic'
+            : 'comic.${state.mode.name}',
+        scopeLabel: [
+          state.mode == ShelfPageMode.history
+              ? t.bookshelf.history
+              : state.isRoot
+              ? t.common.root
+              : state.breadcrumbTitle,
+          if (query.isNotEmpty)
+            t.bookshelf.facets.search(name: search.keyword.trim()),
+        ].join(' · '),
+        currentFolder: state.mode == ShelfPageMode.history
+            ? null
+            : state.currentPath,
+        hierarchical: state.mode != ShelfPageMode.history,
+      );
+      if (!isCurrent() || result == null) return;
+      final current = context.read<FolderShelfBloc>().state;
+      if (current.mode != state.mode ||
+          current.currentPath != state.currentPath ||
+          current.search != state.search) {
+        return;
+      }
+      context.read<FolderShelfBloc>().add(FolderShelfSetFacets(result));
+    } catch (_) {
+      if (isCurrent()) showErrorToast(t.bookshelf.facets.loadFailed);
+    } finally {
+      _openingFilter = false;
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+    CollectionViewPreferences.changes.addListener(_restoreView);
+    unawaited(_restoreView());
     widget.backController?.attach(
       () => _handleShelfBack(context.read<FolderShelfBloc>().state),
     );
@@ -141,6 +347,8 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
 
   @override
   void dispose() {
+    _viewEpoch++;
+    CollectionViewPreferences.changes.removeListener(_restoreView);
     _removeBackEntry();
     widget.backController?.detach();
     if (_isDesktop) {
@@ -163,6 +371,7 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
   }
 
   bool _handleShelfBack(FolderShelfState state) {
+    if (_batchWorking && state.selectionMode) return true;
     switch (shelfBackActionFor(
       selectionMode: state.selectionMode,
       isRoot: state.isRoot,
@@ -235,15 +444,27 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
   void didUpdateWidget(covariant _FolderShelfPageContent oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.isActive != widget.isActive ||
+        oldWidget.keywordScope != widget.keywordScope ||
+        oldWidget.search != widget.search) {
+      _filterScopeEpoch++;
+    }
+    if (_loadedViewScope != _viewScope) {
+      _view = BookshelfContentView.grid;
+      unawaited(_restoreView());
+    }
+    if (oldWidget.isActive != widget.isActive ||
         oldWidget.handleRouteBack != widget.handleRouteBack) {
+      context.read<FolderShelfBloc>().setStorageActive(widget.isActive);
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _syncBackEntry(context.read<FolderShelfBloc>().state);
       });
     }
-    if (oldWidget.refreshSignal != widget.refreshSignal) {
-      context.read<FolderShelfBloc>().add(
-        FolderShelfLoadRequested(search: widget.search),
-      );
+    final bloc = context.read<FolderShelfBloc>();
+    final scopeChanged = oldWidget.keywordScope != widget.keywordScope;
+    if (scopeChanged) bloc.setKeywordScope(widget.keywordScope);
+    if (oldWidget.refreshSignal != widget.refreshSignal ||
+        scopeChanged && widget.search.keyword.trim().isNotEmpty) {
+      bloc.add(FolderShelfLoadRequested(search: widget.search));
     }
   }
 
@@ -254,19 +475,24 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
       listenWhen: (previous, current) =>
           (current.error != null && current.error != previous.error) ||
           current.currentPath != previous.currentPath ||
-          current.selectionMode != previous.selectionMode,
+          current.selectionMode != previous.selectionMode ||
+          current.actionRevision != previous.actionRevision,
       buildWhen: _shelfStructureChanged,
       listener: (context, state) {
         widget.backController?.updateIsRoot(
           state.isRoot && !state.selectionMode,
         );
-        if (_lastPath != state.currentPath) {
-          _lastPath = state.currentPath;
-          _setNavVisible(true);
-        }
+        widget.onSelectionChanged?.call(state.selectionMode);
         _syncBackEntry(state);
+        if (state.actionMessage != null && widget.isActive) {
+          // listenWhen also handles navigation; only consume each result once.
+          if (_lastActionRevision != state.actionRevision) {
+            _lastActionRevision = state.actionRevision;
+            showActionFeedback(context, state.actionMessage!);
+          }
+        }
         final error = state.error;
-        if (error != null && error.isNotEmpty) {
+        if (error != null && error.isNotEmpty && !_pullRefreshing) {
           ScaffoldMessenger.of(
             context,
           ).showSnackBar(SnackBar(content: Text(error)));
@@ -279,588 +505,612 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) _syncBackEntry(context.read<FolderShelfBloc>().state);
         });
-        final content = NotificationListener<ScrollNotification>(
-          onNotification: _onGridScroll,
-          child: Stack(
-            children: [
-              Positioned.fill(child: _buildBody(context)),
-              // 顶部悬浮导航：选择模式下隐藏，由底部悬浮操作条接管。
-              if (!state.selectionMode) ..._buildFloatingNav(context, state),
-            ],
-          ),
+        final content = Column(
+          children: [
+            _buildShelfToolbar(context, state),
+            if (state.error?.isNotEmpty == true)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _failedPullScope != _refreshScope(state)
+                            ? t.common.loadingFailed
+                            : context
+                                      .read<FolderShelfBloc>()
+                                      .hasCurrentSnapshot &&
+                                  (state.comics.isNotEmpty ||
+                                      state.folders.isNotEmpty)
+                            ? t.common.refreshRetained
+                            : t.common.refreshFailed,
+                      ),
+                    ),
+                    TextButton.icon(
+                      key: const ValueKey('comic-shelf.refresh-retry'),
+                      onPressed: state.isLoading || _pullRefreshing
+                          ? null
+                          : () => _refreshIndicator.currentState?.show(),
+                      icon: const Icon(Icons.refresh),
+                      label: Text(t.common.retry),
+                    ),
+                  ],
+                ),
+              ),
+            Expanded(
+              child: BlocBuilder<FolderShelfBloc, FolderShelfState>(
+                builder: (context, selection) => _buildFloatingSelection(
+                  context,
+                  selection,
+                  child: PullRefreshFeedback.indicator(
+                    onRefresh: _refreshFromPull,
+                    active: widget.isActive && !_batchWorking,
+                    scope: _refreshScope(selection),
+                    indicatorKey: _refreshIndicator,
+                    notificationPredicate: (notice) =>
+                        widget.isActive && !_batchWorking && notice.depth == 0,
+                    child: _buildBody(context),
+                  ),
+                ),
+              ),
+            ),
+          ],
         );
-        return content;
+        return CollectionCoverFitScope(
+          child: CollectionCoverPrivacyScope(child: content),
+        );
       },
     );
   }
 
-  /// 顶部悬浮物的显隐（滚动联动），变化时才 setState，避免逐帧重建。
-  bool _navVisible = true;
-
-  void _setNavVisible(bool visible) {
-    if (_navVisible == visible || !mounted) {
-      return;
-    }
-    setState(() => _navVisible = visible);
-  }
-
-  /// 列表滚动方向联动悬浮物：上滑浏览时隐藏，下滑/回顶时显示。
-  /// 只处理垂直主列表的通知，底部横向操作条不参与；不吞通知，RefreshIndicator 照常工作。
-  bool _onGridScroll(ScrollNotification notification) {
-    if (notification.metrics.axis != Axis.vertical) {
-      return false;
-    }
-    if (notification.metrics.pixels <= notification.metrics.minScrollExtent) {
-      _setNavVisible(true);
-    } else if (notification is ScrollUpdateNotification &&
-        notification.dragDetails != null) {
-      // 手指拖动中按手指方向直接判定（比 UserScroll 更跟手）；
-      // 惯性/程序滚动（dragDetails 为空）不参与，避免回顶动画中途闪烁。
-      final dy = notification.dragDetails!.delta.dy;
-      if (dy < 0) {
-        _setNavVisible(false);
-      } else if (dy > 0) {
-        _setNavVisible(true);
-      }
-    } else if (notification is UserScrollNotification) {
-      switch (notification.direction) {
-        case ScrollDirection.reverse:
-          _setNavVisible(false);
-        case ScrollDirection.forward:
-          _setNavVisible(true);
-        case ScrollDirection.idle:
-          break;
-      }
-    }
-    return false;
-  }
-
-  /// 悬浮物拆成两个独立 Positioned：
-  /// - 面包屑置顶（只在子文件夹出现，滑入淡出）；
-  /// - 菜单为右下角 SpeedDial（与搜索结果页同款），跟随滚动显隐。
-  List<Widget> _buildFloatingNav(BuildContext context, FolderShelfState state) {
-    // 面包屑：子文件夹 + 未上滑隐藏时才出现；右下角菜单：只跟随滚动显隐。
-    final pillHidden = state.isRoot || !_navVisible;
-    final leftHandMode = context
-        .watch<GlobalSettingCubit>()
-        .state
-        .leftHandModeEnabled;
-    return [
-      Positioned(
-        bottom: 16,
-        left: leftHandMode ? 16 : null,
-        right: leftHandMode ? null : 16,
-        child: IgnorePointer(
-          ignoring: !_navVisible,
-          child: AnimatedSlide(
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
-            offset: _navVisible ? Offset.zero : const Offset(0, 1),
-            child: AnimatedOpacity(
-              duration: const Duration(milliseconds: 160),
-              opacity: _navVisible ? 1 : 0,
-              child: _buildNavMenuButton(context, state),
+  Widget _buildShelfToolbar(BuildContext context, FolderShelfState state) {
+    final bloc = context.read<FolderShelfBloc>();
+    final hasSnapshot = bloc.hasCurrentSnapshot;
+    final header = BookshelfActionsScope.of(context)?.header;
+    final lifted = header != null;
+    final filterEpoch = _filterScopeEpoch;
+    final scope = _refreshScope(state);
+    return BookshelfContentToolbar(
+      keyPrefix: 'comic-shelf',
+      headerIdentity: (scope, filterEpoch),
+      canRun: () {
+        if (!mounted ||
+            !widget.isActive ||
+            _batchWorking ||
+            (lifted && filterEpoch != _filterScopeEpoch)) {
+          return false;
+        }
+        final current = bloc.state;
+        return current.mode == state.mode &&
+            current.currentPath == state.currentPath &&
+            (!lifted || _refreshScope(current) == scope) &&
+            bloc.hasCurrentSnapshot &&
+            !current.isLoading &&
+            !current.selectionMode;
+      },
+      title: !state.isRoot
+          ? convertChineseForDisplay(state.currentPath.split('/').last)
+          : state.mode == ShelfPageMode.history &&
+                context
+                        .dependOnInheritedWidgetOfExactType<
+                          BookshelfActionsScope
+                        >() ==
+                    null
+          ? t.bookshelf.history
+          : '',
+      subtitle: state.isRoot && hasSnapshot
+          ? t.videoLibrary.results(count: state.comics.length)
+          : '',
+      view: _view,
+      privacyAction: const CollectionCoverPrivacyButton(
+        emphasizeProtected: true,
+      ),
+      filterActive: state.facets.isActive,
+      showFilter: true,
+      onFilter: hasSnapshot && !state.isLoading && !_batchWorking
+          ? () => unawaited(_openFacetFilter(state))
+          : null,
+      onToggleView: _toggleView,
+      onBack: state.isRoot
+          ? null
+          : () =>
+                context.read<FolderShelfBloc>().add(const FolderShelfGoBack()),
+      folderRootLabel: state.mode == ShelfPageMode.download
+          ? t.bookshelf.download
+          : t.common.root,
+      onRoot: state.currentPath.lastIndexOf('/') > 0
+          ? () => context.read<FolderShelfBloc>().add(const FolderShelfGoHome())
+          : null,
+      showCreateFolder: state.mode != ShelfPageMode.history,
+      onCreateFolder: !hasSnapshot || state.isLoading
+          ? null
+          : () => _showCreateFolderDialog(context),
+      onManage: !hasSnapshot || state.comics.isEmpty && state.folders.isEmpty
+          ? null
+          : () => context.read<FolderShelfBloc>().add(
+              const FolderShelfEnterSelectionMode(),
             ),
-          ),
-        ),
+      arrangement: BookshelfActionsScope.forPane(
+        context,
+        video: false,
+        mode: state.mode,
       ),
-      Positioned(
-        top: 8,
-        left: 12,
-        right: 12,
-        child: IgnorePointer(
-          ignoring: pillHidden,
-          child: AnimatedSlide(
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
-            offset: pillHidden ? const Offset(0, -1) : Offset.zero,
-            child: AnimatedOpacity(
-              duration: const Duration(milliseconds: 160),
-              opacity: pillHidden ? 0 : 1,
-              child: _buildBreadcrumbPill(context, state),
-            ),
-          ),
-        ),
-      ),
-    ];
-  }
-
-  /// 面包屑：返回 / 路径 / 回根。菜单由右端常驻按钮负责，这里不重复放。
-  Widget _buildBreadcrumbPill(BuildContext context, FolderShelfState state) {
-    return Material(
-      color: Theme.of(context).colorScheme.surface,
-      borderRadius: BorderRadius.circular(12),
-      elevation: 4,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: SizedBox(
-          height: 48,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.arrow_back),
-                tooltip: t.common.back,
-                onPressed: () => context.read<FolderShelfBloc>().add(
-                  const FolderShelfGoBack(),
-                ),
-              ),
-              Expanded(
-                child: Text(
-                  state.breadcrumbTitle,
-                  style: Theme.of(context).textTheme.titleMedium,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                icon: const Icon(Icons.home),
-                onPressed: () => context.read<FolderShelfBloc>().add(
-                  const FolderShelfGoHome(),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 右下角全局操作菜单，与搜索结果页同款 SpeedDial 样式。
-  /// 长按条目 → 多选已覆盖“管理”入口，这里不再重复放。
-  /// 历史无文件夹体系：只有多选入口。
-  Widget _buildNavMenuButton(BuildContext context, FolderShelfState state) {
-    final colorScheme = Theme.of(context).colorScheme;
-    ShapeBorder roundedRect(double radius) =>
-        RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius));
-    SpeedDialChild menuChild({
-      required Widget child,
-      required String label,
-      required VoidCallback onTap,
-    }) {
-      return SpeedDialChild(
-        child: child,
-        label: label,
-        shape: roundedRect(12),
-        backgroundColor: colorScheme.secondaryContainer,
-        foregroundColor: colorScheme.onSecondaryContainer,
-        onTap: onTap,
-      );
-    }
-
-    // 历史只有一个多选入口：不用 SpeedDial 展开，直接放同款圆形按钮。
-    if (state.mode == ShelfPageMode.history) {
-      return FloatingActionButton(
-        heroTag: null,
-        shape: roundedRect(16),
-        backgroundColor: colorScheme.primaryContainer,
-        foregroundColor: colorScheme.onPrimaryContainer,
-        tooltip: t.bookshelf.multiSelect,
-        onPressed: () => context.read<FolderShelfBloc>().add(
-          const FolderShelfEnterSelectionMode(),
-        ),
-        child: const Icon(Icons.checklist),
-      );
-    }
-    return SpeedDial(
-      shape: roundedRect(16),
-      buttonSize: const Size(56, 56),
-      childrenButtonSize: const Size(56, 56),
-      backgroundColor: colorScheme.primaryContainer,
-      foregroundColor: colorScheme.onPrimaryContainer,
-      icon: Icons.menu,
-      activeIcon: Icons.close,
-      useRotationAnimation: true,
-      animationDuration: const Duration(milliseconds: 300),
-      spacing: 12,
-      spaceBetweenChildren: 8,
-      children: [
-        menuChild(
-          child: const Icon(Icons.checklist),
-          label: t.bookshelf.multiSelect,
-          onTap: () => context.read<FolderShelfBloc>().add(
-            const FolderShelfEnterSelectionMode(),
-          ),
-        ),
-        menuChild(
-          child: const Icon(Icons.create_new_folder_outlined),
-          label: t.bookshelf.newFolder,
-          onTap: () => _showCreateFolderDialog(context),
-        ),
+      selection: state.selectionMode
+          ? BlocBuilder<FolderShelfBloc, FolderShelfState>(
+              bloc: bloc,
+              builder: (context, selection) =>
+                  _buildSelectionBar(bloc, selection, lifted: lifted),
+            )
+          : null,
+      moreOptions: {
         if (state.mode == ShelfPageMode.download)
-          menuChild(
-            child: const Icon(Icons.file_download_outlined),
-            label: t.bookshelf.importComic,
-            onTap: () => _importComic(context),
-          ),
-        menuChild(
-          child: const Icon(Icons.help_outline),
-          label: t.common.help,
-          onTap: () => _showShelfHelpDialog(context),
-        ),
+          'import': t.bookshelf.importComic,
+        'help': t.common.help,
+      },
+      moreGroups: [
+        ['import'],
+        ['help'],
       ],
+      onMore: (value) {
+        if (!widget.isActive || _batchWorking || state.isLoading) return;
+        if (value == 'import') _importComic(context);
+        if (value == 'help') _showShelfHelpDialog(context);
+      },
     );
   }
 
   Future<void> _showShelfHelpDialog(BuildContext context) async {
-    return showDialog(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(t.bookshelf.folderHint),
-        content: Text(t.bookshelf.helpContent),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: Text(t.common.gotIt),
-          ),
-        ],
+    return showBookshelfHelpDialog(
+      context,
+      title: bookshelfHelpTitle(
+        video: false,
+        mode: context.read<FolderShelfBloc>().state.mode,
+      ),
+      content: bookshelfHelpContent(
+        video: false,
+        mode: context.read<FolderShelfBloc>().state.mode,
       ),
     );
   }
 
   Widget _buildBody(BuildContext context) {
-    return BlocBuilder<BookshelfSearchCubit, BookshelfSearchState>(
-      builder: (context, searchState) {
-        return BlocBuilder<FolderShelfBloc, FolderShelfState>(
-          buildWhen: _shelfStructureChanged,
-          builder: (context, state) {
-            final keyword = _normalizeSearchText(
-              searchState.stateOf(state.mode).keyword,
+    return BlocBuilder<FolderShelfBloc, FolderShelfState>(
+      buildWhen: _shelfStructureChanged,
+      builder: (context, state) {
+        final bloc = context.read<FolderShelfBloc>();
+        final rowScope = bloc.loadedScope;
+        final filteredFolders = state.folders;
+        final filteredComics = state.comics;
+        final totalCount = filteredFolders.length + filteredComics.length;
+        if (totalCount == 0 &&
+            (state.isLoading && !_pullRefreshing ||
+                !bloc.hasCurrentSnapshot && state.error == null)) {
+          return Stack(
+            children: [
+              BookshelfGridShimmer(view: _view),
+              if (!_pullRefreshing) const Center(child: BookshelfLoadingView()),
+            ],
+          );
+        }
+
+        if (totalCount == 0) {
+          if (!bloc.hasCurrentSnapshot) {
+            // The retry row describes the failed read. Only a committed
+            // snapshot for this scope can establish that there are no rows.
+            return const CustomScrollView(
+              physics: AlwaysScrollableScrollPhysics(),
             );
-            // 搜索时只展示漫画，不展示文件夹。
-            final filteredFolders = keyword.isEmpty
-                ? state.folders
-                : <ComicFolder>[];
-            final filteredComics = keyword.isEmpty
-                ? state.comics
-                : state.comics.where((c) {
-                    final key = '${c.from.trim()}:${c.id}';
-                    final searchText = state.comicSearchTexts[key] ?? '';
-                    return searchText.contains(keyword);
-                  }).toList();
-
-            final totalCount = filteredFolders.length + filteredComics.length;
-            final isInitialLoading = state.isLoading && totalCount == 0;
-
-            if (isInitialLoading) {
-              return const Stack(
-                children: [
-                  BookshelfGridShimmer(),
-                  Center(child: BookshelfLoadingView()),
-                ],
-              );
-            }
-
-            if (totalCount == 0) {
-              return BookshelfEmptyView(
-                onRefresh: () => context.read<FolderShelfBloc>().add(
-                  const FolderShelfLoadRequested(),
-                ),
-              );
-            }
-
-            final comicType = _comicEntryTypeOf(state.mode);
-            final folderSyncIdMap = _buildSyncIdMap(state.mode);
-            String folderPathOf(ComicFolder f) =>
-                ComicFolderService.folderPath(f, syncIdMap: folderSyncIdMap);
-
-            return RefreshIndicator(
-              onRefresh: () async {
-                context.read<FolderShelfBloc>().add(
-                  const FolderShelfLoadRequested(),
-                );
-              },
-              child: Stack(
-                children: [
-                  GridView.builder(
-                    key: ValueKey((state.mode, state.currentPath)),
-                    // 悬浮物盖在列表上层：子文件夹有面包屑浮栏，留 64px 顶部滚动边距；
-                    // 根目录无顶部悬浮物，选择模式无悬浮物，均保持 10。
-                    // 右下角按钮 56px + bottom 16：底部留 88，避免挡住最后一行漫画。
-                    padding: EdgeInsets.fromLTRB(
-                      10,
-                      state.selectionMode ? 10 : (state.isRoot ? 10 : 64),
-                      10,
-                      88,
+          }
+          if (state.facets.isActive) {
+            return CustomScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(t.bookshelf.facets.noResults),
+                        const SizedBox(height: 8),
+                        TextButton(
+                          key: const ValueKey('comic-shelf.clear-empty-filter'),
+                          onPressed: () => context.read<FolderShelfBloc>().add(
+                            const FolderShelfSetFacets(ShelfFacetSelection()),
+                          ),
+                          child: Text(t.bookshelf.facets.clear),
+                        ),
+                      ],
                     ),
-                    gridDelegate: buildComicSimplifyEntryGridDelegate(),
-                    itemCount: totalCount,
-                    itemBuilder: (context, index) {
-                      if (index < filteredFolders.length) {
-                        final folder = filteredFolders[index];
-                        final folderPath = folderPathOf(folder);
-                        return Builder(
-                          key: ValueKey('folder-${folder.uniqueKey}'),
-                          builder: (rowContext) {
-                            final selection = rowContext.select(
-                              (FolderShelfBloc bloc) => (
-                                bloc.state.selectionMode,
-                                bloc.state.selectedFolderPaths.contains(
-                                  folderPath,
-                                ),
-                              ),
-                            );
-                            return FolderShelfItem(
-                              key: ValueKey('folder-${folder.uniqueKey}'),
-                              folder: folder,
-                              selectionMode: selection.$1,
-                              isSelected: selection.$2,
-                              onTap: selection.$1
-                                  ? () => context.read<FolderShelfBloc>().add(
-                                      FolderShelfToggleFolderSelection(
-                                        folderPath,
-                                      ),
-                                    )
-                                  : () => context.read<FolderShelfBloc>().add(
-                                      FolderShelfEnterFolder(folderPath),
-                                    ),
-                              onLongPress: selection.$1
-                                  ? (details) =>
-                                        context.read<FolderShelfBloc>().add(
-                                          FolderShelfToggleFolderSelection(
-                                            folderPath,
-                                          ),
-                                        )
-                                  : (details) => _showFolderActions(
-                                      context,
-                                      folder,
-                                      folderPath,
-                                      details.globalPosition,
-                                    ),
-                              onSecondaryTapDown: selection.$1
-                                  ? null
-                                  : (details) => _showFolderActions(
-                                      context,
-                                      folder,
-                                      folderPath,
-                                      details.globalPosition,
-                                    ),
-                            );
-                          },
-                        );
-                      }
-                      final comicIndex = index - filteredFolders.length;
-                      final comic = filteredComics[comicIndex];
-                      final comicUniqueKey = '${comic.from.trim()}:${comic.id}';
+                  ),
+                ),
+              ],
+            );
+          }
+          return const BookshelfEmptyView();
+        }
+
+        final comicType = _comicEntryTypeOf(state.mode);
+        final folderSyncIdMap = _buildSyncIdMap(state.mode);
+        String folderPathOf(ComicFolder f) =>
+            ComicFolderService.folderPath(f, syncIdMap: folderSyncIdMap);
+
+        final storageKey = PageStorageKey((rowScope, _view));
+        return BookshelfReturnToTop(
+          key: ValueKey(storageKey.value),
+          enabled:
+              widget.showReturnToTop &&
+              widget.isActive &&
+              !state.selectionMode &&
+              !state.isLoading &&
+              filteredComics.isNotEmpty,
+          child: Stack(
+            children: [
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  Widget buildItem(BuildContext context, int index) {
+                    if (index < filteredFolders.length) {
+                      final folder = filteredFolders[index];
+                      final folderPath = folderPathOf(folder);
                       return Builder(
-                        key: ValueKey('comic-${comic.from}:${comic.id}'),
+                        key: ValueKey('folder-${folder.uniqueKey}'),
                         builder: (rowContext) {
                           final selection = rowContext.select(
                             (FolderShelfBloc bloc) => (
                               bloc.state.selectionMode,
-                              bloc.state.selectedComicKeys.contains(
-                                comicUniqueKey,
+                              bloc.state.selectedFolderPaths.contains(
+                                folderPath,
                               ),
                             ),
                           );
-                          return ComicSimplifyEntry(
-                            key: ValueKey('comic-${comic.from}:${comic.id}'),
-                            info: comic,
-                            type: comicType,
+                          return FolderShelfItem(
+                            key: ValueKey('folder-${folder.uniqueKey}'),
+                            folder: folder,
+                            count: state.folderCounts[folder.syncId],
+                            canEditCover: () =>
+                                mounted &&
+                                widget.isActive &&
+                                !_batchWorking &&
+                                !context
+                                    .read<FolderShelfBloc>()
+                                    .state
+                                    .selectionMode,
+                            menu: FolderCoverMenu(
+                              onCover: _view == BookshelfContentView.grid,
+                              target: FolderCoverService.comic(
+                                folder,
+                                canRun: () =>
+                                    mounted &&
+                                    widget.isActive &&
+                                    !_batchWorking,
+                              ),
+                              canRun: () =>
+                                  mounted && widget.isActive && !_batchWorking,
+                              extraOptions: {
+                                'rename': t.common.rename,
+                                'move': t.bookshelf.moveTo,
+                                'delete': t.common.delete,
+                              },
+                              onCommand: (value) => _runFolderCommand(
+                                context,
+                                folder,
+                                folderPath,
+                                value,
+                              ),
+                            ),
+                            view: _view,
                             selectionMode: selection.$1,
                             isSelected: selection.$2,
-                            refresh: () => context.read<FolderShelfBloc>().add(
-                              const FolderShelfLoadRequested(),
-                            ),
-                            onTapOverride: selection.$1
-                                ? (info) => context.read<FolderShelfBloc>().add(
-                                    FolderShelfToggleComicSelection(
-                                      '${info.from.trim()}:${info.id}',
-                                    ),
-                                  )
-                                : null,
-                            onLongPressOverride: selection.$1
-                                ? (info, details) =>
-                                      context.read<FolderShelfBloc>().add(
-                                        FolderShelfToggleComicSelection(
-                                          '${info.from.trim()}:${info.id}',
-                                        ),
+                            onTap: () {
+                              final bloc = context.read<FolderShelfBloc>();
+                              if (!widget.isActive ||
+                                  _batchWorking ||
+                                  !bloc.hasCurrentSnapshot ||
+                                  bloc.state.isLoading ||
+                                  !bloc.state.folders.any(
+                                    (current) =>
+                                        current.syncId == folder.syncId,
+                                  )) {
+                                return;
+                              }
+                              bloc.add(
+                                bloc.state.selectionMode
+                                    ? FolderShelfToggleFolderSelection(
+                                        folderPath,
                                       )
-                                : (info, details) => _showComicActions(
-                                    context,
-                                    info,
-                                    details.globalPosition,
-                                  ),
+                                    : FolderShelfEnterFolder(folderPath),
+                              );
+                            },
+                            onLongPress: (_) {
+                              if (!mounted ||
+                                  !widget.isActive ||
+                                  _batchWorking ||
+                                  context
+                                      .read<FolderShelfBloc>()
+                                      .state
+                                      .isLoading)
+                                return;
+                              context.read<FolderShelfBloc>().add(
+                                FolderShelfToggleFolderSelection(folderPath),
+                              );
+                            },
                             onSecondaryTapDown: selection.$1
                                 ? null
-                                : (info, details) => _showComicActions(
+                                : (details) => _showFolderActions(
                                     context,
-                                    info,
+                                    folder,
+                                    folderPath,
                                     details.globalPosition,
                                   ),
                           );
                         },
                       );
-                    },
-                  ),
-                  if (state.isLoading)
-                    const Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      child: LinearProgressIndicator(minHeight: 2),
-                    ),
-                  BlocBuilder<FolderShelfBloc, FolderShelfState>(
-                    builder: (context, selectionState) =>
-                        _buildSelectionBar(context, selectionState),
-                  ),
-                ],
+                    }
+                    final comicIndex = index - filteredFolders.length;
+                    final comic = filteredComics[comicIndex];
+                    final comicUniqueKey = '${comic.from.trim()}:${comic.id}';
+                    return Builder(
+                      key: ValueKey('comic-${comic.from}:${comic.id}'),
+                      builder: (rowContext) {
+                        final selection = rowContext.select(
+                          (FolderShelfBloc bloc) => (
+                            bloc.state.selectionMode,
+                            bloc.state.selectedComicKeys.contains(
+                              comicUniqueKey,
+                            ),
+                          ),
+                        );
+                        return ComicSimplifyEntry(
+                          key: ValueKey('comic-${comic.from}:${comic.id}'),
+                          info: comic,
+                          horizontal: _view == BookshelfContentView.list,
+                          coverAspectRatio:
+                              BookshelfContentLayout.coverAspectRatio,
+                          caption: _withHistoryTime(
+                            comic,
+                            state.mode == ShelfPageMode.history &&
+                                _view == BookshelfContentView.list,
+                            BookshelfCardCaption(
+                              fixedHeight: _view != BookshelfContentView.list,
+                              title: convertChineseForDisplay(comic.title),
+                              subtitle: [
+                                if (state.facets.isActive &&
+                                    state.facets.scope !=
+                                        ShelfFacetScope.current)
+                                  state.comicFolderLabels[comicUniqueKey] ?? '',
+                                widget.sourceNames[comic.source
+                                            .trim()
+                                            .isNotEmpty
+                                        ? comic.source.trim()
+                                        : comic.from.trim()] ??
+                                    t.bookshelf.unknownSource,
+                              ].where((value) => value.isNotEmpty).join(' · '),
+                            ),
+                          ),
+                          type: comicType,
+                          selectionMode: selection.$1,
+                          isSelected: selection.$2,
+                          refresh: () => context.read<FolderShelfBloc>().add(
+                            const FolderShelfLoadRequested(),
+                          ),
+                          onTapOverride: selection.$1
+                              ? (info) => context.read<FolderShelfBloc>().add(
+                                  FolderShelfToggleComicSelection(
+                                    '${info.from.trim()}:${info.id}',
+                                  ),
+                                )
+                              : null,
+                          onLongPressOverride: (info, details) {
+                            if (!widget.isActive ||
+                                _batchWorking ||
+                                context
+                                    .read<FolderShelfBloc>()
+                                    .state
+                                    .isLoading) {
+                              return;
+                            }
+                            if (!selection.$1) {
+                              unawaited(HapticFeedback.selectionClick());
+                            }
+                            context.read<FolderShelfBloc>().add(
+                              FolderShelfToggleComicSelection(
+                                '${info.from.trim()}:${info.id}',
+                              ),
+                            );
+                          },
+                          onSecondaryTapDown: selection.$1
+                              ? null
+                              : (info, details) => _showComicActions(
+                                  context,
+                                  info,
+                                  details.globalPosition,
+                                ),
+                        );
+                      },
+                    );
+                  }
+
+                  final padding = EdgeInsets.fromLTRB(
+                    12,
+                    10,
+                    12,
+                    NativeNavigationInset.of(context) +
+                        (state.selectionMode
+                            ? BookshelfFloatingSelectionActions
+                                  .contentBottomPadding
+                            : 20),
+                  );
+                  return _view == BookshelfContentView.grid
+                      ? GridView.builder(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          key: storageKey,
+                          primary: false,
+                          padding: padding,
+                          gridDelegate: BookshelfContentLayout.gridDelegate(
+                            context,
+                            constraints.maxWidth,
+                          ),
+                          itemCount: totalCount,
+                          itemBuilder: buildItem,
+                        )
+                      : ListView.separated(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          key: storageKey,
+                          primary: false,
+                          padding: padding,
+                          itemCount: totalCount,
+                          itemBuilder: buildItem,
+                          separatorBuilder: (_, _) => const WorkListDivider(
+                            height: BookshelfContentLayout.spacing,
+                          ),
+                        );
+                },
               ),
-            );
-          },
+              if (state.isLoading && !_pullRefreshing)
+                const Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: LinearProgressIndicator(minHeight: 2),
+                ),
+            ],
+          ),
         );
       },
     );
   }
 
-  Widget _buildSelectionBar(BuildContext context, FolderShelfState state) {
-    return Positioned(
-      bottom: 8,
-      left: 8,
-      right: 8,
-      child: IgnorePointer(
-        ignoring: !state.selectionMode,
-        child: AnimatedSlide(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          offset: state.selectionMode ? Offset.zero : const Offset(0, 1.0),
-          child: AnimatedOpacity(
-            duration: const Duration(milliseconds: 160),
-            opacity: state.selectionMode ? 1 : 0,
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520),
-                child: Material(
-                  color: Theme.of(context).colorScheme.surface,
-                  borderRadius: BorderRadius.circular(12),
-                  elevation: 4,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 4,
-                      vertical: 6,
-                    ),
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      reverse: true,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            tooltip: t.common.cancel,
-                            onPressed: () => context
-                                .read<FolderShelfBloc>()
-                                .add(const FolderShelfExitSelectionMode()),
-                            icon: const Icon(Icons.close),
-                          ),
-                          Text(
-                            t.bookshelf.selectedCount(
-                              count: state.selectedCount,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          TextButton(
-                            onPressed: () => context
-                                .read<FolderShelfBloc>()
-                                .add(const FolderShelfSelectAll()),
-                            child: Text(t.common.selectAll),
-                          ),
-                          if (state.mode != ShelfPageMode.history)
-                            IconButton(
-                              visualDensity: VisualDensity.compact,
-                              tooltip: t.bookshelf.moveTo,
-                              onPressed: state.hasSelection
-                                  ? () => _showTargetFolderDialog(
-                                      context,
-                                      onConfirmed: (targets) {
-                                        context.read<FolderShelfBloc>().add(
-                                          FolderShelfMoveSelected(targets),
-                                        );
-                                      },
-                                    )
-                                  : null,
-                              icon: const Icon(Icons.drive_file_move_outline),
-                            ),
-                          if (state.mode != ShelfPageMode.history)
-                            IconButton(
-                              visualDensity: VisualDensity.compact,
-                              tooltip: t.bookshelf.copyTo,
-                              onPressed: state.hasSelection
-                                  ? () => _showTargetFolderDialog(
-                                      context,
-                                      onConfirmed: (targets) {
-                                        context.read<FolderShelfBloc>().add(
-                                          FolderShelfCopySelected(targets),
-                                        );
-                                      },
-                                    )
-                                  : null,
-                              icon: const Icon(Icons.folder_copy_outlined),
-                            ),
-                          if (state.mode == ShelfPageMode.download)
-                            IconButton(
-                              visualDensity: VisualDensity.compact,
-                              tooltip: t.bookshelf.batchExport,
-                              onPressed: state.hasSelection
-                                  ? () => _batchExportSelected(context, state)
-                                  : null,
-                              icon: const Icon(Icons.file_upload_outlined),
-                            ),
-                          IconButton(
-                            visualDensity: VisualDensity.compact,
-                            tooltip: t.common.delete,
-                            onPressed: state.hasSelection
-                                ? () => _confirmDeleteSelected(context)
-                                : null,
-                            icon: const Icon(Icons.delete_outline),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
+  Widget _buildSelectionBar(
+    FolderShelfBloc bloc,
+    FolderShelfState state, {
+    required bool lifted,
+  }) {
+    final syncIds = _buildSyncIdMap(state.mode);
+    final allSelected =
+        (state.comics.isNotEmpty || state.folders.isNotEmpty) &&
+        state.comics.every(
+          (c) => state.selectedComicKeys.contains('${c.from.trim()}:${c.id}'),
+        ) &&
+        state.folders.every(
+          (f) => state.selectedFolderPaths.contains(
+            ComicFolderService.folderPath(f, syncIdMap: syncIds),
           ),
-        ),
-      ),
+        );
+    return BookshelfSelectionToolbar(
+      key: const ValueKey('comic-shelf.selection-toolbar'),
+      keyPrefix: 'comic-shelf',
+      selectedCount: state.selectedCount,
+      privacyAction: lifted ? null : const CollectionCoverPrivacyButton(),
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: lifted ? 0 : 4),
+      allSelected: allSelected,
+      onCancel: _batchWorking || state.isLoading
+          ? null
+          : () => bloc.add(const FolderShelfExitSelectionMode()),
+      onToggleAll:
+          _batchWorking ||
+              state.isLoading ||
+              (state.comics.isEmpty && state.folders.isEmpty)
+          ? null
+          : () => bloc.add(
+              allSelected
+                  ? const FolderShelfClearSelection()
+                  : const FolderShelfSelectAll(),
+            ),
     );
+  }
+
+  Widget _buildFloatingSelection(
+    BuildContext context,
+    FolderShelfState state, {
+    required Widget child,
+  }) {
+    final bloc = context.read<FolderShelfBloc>();
+    final move = BookshelfBatchAction(
+      id: 'move',
+      label: t.bookshelf.moveTo,
+      icon: Icons.drive_file_move_outline,
+      symbol: 'folder',
+      onPressed: state.hasSelection
+          ? () => _runBatch(
+              () => _showTargetFolderDialog(
+                context,
+                onConfirmed: (targets) =>
+                    bloc.add(FolderShelfMoveSelected(targets)),
+              ),
+            )
+          : null,
+    );
+    final copy = BookshelfBatchAction(
+      id: 'copy',
+      label: t.bookshelf.copyTo,
+      icon: Icons.folder_copy_outlined,
+      symbol: 'doc.on.doc',
+      onPressed: state.hasSelection
+          ? () => _runBatch(
+              () => _showTargetFolderDialog(
+                context,
+                multiple: true,
+                onConfirmed: (targets) =>
+                    bloc.add(FolderShelfCopySelected(targets)),
+              ),
+            )
+          : null,
+    );
+    return BookshelfFloatingSelectionActions(
+      keyPrefix: 'comic-shelf',
+      selecting: state.selectionMode,
+      selectedCount: state.selectedCount,
+      busy: state.isLoading || _batchWorking,
+      actions: [
+        if (state.mode == ShelfPageMode.favorite) ...[move, copy],
+        if (state.mode == ShelfPageMode.download)
+          BookshelfBatchAction(
+            id: 'export',
+            label: t.common.export,
+            icon: Icons.ios_share,
+            symbol: 'square.and.arrow.up',
+            onPressed: state.hasSelection
+                ? () => _runBatch(() => _batchExportSelected(context, state))
+                : null,
+          ),
+        BookshelfBatchAction(
+          id: 'remove',
+          label: t.common.delete,
+          icon: Icons.delete_outline,
+          symbol: 'trash',
+          onPressed: state.hasSelection
+              ? () => _runBatch(() => _confirmDeleteSelected(context))
+              : null,
+        ),
+      ],
+      overflowActions: state.mode == ShelfPageMode.download
+          ? [move, copy]
+          : const [],
+      child: child,
+    );
+  }
+
+  Future<void> _runBatch(Future<void> Function() operation) async {
+    if (_batchWorking) return;
+    setState(() => _batchWorking = true);
+    try {
+      await operation();
+    } finally {
+      if (mounted) setState(() => _batchWorking = false);
+    }
   }
 
   Future<void> _showCreateFolderDialog(BuildContext context) async {
-    final controller = TextEditingController();
-    final name = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(t.bookshelf.createFolder),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            decoration: InputDecoration(hintText: t.bookshelf.folderName),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: Text(t.common.cancel),
-            ),
-            TextButton(
-              onPressed: () {
-                final text = controller.text.trim();
-                if (text.isNotEmpty) {
-                  Navigator.of(dialogContext).pop(text);
-                }
-              },
-              child: Text(t.common.ok),
-            ),
-          ],
-        );
-      },
+    final state = context.read<FolderShelfBloc>().state;
+    final name = await _showShelfFolderNameDialog(
+      context,
+      title: t.bookshelf.newFolder,
+      siblings: ComicFolderService.listChildFolders(
+        state.currentPath,
+        _folderTypeOf(state.mode),
+      ).map((f) => f.name).toSet(),
     );
-    controller.dispose();
-    if (name != null && name.isNotEmpty && context.mounted) {
+    if (name != null && context.mounted) {
       context.read<FolderShelfBloc>().add(FolderShelfCreateFolder(name));
     }
   }
@@ -873,6 +1123,11 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
   ) {
     final anchor = Rect.fromCenter(center: position, width: 1, height: 1);
 
+    final target = FolderCoverService.comic(
+      folder,
+      canRun: () => mounted && widget.isActive && !_batchWorking,
+    );
+    final imageRevision = LocalAppearanceImages.instance.revisionOf(target.key);
     FluentPopupMenu.show<String>(
       context: context,
       anchor: anchor,
@@ -887,6 +1142,12 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
           leading: const Icon(Icons.drive_file_move_outline),
           title: Text(t.bookshelf.moveTo),
         ),
+        for (final e in folderCoverOptions(target).entries)
+          FluentPopupMenuItem(
+            value: 'folder-cover.${e.key}',
+            leading: const Icon(Icons.image_outlined),
+            title: Text(e.value),
+          ),
         FluentPopupMenuItem(
           value: 'delete',
           leading: const Icon(Icons.delete_outline),
@@ -894,29 +1155,50 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
         ),
       ],
       onSelected: (value) {
-        switch (value) {
-          case 'rename':
-            _showRenameFolderDialog(context, folder, folderPath);
-          case 'move':
-            unawaited(
-              _showTargetFolderDialog(
-                context,
-                selectedFolderPaths: {folderPath},
-                onConfirmed: (targets) {
-                  context.read<FolderShelfBloc>().add(
-                    FolderShelfMoveSelected(
-                      targets,
-                      sourceFolderPaths: {folderPath},
-                    ),
-                  );
-                },
-              ),
-            );
-          case 'delete':
-            _confirmDeleteSingleFolder(context, folderPath);
+        if (value.startsWith('folder-cover.')) {
+          unawaited(
+            runFolderCoverAction(
+              context,
+              target,
+              value.substring('folder-cover.'.length),
+              expectedRevision: imageRevision,
+            ),
+          );
+        } else {
+          _runFolderCommand(context, folder, folderPath, value);
         }
       },
     );
+  }
+
+  void _runFolderCommand(
+    BuildContext context,
+    ComicFolder folder,
+    String folderPath,
+    String value,
+  ) {
+    if (!mounted || !widget.isActive || _batchWorking) return;
+    switch (value) {
+      case 'rename':
+        _showRenameFolderDialog(context, folder, folderPath);
+      case 'move':
+        unawaited(
+          _showTargetFolderDialog(
+            context,
+            selectedFolderPaths: {folderPath},
+            onConfirmed: (targets) {
+              context.read<FolderShelfBloc>().add(
+                FolderShelfMoveSelected(
+                  targets,
+                  sourceFolderPaths: {folderPath},
+                ),
+              );
+            },
+          ),
+        );
+      case 'delete':
+        _confirmDeleteSingleFolder(context, folderPath);
+    }
   }
 
   Future<void> _confirmDeleteSingleFolder(
@@ -928,7 +1210,14 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
       builder: (dialogContext) {
         return AlertDialog(
           title: Text(t.bookshelf.confirmDeleteFolderTitle),
-          content: Text(t.bookshelf.confirmDeleteFolderContent),
+          content: Text(
+            shelfDeletePrompt(
+              mode: context.read<FolderShelfBloc>().state.mode,
+              folders: 1,
+              comics: 0,
+            ),
+          ),
+          scrollable: true,
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -952,40 +1241,92 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
     ComicFolder folder,
     String folderPath,
   ) async {
-    final controller = TextEditingController(text: folder.name);
-    final name = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(t.bookshelf.renameFolder),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            decoration: InputDecoration(hintText: t.common.rename),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: Text(t.common.cancel),
-            ),
-            TextButton(
-              onPressed: () {
-                final text = controller.text.trim();
-                if (text.isNotEmpty) {
-                  Navigator.of(dialogContext).pop(text);
-                }
-              },
-              child: Text(t.common.ok),
-            ),
-          ],
-        );
-      },
+    final slash = folderPath.lastIndexOf('/');
+    final parent = slash <= 0 ? '' : folderPath.substring(0, slash);
+    final state = context.read<FolderShelfBloc>().state;
+    final name = await _showShelfFolderNameDialog(
+      context,
+      title: t.common.rename,
+      initialName: folder.name,
+      siblings: ComicFolderService.listChildFolders(
+        parent,
+        _folderTypeOf(state.mode),
+      ).where((f) => f.syncId != folder.syncId).map((f) => f.name).toSet(),
     );
-    controller.dispose();
-    if (name != null && name.isNotEmpty && context.mounted) {
+    if (name != null && context.mounted) {
       context.read<FolderShelfBloc>().add(
         FolderShelfRenameFolder(folderPath, name),
       );
+    }
+  }
+
+  Widget _withHistoryTime(
+    ComicSimplifyEntryInfo info,
+    bool enabled,
+    Widget caption,
+  ) {
+    final statistics = info.detailViewCount > 0
+        ? t.comicEntry.views(count: info.detailViewCount)
+        : info.detailPopularity > 0
+        ? t.comicList.popularity(count: info.detailPopularity)
+        : '';
+    if (!enabled) {
+      if (_view == BookshelfContentView.list &&
+          caption is BookshelfCardCaption) {
+        return BookshelfDetailedCaption(
+          title: caption.title,
+          source: caption.subtitle,
+          metadata: info.detailMetadata,
+          description: info.description,
+          statistics: statistics,
+        );
+      }
+      return caption;
+    }
+    // The shelf's lightweight cover record intentionally has no private/history
+    // fields. Read only this visible row's local history; never fetch metadata.
+    final source = info.source.trim().isNotEmpty
+        ? info.source.trim()
+        : info.from.trim();
+    final query = objectbox.unifiedHistoryBox
+        .query(
+          UnifiedComicHistory_.source
+              .equals(source)
+              .and(UnifiedComicHistory_.comicId.equals(info.id))
+              .and(UnifiedComicHistory_.deleted.equals(false)),
+        )
+        .build();
+    try {
+      final history = query.findFirst();
+      if (history == null && caption is BookshelfCardCaption) {
+        return BookshelfDetailedCaption(
+          title: caption.title,
+          source: caption.subtitle,
+          metadata: info.detailMetadata,
+          description: info.description,
+          statistics: statistics,
+        );
+      }
+      if (history == null) return caption;
+      final item = unifiedComicFromUnifiedHistory(history);
+      final original = caption as BookshelfCardCaption;
+      return BookshelfDetailedCaption(
+        title: original.title,
+        source: original.subtitle,
+        metadata: info.detailMetadata,
+        description: info.description,
+        statistics: statistics,
+        progress: shelfReadingPosition(
+          history.title,
+          history.chapterTitle,
+          history.pageIndex,
+        ),
+        time: comicLastReadTimestamp(item).isEmpty
+            ? ''
+            : t.comicEntry.lastReadAt(time: comicLastReadTimestamp(item)),
+      );
+    } finally {
+      query.close();
     }
   }
 
@@ -1021,7 +1362,7 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
         FluentPopupMenuItem(
           value: 'multi_select',
           leading: const Icon(Icons.checklist),
-          title: Text(t.bookshelf.multiSelect),
+          title: Text(t.bookshelf.manage),
         ),
         FluentPopupMenuItem(
           value: 'delete',
@@ -1046,13 +1387,17 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
     BuildContext context,
     ComicSimplifyEntryInfo info,
   ) async {
+    final scope = context.read<FolderShelfBloc>().state;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
           title: Text(t.bookshelf.confirmRemoveComicTitle),
           content: Text(
-            t.bookshelf.confirmRemoveComicContent(title: info.title),
+            scope.facets.isActive ||
+                    (scope.search?.keyword.trim().isNotEmpty ?? false)
+                ? t.bookshelf.facets.removeFiltered(title: info.title)
+                : t.bookshelf.confirmRemoveComicContent(title: info.title),
           ),
           actions: [
             TextButton(
@@ -1070,19 +1415,33 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
     if (confirmed == true && context.mounted) {
       final uniqueKey = '${info.from.trim()}:${info.id}';
       final state = context.read<FolderShelfBloc>().state;
+      if (state.mode != scope.mode ||
+          state.currentPath != scope.currentPath ||
+          state.facets != scope.facets ||
+          state.search != scope.search ||
+          !state.comics.any(
+            (row) => '${row.from.trim()}:${row.id}' == uniqueKey,
+          )) {
+        return;
+      }
       // 历史无 ComicLink：直接软删除历史本体（与旧 LocalShelfPage 一致）。
       if (state.mode == ShelfPageMode.history) {
-        final history = objectbox.unifiedHistoryBox
-            .query(UnifiedComicHistory_.uniqueKey.equals(uniqueKey))
-            .build()
-            .findFirst();
-        if (history != null) {
-          history
-            ..deleted = true
-            ..updatedAt = DateTime.now().toUtc();
-          objectbox.unifiedHistoryBox.put(history);
+        final index = loadComicShelfFacetIndex(type: ComicFolderType.history);
+        for (final storedKey in comicFacetRecordKeys(index, uniqueKey)) {
+          final query = objectbox.unifiedHistoryBox
+              .query(UnifiedComicHistory_.uniqueKey.equals(storedKey))
+              .build();
+          try {
+            for (final history in query.find()) {
+              await ReaderHistoryService.instance.deleteHistoryRecord(history);
+            }
+          } finally {
+            query.close();
+          }
         }
-        context.read<FolderShelfBloc>().add(const FolderShelfLoadRequested());
+        if (context.mounted) {
+          context.read<FolderShelfBloc>().add(const FolderShelfLoadRequested());
+        }
         return;
       }
       final folderType = switch (state.mode) {
@@ -1090,27 +1449,109 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
         ShelfPageMode.download => ComicFolderType.download,
         ShelfPageMode.history => ComicFolderType.history,
       };
-      ComicLinkService.removeComic(
+      removeComicFromFacetScope(
         uniqueKey,
-        state.currentPath.isEmpty ? null : state.currentPath,
-        folderType,
+        _effectiveShelfSelection(state),
+        currentFolder: state.currentPath,
+        type: folderType,
       );
       context.read<FolderShelfBloc>().add(const FolderShelfLoadRequested());
     }
   }
 }
 
+Future<String?> _showShelfFolderNameDialog(
+  BuildContext context, {
+  required String title,
+  required Set<String> siblings,
+  String initialName = '',
+}) => showDialog<String>(
+  context: context,
+  builder: (_) => _ShelfFolderNameDialog(
+    title: title,
+    siblings: siblings,
+    initialName: initialName,
+  ),
+);
+
+class _ShelfFolderNameDialog extends StatefulWidget {
+  const _ShelfFolderNameDialog({
+    required this.title,
+    required this.siblings,
+    required this.initialName,
+  });
+  final String title, initialName;
+  final Set<String> siblings;
+  @override
+  State<_ShelfFolderNameDialog> createState() => _ShelfFolderNameDialogState();
+}
+
+class _ShelfFolderNameDialogState extends State<_ShelfFolderNameDialog> {
+  late final _controller = TextEditingController(text: widget.initialName);
+  final _form = GlobalKey<FormState>();
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (_form.currentState!.validate()) {
+      Navigator.of(context).pop(_controller.text.trim());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(widget.title),
+    scrollable: true,
+    content: Form(
+      key: _form,
+      child: TextFormField(
+        key: const ValueKey('shelf-folder-name.input'),
+        controller: _controller,
+        autofocus: true,
+        maxLength: 60,
+        textInputAction: TextInputAction.done,
+        decoration: InputDecoration(labelText: t.bookshelf.folderName),
+        validator: (raw) {
+          final name = raw?.trim() ?? '';
+          if (name.isEmpty) return t.bookshelf.folderNameEmpty;
+          if (name.contains('/')) return t.bookshelf.folderNameSlash;
+          if (widget.siblings.contains(name)) {
+            return t.bookshelf.folderNameExists;
+          }
+          return null;
+        },
+        onFieldSubmitted: (_) => _submit(),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.pop(context),
+        child: Text(t.common.cancel),
+      ),
+      FilledButton(
+        key: const ValueKey('shelf-folder-name.confirm'),
+        onPressed: _submit,
+        child: Text(t.common.ok),
+      ),
+    ],
+  );
+}
+
 Future<void> _showTargetFolderDialog(
   BuildContext context, {
   Set<String>? selectedFolderPaths,
+  bool multiple = false,
   required ValueChanged<Set<String>> onConfirmed,
 }) async {
-  final state = context.read<FolderShelfBloc>().state;
-  final sourceFolderPaths = selectedFolderPaths ?? state.selectedFolderPaths;
+  final bloc = context.read<FolderShelfBloc>(),
+      state = context.read<FolderShelfBloc>().state;
   final allFolders = ComicFolderService.listAllFolders(
     _folderTypeOf(state.mode),
   );
-  final syncIdMap = _buildSyncIdMap(state.mode);
+  final syncIdMap = {for (final folder in allFolders) folder.syncId: folder};
   final pathMap = {
     for (final folder in allFolders)
       folder.syncId: ComicFolderService.folderPath(
@@ -1118,138 +1559,80 @@ Future<void> _showTargetFolderDialog(
         syncIdMap: syncIdMap,
       ),
   };
-  final forest = _buildFolderForest(allFolders, pathMap);
-
-  // 排除当前所在文件夹（仅自身）、被选中的文件夹及其子树
-  final forbiddenSyncIds = <String>{};
-  for (final path in sourceFolderPaths) {
+  final forbidden = <String>{};
+  // A filtered result can include works archived outside the visible directory.
+  // In that case the visible directory is a valid destination, including root.
+  final pathsInScope =
+      state.mode != ShelfPageMode.history &&
+          (state.facets.isActive ||
+              (state.search?.keyword.trim().isNotEmpty ?? false))
+      ? comicFacetPathsInScope(
+          loadComicShelfFacetIndex(type: _folderTypeOf(state.mode)),
+          _effectiveShelfSelection(state),
+          currentFolder: state.currentPath,
+        )
+      : const <String, Set<String>>{};
+  final canTargetCurrent = state.selectedComicKeys.any(
+    (key) => (pathsInScope[key] ?? const <String>{}).any(
+      (path) => path != state.currentPath,
+    ),
+  );
+  for (final path in selectedFolderPaths ?? state.selectedFolderPaths) {
     final folder = allFolders.firstWhereOrNull(
       (f) => pathMap[f.syncId] == path,
     );
     if (folder != null) {
-      _collectForbiddenSyncIds(folder.syncId, allFolders, forbiddenSyncIds);
+      _collectForbiddenSyncIds(folder.syncId, allFolders, forbidden);
     }
   }
-  final currentPath = state.currentPath;
-  final isRoot = currentPath.isEmpty;
-  final currentFolder = isRoot
-      ? null
-      : allFolders.firstWhereOrNull((f) => pathMap[f.syncId] == currentPath);
-  final currentSyncId = currentFolder?.syncId;
-
-  final selectedPaths = <String>{};
-
-  await showDialog<void>(
-    context: context,
-    builder: (dialogContext) {
-      final expandedPaths = <String>{};
-      return StatefulBuilder(
-        builder: (ctx, setState) {
-          void togglePath(String path) {
-            setState(() {
-              if (selectedPaths.contains(path)) {
-                selectedPaths.remove(path);
-              } else {
-                selectedPaths.add(path);
-              }
-            });
-          }
-
-          return AlertDialog(
-            title: Text(t.bookshelf.selectTargetFolder),
-            content: SizedBox(
-              width: 380,
-              height: 400,
-              child: ListView(
-                children: [
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: const SizedBox(width: 48),
-                    title: Text(t.common.root),
-                    trailing: Checkbox(
-                      value: selectedPaths.contains(kComicFolderRootPath),
-                      onChanged: isRoot
-                          ? null
-                          : (_) => togglePath(kComicFolderRootPath),
-                    ),
-                    onTap: isRoot
-                        ? null
-                        : () => togglePath(kComicFolderRootPath),
-                  ),
-                  const Divider(),
-                  ...forest.map(
-                    (node) => _buildFolderTreeTile(
-                      context: ctx,
-                      node: node,
-                      pathMap: pathMap,
-                      expandedPaths: expandedPaths,
-                      forbiddenSyncIds: forbiddenSyncIds,
-                      currentSyncId: currentSyncId,
-                      selectedPaths: selectedPaths,
-                      onToggleExpand: (path) => setState(() {
-                        if (expandedPaths.contains(path)) {
-                          expandedPaths.remove(path);
-                        } else {
-                          expandedPaths.add(path);
-                        }
-                      }),
-                      onSelect: togglePath,
-                    ),
-                  ),
-                ],
-              ),
+  var createdFolder = false;
+  try {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => BookshelfFolderPicker(
+        title: multiple ? t.bookshelf.copyTo : t.bookshelf.moveTo,
+        multiple: multiple,
+        initialCreateParent: state.currentPath,
+        choices: [
+          BookshelfFolderChoice(
+            path: '',
+            name: t.common.root,
+            parentPath: '',
+            selectable: state.currentPath.isNotEmpty || canTargetCurrent,
+          ),
+          for (final folder in allFolders)
+            BookshelfFolderChoice(
+              path: pathMap[folder.syncId]!,
+              name: folder.name,
+              parentPath: pathMap[folder.parentSyncId] ?? '',
+              selectable:
+                  (pathMap[folder.syncId] != state.currentPath ||
+                      canTargetCurrent) &&
+                  !forbidden.contains(folder.syncId),
+              browsable: !forbidden.contains(folder.syncId),
             ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(),
-                child: Text(t.common.cancel),
-              ),
-              FilledButton(
-                onPressed: selectedPaths.isEmpty
-                    ? null
-                    : () {
-                        Navigator.of(dialogContext).pop();
-                        onConfirmed(selectedPaths);
-                      },
-                child: Text(t.common.ok),
-              ),
-            ],
+        ],
+        onCreate: (parent, name) async {
+          final folder = ComicFolderService.createFolder(
+            parent,
+            name,
+            _folderTypeOf(state.mode),
+          );
+          createdFolder = true;
+          return BookshelfFolderChoice(
+            path: ComicFolderService.folderPath(folder),
+            name: folder.name,
+            parentPath: parent,
           );
         },
-      );
-    },
-  );
-}
-
-class _FolderNode {
-  final ComicFolder folder;
-  final List<_FolderNode> children;
-
-  _FolderNode(this.folder) : children = [];
-}
-
-List<_FolderNode> _buildFolderForest(
-  List<ComicFolder> folders,
-  Map<String, String> pathMap,
-) {
-  final sorted = folders.toList()
-    ..sort(
-      (a, b) => (pathMap[a.syncId] ?? '').compareTo(pathMap[b.syncId] ?? ''),
+        onConfirmed: onConfirmed,
+      ),
     );
-  final map = <String, _FolderNode>{};
-  final roots = <_FolderNode>[];
-  for (final folder in sorted) {
-    final node = _FolderNode(folder);
-    map[folder.syncId] = node;
-    final parentSyncId = folder.parentSyncId;
-    if (parentSyncId == null || parentSyncId.isEmpty) {
-      roots.add(node);
-    } else {
-      map[parentSyncId]?.children.add(node);
+  } finally {
+    if (createdFolder && context.mounted && !bloc.isClosed) {
+      bloc.add(const FolderShelfLoadRequested());
     }
   }
-  return roots;
 }
 
 Map<String, ComicFolder> _buildSyncIdMap(ShelfPageMode mode) {
@@ -1270,75 +1653,10 @@ void _collectForbiddenSyncIds(
   }
 }
 
-Widget _buildFolderTreeTile({
-  required BuildContext context,
-  required _FolderNode node,
-  required Map<String, String> pathMap,
-  required Set<String> expandedPaths,
-  required Set<String> forbiddenSyncIds,
-  required String? currentSyncId,
-  required Set<String> selectedPaths,
-  required ValueChanged<String> onToggleExpand,
-  required ValueChanged<String> onSelect,
-}) {
-  final path = pathMap[node.folder.syncId] ?? '/${node.folder.name}';
-  final syncId = node.folder.syncId;
-  final isExpanded = expandedPaths.contains(path);
-  final isCurrentPath = currentSyncId != null && syncId == currentSyncId;
-  final isForbidden = isCurrentPath || forbiddenSyncIds.contains(syncId);
-  final hasChildren = node.children.isNotEmpty;
-  final theme = Theme.of(context);
-  final isSelected = selectedPaths.contains(path) && !isForbidden;
-
-  return Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      ListTile(
-        dense: true,
-        contentPadding: EdgeInsets.zero,
-        leading: hasChildren
-            ? IconButton(
-                icon: Icon(
-                  isExpanded ? Icons.expand_more : Icons.chevron_right,
-                ),
-                onPressed: () => onToggleExpand(path),
-              )
-            : const SizedBox(width: 48),
-        title: Text(
-          node.folder.name,
-          style: isForbidden ? TextStyle(color: theme.disabledColor) : null,
-        ),
-        trailing: Checkbox(
-          value: isSelected,
-          onChanged: isForbidden ? null : (_) => onSelect(path),
-        ),
-        onTap: isForbidden ? null : () => onSelect(path),
-      ),
-      if (isExpanded)
-        Padding(
-          padding: const EdgeInsets.only(left: 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: node.children
-                .map(
-                  (child) => _buildFolderTreeTile(
-                    context: context,
-                    node: child,
-                    pathMap: pathMap,
-                    expandedPaths: expandedPaths,
-                    forbiddenSyncIds: forbiddenSyncIds,
-                    currentSyncId: currentSyncId,
-                    selectedPaths: selectedPaths,
-                    onToggleExpand: onToggleExpand,
-                    onSelect: onSelect,
-                  ),
-                )
-                .toList(),
-          ),
-        ),
-    ],
-  );
-}
+ShelfFacetSelection _effectiveShelfSelection(FolderShelfState state) =>
+    !state.facets.isActive && (state.search?.keyword.trim().isNotEmpty ?? false)
+    ? const ShelfFacetSelection(scope: ShelfFacetScope.all)
+    : state.facets;
 
 ComicFolderType _folderTypeOf(ShelfPageMode mode) {
   return switch (mode) {
@@ -1454,12 +1772,24 @@ Future<void> _batchExportSelected(
 }
 
 Future<void> _confirmDeleteSelected(BuildContext context) async {
+  final bloc = context.read<FolderShelfBloc>();
+  final selection = bloc.state;
+  if (!selection.hasSelection) return;
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) {
       return AlertDialog(
         title: Text(t.bookshelf.confirmDeleteSelectedTitle),
-        content: Text(t.bookshelf.confirmDeleteSelectedContent),
+        content: Text(
+          selection.facets.isActive
+              ? t.bookshelf.facets.removeFilteredBatch
+              : shelfDeletePrompt(
+                  mode: selection.mode,
+                  folders: selection.selectedFolderPaths.length,
+                  comics: selection.selectedComicKeys.length,
+                ),
+        ),
+        scrollable: true,
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -1474,7 +1804,23 @@ Future<void> _confirmDeleteSelected(BuildContext context) async {
     },
   );
   if (confirmed == true && context.mounted) {
-    context.read<FolderShelfBloc>().add(const FolderShelfDeleteSelected());
+    final current = bloc.state;
+    if (current.mode != selection.mode ||
+        current.facets != selection.facets ||
+        current.search != selection.search ||
+        current.currentPath != selection.currentPath ||
+        !const SetEquality<String>().equals(
+          current.selectedFolderPaths,
+          selection.selectedFolderPaths,
+        ) ||
+        !const SetEquality<String>().equals(
+          current.selectedComicKeys,
+          selection.selectedComicKeys,
+        )) {
+      showActionFeedback(context, t.bookshelf.selectionChanged);
+      return;
+    }
+    bloc.add(const FolderShelfDeleteSelected());
   }
 }
 
@@ -1486,10 +1832,25 @@ bool _shelfStructureChanged(
 ) =>
     previous.currentPath != current.currentPath ||
     previous.folders != current.folders ||
+    previous.folderCounts != current.folderCounts ||
     previous.comics != current.comics ||
     previous.comicSearchTexts != current.comicSearchTexts ||
+    previous.facets != current.facets ||
+    previous.comicFolderLabels != current.comicFolderLabels ||
     previous.search != current.search ||
     previous.isLoading != current.isLoading ||
     previous.error != current.error ||
     previous.sortAscending != current.sortAscending ||
     previous.selectionMode != current.selectionMode;
+
+bool _sameShelfRows(FolderShelfState before, FolderShelfState after) {
+  const equality = DeepCollectionEquality();
+  return equality.equals(before.comics, after.comics) &&
+      equality.equals(before.folderCounts, after.folderCounts) &&
+      equality.equals(before.comicSearchTexts, after.comicSearchTexts) &&
+      equality.equals(before.comicFolderLabels, after.comicFolderLabels) &&
+      equality.equals(
+        before.folders.map((folder) => folder.toJson()).toList(),
+        after.folders.map((folder) => folder.toJson()).toList(),
+      );
+}

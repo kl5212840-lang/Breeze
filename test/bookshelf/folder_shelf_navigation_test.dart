@@ -1,5 +1,6 @@
 import '../test_helper.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:worker_manager/worker_manager.dart';
 import 'package:zephyr/page/bookshelf/bloc/folder_shelf_bloc.dart';
 import 'package:zephyr/page/bookshelf/models/shelf_page_mode.dart';
@@ -13,7 +14,9 @@ import 'package:zephyr/page/bookshelf/models/shelf_page_mode.dart';
 /// 路径，在测试里只会落到 error 状态。这里不断言列表内容，只断言
 /// 导航事件同步发出的 currentPath（先于 load 结果发出，不受影响）。
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async {
+    SharedPreferences.setMockInitialValues({});
     // 让 worker 任务真正跑完（测试里落到 error），否则 LoadRequested
     // handler 挂起会堵住 bloc 的顺序事件队列。
     await TestObjectBoxHelper.setUpTestObjectBox();

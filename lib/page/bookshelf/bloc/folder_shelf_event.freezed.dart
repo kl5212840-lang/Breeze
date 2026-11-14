@@ -56,12 +56,13 @@ extension FolderShelfEventPatterns on FolderShelfEvent {
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( FolderShelfLoadRequested value)?  loadRequested,TResult Function( FolderShelfEnterFolder value)?  enterFolder,TResult Function( FolderShelfGoBack value)?  goBack,TResult Function( FolderShelfGoHome value)?  goHome,TResult Function( FolderShelfToggleSort value)?  toggleSort,TResult Function( FolderShelfCreateFolder value)?  createFolder,TResult Function( FolderShelfDeleteFolder value)?  deleteFolder,TResult Function( FolderShelfRenameFolder value)?  renameFolder,TResult Function( FolderShelfEnterSelectionMode value)?  enterSelectionMode,TResult Function( FolderShelfExitSelectionMode value)?  exitSelectionMode,TResult Function( FolderShelfToggleFolderSelection value)?  toggleFolderSelection,TResult Function( FolderShelfToggleComicSelection value)?  toggleComicSelection,TResult Function( FolderShelfSelectAll value)?  selectAll,TResult Function( FolderShelfMoveSelected value)?  moveSelected,TResult Function( FolderShelfCopySelected value)?  copySelected,TResult Function( FolderShelfDeleteSelected value)?  deleteSelected,required TResult orElse(),}){
+@optionalTypeArgs TResult maybeMap<TResult extends Object?>({TResult Function( FolderShelfLoadRequested value)?  loadRequested,TResult Function( FolderShelfEnterFolder value)?  enterFolder,TResult Function( FolderShelfSetFacets value)?  setFacets,TResult Function( FolderShelfGoBack value)?  goBack,TResult Function( FolderShelfGoHome value)?  goHome,TResult Function( FolderShelfToggleSort value)?  toggleSort,TResult Function( FolderShelfCreateFolder value)?  createFolder,TResult Function( FolderShelfDeleteFolder value)?  deleteFolder,TResult Function( FolderShelfRenameFolder value)?  renameFolder,TResult Function( FolderShelfEnterSelectionMode value)?  enterSelectionMode,TResult Function( FolderShelfExitSelectionMode value)?  exitSelectionMode,TResult Function( FolderShelfToggleFolderSelection value)?  toggleFolderSelection,TResult Function( FolderShelfToggleComicSelection value)?  toggleComicSelection,TResult Function( FolderShelfClearSelection value)?  clearSelection,TResult Function( FolderShelfSelectAll value)?  selectAll,TResult Function( FolderShelfMoveSelected value)?  moveSelected,TResult Function( FolderShelfCopySelected value)?  copySelected,TResult Function( FolderShelfDeleteSelected value)?  deleteSelected,required TResult orElse(),}){
 final _that = this;
 switch (_that) {
 case FolderShelfLoadRequested() when loadRequested != null:
 return loadRequested(_that);case FolderShelfEnterFolder() when enterFolder != null:
-return enterFolder(_that);case FolderShelfGoBack() when goBack != null:
+return enterFolder(_that);case FolderShelfSetFacets() when setFacets != null:
+return setFacets(_that);case FolderShelfGoBack() when goBack != null:
 return goBack(_that);case FolderShelfGoHome() when goHome != null:
 return goHome(_that);case FolderShelfToggleSort() when toggleSort != null:
 return toggleSort(_that);case FolderShelfCreateFolder() when createFolder != null:
@@ -71,7 +72,8 @@ return renameFolder(_that);case FolderShelfEnterSelectionMode() when enterSelect
 return enterSelectionMode(_that);case FolderShelfExitSelectionMode() when exitSelectionMode != null:
 return exitSelectionMode(_that);case FolderShelfToggleFolderSelection() when toggleFolderSelection != null:
 return toggleFolderSelection(_that);case FolderShelfToggleComicSelection() when toggleComicSelection != null:
-return toggleComicSelection(_that);case FolderShelfSelectAll() when selectAll != null:
+return toggleComicSelection(_that);case FolderShelfClearSelection() when clearSelection != null:
+return clearSelection(_that);case FolderShelfSelectAll() when selectAll != null:
 return selectAll(_that);case FolderShelfMoveSelected() when moveSelected != null:
 return moveSelected(_that);case FolderShelfCopySelected() when copySelected != null:
 return copySelected(_that);case FolderShelfDeleteSelected() when deleteSelected != null:
@@ -93,12 +95,13 @@ return deleteSelected(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( FolderShelfLoadRequested value)  loadRequested,required TResult Function( FolderShelfEnterFolder value)  enterFolder,required TResult Function( FolderShelfGoBack value)  goBack,required TResult Function( FolderShelfGoHome value)  goHome,required TResult Function( FolderShelfToggleSort value)  toggleSort,required TResult Function( FolderShelfCreateFolder value)  createFolder,required TResult Function( FolderShelfDeleteFolder value)  deleteFolder,required TResult Function( FolderShelfRenameFolder value)  renameFolder,required TResult Function( FolderShelfEnterSelectionMode value)  enterSelectionMode,required TResult Function( FolderShelfExitSelectionMode value)  exitSelectionMode,required TResult Function( FolderShelfToggleFolderSelection value)  toggleFolderSelection,required TResult Function( FolderShelfToggleComicSelection value)  toggleComicSelection,required TResult Function( FolderShelfSelectAll value)  selectAll,required TResult Function( FolderShelfMoveSelected value)  moveSelected,required TResult Function( FolderShelfCopySelected value)  copySelected,required TResult Function( FolderShelfDeleteSelected value)  deleteSelected,}){
+@optionalTypeArgs TResult map<TResult extends Object?>({required TResult Function( FolderShelfLoadRequested value)  loadRequested,required TResult Function( FolderShelfEnterFolder value)  enterFolder,required TResult Function( FolderShelfSetFacets value)  setFacets,required TResult Function( FolderShelfGoBack value)  goBack,required TResult Function( FolderShelfGoHome value)  goHome,required TResult Function( FolderShelfToggleSort value)  toggleSort,required TResult Function( FolderShelfCreateFolder value)  createFolder,required TResult Function( FolderShelfDeleteFolder value)  deleteFolder,required TResult Function( FolderShelfRenameFolder value)  renameFolder,required TResult Function( FolderShelfEnterSelectionMode value)  enterSelectionMode,required TResult Function( FolderShelfExitSelectionMode value)  exitSelectionMode,required TResult Function( FolderShelfToggleFolderSelection value)  toggleFolderSelection,required TResult Function( FolderShelfToggleComicSelection value)  toggleComicSelection,required TResult Function( FolderShelfClearSelection value)  clearSelection,required TResult Function( FolderShelfSelectAll value)  selectAll,required TResult Function( FolderShelfMoveSelected value)  moveSelected,required TResult Function( FolderShelfCopySelected value)  copySelected,required TResult Function( FolderShelfDeleteSelected value)  deleteSelected,}){
 final _that = this;
 switch (_that) {
 case FolderShelfLoadRequested():
 return loadRequested(_that);case FolderShelfEnterFolder():
-return enterFolder(_that);case FolderShelfGoBack():
+return enterFolder(_that);case FolderShelfSetFacets():
+return setFacets(_that);case FolderShelfGoBack():
 return goBack(_that);case FolderShelfGoHome():
 return goHome(_that);case FolderShelfToggleSort():
 return toggleSort(_that);case FolderShelfCreateFolder():
@@ -108,7 +111,8 @@ return renameFolder(_that);case FolderShelfEnterSelectionMode():
 return enterSelectionMode(_that);case FolderShelfExitSelectionMode():
 return exitSelectionMode(_that);case FolderShelfToggleFolderSelection():
 return toggleFolderSelection(_that);case FolderShelfToggleComicSelection():
-return toggleComicSelection(_that);case FolderShelfSelectAll():
+return toggleComicSelection(_that);case FolderShelfClearSelection():
+return clearSelection(_that);case FolderShelfSelectAll():
 return selectAll(_that);case FolderShelfMoveSelected():
 return moveSelected(_that);case FolderShelfCopySelected():
 return copySelected(_that);case FolderShelfDeleteSelected():
@@ -126,12 +130,13 @@ return deleteSelected(_that);}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( FolderShelfLoadRequested value)?  loadRequested,TResult? Function( FolderShelfEnterFolder value)?  enterFolder,TResult? Function( FolderShelfGoBack value)?  goBack,TResult? Function( FolderShelfGoHome value)?  goHome,TResult? Function( FolderShelfToggleSort value)?  toggleSort,TResult? Function( FolderShelfCreateFolder value)?  createFolder,TResult? Function( FolderShelfDeleteFolder value)?  deleteFolder,TResult? Function( FolderShelfRenameFolder value)?  renameFolder,TResult? Function( FolderShelfEnterSelectionMode value)?  enterSelectionMode,TResult? Function( FolderShelfExitSelectionMode value)?  exitSelectionMode,TResult? Function( FolderShelfToggleFolderSelection value)?  toggleFolderSelection,TResult? Function( FolderShelfToggleComicSelection value)?  toggleComicSelection,TResult? Function( FolderShelfSelectAll value)?  selectAll,TResult? Function( FolderShelfMoveSelected value)?  moveSelected,TResult? Function( FolderShelfCopySelected value)?  copySelected,TResult? Function( FolderShelfDeleteSelected value)?  deleteSelected,}){
+@optionalTypeArgs TResult? mapOrNull<TResult extends Object?>({TResult? Function( FolderShelfLoadRequested value)?  loadRequested,TResult? Function( FolderShelfEnterFolder value)?  enterFolder,TResult? Function( FolderShelfSetFacets value)?  setFacets,TResult? Function( FolderShelfGoBack value)?  goBack,TResult? Function( FolderShelfGoHome value)?  goHome,TResult? Function( FolderShelfToggleSort value)?  toggleSort,TResult? Function( FolderShelfCreateFolder value)?  createFolder,TResult? Function( FolderShelfDeleteFolder value)?  deleteFolder,TResult? Function( FolderShelfRenameFolder value)?  renameFolder,TResult? Function( FolderShelfEnterSelectionMode value)?  enterSelectionMode,TResult? Function( FolderShelfExitSelectionMode value)?  exitSelectionMode,TResult? Function( FolderShelfToggleFolderSelection value)?  toggleFolderSelection,TResult? Function( FolderShelfToggleComicSelection value)?  toggleComicSelection,TResult? Function( FolderShelfClearSelection value)?  clearSelection,TResult? Function( FolderShelfSelectAll value)?  selectAll,TResult? Function( FolderShelfMoveSelected value)?  moveSelected,TResult? Function( FolderShelfCopySelected value)?  copySelected,TResult? Function( FolderShelfDeleteSelected value)?  deleteSelected,}){
 final _that = this;
 switch (_that) {
 case FolderShelfLoadRequested() when loadRequested != null:
 return loadRequested(_that);case FolderShelfEnterFolder() when enterFolder != null:
-return enterFolder(_that);case FolderShelfGoBack() when goBack != null:
+return enterFolder(_that);case FolderShelfSetFacets() when setFacets != null:
+return setFacets(_that);case FolderShelfGoBack() when goBack != null:
 return goBack(_that);case FolderShelfGoHome() when goHome != null:
 return goHome(_that);case FolderShelfToggleSort() when toggleSort != null:
 return toggleSort(_that);case FolderShelfCreateFolder() when createFolder != null:
@@ -141,7 +146,8 @@ return renameFolder(_that);case FolderShelfEnterSelectionMode() when enterSelect
 return enterSelectionMode(_that);case FolderShelfExitSelectionMode() when exitSelectionMode != null:
 return exitSelectionMode(_that);case FolderShelfToggleFolderSelection() when toggleFolderSelection != null:
 return toggleFolderSelection(_that);case FolderShelfToggleComicSelection() when toggleComicSelection != null:
-return toggleComicSelection(_that);case FolderShelfSelectAll() when selectAll != null:
+return toggleComicSelection(_that);case FolderShelfClearSelection() when clearSelection != null:
+return clearSelection(_that);case FolderShelfSelectAll() when selectAll != null:
 return selectAll(_that);case FolderShelfMoveSelected() when moveSelected != null:
 return moveSelected(_that);case FolderShelfCopySelected() when copySelected != null:
 return copySelected(_that);case FolderShelfDeleteSelected() when deleteSelected != null:
@@ -162,11 +168,12 @@ return deleteSelected(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( SearchStatusState? search)?  loadRequested,TResult Function( String path)?  enterFolder,TResult Function()?  goBack,TResult Function()?  goHome,TResult Function()?  toggleSort,TResult Function( String name)?  createFolder,TResult Function( String path)?  deleteFolder,TResult Function( String path,  String newName)?  renameFolder,TResult Function()?  enterSelectionMode,TResult Function()?  exitSelectionMode,TResult Function( String path)?  toggleFolderSelection,TResult Function( String comicUniqueKey)?  toggleComicSelection,TResult Function()?  selectAll,TResult Function( Set<String> targetPaths,  Set<String>? sourceFolderPaths)?  moveSelected,TResult Function( Set<String> targetPaths)?  copySelected,TResult Function()?  deleteSelected,required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>({TResult Function( SearchStatusState? search)?  loadRequested,TResult Function( String path)?  enterFolder,TResult Function( ShelfFacetSelection selection)?  setFacets,TResult Function()?  goBack,TResult Function()?  goHome,TResult Function()?  toggleSort,TResult Function( String name)?  createFolder,TResult Function( String path)?  deleteFolder,TResult Function( String path,  String newName)?  renameFolder,TResult Function()?  enterSelectionMode,TResult Function()?  exitSelectionMode,TResult Function( String path)?  toggleFolderSelection,TResult Function( String comicUniqueKey)?  toggleComicSelection,TResult Function()?  clearSelection,TResult Function()?  selectAll,TResult Function( Set<String> targetPaths,  Set<String>? sourceFolderPaths)?  moveSelected,TResult Function( Set<String> targetPaths)?  copySelected,TResult Function()?  deleteSelected,required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case FolderShelfLoadRequested() when loadRequested != null:
 return loadRequested(_that.search);case FolderShelfEnterFolder() when enterFolder != null:
-return enterFolder(_that.path);case FolderShelfGoBack() when goBack != null:
+return enterFolder(_that.path);case FolderShelfSetFacets() when setFacets != null:
+return setFacets(_that.selection);case FolderShelfGoBack() when goBack != null:
 return goBack();case FolderShelfGoHome() when goHome != null:
 return goHome();case FolderShelfToggleSort() when toggleSort != null:
 return toggleSort();case FolderShelfCreateFolder() when createFolder != null:
@@ -176,7 +183,8 @@ return renameFolder(_that.path,_that.newName);case FolderShelfEnterSelectionMode
 return enterSelectionMode();case FolderShelfExitSelectionMode() when exitSelectionMode != null:
 return exitSelectionMode();case FolderShelfToggleFolderSelection() when toggleFolderSelection != null:
 return toggleFolderSelection(_that.path);case FolderShelfToggleComicSelection() when toggleComicSelection != null:
-return toggleComicSelection(_that.comicUniqueKey);case FolderShelfSelectAll() when selectAll != null:
+return toggleComicSelection(_that.comicUniqueKey);case FolderShelfClearSelection() when clearSelection != null:
+return clearSelection();case FolderShelfSelectAll() when selectAll != null:
 return selectAll();case FolderShelfMoveSelected() when moveSelected != null:
 return moveSelected(_that.targetPaths,_that.sourceFolderPaths);case FolderShelfCopySelected() when copySelected != null:
 return copySelected(_that.targetPaths);case FolderShelfDeleteSelected() when deleteSelected != null:
@@ -198,11 +206,12 @@ return deleteSelected();case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( SearchStatusState? search)  loadRequested,required TResult Function( String path)  enterFolder,required TResult Function()  goBack,required TResult Function()  goHome,required TResult Function()  toggleSort,required TResult Function( String name)  createFolder,required TResult Function( String path)  deleteFolder,required TResult Function( String path,  String newName)  renameFolder,required TResult Function()  enterSelectionMode,required TResult Function()  exitSelectionMode,required TResult Function( String path)  toggleFolderSelection,required TResult Function( String comicUniqueKey)  toggleComicSelection,required TResult Function()  selectAll,required TResult Function( Set<String> targetPaths,  Set<String>? sourceFolderPaths)  moveSelected,required TResult Function( Set<String> targetPaths)  copySelected,required TResult Function()  deleteSelected,}) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>({required TResult Function( SearchStatusState? search)  loadRequested,required TResult Function( String path)  enterFolder,required TResult Function( ShelfFacetSelection selection)  setFacets,required TResult Function()  goBack,required TResult Function()  goHome,required TResult Function()  toggleSort,required TResult Function( String name)  createFolder,required TResult Function( String path)  deleteFolder,required TResult Function( String path,  String newName)  renameFolder,required TResult Function()  enterSelectionMode,required TResult Function()  exitSelectionMode,required TResult Function( String path)  toggleFolderSelection,required TResult Function( String comicUniqueKey)  toggleComicSelection,required TResult Function()  clearSelection,required TResult Function()  selectAll,required TResult Function( Set<String> targetPaths,  Set<String>? sourceFolderPaths)  moveSelected,required TResult Function( Set<String> targetPaths)  copySelected,required TResult Function()  deleteSelected,}) {final _that = this;
 switch (_that) {
 case FolderShelfLoadRequested():
 return loadRequested(_that.search);case FolderShelfEnterFolder():
-return enterFolder(_that.path);case FolderShelfGoBack():
+return enterFolder(_that.path);case FolderShelfSetFacets():
+return setFacets(_that.selection);case FolderShelfGoBack():
 return goBack();case FolderShelfGoHome():
 return goHome();case FolderShelfToggleSort():
 return toggleSort();case FolderShelfCreateFolder():
@@ -212,7 +221,8 @@ return renameFolder(_that.path,_that.newName);case FolderShelfEnterSelectionMode
 return enterSelectionMode();case FolderShelfExitSelectionMode():
 return exitSelectionMode();case FolderShelfToggleFolderSelection():
 return toggleFolderSelection(_that.path);case FolderShelfToggleComicSelection():
-return toggleComicSelection(_that.comicUniqueKey);case FolderShelfSelectAll():
+return toggleComicSelection(_that.comicUniqueKey);case FolderShelfClearSelection():
+return clearSelection();case FolderShelfSelectAll():
 return selectAll();case FolderShelfMoveSelected():
 return moveSelected(_that.targetPaths,_that.sourceFolderPaths);case FolderShelfCopySelected():
 return copySelected(_that.targetPaths);case FolderShelfDeleteSelected():
@@ -230,11 +240,12 @@ return deleteSelected();}
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( SearchStatusState? search)?  loadRequested,TResult? Function( String path)?  enterFolder,TResult? Function()?  goBack,TResult? Function()?  goHome,TResult? Function()?  toggleSort,TResult? Function( String name)?  createFolder,TResult? Function( String path)?  deleteFolder,TResult? Function( String path,  String newName)?  renameFolder,TResult? Function()?  enterSelectionMode,TResult? Function()?  exitSelectionMode,TResult? Function( String path)?  toggleFolderSelection,TResult? Function( String comicUniqueKey)?  toggleComicSelection,TResult? Function()?  selectAll,TResult? Function( Set<String> targetPaths,  Set<String>? sourceFolderPaths)?  moveSelected,TResult? Function( Set<String> targetPaths)?  copySelected,TResult? Function()?  deleteSelected,}) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>({TResult? Function( SearchStatusState? search)?  loadRequested,TResult? Function( String path)?  enterFolder,TResult? Function( ShelfFacetSelection selection)?  setFacets,TResult? Function()?  goBack,TResult? Function()?  goHome,TResult? Function()?  toggleSort,TResult? Function( String name)?  createFolder,TResult? Function( String path)?  deleteFolder,TResult? Function( String path,  String newName)?  renameFolder,TResult? Function()?  enterSelectionMode,TResult? Function()?  exitSelectionMode,TResult? Function( String path)?  toggleFolderSelection,TResult? Function( String comicUniqueKey)?  toggleComicSelection,TResult? Function()?  clearSelection,TResult? Function()?  selectAll,TResult? Function( Set<String> targetPaths,  Set<String>? sourceFolderPaths)?  moveSelected,TResult? Function( Set<String> targetPaths)?  copySelected,TResult? Function()?  deleteSelected,}) {final _that = this;
 switch (_that) {
 case FolderShelfLoadRequested() when loadRequested != null:
 return loadRequested(_that.search);case FolderShelfEnterFolder() when enterFolder != null:
-return enterFolder(_that.path);case FolderShelfGoBack() when goBack != null:
+return enterFolder(_that.path);case FolderShelfSetFacets() when setFacets != null:
+return setFacets(_that.selection);case FolderShelfGoBack() when goBack != null:
 return goBack();case FolderShelfGoHome() when goHome != null:
 return goHome();case FolderShelfToggleSort() when toggleSort != null:
 return toggleSort();case FolderShelfCreateFolder() when createFolder != null:
@@ -244,7 +255,8 @@ return renameFolder(_that.path,_that.newName);case FolderShelfEnterSelectionMode
 return enterSelectionMode();case FolderShelfExitSelectionMode() when exitSelectionMode != null:
 return exitSelectionMode();case FolderShelfToggleFolderSelection() when toggleFolderSelection != null:
 return toggleFolderSelection(_that.path);case FolderShelfToggleComicSelection() when toggleComicSelection != null:
-return toggleComicSelection(_that.comicUniqueKey);case FolderShelfSelectAll() when selectAll != null:
+return toggleComicSelection(_that.comicUniqueKey);case FolderShelfClearSelection() when clearSelection != null:
+return clearSelection();case FolderShelfSelectAll() when selectAll != null:
 return selectAll();case FolderShelfMoveSelected() when moveSelected != null:
 return moveSelected(_that.targetPaths,_that.sourceFolderPaths);case FolderShelfCopySelected() when copySelected != null:
 return copySelected(_that.targetPaths);case FolderShelfDeleteSelected() when deleteSelected != null:
@@ -402,6 +414,83 @@ as String,
 }
 
 
+}
+
+/// @nodoc
+
+
+class FolderShelfSetFacets implements FolderShelfEvent {
+  const FolderShelfSetFacets(this.selection);
+
+
+ final  ShelfFacetSelection selection;
+
+/// Create a copy of FolderShelfEvent
+/// with the given fields replaced by the non-null parameter values.
+@JsonKey(includeFromJson: false, includeToJson: false)
+@pragma('vm:prefer-inline')
+$FolderShelfSetFacetsCopyWith<FolderShelfSetFacets> get copyWith => _$FolderShelfSetFacetsCopyWithImpl<FolderShelfSetFacets>(this, _$identity);
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is FolderShelfSetFacets&&(identical(other.selection, selection) || other.selection == selection));
+}
+
+
+@override
+int get hashCode {
+    return Object.hash(runtimeType,selection);
+}
+
+@override
+String toString() {
+    return 'FolderShelfEvent.setFacets(selection: $selection)';
+}
+
+
+}
+
+/// @nodoc
+abstract mixin class $FolderShelfSetFacetsCopyWith<$Res> implements $FolderShelfEventCopyWith<$Res> {
+  factory $FolderShelfSetFacetsCopyWith(FolderShelfSetFacets value, $Res Function(FolderShelfSetFacets) _then) = _$FolderShelfSetFacetsCopyWithImpl;
+@useResult
+$Res call({
+ ShelfFacetSelection selection
+});
+
+
+$ShelfFacetSelectionCopyWith<$Res> get selection;
+
+}
+/// @nodoc
+class _$FolderShelfSetFacetsCopyWithImpl<$Res>
+    implements $FolderShelfSetFacetsCopyWith<$Res> {
+  _$FolderShelfSetFacetsCopyWithImpl(this._self, this._then);
+
+  final FolderShelfSetFacets _self;
+  final $Res Function(FolderShelfSetFacets) _then;
+
+/// Create a copy of FolderShelfEvent
+/// with the given fields replaced by the non-null parameter values.
+@pragma('vm:prefer-inline') $Res call({Object? selection = null,}) {
+  return _then(FolderShelfSetFacets(
+null == selection ? _self.selection : selection // ignore: cast_nullable_to_non_nullable
+as ShelfFacetSelection,
+  ));
+}
+
+/// Create a copy of FolderShelfEvent
+/// with the given fields replaced by the non-null parameter values.
+@override
+@pragma('vm:prefer-inline')
+$ShelfFacetSelectionCopyWith<$Res> get selection {
+
+  return $ShelfFacetSelectionCopyWith<$Res>(_self.selection, (value) {
+    return _then(_self.copyWith(selection: value));
+  });
+}
 }
 
 /// @nodoc
@@ -905,6 +994,38 @@ as String,
 
 
 }
+
+/// @nodoc
+
+
+class FolderShelfClearSelection implements FolderShelfEvent {
+  const FolderShelfClearSelection();
+
+
+
+
+
+
+
+@override
+bool operator ==(Object other) {
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is FolderShelfClearSelection);
+}
+
+
+@override
+int get hashCode => runtimeType.hashCode;
+
+@override
+String toString() {
+    return 'FolderShelfEvent.clearSelection()';
+}
+
+
+}
+
+
+
 
 /// @nodoc
 

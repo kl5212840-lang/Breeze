@@ -1,4 +1,9 @@
+import 'package:zephyr/network/http/plugin/unified_plugin_envelope.dart';
+import 'package:zephyr/page/comic_info/models/comic_metric_availability.dart';
+import 'package:zephyr/service/comic_follow/comic_follow_check_failure.dart';
 import 'package:zephyr/util/json/json_value.dart';
+
+const comicDetailErrorType = 'comic_detail_error';
 
 class UnifiedPluginDetailResponse {
   const UnifiedPluginDetailResponse({
@@ -17,6 +22,21 @@ class UnifiedPluginDetailResponse {
   final Map<String, dynamic> normal;
   final Map<String, dynamic> raw;
 
+  /// JM's normalized numeric field has a legacy default of zero. The original
+  /// availability flag and matching album identities establish a real count.
+  int? confirmedLikes({required String source, required String comicId}) {
+    final comic = asJsonMap(normal['comicInfo']);
+    final declared = asJsonMap(normal['extern'])[comicMetricAvailabilityKey];
+    if (this.source != source ||
+        this.comicId != comicId ||
+        comic['id']?.toString() != comicId ||
+        declared is! Map ||
+        declared['totalLikes'] != true) {
+      return null;
+    }
+    return parsePublicComicCount(normal['totalLikes']);
+  }
+
   factory UnifiedPluginDetailResponse.fromMap(Map<String, dynamic> map) {
     final data = asJsonMap(map['data']);
     final normal = data.isNotEmpty
@@ -25,6 +45,17 @@ class UnifiedPluginDetailResponse {
     final raw = data.isNotEmpty
         ? asJsonMap(data['raw'])
         : asJsonMap(map['raw']);
+
+    for (final envelope in [map, data, normal]) {
+      final failure =
+          ComicFollowCheckException.fromPluginEnvelope(
+            envelope,
+            type: comicDetailErrorType,
+          ) ??
+          ComicFollowCheckException.fromPluginEnvelope(envelope);
+      if (failure != null) throw failure;
+      requireSuccessfulPluginEnvelope(envelope);
+    }
 
     return UnifiedPluginDetailResponse(
       source: map['source']?.toString() ?? '',

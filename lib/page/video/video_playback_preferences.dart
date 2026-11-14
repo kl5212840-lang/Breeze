@@ -57,6 +57,10 @@ class VideoPlaybackPreferences {
   static final _changes = ValueNotifier<int>(0);
   static ValueListenable<int> get changes => _changes;
 
+  // Reuse the existing key so a previously chosen style and synced value keep
+  // their meaning. This choice now controls host chrome as well as playback.
+  static final interfaceStyle = ValueNotifier<String>('system');
+
   static Future<void> _serialize(Future<void> Function() action) async {
     final previous = _writes;
     final write = previous == null
@@ -104,10 +108,17 @@ class VideoPlaybackPreferences {
     );
   }
 
+  static Future<void> refreshAfterRestore() async {
+    await read();
+    _changes.value++;
+  }
+
   static Future<VideoPlaybackPreferences> read() async {
     await _writes?.catchError((_) {});
     final store = await SharedPreferences.getInstance();
-    return _read(store);
+    final value = _read(store);
+    interfaceStyle.value = value.controlsStyle;
+    return value;
   }
 
   /// Zero means untouched defaults; a new installation must not beat an older
@@ -180,32 +191,93 @@ class VideoPlaybackPreferences {
 
   /// Restores only declared video fields. Unknown/invalid remote values cannot
   /// overwrite another store, reset good local fields or introduce credentials.
+  /// A local commit runs under the playback write queue and must not call back
+  /// into this store's reads or writes. Failure restores the prior snapshot
+  /// before queued user edits can read it.
   static Future<void> restore(
     Map<String, dynamic> values, {
     required int updatedAt,
+    Future<void> Function(String expected)? beforeWrite,
+    Future<void> Function()? commit,
   }) async {
-    final valid = {
-      for (final entry in values.entries)
-        if (_valid(entry.key, entry.value)) entry.key: entry.value as Object,
-    };
-    if (valid.isEmpty) return;
+    final valid = validatedValues(values);
+    if (valid.isEmpty) {
+      await commit?.call();
+      return;
+    }
     await _serialize(() async {
       final store = await SharedPreferences.getInstance();
       final merged = _read(store).toValues()..addAll(valid);
-      await _writeSnapshot(store, merged, updatedAt);
+      await _writeSnapshot(
+        store,
+        merged,
+        updatedAt,
+        beforeWrite: beforeWrite,
+        commit: commit,
+      );
     });
   }
+
+  static Future<void> restoreSnapshotIfCurrent(
+    Iterable<String?> expected,
+    String? before,
+  ) => _serialize(() async {
+    final store = await SharedPreferences.getInstance();
+    final current = store.getString(snapshotKey);
+    if (current == before || !expected.contains(current)) return;
+    await _restoreSnapshot(store, before);
+    _publish(_read(store).controlsStyle);
+  });
+
+  static Future<void> _restoreSnapshot(
+    SharedPreferences store,
+    String? before,
+  ) async {
+    final saved = before == null
+        ? await store.remove(snapshotKey)
+        : await store.setString(snapshotKey, before);
+    if (!saved) throw StateError('Video preference was not restored');
+  }
+
+  static Map<String, Object> validatedValues(Map<String, dynamic> values) => {
+    for (final entry in values.entries)
+      if (_valid(entry.key, entry.value)) entry.key: entry.value as Object,
+  };
 
   static Future<void> _writeSnapshot(
     SharedPreferences store,
     Map<String, Object> values,
-    int updatedAt,
-  ) async {
-    final saved = await store.setString(
-      snapshotKey,
-      jsonEncode({'version': 1, 'updatedAt': updatedAt, 'values': values}),
-    );
-    if (!saved) throw StateError('Video preference was not saved');
+    int updatedAt, {
+    Future<void> Function(String expected)? beforeWrite,
+    Future<void> Function()? commit,
+  }) async {
+    final encoded = jsonEncode({
+      'version': 1,
+      'updatedAt': updatedAt,
+      'values': values,
+    });
+    final before = commit == null ? null : store.getString(snapshotKey);
+    await beforeWrite?.call(encoded);
+    try {
+      if (!await store.setString(snapshotKey, encoded)) {
+        throw StateError('Video preference was not saved');
+      }
+      if (commit != null) await commit();
+    } catch (_) {
+      // Queued user edits must read the pre-restore values when this local
+      // commit fails. Do not call back into the public write queue from here.
+      if (commit != null &&
+          before != encoded &&
+          store.getString(snapshotKey) == encoded) {
+        await _restoreSnapshot(store, before);
+      }
+      rethrow;
+    }
+    _publish(values['controlsStyle'] == 'breeze' ? 'breeze' : 'system');
+  }
+
+  static void _publish(String style) {
+    interfaceStyle.value = style;
     _changes.value++;
   }
 }

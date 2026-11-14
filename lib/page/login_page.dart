@@ -1,3 +1,7 @@
+import 'package:zephyr/service/plugin_account_authentication.dart';
+import 'package:zephyr/service/plugin_account_profiles.dart';
+import 'package:zephyr/page/source_shell/source_loading_indicator.dart';
+import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'dart:convert';
@@ -8,24 +12,94 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/http/plugin/unified_plugin_envelope.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
+import 'package:zephyr/network/http/plugin/qjs_network_route.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/login/registration_link.dart';
+import 'package:zephyr/page/login/login_error_message.dart';
+import 'package:zephyr/page/video/video_page_route.dart';
+import 'package:zephyr/widgets/native_view_occlusion.dart';
 import 'package:zephyr/widgets/toast.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'package:zephyr/config/router/router.gr.dart';
-import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/util/event/event.dart';
 import 'package:zephyr/util/json/json_value.dart';
 
+const _loginIdentityFields = {'account', 'username', 'email'};
+
+/// Account form seed is memory-only and never becomes generated route args.
+class PluginAccountLoginSeed extends InheritedWidget {
+  const PluginAccountLoginSeed({
+    super.key,
+    required super.child,
+    this.values = const {},
+    this.recoveryGeneration,
+  });
+  final Map<String, String> values;
+  final int? recoveryGeneration;
+  static PluginAccountLoginSeed? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<PluginAccountLoginSeed>();
+  @override
+  bool updateShouldNotify(PluginAccountLoginSeed oldWidget) =>
+      values != oldWidget.values ||
+      recoveryGeneration != oldWidget.recoveryGeneration;
+}
+
+/// Used by explicit account actions. Keep the seed in the route's widget tree.
+Future<void> openPluginAccountLoginForm(
+  BuildContext context, {
+  required String source,
+  String? username,
+  int? recoveryGeneration,
+}) async {
+  final route = videoPageRoute<void>(
+    settings: const RouteSettings(name: LoginRoute.name),
+    builder: (_) => PluginAccountLoginSeed(
+      recoveryGeneration: recoveryGeneration,
+      values: {
+        if (username != null && username.isNotEmpty) ...{
+          'account': username,
+          'username': username,
+          if (username.contains('@')) 'email': username,
+        },
+      },
+      child: LoginPage(from: source),
+    ),
+  );
+  final completion = Navigator.of(context).push<void>(route);
+  NativeCompositionObserver.observeSharedDestination(context, route);
+  await completion;
+}
+
 @RoutePage()
-class LoginPage extends StatefulWidget {
+class LoginPage extends StatelessWidget {
+  static const addAccountKey = ValueKey('login.add-account');
   final String? from;
 
   const LoginPage({super.key, this.from});
 
   @override
-  State<LoginPage> createState() => _LoginPageState();
+  Widget build(BuildContext context) => SourceExperienceBoundary(
+    source: from ?? '',
+    builder: (_) {
+      final body = _SourceLoginBody(from: from);
+      return key == addAccountKey ? PluginAccountLoginSeed(child: body) : body;
+    },
+  );
+}
+
+class _SourceLoginBody extends StatefulWidget {
+  const _SourceLoginBody({this.from});
+  final String? from;
+  @override
+  State<_SourceLoginBody> createState() => _LoginPageState();
+}
+
+class _LoginEnvelopeRejected implements Exception {
+  const _LoginEnvelopeRejected(this.kind);
+
+  final LoginFailureKind kind;
 }
 
 class _LoginFieldSpec {
@@ -60,8 +134,10 @@ class _LoginFieldSpec {
   bool get isCaptchaImage => kind == 'captcha-image';
 }
 
-class _LoginPageState extends State<LoginPage> {
+class _LoginPageState extends State<_SourceLoginBody> {
   final Map<String, TextEditingController> _controllers = {};
+  final Set<String> _prefilledPasswords = {};
+  int? _prefillGeneration;
   final Set<String> _revealedSecrets = {};
   final Map<String, Uint8List> _captchaImages = {};
   final Set<String> _captchaLoading = {};
@@ -76,6 +152,7 @@ class _LoginPageState extends State<LoginPage> {
   bool _loadingScheme = true;
   bool _submitting = false;
   String? _schemeError;
+  String? _submitError;
 
   @override
   void initState() {
@@ -109,19 +186,29 @@ class _LoginPageState extends State<LoginPage> {
         core: const <String, dynamic>{},
         extern: const <String, dynamic>{},
       );
+      if (!mounted) return;
+      final failure = loginResponseFailure(response);
+      if (failure != null) {
+        if (mounted) {
+          setState(() {
+            _schemeError = t.login.loadConfigFailed(error: failure);
+            _loadingScheme = false;
+          });
+        }
+        return;
+      }
       final envelope = UnifiedPluginEnvelope.fromMap(response);
       _applyLoginBundle(envelope.scheme, envelope.data);
     } catch (e) {
       if (mounted) {
         final raw = e.toString();
         final missingBundle =
-            raw.contains('getLoginBundle') ||
             raw.contains('function path not found') ||
             raw.contains('target is not function');
         setState(() {
           _schemeError = missingBundle
               ? t.login.loginNotSupported
-              : t.login.loadConfigFailed(error: e);
+              : t.login.loadConfigFailed(error: userFacingLoginErrorMessage(e));
           _loadingScheme = false;
         });
       }
@@ -179,14 +266,44 @@ class _LoginPageState extends State<LoginPage> {
       entry.dispose();
     }
     _controllers.clear();
+    _prefilledPasswords.clear();
     final values = <String, dynamic>{
       ...asJsonMap(data),
       ...asJsonMap(data?['values']),
     };
+    final seed = PluginAccountLoginSeed.maybeOf(context);
+    final source = canonicalQjsSource(from);
+    final accountFields = specs.where(
+      (spec) => spec.kind == 'text' && _loginIdentityFields.contains(spec.key),
+    );
+    final accountField = accountFields.length == 1
+        ? accountFields.single.key
+        : null;
+    final recoveryGeneration = seed?.recoveryGeneration;
+    final savedAccount = accountField == null ? null : values[accountField];
+    final prefillPassword =
+        recoveryGeneration != null &&
+        !pluginSessionWriteFence.isChanging(source) &&
+        pluginSessionWriteFence.generation(source) == recoveryGeneration &&
+        savedAccount is String &&
+        savedAccount.isNotEmpty &&
+        seed?.values[accountField] == savedAccount;
+    _prefillGeneration = prefillPassword ? recoveryGeneration : null;
     for (final spec in specs) {
-      _controllers[spec.key] = TextEditingController(
-        text: values[spec.key]?.toString() ?? '',
-      );
+      final saved = values[spec.key];
+      final useSavedPassword =
+          prefillPassword &&
+          spec.obscure &&
+          spec.key == 'password' &&
+          saved is String &&
+          saved.isNotEmpty;
+      if (useSavedPassword) _prefilledPasswords.add(spec.key);
+      final initialValue = seed == null || useSavedPassword
+          ? saved?.toString() ?? ''
+          : spec.obscure
+          ? ''
+          : seed.values[spec.key] ?? '';
+      _controllers[spec.key] = TextEditingController(text: initialValue);
     }
 
     if (mounted) {
@@ -279,33 +396,6 @@ class _LoginPageState extends State<LoginPage> {
     super.dispose();
   }
 
-  Future<void> _showDialog(String title, String message) async {
-    if (message.contains("invalid email or password")) {
-      message = t.login.invalidCredentials;
-    }
-
-    if (!mounted) return;
-
-    return showDialog<void>(
-      context: context,
-      barrierDismissible: false, // user must tap button!
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text(title),
-          content: SingleChildScrollView(
-            child: ListBody(children: <Widget>[Text(message)]),
-          ),
-          actions: <Widget>[
-            TextButton(
-              child: Text(t.common.ok),
-              onPressed: () => context.pop(),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   /// 登录提交返回值约定：`message?: string | null`，缺省/空白时用默认文案。
   String _resolveLoginSuccessMessage(Map<String, dynamic> result) {
     final message = result['message']?.toString().trim();
@@ -315,12 +405,27 @@ class _LoginPageState extends State<LoginPage> {
     return t.login.loginSuccess;
   }
 
+  void _clearPrefilledPasswords() {
+    for (final key in _prefilledPasswords) {
+      _controllers[key]?.clear();
+      _revealedSecrets.remove(key);
+    }
+    _prefilledPasswords.clear();
+  }
+
   void _submitForm() async {
     if (!mounted) return;
     if (_loadingScheme || _schemeError != null || _submitting) {
       if (!_submitting) {
         showErrorToast(t.login.configNotReady);
       }
+      return;
+    }
+    final source = canonicalQjsSource(from);
+    if (_prefilledPasswords.isNotEmpty &&
+        (pluginSessionWriteFence.isChanging(source) ||
+            pluginSessionWriteFence.generation(source) != _prefillGeneration)) {
+      setState(_clearPrefilledPasswords);
       return;
     }
     final values = <String, dynamic>{};
@@ -334,16 +439,29 @@ class _LoginPageState extends State<LoginPage> {
     }
     setState(() {
       _submitting = true;
+      _submitError = null;
     });
     showInfoToast(t.login.loggingIn);
 
     try {
-      // 新旧兼容：新插件读 core.values，旧插件读顶层 account/password。
-      final result = await callUnifiedComicPlugin(
-        from: from,
-        fnPath: _submitFnPath,
-        core: {...values, 'values': values},
-        extern: const <String, dynamic>{},
+      final authentication = PluginAccountAuthenticationService(from);
+      final result = await PluginAccountProfiles.submitLogin(
+        from,
+        submit: () async {
+          final result = await callUnifiedComicPlugin(
+            from: from,
+            fnPath: _submitFnPath,
+            sessionChange: true,
+            core: {...values, 'values': values},
+            extern: const <String, dynamic>{},
+          );
+          final failure = loginResponseFailureKind(result);
+          if (failure != null) throw _LoginEnvelopeRejected(failure);
+          return result;
+        },
+        verify: authentication.hasApiVerification
+            ? authentication.verify
+            : null,
       );
       showSuccessToast(_resolveLoginSuccessMessage(result));
       eventBus.fire(PluginLoginSucceeded(from));
@@ -351,8 +469,10 @@ class _LoginPageState extends State<LoginPage> {
       if (!mounted) return;
       context.maybePop();
     } catch (e) {
-      final message = userFacingErrorMessage(e);
-      _showDialog(t.login.loginFailed, message);
+      final message = e is _LoginEnvelopeRejected
+          ? userFacingLoginFailureMessage(e.kind)
+          : userFacingLoginErrorMessage(e);
+      if (mounted) setState(() => _submitError = message);
       // 失败自动刷新：验证码一次一码，旧码提交后即作废；
       // 无论失败原因是码错还是账密错，都换一张新图 + 清空输入。
       if (_hasCaptchaField) _refreshAllCaptchas();
@@ -366,6 +486,7 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   Future<void> _openRegistration() async {
+    if (_submitting) return;
     final uri = _registrationUri;
     if (uri == null) return;
     final confirmed = await showDialog<bool>(
@@ -405,7 +526,7 @@ class _LoginPageState extends State<LoginPage> {
           title: Text(t.login.title),
           actions: [if (from.isNotEmpty) SourceMoreButton(source: from)],
         ),
-        body: const Center(child: CircularProgressIndicator()),
+        body: Center(child: SourceLoadingIndicator(source: from)),
       );
     }
 
@@ -478,11 +599,25 @@ class _LoginPageState extends State<LoginPage> {
                   if (i > 0) const SizedBox(height: 20),
                   _buildField(_fields[i]),
                 ],
+                if (_submitError != null) ...[
+                  const SizedBox(height: 12),
+                  Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      _submitError!,
+                      key: const ValueKey('login.submit-error'),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 10),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     TextButton(
+                      key: const ValueKey('login.submit'),
                       onPressed: _submitting ? null : _submitForm,
                       child: _submitting
                           ? const SizedBox(
@@ -498,7 +633,7 @@ class _LoginPageState extends State<LoginPage> {
                   const SizedBox(height: 4),
                   Center(
                     child: TextButton.icon(
-                      onPressed: _openRegistration,
+                      onPressed: _submitting ? null : _openRegistration,
                       icon: const Icon(Icons.open_in_new),
                       label: Text(t.login.registerAccount),
                     ),
@@ -528,6 +663,13 @@ class _LoginPageState extends State<LoginPage> {
       children: [
         TextField(
           controller: controller,
+          onChanged: _loginIdentityFields.contains(spec.key)
+              ? (_) {
+                  if (_prefilledPasswords.isNotEmpty) {
+                    setState(_clearPrefilledPasswords);
+                  }
+                }
+              : null,
           decoration: InputDecoration(
             labelText: spec.required ? '${spec.label} *' : spec.label,
             hintText: spec.placeholder.isEmpty ? null : spec.placeholder,

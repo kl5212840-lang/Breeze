@@ -242,6 +242,7 @@ fn direct_get(url: &str, timeout_ms: u64) -> Result<Duration, String> {
             &direct_config(),
             BuildHttpClientOptions {
                 no_proxy: false,
+                https_only: false,
                 timeout: Some(Duration::from_millis(timeout_ms)),
                 connect_timeout: Some(Duration::from_millis(15_000)),
                 follow_redirects: None,
@@ -365,6 +366,7 @@ fn host_header_and_referer_on_cross_host_redirect() {
             &direct_config(),
             BuildHttpClientOptions {
                 no_proxy: false,
+                https_only: false,
                 timeout: Some(Duration::from_millis(10_000)),
                 connect_timeout: Some(Duration::from_millis(5_000)),
                 follow_redirects: None,
@@ -899,6 +901,7 @@ fn direct_get_real(
             &direct_config(),
             BuildHttpClientOptions {
                 no_proxy: false,
+                https_only: false,
                 timeout: Some(Duration::from_millis(timeout_ms)),
                 connect_timeout: Some(Duration::from_millis(15_000)),
                 follow_redirects: None,

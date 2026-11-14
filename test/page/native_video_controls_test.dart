@@ -4,8 +4,102 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
+import 'package:zephyr/widgets/breeze_control_colors.dart';
+import 'package:zephyr/widgets/breeze_theme_colors.dart';
 
 void main() {
+  testWidgets(
+    'segmented fallback measures finite height in an unbounded column',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      for (final width in [320.0, 390.0, 440.0]) {
+        for (final scale in [1.0, 1.4, 2.0]) {
+          tester.view.physicalSize = Size(width, 900);
+          final brightness = width == 390 ? Brightness.dark : Brightness.light;
+          final colors = BreezeThemeColors.fromSeed(
+            const Color(0xff009688),
+            brightness,
+          );
+          final highContrast = scale == 2;
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: ThemeData(
+                colorScheme: colors,
+                scaffoldBackgroundColor: colors.surface,
+              ),
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  textScaler: TextScaler.linear(scale),
+                  highContrast: highContrast,
+                ),
+                child: child!,
+              ),
+              home: Scaffold(
+                body: VideoControlAppearance(
+                  systemControls: false,
+                  child: SingleChildScrollView(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Column(
+                        children: [
+                          NativeVideoSegmentedControl(
+                            options: const {'all': '全部追更', 'unread': '未读更新'},
+                            selected: 'all',
+                            onSelected: (_) {},
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final size = tester.getSize(find.byType(NativeVideoSegmentedControl));
+          expect(size.height.isFinite, isTrue);
+          expect(size.height, greaterThanOrEqualTo(44));
+          expect(find.text('全部追更').hitTestable(), findsOneWidget);
+          expect(find.text('未读更新').hitTestable(), findsOneWidget);
+          final fallback = tester.widget<SegmentedButton<String>>(
+            find.byType(SegmentedButton<String>),
+          );
+          const selected = {WidgetState.selected};
+          final fill = fallback.style!.backgroundColor!.resolve(selected)!;
+          final label = fallback.style!.foregroundColor!.resolve(selected)!;
+          final track = fallback.style!.backgroundColor!.resolve({})!;
+          final selection = BreezeControlColors.systemSegmentSelection(
+            colors,
+            highContrast: highContrast,
+          );
+          expect(
+            (track, fill, label),
+            (selection.track, selection.fill, selection.foreground),
+          );
+          expect(
+            BreezeThemeColors.contrast(label, fill),
+            greaterThanOrEqualTo(4.5),
+          );
+          if (highContrast) {
+            expect(
+              BreezeThemeColors.contrast(fill, track),
+              greaterThanOrEqualTo(3),
+            );
+          } else {
+            expect(fill, isNot(Colors.white));
+            expect(
+              fill.computeLuminance(),
+              greaterThan(track.computeLuminance()),
+            );
+          }
+          expect(tester.takeException(), isNull, reason: '$width / $scale');
+        }
+      }
+    },
+  );
+
   testWidgets(
     'catalog back and more keep equal UIKit hit areas and visible plate metrics',
     (tester) async {
@@ -52,7 +146,16 @@ void main() {
                   icon: Icons.more_horiz_rounded,
                   symbol: 'ellipsis',
                   selected: '',
-                  options: const {'exit': 'Exit'},
+                  options: const {
+                    'website': '打开官网',
+                    'settings': '设置',
+                    'exit': '退出插件',
+                  },
+                  groups: const [
+                    ['website'],
+                    ['settings'],
+                    ['exit'],
+                  ],
                   onSelected: (_) {},
                 ),
               ],
@@ -63,6 +166,13 @@ void main() {
       await tester.pumpAndSettle();
       final views = find.byType(UiKitView);
       expect(views, findsNWidgets(2));
+      final more = tester.widget<UiKitView>(views.last);
+      expect((more.creationParams! as Map)['compactPopup'], isTrue);
+      expect((more.creationParams! as Map)['groups'], [
+        ['website'],
+        ['settings'],
+        ['exit'],
+      ], reason: 'Grouping must retain the real iOS menu presentation');
       for (var index = 0; index < 2; index++) {
         final view = tester.widget<UiKitView>(views.at(index));
         final arguments = view.creationParams! as Map;
@@ -73,6 +183,43 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
+
+  testWidgets('a bare host menu keeps its 44-point hit area and opens', (
+    tester,
+  ) async {
+    var selected = '';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: VideoControlAppearance(
+            systemControls: false,
+            child: NativeVideoMenu(
+              label: '',
+              tooltip: 'More',
+              selected: '',
+              options: const {'manage': 'Manage'},
+              onSelected: (value) => selected = value,
+              icon: Icons.more_horiz_rounded,
+              width: 44,
+              bare: true,
+              hostPresentation: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    final button = find.byType(IconButton);
+    expect(tester.getSize(button), const Size(44, 44));
+    final plate = tester.widget<DecoratedBox>(
+      find.descendant(of: button, matching: find.byType(DecoratedBox)),
+    );
+    expect((plate.decoration as BoxDecoration).color, Colors.transparent);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Manage'));
+    await tester.pumpAndSettle();
+    expect(selected, 'manage');
+  });
 
   testWidgets(
     'catalog fallback back and more share a 36pt plate without shrinking touch targets',
@@ -338,18 +485,22 @@ void main() {
       });
       var opened = 0;
       var closed = 0;
+      final navigator = GlobalKey<NavigatorState>();
       final controller = NativeVideoMenuController();
       Widget menu(String selected) => MaterialApp(
-        home: Center(
-          child: NativeVideoMenu(
-            controller: controller,
-            label: '$selected×',
-            tooltip: 'Speed',
-            selected: selected,
-            options: const {'1': '1×', '2': '2×'},
-            onSelected: (_) {},
-            onOpened: () => opened++,
-            onClosed: () => closed++,
+        navigatorKey: navigator,
+        home: Scaffold(
+          body: Center(
+            child: NativeVideoMenu(
+              controller: controller,
+              label: '$selected×',
+              tooltip: 'Speed',
+              selected: selected,
+              options: const {'1': '1×', '2': '2×'},
+              onSelected: (_) {},
+              onOpened: () => opened++,
+              onClosed: () => closed++,
+            ),
           ),
         ),
       );
@@ -402,6 +553,21 @@ void main() {
       await tester.pumpWidget(menu('2'));
       expect(updates.single.method, 'update');
       expect((updates.single.arguments as Map)['selected'], '2');
+      await native('menuOpened', 4);
+      navigator.currentState!.push(
+        MaterialPageRoute<void>(builder: (_) => const Scaffold()),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(
+        closed,
+        2,
+        reason:
+            'A route transition must not destroy native chrome or synthesize a close',
+      );
+      await native('menuClosed', 4);
+      expect(closed, 3);
+      await tester.pumpAndSettle();
       await tester.pumpWidget(const SizedBox.shrink());
       expect(controller.attached, false);
     },

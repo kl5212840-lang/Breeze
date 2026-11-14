@@ -70,6 +70,49 @@ void main() {
     },
   );
 
+  test('declared site playlist cannot leak into episodes or title labels', () {
+    final watch = Uri.parse('https://hanime1.me/watch?v=31');
+    final session = NativePlaybackSession.fromDetailResponse({
+      'data': {
+        'title': 'Mixed playlist',
+        'sequenceKind': 'sitePlaylist',
+        'episodes': [
+          {
+            'title': 'Wrong category',
+            'watchUrl': 'https://hanime1.me/watch?v=55',
+          },
+        ],
+        'playlist': [
+          {
+            'title': 'Other work Episode 20',
+            'watchUrl': 'https://hanime1.me/watch?v=81',
+          },
+          {'title': 'Current Episode 1', 'watchUrl': watch.toString()},
+        ],
+      },
+    }, watchUrl: watch);
+    expect(session.isSitePlaylist, isTrue);
+    expect(session.episodes, isEmpty);
+    expect(session.playbackEntries.map((card) => card.title), [
+      'Other work Episode 20',
+      'Current Episode 1',
+    ]);
+    expect(
+      session.playbackEntries.every((card) => card.episodeLabel.isEmpty),
+      isTrue,
+    );
+    expect(session.withSources([]).sitePlaylist, session.sitePlaylist);
+    final empty = NativePlaybackSession.fromDetailResponse({
+      'data': {
+        'title': 'No items',
+        'sequenceKind': 'sitePlaylist',
+        'playlist': [],
+      },
+    }, watchUrl: watch);
+    expect(empty.isSitePlaylist, isTrue);
+    expect(empty.playbackEntries, isEmpty);
+  });
+
   test(
     'detail tag targets stay first-party and preserve the actual search parameters',
     () {

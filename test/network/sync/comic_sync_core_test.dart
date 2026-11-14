@@ -36,6 +36,119 @@ void main() {
   }
 
   group('ComicSyncCore.mergeUnifiedData', () {
+    test('a legacy follow check cannot bring back a cancelled follow', () async {
+      final started = DateTime.utc(2026, 11, 11, 9);
+      final cancelled = DateTime.utc(2026, 11, 12, 9);
+      final lateCheck = DateTime.utc(2026, 11, 12, 10);
+      final active = createFollow('test:old-follow', started);
+      final tombstone = active.copyWith(deleted: true, updatedAt: cancelled);
+      // The old host used the observation time as the edit time, even for a
+      // poll. A check finishing later is not a request to follow again.
+      final legacyObservation = active.copyWith(
+        updatedAt: lateCheck,
+        updateTime: lateCheck,
+        detectedChapterCount: 9,
+      );
+      final box = store.box<ComicFollow>()..put(tombstone);
+      await runMerge(store, {
+        ...buildPayload(),
+        'follows': [legacyObservation.toJson()],
+      });
+      expect(box.getAll().single.deleted, isTrue);
+
+      final explicitlyFollowedAgain = legacyObservation.copyWith(
+        createdAt: lateCheck,
+        updatedAt: lateCheck,
+      );
+      await runMerge(store, {
+        ...buildPayload(),
+        'follows': [explicitlyFollowedAgain.toJson()],
+      });
+      expect(box.getAll().single.deleted, isFalse);
+      expect(box.getAll().single.createdAt.toUtc(), lateCheck);
+    });
+
+    test('a legacy observation cannot undo an acknowledged chapter', () async {
+      final started = DateTime.utc(2026, 11, 11, 9);
+      final readAt = DateTime.utc(2026, 11, 12, 9);
+      final lateCheck = DateTime.utc(2026, 11, 12, 10);
+      final initial = createFollow('test:old-read', started);
+      final alreadyRead = initial.copyWith(
+        lastChapterCount: 8,
+        detectedChapterCount: 8,
+        updatedAt: readAt,
+      );
+      final legacyObservation = initial.copyWith(
+        detectedChapterCount: 8,
+        updatedAt: lateCheck,
+        updateTime: lateCheck,
+        hasUpdate: true,
+      );
+      final box = store.box<ComicFollow>()..put(alreadyRead);
+      await runMerge(store, {
+        ...buildPayload(),
+        'follows': [legacyObservation.toJson()],
+      });
+      final merged = box.getAll().single;
+      expect(merged.lastChapterCount, 8);
+      expect(merged.detectedChapterCount, 8);
+      expect(merged.hasUpdate, isFalse);
+      expect(merged.updateTime.toUtc(), lateCheck);
+    });
+
+    test('follow sync combines the newer observation with the read baseline', () async {
+      final time = DateTime.utc(2026, 11, 12, 12);
+      final local = ComicFollow(
+        uniqueKey: 'test:1',
+        source: 'test',
+        comicId: '1',
+        title: 'Tracked comic',
+        description: '',
+        cover: '',
+        creator: '',
+        titleMeta: '',
+        metadata: '',
+        lastChapterCount: 11,
+        detectedChapterCount: 11,
+        hasUpdate: false,
+        updateTime: time,
+        deleted: false,
+        createdAt: time,
+        updatedAt: time.add(const Duration(minutes: 1)),
+        schemaVersion: 1,
+      );
+      final incoming = local.copyWith(
+        lastChapterCount: 10,
+        detectedChapterCount: 12,
+        detectedChapterTitle: 'Twelfth',
+        hasUpdate: true,
+        updateTime: time.add(const Duration(minutes: 2)),
+        updatedAt: time,
+      );
+      final box = store.box<ComicFollow>();
+      box.put(local);
+      await runMerge(store, {...buildPayload(), 'follows': [incoming.toJson()]});
+      final merged = box.getAll().single;
+      expect(merged.lastChapterCount, 11);
+      expect(merged.detectedChapterCount, 12);
+      expect(merged.detectedChapterTitle, 'Twelfth');
+      expect(merged.hasUpdate, isTrue);
+      expect(merged.updatedAt.toUtc(), local.updatedAt);
+
+      final removed = merged.copyWith(
+        deleted: true,
+        updatedAt: time.add(const Duration(minutes: 3)),
+      );
+      box.put(removed);
+      final observedLater = incoming.copyWith(
+        updateTime: time.add(const Duration(minutes: 4)),
+        detectedChapterCount: 13,
+      );
+      await runMerge(store, {...buildPayload(), 'follows': [observedLater.toJson()]});
+      expect(box.getAll().single.deleted, isTrue);
+      expect(box.getAll().single.detectedChapterCount, 12);
+    });
+
     test('merges favorites by LWW', () async {
       final localUpdated = DateTime.utc(2024, 1, 1, 12, 0);
       final cloudUpdated = DateTime.utc(2024, 1, 1, 13, 0);
@@ -558,6 +671,26 @@ void main() {
 }
 
 // ==================== 测试工具函数 ====================
+
+ComicFollow createFollow(String key, DateTime started) => ComicFollow(
+  uniqueKey: key,
+  source: 'test',
+  comicId: key.split(':').last,
+  title: 'Followed work',
+  description: '',
+  cover: '',
+  creator: '',
+  titleMeta: '',
+  metadata: '',
+  lastChapterCount: 7,
+  detectedChapterCount: 7,
+  hasUpdate: false,
+  updateTime: started,
+  deleted: false,
+  createdAt: started,
+  updatedAt: started,
+  schemaVersion: 1,
+);
 
 Map<String, dynamic> buildPayload({
   List<Map<String, dynamic>> favorites = const [],

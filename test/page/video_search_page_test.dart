@@ -71,6 +71,11 @@ void main() {
       await mount(tester, (value) => result = value);
       final input = find.byKey(const ValueKey('video-search.input'));
       expect(tester.testTextInput.isVisible, isTrue);
+      expect(find.byIcon(Icons.search_rounded), findsOneWidget);
+      expect(
+        find.descendant(of: input, matching: find.byIcon(Icons.search_rounded)),
+        findsOneWidget,
+      );
       await tester.tap(find.byTooltip(t.videoSearch.clearQuery));
       await tester.pump();
       expect(tester.widget<TextField>(input).controller!.text, isEmpty);
@@ -115,7 +120,29 @@ void main() {
       });
       VideoSearchFilters? result;
       await mount(tester, (value) => result = value);
-      await tester.tap(find.byTooltip(t.videoSearch.removeRecent).first);
+      final historyRow = find.byKey(
+        const ValueKey('search-history.word.Remove me'),
+      );
+      final historyStart = tester.getTopLeft(historyRow);
+      expect(find.byTooltip(t.videoSearch.removeRecent), findsNothing);
+      expect(find.byTooltip(t.search.clearHistory), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('search-history.manage')));
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(historyRow), historyStart);
+      expect(tester.testTextInput.isVisible, isFalse);
+      await tester.tap(historyRow);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip(t.bookshelf.deleteSelected));
+      await tester.pumpAndSettle();
+      expect(await tester.runAsync(() => VideoSearchHistory.read('one')), [
+        'Remove me',
+        'Recent',
+      ]);
+      await tester.tap(find.widgetWithText(TextButton, t.common.cancel));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip(t.bookshelf.deleteSelected));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, t.common.delete));
       await tester.pumpAndSettle();
       expect(await tester.runAsync(() => VideoSearchHistory.read('one')), [
         'Recent',

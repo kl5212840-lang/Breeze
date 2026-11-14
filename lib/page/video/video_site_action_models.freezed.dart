@@ -15,7 +15,7 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$VideoInteractionState {
 
- VideoSiteActor get actor; Map<VideoSiteAction, VideoActionCapability> get capabilities; bool? get liked; bool? get disliked; int? get positiveVotes; int? get negativeVotes; int? get totalVotes; bool? get following; bool? get watchLater;
+ VideoSiteActor get actor; Map<VideoSiteAction, VideoActionCapability> get capabilities; bool? get liked; bool? get disliked; int? get positiveVotes; int? get negativeVotes; int? get totalVotes; String? get ratingPercentRaw; bool? get following; bool? get watchLater;
 /// Create a copy of VideoInteractionState
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -27,20 +27,20 @@ $VideoInteractionStateCopyWith<VideoInteractionState> get copyWith => _$VideoInt
 @override
 bool operator ==(Object other) {
   final _this = this as VideoInteractionState;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is VideoInteractionState&&(identical(other.actor, _this.actor) || other.actor == _this.actor)&&const DeepCollectionEquality().equals(other.capabilities, _this.capabilities)&&(identical(other.liked, _this.liked) || other.liked == _this.liked)&&(identical(other.disliked, _this.disliked) || other.disliked == _this.disliked)&&(identical(other.positiveVotes, _this.positiveVotes) || other.positiveVotes == _this.positiveVotes)&&(identical(other.negativeVotes, _this.negativeVotes) || other.negativeVotes == _this.negativeVotes)&&(identical(other.totalVotes, _this.totalVotes) || other.totalVotes == _this.totalVotes)&&(identical(other.following, _this.following) || other.following == _this.following)&&(identical(other.watchLater, _this.watchLater) || other.watchLater == _this.watchLater));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is VideoInteractionState&&(identical(other.actor, _this.actor) || other.actor == _this.actor)&&const DeepCollectionEquality().equals(other.capabilities, _this.capabilities)&&(identical(other.liked, _this.liked) || other.liked == _this.liked)&&(identical(other.disliked, _this.disliked) || other.disliked == _this.disliked)&&(identical(other.positiveVotes, _this.positiveVotes) || other.positiveVotes == _this.positiveVotes)&&(identical(other.negativeVotes, _this.negativeVotes) || other.negativeVotes == _this.negativeVotes)&&(identical(other.totalVotes, _this.totalVotes) || other.totalVotes == _this.totalVotes)&&(identical(other.ratingPercentRaw, _this.ratingPercentRaw) || other.ratingPercentRaw == _this.ratingPercentRaw)&&(identical(other.following, _this.following) || other.following == _this.following)&&(identical(other.watchLater, _this.watchLater) || other.watchLater == _this.watchLater));
 }
 
 
 @override
 int get hashCode {
   final _this = this as VideoInteractionState;
-  return Object.hash(runtimeType,_this.actor,const DeepCollectionEquality().hash(_this.capabilities),_this.liked,_this.disliked,_this.positiveVotes,_this.negativeVotes,_this.totalVotes,_this.following,_this.watchLater);
+  return Object.hash(runtimeType,_this.actor,const DeepCollectionEquality().hash(_this.capabilities),_this.liked,_this.disliked,_this.positiveVotes,_this.negativeVotes,_this.totalVotes,_this.ratingPercentRaw,_this.following,_this.watchLater);
 }
 
 @override
 String toString() {
   final _this = this as VideoInteractionState;
-  return 'VideoInteractionState(actor: ${_this.actor}, capabilities: ${_this.capabilities}, liked: ${_this.liked}, disliked: ${_this.disliked}, positiveVotes: ${_this.positiveVotes}, negativeVotes: ${_this.negativeVotes}, totalVotes: ${_this.totalVotes}, following: ${_this.following}, watchLater: ${_this.watchLater})';
+  return 'VideoInteractionState(actor: ${_this.actor}, capabilities: ${_this.capabilities}, liked: ${_this.liked}, disliked: ${_this.disliked}, positiveVotes: ${_this.positiveVotes}, negativeVotes: ${_this.negativeVotes}, totalVotes: ${_this.totalVotes}, ratingPercentRaw: ${_this.ratingPercentRaw}, following: ${_this.following}, watchLater: ${_this.watchLater})';
 }
 
 
@@ -51,7 +51,7 @@ abstract mixin class $VideoInteractionStateCopyWith<$Res>  {
   factory $VideoInteractionStateCopyWith(VideoInteractionState value, $Res Function(VideoInteractionState) _then) = _$VideoInteractionStateCopyWithImpl;
 @useResult
 $Res call({
- VideoSiteActor actor, Map<VideoSiteAction, VideoActionCapability> capabilities, bool? liked, bool? disliked, int? positiveVotes, int? negativeVotes, int? totalVotes, bool? following, bool? watchLater
+ VideoSiteActor actor, Map<VideoSiteAction, VideoActionCapability> capabilities, bool? liked, bool? disliked, int? positiveVotes, int? negativeVotes, int? totalVotes, String? ratingPercentRaw, bool? following, bool? watchLater
 });
 
 
@@ -68,7 +68,7 @@ class _$VideoInteractionStateCopyWithImpl<$Res>
 
 /// Create a copy of VideoInteractionState
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? actor = null,Object? capabilities = null,Object? liked = freezed,Object? disliked = freezed,Object? positiveVotes = freezed,Object? negativeVotes = freezed,Object? totalVotes = freezed,Object? following = freezed,Object? watchLater = freezed,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? actor = null,Object? capabilities = null,Object? liked = freezed,Object? disliked = freezed,Object? positiveVotes = freezed,Object? negativeVotes = freezed,Object? totalVotes = freezed,Object? ratingPercentRaw = freezed,Object? following = freezed,Object? watchLater = freezed,}) {
   return _then(VideoInteractionState(
 actor: null == actor ? _self.actor : actor // ignore: cast_nullable_to_non_nullable
 as VideoSiteActor,capabilities: null == capabilities ? _self.capabilities : capabilities // ignore: cast_nullable_to_non_nullable
@@ -77,7 +77,8 @@ as bool?,disliked: freezed == disliked ? _self.disliked : disliked // ignore: ca
 as bool?,positiveVotes: freezed == positiveVotes ? _self.positiveVotes : positiveVotes // ignore: cast_nullable_to_non_nullable
 as int?,negativeVotes: freezed == negativeVotes ? _self.negativeVotes : negativeVotes // ignore: cast_nullable_to_non_nullable
 as int?,totalVotes: freezed == totalVotes ? _self.totalVotes : totalVotes // ignore: cast_nullable_to_non_nullable
-as int?,following: freezed == following ? _self.following : following // ignore: cast_nullable_to_non_nullable
+as int?,ratingPercentRaw: freezed == ratingPercentRaw ? _self.ratingPercentRaw : ratingPercentRaw // ignore: cast_nullable_to_non_nullable
+as String?,following: freezed == following ? _self.following : following // ignore: cast_nullable_to_non_nullable
 as bool?,watchLater: freezed == watchLater ? _self.watchLater : watchLater // ignore: cast_nullable_to_non_nullable
 as bool?,
   ));
@@ -164,10 +165,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( VideoSiteActor actor,  Map<VideoSiteAction, VideoActionCapability> capabilities,  bool? liked,  bool? disliked,  int? positiveVotes,  int? negativeVotes,  int? totalVotes,  bool? following,  bool? watchLater)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( VideoSiteActor actor,  Map<VideoSiteAction, VideoActionCapability> capabilities,  bool? liked,  bool? disliked,  int? positiveVotes,  int? negativeVotes,  int? totalVotes,  String? ratingPercentRaw,  bool? following,  bool? watchLater)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _VideoInteractionState() when $default != null:
-return $default(_that.actor,_that.capabilities,_that.liked,_that.disliked,_that.positiveVotes,_that.negativeVotes,_that.totalVotes,_that.following,_that.watchLater);case _:
+return $default(_that.actor,_that.capabilities,_that.liked,_that.disliked,_that.positiveVotes,_that.negativeVotes,_that.totalVotes,_that.ratingPercentRaw,_that.following,_that.watchLater);case _:
   return orElse();
 
 }
@@ -185,10 +186,10 @@ return $default(_that.actor,_that.capabilities,_that.liked,_that.disliked,_that.
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( VideoSiteActor actor,  Map<VideoSiteAction, VideoActionCapability> capabilities,  bool? liked,  bool? disliked,  int? positiveVotes,  int? negativeVotes,  int? totalVotes,  bool? following,  bool? watchLater)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( VideoSiteActor actor,  Map<VideoSiteAction, VideoActionCapability> capabilities,  bool? liked,  bool? disliked,  int? positiveVotes,  int? negativeVotes,  int? totalVotes,  String? ratingPercentRaw,  bool? following,  bool? watchLater)  $default,) {final _that = this;
 switch (_that) {
 case _VideoInteractionState():
-return $default(_that.actor,_that.capabilities,_that.liked,_that.disliked,_that.positiveVotes,_that.negativeVotes,_that.totalVotes,_that.following,_that.watchLater);case _:
+return $default(_that.actor,_that.capabilities,_that.liked,_that.disliked,_that.positiveVotes,_that.negativeVotes,_that.totalVotes,_that.ratingPercentRaw,_that.following,_that.watchLater);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -205,10 +206,10 @@ return $default(_that.actor,_that.capabilities,_that.liked,_that.disliked,_that.
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( VideoSiteActor actor,  Map<VideoSiteAction, VideoActionCapability> capabilities,  bool? liked,  bool? disliked,  int? positiveVotes,  int? negativeVotes,  int? totalVotes,  bool? following,  bool? watchLater)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( VideoSiteActor actor,  Map<VideoSiteAction, VideoActionCapability> capabilities,  bool? liked,  bool? disliked,  int? positiveVotes,  int? negativeVotes,  int? totalVotes,  String? ratingPercentRaw,  bool? following,  bool? watchLater)?  $default,) {final _that = this;
 switch (_that) {
 case _VideoInteractionState() when $default != null:
-return $default(_that.actor,_that.capabilities,_that.liked,_that.disliked,_that.positiveVotes,_that.negativeVotes,_that.totalVotes,_that.following,_that.watchLater);case _:
+return $default(_that.actor,_that.capabilities,_that.liked,_that.disliked,_that.positiveVotes,_that.negativeVotes,_that.totalVotes,_that.ratingPercentRaw,_that.following,_that.watchLater);case _:
   return null;
 
 }
@@ -220,7 +221,7 @@ return $default(_that.actor,_that.capabilities,_that.liked,_that.disliked,_that.
 
 
 class _VideoInteractionState extends VideoInteractionState {
-  const _VideoInteractionState({this.actor = VideoSiteActor.unknown,  Map<VideoSiteAction, VideoActionCapability> capabilities = const {}, this.liked, this.disliked, this.positiveVotes, this.negativeVotes, this.totalVotes, this.following, this.watchLater}): _capabilities = capabilities,super._();
+  const _VideoInteractionState({this.actor = VideoSiteActor.unknown,  Map<VideoSiteAction, VideoActionCapability> capabilities = const {}, this.liked, this.disliked, this.positiveVotes, this.negativeVotes, this.totalVotes, this.ratingPercentRaw, this.following, this.watchLater}): _capabilities = capabilities,super._();
   
 
 @override@JsonKey() final  VideoSiteActor actor;
@@ -236,6 +237,7 @@ class _VideoInteractionState extends VideoInteractionState {
 @override final  int? positiveVotes;
 @override final  int? negativeVotes;
 @override final  int? totalVotes;
+@override final  String? ratingPercentRaw;
 @override final  bool? following;
 @override final  bool? watchLater;
 
@@ -249,18 +251,18 @@ _$VideoInteractionStateCopyWith<_VideoInteractionState> get copyWith => __$Video
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _VideoInteractionState&&(identical(other.actor, actor) || other.actor == actor)&&const DeepCollectionEquality().equals(other.capabilities, _capabilities)&&(identical(other.liked, liked) || other.liked == liked)&&(identical(other.disliked, disliked) || other.disliked == disliked)&&(identical(other.positiveVotes, positiveVotes) || other.positiveVotes == positiveVotes)&&(identical(other.negativeVotes, negativeVotes) || other.negativeVotes == negativeVotes)&&(identical(other.totalVotes, totalVotes) || other.totalVotes == totalVotes)&&(identical(other.following, following) || other.following == following)&&(identical(other.watchLater, watchLater) || other.watchLater == watchLater));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _VideoInteractionState&&(identical(other.actor, actor) || other.actor == actor)&&const DeepCollectionEquality().equals(other.capabilities, _capabilities)&&(identical(other.liked, liked) || other.liked == liked)&&(identical(other.disliked, disliked) || other.disliked == disliked)&&(identical(other.positiveVotes, positiveVotes) || other.positiveVotes == positiveVotes)&&(identical(other.negativeVotes, negativeVotes) || other.negativeVotes == negativeVotes)&&(identical(other.totalVotes, totalVotes) || other.totalVotes == totalVotes)&&(identical(other.ratingPercentRaw, ratingPercentRaw) || other.ratingPercentRaw == ratingPercentRaw)&&(identical(other.following, following) || other.following == following)&&(identical(other.watchLater, watchLater) || other.watchLater == watchLater));
 }
 
 
 @override
 int get hashCode {
-    return Object.hash(runtimeType,actor,const DeepCollectionEquality().hash(_capabilities),liked,disliked,positiveVotes,negativeVotes,totalVotes,following,watchLater);
+    return Object.hash(runtimeType,actor,const DeepCollectionEquality().hash(_capabilities),liked,disliked,positiveVotes,negativeVotes,totalVotes,ratingPercentRaw,following,watchLater);
 }
 
 @override
 String toString() {
-    return 'VideoInteractionState(actor: $actor, capabilities: $capabilities, liked: $liked, disliked: $disliked, positiveVotes: $positiveVotes, negativeVotes: $negativeVotes, totalVotes: $totalVotes, following: $following, watchLater: $watchLater)';
+    return 'VideoInteractionState(actor: $actor, capabilities: $capabilities, liked: $liked, disliked: $disliked, positiveVotes: $positiveVotes, negativeVotes: $negativeVotes, totalVotes: $totalVotes, ratingPercentRaw: $ratingPercentRaw, following: $following, watchLater: $watchLater)';
 }
 
 
@@ -271,7 +273,7 @@ abstract mixin class _$VideoInteractionStateCopyWith<$Res> implements $VideoInte
   factory _$VideoInteractionStateCopyWith(_VideoInteractionState value, $Res Function(_VideoInteractionState) _then) = __$VideoInteractionStateCopyWithImpl;
 @override @useResult
 $Res call({
- VideoSiteActor actor, Map<VideoSiteAction, VideoActionCapability> capabilities, bool? liked, bool? disliked, int? positiveVotes, int? negativeVotes, int? totalVotes, bool? following, bool? watchLater
+ VideoSiteActor actor, Map<VideoSiteAction, VideoActionCapability> capabilities, bool? liked, bool? disliked, int? positiveVotes, int? negativeVotes, int? totalVotes, String? ratingPercentRaw, bool? following, bool? watchLater
 });
 
 
@@ -288,7 +290,7 @@ class __$VideoInteractionStateCopyWithImpl<$Res>
 
 /// Create a copy of VideoInteractionState
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? actor = null,Object? capabilities = null,Object? liked = freezed,Object? disliked = freezed,Object? positiveVotes = freezed,Object? negativeVotes = freezed,Object? totalVotes = freezed,Object? following = freezed,Object? watchLater = freezed,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? actor = null,Object? capabilities = null,Object? liked = freezed,Object? disliked = freezed,Object? positiveVotes = freezed,Object? negativeVotes = freezed,Object? totalVotes = freezed,Object? ratingPercentRaw = freezed,Object? following = freezed,Object? watchLater = freezed,}) {
   return _then(_VideoInteractionState(
 actor: null == actor ? _self.actor : actor // ignore: cast_nullable_to_non_nullable
 as VideoSiteActor,capabilities: null == capabilities ? _self._capabilities : capabilities // ignore: cast_nullable_to_non_nullable
@@ -297,7 +299,8 @@ as bool?,disliked: freezed == disliked ? _self.disliked : disliked // ignore: ca
 as bool?,positiveVotes: freezed == positiveVotes ? _self.positiveVotes : positiveVotes // ignore: cast_nullable_to_non_nullable
 as int?,negativeVotes: freezed == negativeVotes ? _self.negativeVotes : negativeVotes // ignore: cast_nullable_to_non_nullable
 as int?,totalVotes: freezed == totalVotes ? _self.totalVotes : totalVotes // ignore: cast_nullable_to_non_nullable
-as int?,following: freezed == following ? _self.following : following // ignore: cast_nullable_to_non_nullable
+as int?,ratingPercentRaw: freezed == ratingPercentRaw ? _self.ratingPercentRaw : ratingPercentRaw // ignore: cast_nullable_to_non_nullable
+as String?,following: freezed == following ? _self.following : following // ignore: cast_nullable_to_non_nullable
 as bool?,watchLater: freezed == watchLater ? _self.watchLater : watchLater // ignore: cast_nullable_to_non_nullable
 as bool?,
   ));

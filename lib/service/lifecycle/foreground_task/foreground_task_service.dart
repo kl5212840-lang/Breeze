@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:zephyr/config/global/global.dart';
 import 'package:zephyr/config/global/global_setting.dart';
@@ -10,7 +10,6 @@ import 'package:zephyr/main.dart';
 import 'package:zephyr/service/download/download_queue_manager.dart';
 import 'package:zephyr/service/lifecycle/foreground_task/foreground_task_handler.dart';
 import 'package:zephyr/i18n/strings.g.dart';
-import 'package:zephyr/widgets/toast.dart';
 
 /// Android 前台服务封装。
 ///
@@ -26,8 +25,11 @@ class ForegroundTaskService {
 
   bool _initialized = false;
 
+  bool get _isAndroid =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
   bool get _keepAliveEnabled =>
-      Platform.isAndroid && globalSetting.androidKeepAliveEnabled;
+      _isAndroid && globalSetting.androidKeepAliveEnabled;
 
   bool get _hasPendingDownloads =>
       DownloadQueueManager.instance.queueLength > 0;
@@ -59,7 +61,7 @@ class ForegroundTaskService {
 
   /// 应用冷启动后根据保活开关与下载队列同步前台服务。
   Future<void> syncOnAppStart() async {
-    if (!Platform.isAndroid) return;
+    if (!_isAndroid) return;
     if (!_keepAliveEnabled && !_hasPendingDownloads) return;
     await _ensureRunning(forDownload: _hasPendingDownloads);
   }
@@ -68,7 +70,7 @@ class ForegroundTaskService {
   ///
   /// 若前台服务已在运行（例如已有下载任务），则不重复启动。
   Future<void> enableKeepAlive() async {
-    if (!Platform.isAndroid) return;
+    if (!_isAndroid) return;
     if (await FlutterForegroundTask.isRunningService) {
       if (!_hasPendingDownloads) {
         await _applyKeepAliveNotification();
@@ -82,7 +84,7 @@ class ForegroundTaskService {
   ///
   /// 若仍有下载/排队任务，则不停止前台服务，仅切回下载通知样式。
   Future<void> disableKeepAlive() async {
-    if (!Platform.isAndroid) return;
+    if (!_isAndroid) return;
     if (_hasPendingDownloads) {
       if (await FlutterForegroundTask.isRunningService) {
         await _applyDownloadNotification();
@@ -96,7 +98,7 @@ class ForegroundTaskService {
   ///
   /// 若服务已因保活运行，则跳过启动，仅更新为下载通知样式。
   Future<void> start() async {
-    if (!Platform.isAndroid) return;
+    if (!_isAndroid) return;
     if (await FlutterForegroundTask.isRunningService) {
       await _applyDownloadNotification();
       return;
@@ -108,7 +110,7 @@ class ForegroundTaskService {
   ///
   /// 若保活开关仍开启，则不停止服务，仅更新为保活通知样式。
   Future<void> stop() async {
-    if (!Platform.isAndroid) return;
+    if (!_isAndroid) return;
     if (_keepAliveEnabled) {
       if (await FlutterForegroundTask.isRunningService) {
         await _applyKeepAliveNotification();
@@ -120,7 +122,7 @@ class ForegroundTaskService {
 
   /// 更新前台服务通知栏内容（下载进度等）。
   Future<void> updateNotification(String title, String message) async {
-    if (!Platform.isAndroid) return;
+    if (!_isAndroid) return;
     if (!await FlutterForegroundTask.isRunningService) return;
     await FlutterForegroundTask.updateService(
       notificationTitle: title,
@@ -133,7 +135,7 @@ class ForegroundTaskService {
   ///
   /// 应在主 Isolate 应用启动后调用一次。
   void listenEvents() {
-    if (!Platform.isAndroid) return;
+    if (!_isAndroid) return;
 
     FlutterForegroundTask.addTaskDataCallback(_onReceiveTaskData);
 
@@ -154,8 +156,7 @@ class ForegroundTaskService {
       return;
     }
 
-    await _ensureNotificationPermission();
-
+    // Android can run a foreground service when its notification is hidden.
     final notificationText = forDownload
         ? t.foregroundTask.waitingForTask
         : t.foregroundTask.keepAliveRunning;
@@ -205,26 +206,6 @@ class ForegroundTaskService {
       notificationText: t.foregroundTask.keepAliveRunning,
       notificationButtons: const <NotificationButton>[],
     );
-  }
-
-  Future<void> _ensureNotificationPermission() async {
-    if (!Platform.isAndroid) return;
-
-    NotificationPermission notificationPermission =
-        await FlutterForegroundTask.checkNotificationPermission();
-
-    if (notificationPermission == NotificationPermission.granted) {
-      return;
-    }
-
-    showInfoToast(t.foregroundTask.notificationPermissionRequired);
-
-    notificationPermission =
-        await FlutterForegroundTask.requestNotificationPermission();
-
-    if (notificationPermission != NotificationPermission.granted) {
-      throw Exception(t.foregroundTask.cannotStartWithoutPermission);
-    }
   }
 
   void _onReceiveTaskData(Object data) {

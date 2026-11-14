@@ -3,9 +3,10 @@ import 'dart:convert';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
-import 'package:zephyr/page/download/adapters/download_chapter_matcher.dart';
+import 'package:zephyr/page/comic_read/method/get_local_info.dart'
+    show findLocalDownloadChapterByKey;
 import 'package:zephyr/page/download/models/download_chapter.dart';
-import 'package:zephyr/page/download/models/unified_comic_download.dart';
+import 'package:zephyr/service/download/download_admission.dart';
 import 'package:zephyr/service/download/models/download_task_json.dart';
 
 /// DownloadTask 的唯一读写入口。
@@ -31,6 +32,103 @@ class DownloadTaskRepository {
     return tasks.where((task) => !task.isCompleted).toList();
   }
 
+  /// Older versions left this explicit marker after deleting the files.
+  void removeLegacyDeletedTasks() {
+    final box = objectbox.downloadTaskBox;
+    final query = box
+        .query(DownloadTask_.dbTaskInfoStr.contains('fileRemoved'))
+        .build();
+    try {
+      objectbox.store.runInTransaction(TxMode.write, () {
+        box.removeMany([
+          for (final task in query.find())
+            if (readPayload(task)?.phaseCode == 'fileRemoved') task.id,
+        ]);
+      });
+    } finally {
+      query.close();
+    }
+  }
+
+  bool _settledCancellation(DownloadTask task, DownloadTaskJson? payload) =>
+      task.isCompleted &&
+      !task.isDownloading &&
+      payload?.stateCode == 'cancelled' &&
+      payload?.phaseCode == 'cancelled';
+
+  /// Drops superseded task metadata. Chapter assets have their own ownership.
+  /// If supplied, [beforeIds] is the winning row already fenced for deletion.
+  void removeSupersededCancelledRecords({Map<String, int>? beforeIds}) {
+    objectbox.store.runInTransaction(TxMode.write, () {
+      removeSupersededCancelledRecordsInTransaction(beforeIds: beforeIds);
+    });
+  }
+
+  void removeSupersededCancelledRecordsInTransaction({
+    Map<String, int>? beforeIds,
+  }) {
+    final box = objectbox.downloadTaskBox;
+    final tasks = [
+      for (final row in box.getAll())
+        if (readPayload(row) case final payload?) (row, payload),
+    ];
+    final winners = beforeIds ?? <String, int>{};
+    if (beforeIds == null) {
+      for (final (row, payload) in tasks) {
+        if (row.id > (winners[payload.taskKey] ?? 0)) {
+          winners[payload.taskKey] = row.id;
+        }
+      }
+    }
+    box.removeMany([
+      for (final (row, payload) in tasks)
+        if (row.id < (winners[payload.taskKey] ?? 0) &&
+            _settledCancellation(row, payload))
+          row.id,
+    ]);
+  }
+
+  Future<bool> removeCancelledRecord(DownloadTask snapshot) async {
+    final payload = readPayload(snapshot);
+    if (!_settledCancellation(snapshot, payload)) return false;
+    await flushTaskWrites(payload!.taskKey);
+    return objectbox.store.runInTransaction(TxMode.write, () {
+      final box = objectbox.downloadTaskBox;
+      final current = box.get(snapshot.id);
+      if (current == null ||
+          current.dbTaskInfoStr != snapshot.dbTaskInfoStr ||
+          !_settledCancellation(current, readPayload(current)))
+        return false;
+      return box.remove(snapshot.id);
+    });
+  }
+
+  /// Explicit history removal never touches download files or shelf links.
+  Future<void> removeRecords(Iterable<int> ids) async {
+    for (final id in ids) {
+      var task = objectbox.downloadTaskBox.get(id);
+      if (task == null) continue;
+      final payload = readPayload(task);
+      if (payload?.phaseCode == downloadTaskDeletionPhase ||
+          task.isDownloading ||
+          (!task.isCompleted &&
+              !{'failed', 'paused'}.contains(payload?.stateCode))) {
+        throw StateError('Task is still active');
+      }
+      if (payload != null) await flushTaskWrites(payload.taskKey);
+      task = objectbox.downloadTaskBox.get(id);
+      if (task == null) continue;
+      final current = readPayload(task);
+      if (current?.phaseCode == downloadTaskDeletionPhase ||
+          task.isDownloading ||
+          (!task.isCompleted &&
+              !{'failed', 'paused'}.contains(current?.stateCode))) {
+        throw StateError('Task became active');
+      }
+      objectbox.downloadTaskBox.remove(id);
+    }
+  }
+
   DownloadTask? findByTaskKey(String taskKey, {bool incompleteOnly = false}) {
     DownloadTask? result;
     final normalizedKey = taskKey.trim();
@@ -38,14 +136,18 @@ class DownloadTaskRepository {
       final cachedId = _taskKeyCache[normalizedKey];
       if (cachedId != null) {
         final cached = objectbox.downloadTaskBox.get(cachedId);
-        if (cached != null &&
+        if (incompleteOnly &&
+            cached != null &&
+            !cached.isCompleted &&
             (!incompleteOnly || !cached.isCompleted) &&
             _taskKeyOf(cached) == normalizedKey) {
           return cached;
         }
         _taskKeyCache.remove(normalizedKey);
       }
-      for (final task in getAll(incompleteOnly: incompleteOnly)) {
+      final candidates = getAll(incompleteOnly: incompleteOnly)
+        ..sort((a, b) => b.id.compareTo(a.id));
+      for (final task in candidates) {
         if (_taskKeyOf(task) == normalizedKey) {
           result = task;
           _taskKeyCache[normalizedKey] = task.id;
@@ -70,14 +172,18 @@ class DownloadTaskRepository {
   /// 查找本漫画的本地下载记录，没有返回 null。
   UnifiedComicDownload? findDownloadRecord(String from, String comicId) {
     try {
-      return objectbox.unifiedDownloadBox
+      final query = objectbox.unifiedDownloadBox
           .query(
             UnifiedComicDownload_.uniqueKey.equals(
               buildDownloadTaskKey(from, comicId),
             ),
           )
-          .build()
-          .findFirst();
+          .build();
+      try {
+        return query.findFirst();
+      } finally {
+        query.close();
+      }
     } catch (_) {
       return null;
     }
@@ -85,24 +191,19 @@ class DownloadTaskRepository {
 
   /// 按章节 key 查找本地已下载章节，找不到返回 null。
   ///
-  /// [chapterKey] 可以是逻辑 id / requestId / order 字符串中的任意一个。
-  /// 阅读入口统一用它判断“该章是否已下载”，命中则直接读本地。
+  /// 阅读入口只按逻辑身份或唯一的旧请求身份切换到本地章节。
   DownloadChapter? findDownloadedChapter({
     required String from,
     required String comicId,
     required String chapterKey,
   }) {
     final record = findDownloadRecord(from, comicId);
-    if (record == null || chapterKey.trim().isEmpty) return null;
-    const matcher = DownloadChapterMatcher();
+    if (record == null) return null;
     try {
-      for (final chapter in resolveDownloadChapters(record)) {
-        if (matcher.matches(chapter, chapterKey.trim())) return chapter;
-      }
+      return findLocalDownloadChapterByKey(record, chapterKey);
     } catch (_) {
       return null;
     }
-    return null;
   }
 
   /// 按章节查找未完成任务。章节 key 必须是逻辑身份
@@ -179,39 +280,101 @@ class DownloadTaskRepository {
   Future<void> putTaskWriteBackground({
     required String taskKey,
     required int taskId,
+    int? expectedAttempt,
+    bool requireRunning = false,
     String? status,
     bool? isDownloading,
     bool? isCompleted,
     String? payloadJson,
   }) {
     final normalizedKey = taskKey.trim();
-    final args = <String, dynamic>{'id': taskId};
+    final args = <String, dynamic>{
+      'id': taskId,
+      'taskKey': normalizedKey,
+      if (expectedAttempt != null) 'expectedAttempt': expectedAttempt,
+      'requireRunning': requireRunning,
+    };
     if (status != null) args['status'] = status;
     if (isDownloading != null) args['isDownloading'] = isDownloading;
     if (isCompleted != null) args['isCompleted'] = isCompleted;
     if (payloadJson != null) args['payloadJson'] = payloadJson;
-    final prev = _pendingTaskWrites[normalizedKey] ?? Future.value();
-    late final Future<void> next;
-    next = prev.then(
+    final previous = _pendingTaskWrites[normalizedKey] ?? Future<void>.value();
+    final write = previous.then<void>(
       (_) => objectbox.store.runInTransactionAsync<int, Map<String, dynamic>>(
         TxMode.write,
         _applyDownloadTaskWrite,
         args,
       ),
     );
-    _pendingTaskWrites[normalizedKey] = next;
-    next.whenComplete(() {
-      if (identical(_pendingTaskWrites[normalizedKey], next)) {
+    late final Future<void> settled;
+    void release() {
+      if (identical(_pendingTaskWrites[normalizedKey], settled)) {
         _pendingTaskWrites.remove(normalizedKey);
       }
-    });
-    return next;
+    }
+
+    // The caller owns this write's outcome. The queue only tracks ordering,
+    // so a rejected checkpoint cannot skip later writes or block cancellation.
+    settled = write.then<void>(
+      (_) => release(),
+      onError: (Object _, StackTrace _) => release(),
+    );
+    _pendingTaskWrites[normalizedKey] = settled;
+    return write;
   }
 
-  /// 排空指定任务的后台写。状态迁移（完成/失败/取消/重试/删除）前必须调，
-  /// 否则在途的旧写可能覆盖新状态。
+  /// 等待指定任务已经排队的后台写全部结束。单次写入失败由其调用方处理，
+  /// 状态迁移只需要确保在途旧写不会再覆盖新状态。
   Future<void> flushTaskWrites(String taskKey) {
     return _pendingTaskWrites[taskKey.trim()] ?? Future.value();
+  }
+
+  /// Pause for the transport policy while retaining the latest checkpoint.
+  bool markNetworkWaiting(
+    DownloadTask snapshot,
+    DownloadNetworkWait wait, {
+    Iterable<String> retainedPagePaths = const [],
+  }) {
+    return objectbox.store.runInTransaction(TxMode.write, () {
+      final task = objectbox.downloadTaskBox.get(snapshot.id);
+      if (task == null ||
+          task.isCompleted ||
+          task.isDownloading != snapshot.isDownloading) {
+        return false;
+      }
+      final payload = readPayload(task);
+      if (payload == null ||
+          payload.phaseCode == wait.code ||
+          payload.phaseCode == 'cancelling' ||
+          !const {'queued', 'running', ''}.contains(payload.stateCode)) {
+        return false;
+      }
+      if (task.dbTaskInfoStr != snapshot.dbTaskInfoStr) {
+        // Background progress may advance after the queue sees the running
+        // row. Only that same running attempt can absorb the newer snapshot.
+        final expected = readPayload(snapshot);
+        if (!task.isDownloading ||
+            payload.stateCode != 'running' ||
+            expected == null ||
+            expected.stateCode != 'running' ||
+            payload.taskKey != expected.taskKey ||
+            payload.attempt != expected.attempt) {
+          return false;
+        }
+      }
+      task
+        ..isDownloading = false
+        ..status = wait.label
+        ..taskInfo = payload.copyWith(
+          stateCode: 'queued',
+          phaseCode: wait.code,
+          imagePaths: retainedPagePaths.isEmpty
+              ? payload.imagePaths
+              : {...payload.imagePaths, ...retainedPagePaths}.toList(),
+        );
+      objectbox.downloadTaskBox.put(task);
+      return true;
+    });
   }
 
   void resetInterruptedTasks() {
@@ -262,6 +425,23 @@ int _applyDownloadTaskWrite(Store store, Map<String, dynamic> args) {
   final box = store.box<DownloadTask>();
   final task = box.get(args['id'] as int);
   if (task != null) {
+    final expectedAttempt = args['expectedAttempt'] as int?;
+    if (expectedAttempt != null) {
+      DownloadTaskJson? current;
+      try {
+        current = task.taskInfo;
+      } catch (_) {
+        return sw.elapsedMilliseconds;
+      }
+      if (current?.taskKey != args['taskKey'] ||
+          current?.attempt != expectedAttempt ||
+          args['requireRunning'] == true &&
+              (task.isCompleted ||
+                  !task.isDownloading ||
+                  current?.stateCode != 'running')) {
+        return sw.elapsedMilliseconds;
+      }
+    }
     task.status = (args['status'] as String?) ?? task.status;
     task.isDownloading = (args['isDownloading'] as bool?) ?? task.isDownloading;
     task.isCompleted = (args['isCompleted'] as bool?) ?? task.isCompleted;

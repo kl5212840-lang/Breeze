@@ -15,7 +15,15 @@ void main(List<String> args) {
   stdout.write(
     jsonEncode({
       'catalog': videoCatalogSnapshotScript(selectors, includeFilters: true),
-      'personalRecent': videoPersonalRecentScript(Uri.parse('https://hanime1.me/user/42/histories'), selectors),
+      'personalRecent': videoPersonalRecentScript(
+        Uri.parse('https://hanime1.me/user/42/histories'),
+        selectors,
+      ),
+      for (final kind in ['saves', 'likes', 'playlists'])
+        'personal-$kind': videoPersonalRecentScript(
+          Uri.parse('https://hanime1.me/user/42/$kind'),
+          selectors,
+        ),
       'filterSchema':
           '(() => { $videoFilterSchemaExtraction return filterSchema(document); })()',
       'detail': videoDetailSnapshotScript(selectors),

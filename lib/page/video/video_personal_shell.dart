@@ -17,6 +17,7 @@ class VideoPersonalShell extends StatefulWidget {
     this.onAccountSettings,
     required this.child,
     this.overview,
+    this.showTabs = true,
   });
   final Map<String, dynamic> account;
   final Uri page, current;
@@ -26,6 +27,7 @@ class VideoPersonalShell extends StatefulWidget {
   final VoidCallback? onAccountSettings;
   final Widget child;
   final Widget? overview;
+  final bool showTabs;
 
   @override
   State<VideoPersonalShell> createState() => _VideoPersonalShellState();
@@ -91,7 +93,7 @@ class _VideoPersonalShellState extends State<VideoPersonalShell>
     }
     return Column(
       children: [
-        if (widget.overview != null)
+        if (widget.overview != null || !widget.showTabs)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
             child: Align(
@@ -110,14 +112,16 @@ class _VideoPersonalShellState extends State<VideoPersonalShell>
                   ),
                   if (widget.account['status'] != 'signedIn')
                     Text(
-                      t.videoPlayback.accountUnconfirmed,
+                      widget.account['status'] == 'signedOut'
+                          ? t.videoCommunity.loginRequired
+                          : t.videoPlayback.accountUnconfirmed,
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                 ],
               ),
             ),
           ),
-        if (widget.overview == null)
+        if (widget.overview == null && widget.showTabs)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 8, 4),
             child: VideoProfileHeader(
@@ -128,7 +132,7 @@ class _VideoPersonalShellState extends State<VideoPersonalShell>
               onAccountSettings: widget.onAccountSettings,
             ),
           ),
-        if (widget.tabs.isNotEmpty)
+        if (widget.showTabs && widget.tabs.isNotEmpty)
           TabBar(
             controller: _tabs,
             isScrollable: true,

@@ -22,11 +22,20 @@ String chapterGroupDisplayTitle(String title, String untitledLabel) {
 }
 
 class ChapterGroup<T> {
-  ChapterGroup({required this.title, required this.items});
+  ChapterGroup({required this.title, required this.items})
+    : collapseKey = (title, 0);
+
+  ChapterGroup._segment({
+    required this.title,
+    required this.items,
+    required String sourceTitle,
+    required int start,
+  }) : collapseKey = (sourceTitle, start);
 
   /// 分组标题，`''` 表示未分组。
   final String title;
   final List<T> items;
+  final (String, int) collapseKey;
 }
 
 /// 有序分组：元素保持输入相对顺序，组按首次出现排序。
@@ -66,6 +75,29 @@ List<ChapterGroup<int>> groupIndicesByTitle(
       groups.add(ChapterGroup<int>(title: title, items: [i]));
     } else {
       groups[existing].items.add(i);
+    }
+  }
+  return groups;
+}
+
+List<ChapterGroup<int>> splitLongChapterGroups(List<ChapterGroup<int>> source) {
+  final groups = <ChapterGroup<int>>[];
+  for (final group in source) {
+    if (group.items.length <= 50) {
+      groups.add(group);
+    } else {
+      for (var start = 0; start < group.items.length; start += 50) {
+        final end = (start + 50).clamp(0, group.items.length);
+        final range = '${start + 1}-$end';
+        groups.add(
+          ChapterGroup._segment(
+            title: group.title.isEmpty ? range : '${group.title} $range',
+            items: group.items.sublist(start, end),
+            sourceTitle: group.title,
+            start: start,
+          ),
+        );
+      }
     }
   }
   return groups;

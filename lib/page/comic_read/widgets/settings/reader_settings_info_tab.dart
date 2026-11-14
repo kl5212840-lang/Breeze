@@ -37,44 +37,39 @@ class _PageInfoVisibilitySection extends StatelessWidget {
       children: [
         _SettingsSwitchTile(
           title: t.reader.pageNumber,
-          subtitle: t.reader.pageNumberSubtitle,
           value: effective.pageInfoShowPage,
           onChanged: (value) {
             context.updateEffectiveReadSetting(
-              effective,
               (current) => current.copyWith(pageInfoShowPage: value),
             );
           },
         ),
         _SettingsSwitchTile(
           title: t.reader.networkStatus,
-          subtitle: t.reader.networkStatusSubtitle,
+          subtitle: !kIsWeb && Platform.isLinux
+              ? t.reader.networkStatusSubtitle
+              : '',
           value: effective.pageInfoShowNetwork,
           onChanged: (value) {
             context.updateEffectiveReadSetting(
-              effective,
               (current) => current.copyWith(pageInfoShowNetwork: value),
             );
           },
         ),
         _SettingsSwitchTile(
           title: t.reader.battery,
-          subtitle: t.reader.batterySubtitle,
           value: effective.pageInfoShowBattery,
           onChanged: (value) {
             context.updateEffectiveReadSetting(
-              effective,
               (current) => current.copyWith(pageInfoShowBattery: value),
             );
           },
         ),
         _SettingsSwitchTile(
           title: t.reader.time,
-          subtitle: t.reader.timeSubtitle,
           value: effective.pageInfoShowTime,
           onChanged: (value) {
             context.updateEffectiveReadSetting(
-              effective,
               (current) => current.copyWith(pageInfoShowTime: value),
             );
           },
@@ -98,37 +93,35 @@ class _PageInfoPlacementSection extends StatelessWidget {
     return _SettingsSection(
       title: t.reader.infoBarPosition,
       children: [
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _SettingsChoiceChip(
-              title: t.reader.verticalPositionTop,
-              selected:
-                  effective.pageInfoVerticalPosition ==
-                  ReaderInfoVerticalPosition.top,
-              onTap: () {
-                context.updateEffectiveReadSetting(
-                  effective,
-                  (current) => current.copyWith(
-                    pageInfoVerticalPosition: ReaderInfoVerticalPosition.top,
-                  ),
-                );
+            _PageInfoPositionChoices(
+              options: {
+                ReaderInfoVerticalPosition.top: t.reader.verticalPositionTop,
+                ReaderInfoVerticalPosition.bottom:
+                    t.reader.verticalPositionBottom,
               },
+              value: effective.pageInfoVerticalPosition,
+              onChanged: (value) => context.updateEffectiveReadSetting(
+                (current) => current.copyWith(pageInfoVerticalPosition: value),
+              ),
             ),
-            _SettingsChoiceChip(
-              title: t.reader.verticalPositionBottom,
-              selected:
-                  effective.pageInfoVerticalPosition ==
-                  ReaderInfoVerticalPosition.bottom,
-              onTap: () {
-                context.updateEffectiveReadSetting(
-                  effective,
-                  (current) => current.copyWith(
-                    pageInfoVerticalPosition: ReaderInfoVerticalPosition.bottom,
-                  ),
-                );
+            const SizedBox(height: 6),
+            _PageInfoPositionChoices(
+              options: {
+                ReaderInfoHorizontalPosition.left:
+                    t.reader.horizontalPositionLeft,
+                ReaderInfoHorizontalPosition.center:
+                    t.reader.horizontalPositionCenter,
+                ReaderInfoHorizontalPosition.right:
+                    t.reader.horizontalPositionRight,
               },
+              value: effective.pageInfoHorizontalPosition,
+              onChanged: (value) => context.updateEffectiveReadSetting(
+                (current) =>
+                    current.copyWith(pageInfoHorizontalPosition: value),
+              ),
             ),
           ],
         ),
@@ -136,67 +129,11 @@ class _PageInfoPlacementSection extends StatelessWidget {
             ReaderInfoVerticalPosition.top)
           _SettingsSwitchTile(
             title: t.reader.showInStatusBar,
-            subtitle: t.reader.showInStatusBarSubtitle,
             value: effective.pageInfoTopInStatusBar,
-            onChanged: (value) {
-              logger.d('pageInfoTopInStatusBar: $value');
-              context.updateEffectiveReadSetting(
-                effective,
-                (current) => current.copyWith(pageInfoTopInStatusBar: value),
-              );
-            },
+            onChanged: (value) => context.updateEffectiveReadSetting(
+              (current) => current.copyWith(pageInfoTopInStatusBar: value),
+            ),
           ),
-        Wrap(
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            _SettingsChoiceChip(
-              title: t.reader.horizontalPositionLeft,
-              selected:
-                  effective.pageInfoHorizontalPosition ==
-                  ReaderInfoHorizontalPosition.left,
-              onTap: () {
-                context.updateEffectiveReadSetting(
-                  effective,
-                  (current) => current.copyWith(
-                    pageInfoHorizontalPosition:
-                        ReaderInfoHorizontalPosition.left,
-                  ),
-                );
-              },
-            ),
-            _SettingsChoiceChip(
-              title: t.reader.horizontalPositionCenter,
-              selected:
-                  effective.pageInfoHorizontalPosition ==
-                  ReaderInfoHorizontalPosition.center,
-              onTap: () {
-                context.updateEffectiveReadSetting(
-                  effective,
-                  (current) => current.copyWith(
-                    pageInfoHorizontalPosition:
-                        ReaderInfoHorizontalPosition.center,
-                  ),
-                );
-              },
-            ),
-            _SettingsChoiceChip(
-              title: t.reader.horizontalPositionRight,
-              selected:
-                  effective.pageInfoHorizontalPosition ==
-                  ReaderInfoHorizontalPosition.right,
-              onTap: () {
-                context.updateEffectiveReadSetting(
-                  effective,
-                  (current) => current.copyWith(
-                    pageInfoHorizontalPosition:
-                        ReaderInfoHorizontalPosition.right,
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
         _SettingsSliderCard(
           title: t.reader.edgePadding,
           value: effective.pageInfoEdgePadding.clamp(0, 48),
@@ -207,7 +144,6 @@ class _PageInfoPlacementSection extends StatelessWidget {
           enabled: !isHorizontalCenter,
           onChanged: (value) {
             context.updateEffectiveReadSetting(
-              effective,
               (current) => current.copyWith(pageInfoEdgePadding: value),
             );
           },
@@ -217,6 +153,32 @@ class _PageInfoPlacementSection extends StatelessWidget {
       ],
     );
   }
+}
+
+class _PageInfoPositionChoices<T> extends StatelessWidget {
+  const _PageInfoPositionChoices({
+    required this.options,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final Map<T, String> options;
+  final T value;
+  final ValueChanged<T> onChanged;
+
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: 10,
+    runSpacing: 6,
+    children: [
+      for (final option in options.entries)
+        _SettingsChoiceChip(
+          title: option.value,
+          selected: option.key == value,
+          onTap: () => onChanged(option.key),
+        ),
+    ],
+  );
 }
 
 class _PageInfoAppearanceSection extends StatelessWidget {
@@ -230,20 +192,6 @@ class _PageInfoAppearanceSection extends StatelessWidget {
       title: t.reader.infoBarStyle,
       children: [
         _SettingsSliderCard(
-          title: t.reader.backgroundOpacity,
-          value: effective.pageInfoOpacityPercent.clamp(20, 100),
-          min: 20,
-          max: 100,
-          divisions: 80,
-          suffix: t.reader.percent,
-          onChanged: (value) {
-            context.updateEffectiveReadSetting(
-              effective,
-              (current) => current.copyWith(pageInfoOpacityPercent: value),
-            );
-          },
-        ),
-        _SettingsSliderCard(
           title: t.reader.fontSize,
           value: effective.pageInfoFontSize.clamp(10, 20),
           min: 10,
@@ -252,8 +200,20 @@ class _PageInfoAppearanceSection extends StatelessWidget {
           suffix: t.reader.pixels,
           onChanged: (value) {
             context.updateEffectiveReadSetting(
-              effective,
               (current) => current.copyWith(pageInfoFontSize: value),
+            );
+          },
+        ),
+        _SettingsSliderCard(
+          title: t.reader.backgroundOpacity,
+          value: effective.pageInfoOpacityPercent.clamp(20, 100),
+          min: 20,
+          max: 100,
+          divisions: 80,
+          suffix: t.reader.percent,
+          onChanged: (value) {
+            context.updateEffectiveReadSetting(
+              (current) => current.copyWith(pageInfoOpacityPercent: value),
             );
           },
         ),

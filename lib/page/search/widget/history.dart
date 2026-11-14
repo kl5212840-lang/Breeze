@@ -2,212 +2,60 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search/method/on_search.dart';
+import 'package:zephyr/page/search/method/search_history_entries.dart';
+import 'package:zephyr/page/search/widget/search_history_section.dart';
 
-class HistoryWidget extends StatefulWidget {
-  const HistoryWidget({super.key, this.aggregateMode = true});
-
-  final bool aggregateMode;
-
-  /// 点历史词条前调用，丢弃 [SearchBar] 里待触发的输入防抖。
-  /// 不丢的话：输入框旧词的防抖在提交后才开火，把新词盖掉。
-  static VoidCallback? _cancelPendingKeywordSync;
-
-  static void registerPendingKeywordSyncCanceller(VoidCallback? canceller) {
-    _cancelPendingKeywordSync = canceller;
-  }
-
-  static void cancelPendingKeywordSync() {
-    _cancelPendingKeywordSync?.call();
-  }
-
-  @override
-  State<HistoryWidget> createState() => _HistoryWidgetState();
-}
-
-class _HistoryWidgetState extends State<HistoryWidget> {
-  bool _isNewestFirst = true;
-
+class HistoryWidget extends StatelessWidget {
+  const HistoryWidget({
+    super.key,
+    this.aggregateMode = true,
+    this.source,
+    this.embedded = false,
+  });
+  final bool aggregateMode, embedded;
+  final String? source;
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final colorScheme = Theme.of(context).colorScheme;
-    final globalSettingState = context.watch<GlobalSettingCubit>().state;
-
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
-          child: Row(
-            children: [
-              Text(
-                t.search.history,
-                style: textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const Spacer(),
-
-              // 排序按钮
-              if (globalSettingState.searchHistory.isNotEmpty) ...[
-                _buildSortButton(),
-
-                IconButton(
-                  icon: const Icon(Icons.delete_outline, size: 20),
-                  tooltip: t.search.clearHistory,
-                  color: colorScheme.outline,
-                  onPressed: _resetHistory,
-                ),
-              ],
-            ],
-          ),
-        ),
-
-        // --- 3. 历史记录内容区域 ---
-        Expanded(
-          child: globalSettingState.searchHistory.isEmpty
-              ? _buildEmpty()
-              : _buildHistoryList(globalSettingState.searchHistory),
-        ),
-      ],
+    final scope = aggregateMode
+        ? ''
+        : source ??
+              context.select<SearchCubit, String>((cubit) => cubit.state.from);
+    final entries = context.watch<GlobalSettingCubit>().state.searchHistory;
+    final visible = SearchHistoryEntries.words(
+      entries,
+      scope: !aggregateMode && scope.isEmpty ? '__unknown_source__' : scope,
     );
-  }
-
-  Widget _buildSortButton() {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Tooltip(
-      message: _isNewestFirst ? t.search.newestFirst : t.search.oldestFirst,
-      child: TextButton.icon(
-        style: TextButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          minimumSize: const Size(0, 36),
-        ),
-        icon: Icon(
-          _isNewestFirst ? Icons.history : Icons.history_toggle_off, // 图标随状态变
-          size: 18,
-          color: colorScheme.primary,
-        ),
-        label: Text(
-          _isNewestFirst ? t.search.descending : t.search.ascending,
-          style: TextStyle(fontSize: 12, color: colorScheme.primary),
-        ),
-        onPressed: () {
-          setState(() {
-            _isNewestFirst = !_isNewestFirst;
-          });
-        },
-      ),
-    );
-  }
-
-  Widget _buildEmpty() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.manage_search,
-            size: 64,
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            t.search.noHistory,
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+    final section = SearchHistorySection(
+      key: ValueKey('comic-history.$scope'),
+      words: visible,
+      compact: !aggregateMode,
+      scopeLabel: aggregateMode
+          ? t.search.aggregateHistory
+          : t.search.currentSourceHistory,
+      onSubmit: (keyword) =>
+          onSearch(context, keyword, aggregateMode: aggregateMode),
+      onRemove: (selected) async {
+        context.read<GlobalSettingCubit>().updateState(
+          (current) => current.copyWith(
+            searchHistory: SearchHistoryEntries.remove(
+              current.searchHistory,
+              selected,
+              scope: !aggregateMode && scope.isEmpty
+                  ? '__unknown_source__'
+                  : scope,
             ),
           ),
-        ],
-      ),
+        );
+      },
     );
-  }
-
-  Widget _buildHistoryList(List<String> historyList) {
-    final sortedHistory = _isNewestFirst
-        ? historyList
-        : historyList.reversed.toList();
-    return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: SizedBox(
-        width: double.infinity,
-        child: Wrap(
-          spacing: 12.0,
-          runSpacing: 12.0,
-          alignment: WrapAlignment.start,
-          children: sortedHistory.map((historyItem) {
-            final keyword = historyItem;
-
-            return GestureDetector(
-              onLongPress: () => _deleteSingle(historyItem),
-              child: InputChip(
-                label: Text(keyword),
-                labelStyle: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurface,
-                  fontSize: 14,
-                ),
-                backgroundColor: Theme.of(
-                  context,
-                ).colorScheme.surfaceContainerLow,
-                side: BorderSide(
-                  color: Theme.of(context).colorScheme.outlineVariant,
-                  width: 1.0,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 0),
-                onPressed: () {
-                  HistoryWidget.cancelPendingKeywordSync();
-                  onSearch(
-                    context,
-                    keyword,
-                    aggregateMode: widget.aggregateMode,
-                  );
-                },
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-            );
-          }).toList(),
-        ),
-      ),
-    );
-  }
-
-  void _deleteSingle(String historyItem) {
-    final globalSettingCubit = context.read<GlobalSettingCubit>();
-    final List<String> newHistory = List.from(
-      globalSettingCubit.state.searchHistory,
-    );
-    newHistory.remove(historyItem);
-    globalSettingCubit.updateState(
-      (current) => current.copyWith(searchHistory: newHistory),
-    );
-  }
-
-  Future<void> _resetHistory() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(t.search.clearHistory),
-        content: Text(t.search.clearHistoryConfirm),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: Text(t.common.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(t.search.clearHistory),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    final globalSettingCubit = context.read<GlobalSettingCubit>();
-    globalSettingCubit.resetState(
-      (current, defaults) =>
-          current.copyWith(searchHistory: defaults.searchHistory),
-    );
+    return embedded
+        ? section
+        : SingleChildScrollView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            child: section,
+          );
   }
 }

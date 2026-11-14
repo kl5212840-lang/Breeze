@@ -15,13 +15,14 @@ ComicFollow? resolveFollowSyncFromDetail({
   if (follow == null || follow.deleted) return null;
   if (onlineChapterCount <= 0) return null;
   if (onlineChapterCount <= follow.lastChapterCount) return null;
+  final includesKnownLatest = onlineChapterCount >= follow.detectedChapterCount;
   return follow.copyWith(
     lastChapterCount: onlineChapterCount,
-    detectedChapterCount: onlineChapterCount,
-    detectedChapterTitle: onlineLatestTitle,
-    hasUpdate: false,
+    detectedChapterCount: includesKnownLatest ? onlineChapterCount : null,
+    detectedChapterTitle: includesKnownLatest ? onlineLatestTitle : null,
+    hasUpdate: !includesKnownLatest && follow.hasUpdate,
     lastCheckFailed: false,
-    updateTime: now,
+    updateTime: includesKnownLatest ? now : null,
     updatedAt: now,
   );
 }

@@ -18,6 +18,20 @@ void main() {
     expect(userFacingErrorMessage(const FormatException('头像图片过大')), '头像图片过大');
   });
 
+  test('rejects bare script and JSON parsing diagnostics', () {
+    for (final error in [
+      "unexpected token: 'error'",
+      const FormatException('Unexpected end of JSON input'),
+      'SyntaxError: invalid JSON',
+    ]) {
+      expect(userFacingErrorMessage(error), '加载失败，请稍后重试');
+    }
+    expect(
+      userFacingErrorMessage('This work will be available at a later date'),
+      'This work will be available at a later date',
+    );
+  });
+
   test('does not expose unknown multiline runtime diagnostics', () {
     expect(
       userFacingErrorMessage('request failed\nat internal.js:10'),

@@ -10,6 +10,10 @@ _ComicSimplifyEntryInfo _$ComicSimplifyEntryInfoFromJson(
   Map<String, dynamic> json,
 ) => _ComicSimplifyEntryInfo(
   title: json['title'] as String,
+  description: json['description'] as String? ?? '',
+  detailMetadata: json['detailMetadata'] as String? ?? '',
+  detailViewCount: (json['detailViewCount'] as num?)?.toInt() ?? 0,
+  detailPopularity: (json['detailPopularity'] as num?)?.toInt() ?? 0,
   id: json['id'] as String,
   fileServer: json['fileServer'] as String,
   path: json['path'] as String,
@@ -22,6 +26,10 @@ Map<String, dynamic> _$ComicSimplifyEntryInfoToJson(
   _ComicSimplifyEntryInfo instance,
 ) => <String, dynamic>{
   'title': instance.title,
+  'description': instance.description,
+  'detailMetadata': instance.detailMetadata,
+  'detailViewCount': instance.detailViewCount,
+  'detailPopularity': instance.detailPopularity,
   'id': instance.id,
   'fileServer': instance.fileServer,
   'path': instance.path,

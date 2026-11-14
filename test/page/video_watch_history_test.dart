@@ -3,6 +3,10 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/page/video/video_watch_history.dart';
+import 'package:zephyr/page/video/api_video_history.dart';
+import 'package:zephyr/page/video/api_video_models.dart';
+import 'package:zephyr/page/bookshelf/service/shelf_facet_adapters.dart';
+import 'package:zephyr/page/bookshelf/service/video_bookshelf_index.dart';
 
 VideoWatchRecord _record(int id, {int second = 20}) => VideoWatchRecord(
   watchUrl: Uri.parse('https://hanime1.me/watch?v=$id&temporary=not-persisted'),
@@ -87,4 +91,80 @@ void main() {
     expect(records, hasLength(1));
     expect(records.single.position, records.single.duration);
   });
+  test(
+    'public metadata roundtrips without private payload and legacy replay keeps known fields',
+    () async {
+      final watch = Uri.parse(
+        'https://module.test/videos/Hid-1?line=main&episode=1&token=omit',
+      );
+      expect(VideoWatchRecord.canonicalUrl(watch), isNotNull);
+      final item = ApiVideoItem(
+        id: 'movie:Hid-1',
+        title: 'Work',
+        detailUrl: watch,
+        genres: 'Action/Drama',
+        typeName: 'Movie',
+        year: '2024',
+        area: 'Japan',
+        language: 'Japanese',
+        writers: '作者甲 / 作者乙',
+      );
+      final row = VideoWatchRecord(
+        watchUrl: watch,
+        title: item.title,
+        position: const Duration(seconds: 20),
+        duration: const Duration(minutes: 10),
+        updatedAt: DateTime.utc(2026),
+        completed: false,
+        metadata: {
+          ...VideoWatchRecord.metadataFromItem(item),
+          'token': 'private',
+          'mediaUrl': 'https://secret.test/media',
+        },
+      );
+      await VideoWatchHistory.record('hybrid', row);
+      var restored = (await VideoWatchHistory.read('hybrid')).single;
+      expect(
+        restored.metadata.keys,
+        unorderedEquals(['genres', 'typeName', 'year', 'area', 'language', 'writers']),
+      );
+      final replay = apiVideoHistoryItem(restored, itemNamespace: 'movie');
+      expect(replay.year, '2024');
+      expect(replay.genres, 'Action/Drama');
+      expect(replay.writers, '作者甲 / 作者乙');
+      final facets = shelfFacetEntryFromVideo(VideoBookshelfRow(
+        key: 'history', source: 'hybrid', item: replay, updatedAt: restored.updatedAt,
+      ));
+      expect(facets.fields['author'], {'作者甲', '作者乙'});
+      expect(replay.detailUrl.hasQuery, isFalse);
+      expect(jsonEncode(restored.toJson()), isNot(contains('private')));
+      await VideoWatchHistory.record(
+        'hybrid',
+        VideoWatchRecord(
+          watchUrl: watch.replace(query: 'line=main&episode=2'),
+          title: 'Work',
+          position: const Duration(seconds: 30),
+          duration: row.duration,
+          updatedAt: DateTime.utc(2026, 2),
+          completed: false,
+        ),
+      );
+      restored = (await VideoWatchHistory.read('hybrid')).first;
+      expect(restored.metadata['year'], '2024');
+      expect(restored.metadata['writers'], '作者甲 / 作者乙');
+      expect(restored.position.inSeconds, 30);
+      // History's existing sparse contract treats empty fields as unknown:
+      // a replay without public basics must not retract an observed author.
+      await VideoWatchHistory.record('hybrid', VideoWatchRecord(
+        watchUrl: restored.watchUrl, title: restored.title,
+        position: restored.position, duration: restored.duration,
+        updatedAt: DateTime.utc(2026, 3), completed: false,
+        metadata: const {'writers': ''},
+      ));
+      expect((await VideoWatchHistory.read('hybrid')).first.metadata['writers'],
+        '作者甲 / 作者乙');
+      expect((await VideoWatchHistory.read('another-source')), isEmpty);
+
+    },
+  );
 }

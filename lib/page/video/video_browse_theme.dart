@@ -34,3 +34,42 @@ ThemeData videoBrowseTheme(ThemeData base) {
     ),
   );
 }
+
+/// Readable text on the system's thick task material, scoped to video tasks.
+/// Semantic colors follow brightness; only the heading is semibold.
+ThemeData videoReadableTaskTheme(ThemeData base) {
+  final colors = base.colorScheme;
+  final title = base.textTheme.titleMedium?.copyWith(
+    fontSize: 17,
+    fontWeight: FontWeight.w600,
+    color: colors.onSurface,
+  );
+  final body = base.textTheme.bodyLarge?.copyWith(
+    fontSize: 17,
+    fontWeight: FontWeight.w500,
+    color: colors.onSurface,
+  );
+  return base.copyWith(
+    textTheme: base.textTheme.copyWith(
+      titleMedium: title,
+      bodyLarge: body,
+      titleSmall: base.textTheme.titleSmall?.copyWith(
+        fontWeight: FontWeight.w600,
+        color: colors.onSurface,
+      ),
+      bodyMedium: base.textTheme.bodyMedium?.copyWith(color: colors.onSurface),
+    ),
+    iconTheme: base.iconTheme.copyWith(color: colors.onSurface),
+    listTileTheme: base.listTileTheme.copyWith(
+      minTileHeight: 44,
+      titleTextStyle: body,
+      textColor: colors.onSurface,
+      iconColor: colors.onSurface,
+      selectedColor: colors.onSurface,
+      selectedTileColor: Colors.transparent,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      horizontalTitleGap: 10,
+      minVerticalPadding: 4,
+    ),
+  );
+}

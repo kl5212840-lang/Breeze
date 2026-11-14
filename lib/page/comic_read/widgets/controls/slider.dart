@@ -13,6 +13,7 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/comic_read/cubit/reader_cubit.dart';
 import 'package:zephyr/page/comic_read/widgets/layout/read_layout.dart';
 import 'package:zephyr/util/context/context_extensions.dart';
+import 'package:zephyr/widgets/app_interface_style.dart';
 
 class SliderWidget extends StatefulWidget {
   final ListObserverController observerController;
@@ -59,29 +60,35 @@ class _SliderWidgetState extends State<SliderWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return Expanded(
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            height: 52,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            decoration: BoxDecoration(
-              color: context.theme.colorScheme.surfaceContainerHigh.withValues(
-                alpha: 0.9,
-              ),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: context.theme.colorScheme.outlineVariant.withValues(
-                  alpha: 0.35,
-                ),
-              ),
-            ),
-            child: _SliderContents(configuration: widget, owner: this),
-          ),
-        ),
+    final system = AppInterfaceStyleScope.usesSystem(context);
+    final colors = context.theme.colorScheme;
+    final radius = BorderRadius.circular(24);
+    final track = Container(
+      height: 52,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: system
+            ? colors.surfaceContainerHigh.withValues(alpha: .9)
+            : colors.surfaceContainerHigh,
+        borderRadius: radius,
+        border: system
+            ? Border.all(color: colors.outlineVariant.withValues(alpha: .35))
+            : MediaQuery.highContrastOf(context)
+            ? Border.all(color: colors.outline)
+            : null,
       ),
+      child: _SliderContents(configuration: widget, owner: this),
+    );
+    return Expanded(
+      child: system
+          ? ClipRRect(
+              borderRadius: radius,
+              child: BackdropFilter(
+                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                child: track,
+              ),
+            )
+          : track,
     );
   }
 

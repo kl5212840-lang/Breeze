@@ -9,12 +9,7 @@ extension _ComicReadAutoReadPart on _ComicReadPageState {
     _autoReadController.sync(
       readSetting: readSetting,
       readMode: readMode,
-      canTick: () {
-        final readerState = context.read<ReaderCubit>().state;
-        return !readerState.isMenuVisible &&
-            !readerState.isSliderRolling &&
-            !readerState.isComicRolling;
-      },
+      canTick: _canAutoReadTick,
       onTick: _actionController.onAutoReadTick,
     );
   }
@@ -26,14 +21,21 @@ extension _ComicReadAutoReadPart on _ComicReadPageState {
     _autoReadController.togglePaused(
       readSetting: effective,
       readMode: effective.readMode,
-      canTick: () {
-        final readerState = context.read<ReaderCubit>().state;
-        return !readerState.isMenuVisible &&
-            !readerState.isSliderRolling &&
-            !readerState.isComicRolling;
-      },
+      canTick: _canAutoReadTick,
       onTick: _actionController.onAutoReadTick,
     );
+  }
+
+  bool _canAutoReadTick() {
+    if (!mounted ||
+        !_historyController.hasRestoredPosition ||
+        context.read<PageBloc>().state.status != PageStatus.success) {
+      return false;
+    }
+    final readerState = context.read<ReaderCubit>().state;
+    return !readerState.isMenuVisible &&
+        !readerState.isSliderRolling &&
+        !readerState.isComicRolling;
   }
 
   // 自动阅读悬浮控制按钮。
@@ -93,7 +95,7 @@ extension _ComicReadAutoReadPart on _ComicReadPageState {
                       transitionBuilder: (child, animation) {
                         return ScaleTransition(scale: animation, child: child);
                       },
-                      child: Icon(
+                      child: ReaderToolGlyph(
                         _autoReadController.isPaused
                             ? Icons.play_arrow_rounded
                             : Icons.pause_rounded,

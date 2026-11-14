@@ -1,10 +1,9 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:intl/intl.dart';
-import 'package:loading_animation_widget/loading_animation_widget.dart';
 import 'package:markdown_widget/markdown_widget.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:zephyr/page/change_log/release_history.dart';
@@ -13,6 +12,7 @@ import 'package:zephyr/network/http/wind_http.dart';
 import 'package:zephyr/network/utils/github_proxy.dart';
 import 'package:zephyr/service/update/json/github_release_json.dart';
 import 'package:zephyr/util/error_filter.dart';
+import 'package:zephyr/page/setting/common/setting_ui.dart';
 
 const _upstreamProxyReleasesApiUrl =
     '$breezeGithubApi/repos/deretame/Breeze/releases';
@@ -25,7 +25,10 @@ enum _ReleaseHistorySource { fork, upstream }
 
 @RoutePage()
 class ChangelogPage extends StatefulWidget {
-  const ChangelogPage({super.key});
+  const ChangelogPage({super.key, this.releaseLoader});
+
+  final Future<List<GithubReleaseJson>> Function(bool upstream, int page)?
+  releaseLoader;
 
   @override
   State<ChangelogPage> createState() => _ChangelogPageState();
@@ -93,27 +96,29 @@ class _ChangelogPageState extends State<ChangelogPage> {
       List<GithubReleaseJson> releases;
       bool hasMore;
 
-      // fork 的记录结束后，继续展示 v3.0.35 及以前的上游历史。
+      // fork 的记录结束后，继续展示 v3.0.36 及以前的上游历史。
       // 如果上游后来新增版本，跳过它们而不打乱本分支的版本顺序。
       while (true) {
         final fetched = await _fetchReleasePage(source, requestPage);
+        final published = fetched.where((release) => !release.draft).toList()
+          ..sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
         if (source == _ReleaseHistorySource.fork && fetched.length < _perPage) {
           hasMore = true;
-          if (fetched.isEmpty) {
+          if (published.isEmpty) {
             source = _ReleaseHistorySource.upstream;
             requestPage = 1;
             continue;
           }
-          releases = fetched;
+          releases = published;
           source = _ReleaseHistorySource.upstream;
           requestPage = 0;
         } else {
           hasMore = fetched.length >= _perPage;
           releases = source == _ReleaseHistorySource.upstream && Platform.isIOS
-              ? fetched
+              ? published
                     .where((item) => isUpstreamHistoryVersion(item.tagName))
                     .toList()
-              : fetched;
+              : published;
         }
         if (releases.isNotEmpty || !hasMore) break;
         requestPage++;
@@ -169,6 +174,10 @@ class _ChangelogPageState extends State<ChangelogPage> {
     _ReleaseHistorySource source,
     int page,
   ) async {
+    final loader = widget.releaseLoader;
+    if (loader != null) {
+      return loader(source == _ReleaseHistorySource.upstream, page);
+    }
     final urls = source == _ReleaseHistorySource.fork
         ? [
             ...mirrorBaseUrls.map((base) => '$base$_forkReleasesApiUrl'),
@@ -185,7 +194,19 @@ class _ChangelogPageState extends State<ChangelogPage> {
             'User-Agent': 'Breeze',
           },
         );
-        if (response.ok) return githubReleaseJsonFromJson(response.text);
+        if (response.ok) {
+          final decoded = jsonDecode(response.text) as List;
+          return decoded
+              .whereType<Map>()
+              .where(
+                (item) => item['draft'] != true && item['published_at'] != null,
+              )
+              .map(
+                (item) =>
+                    GithubReleaseJson.fromJson(Map<String, dynamic>.from(item)),
+              )
+              .toList();
+        }
       } catch (_) {
         // 当前地址不可用时尝试下一个镜像或 GitHub 官方接口。
       }
@@ -205,124 +226,66 @@ class _ChangelogPageState extends State<ChangelogPage> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(t.changelog.title),
-        centerTitle: true,
-        scrolledUnderElevation: 0,
-      ),
-      body: _buildBody(colorScheme),
-    );
-  }
-
-  Widget _buildBody(ColorScheme colorScheme) {
-    // 首次全屏 Loading
-    if (_isLoading) {
-      return Center(
-        child: LoadingAnimationWidget.staggeredDotsWave(
-          color: colorScheme.primary,
-          size: 50,
-        ),
-      );
-    }
-
-    // 首次全屏错误
-    if (_errorMsg != null && _releases.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.wifi_off_rounded, size: 64, color: colorScheme.error),
-            const SizedBox(height: 16),
-            Text(
-              t.changelog.checkNetwork,
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 24),
-            FilledButton.tonal(
-              onPressed: () {
-                setState(() {
-                  _isLoading = true;
-                  _errorMsg = null;
-                });
-                _fetchReleases(refresh: true);
-              },
-              child: Text(t.changelog.retry),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (_releases.isEmpty) {
-      return RefreshIndicator(
-        onRefresh: () => _fetchReleases(refresh: true),
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          children: [
-            SizedBox(
-              height: MediaQuery.sizeOf(context).height * 0.8,
-              child: Center(child: Text(t.changelog.empty)),
-            ),
-          ],
-        ),
-      );
-    }
-
-    // 桌面端窄栏居中：与追更/more等页一致，Align + 768 上限，移动端无影响。
-    return RefreshIndicator(
+  Widget build(BuildContext context) => SettingPageShell(
+    title: t.changelog.title,
+    child: RefreshIndicator(
       onRefresh: () => _fetchReleases(refresh: true),
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 768),
-          child: ListView.builder(
-            controller: _scrollController,
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            itemCount: _releases.length + (_hasMore ? 1 : 0),
-            itemBuilder: (context, index) {
-              if (index == _releases.length) {
-                return const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Center(child: CircularProgressIndicator()),
-                );
-              }
-              final release = _releases[index];
-              return Container(
-                key: ValueKey(release.id), // 添加 Key 提高性能
-                child:
-                    _ReleaseCard(
-                          release: release,
-                          isHistorical:
-                              Platform.isIOS &&
-                              isUpstreamHistoryVersion(release.tagName),
-                          onLinkTap: _launchUrl,
-                        )
-                        .animate()
-                        .fade(duration: 400.ms)
-                        .slideY(begin: 0.1, end: 0, curve: Curves.easeOutQuad),
-              );
-            },
-          ),
-        ),
+      child: ListView(
+        controller: _scrollController,
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: kSettingPagePadding,
+        children: [
+          if (_isLoading)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            )
+          else if (_errorMsg != null)
+            ListTile(
+              leading: const Icon(Icons.cloud_off_outlined),
+              title: Text(t.changelog.checkNetwork),
+              trailing: TextButton(
+                onPressed: () => _fetchReleases(refresh: true),
+                child: Text(t.common.retry),
+              ),
+            )
+          else if (_releases.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(t.changelog.empty),
+            ),
+          for (final (index, release) in _releases.indexed)
+            _ReleaseCard(
+              key: ValueKey(release.id),
+              release: release,
+              initiallyExpanded: index == 0,
+              isHistorical:
+                  Platform.isIOS && isUpstreamHistoryVersion(release.tagName),
+              onLinkTap: _launchUrl,
+            ),
+          if (!_isLoading && _isFetching && _releases.isNotEmpty)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            ),
+        ],
       ),
-    );
-  }
+    ),
+  );
 }
 
 class _ReleaseCard extends StatelessWidget {
   final GithubReleaseJson release;
   final bool isHistorical;
   final Function(String) onLinkTap;
+  final bool initiallyExpanded;
 
   const _ReleaseCard({
+    super.key,
     required this.release,
     required this.isHistorical,
     required this.onLinkTap,
+    required this.initiallyExpanded,
   });
 
   @override
@@ -349,7 +312,7 @@ class _ReleaseCard extends StatelessWidget {
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          initiallyExpanded: true,
+          initiallyExpanded: initiallyExpanded,
           shape: const Border(),
           collapsedShape: const Border(),
           tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -361,19 +324,19 @@ class _ReleaseCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        Flexible(
-                          child: Text(
-                            release.tagName,
-                            style: textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: colorScheme.primary,
-                            ),
-                            overflow: TextOverflow.ellipsis,
+                        Text(
+                          release.tagName,
+                          style: textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: colorScheme.primary,
                           ),
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        const SizedBox(width: 8),
                         if (Platform.isIOS)
                           _TagChip(
                             text: isHistorical
@@ -385,10 +348,6 @@ class _ReleaseCard extends StatelessWidget {
                           ),
                         if (release.prerelease)
                           _TagChip(text: 'Pre', color: Colors.orange),
-                        if (release.draft) ...[
-                          const SizedBox(width: 4),
-                          _TagChip(text: 'Draft', color: Colors.grey),
-                        ],
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -406,7 +365,10 @@ class _ReleaseCard extends StatelessWidget {
                 child: IconButton(
                   icon: const Icon(Icons.open_in_new_rounded, size: 20),
                   color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(
+                    minWidth: 44,
+                    minHeight: 44,
+                  ),
                   onPressed: () => onLinkTap(release.htmlUrl),
                 ),
               ),
@@ -494,7 +456,6 @@ class _ReleaseCard extends StatelessWidget {
                       runSpacing: 8,
                       children: release.assets.map((asset) {
                         return ActionChip(
-                          visualDensity: VisualDensity.compact,
                           avatar: Icon(
                             Icons.download_rounded,
                             size: 14,

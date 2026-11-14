@@ -1,13 +1,14 @@
 import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
+import 'package:zephyr/service/local_appearance_images.dart';
 
 /// The Bika avatar API expects a compact square JPEG, not the original photo.
 Uint8List prepareSourceAvatar(Uint8List bytes) {
   if (bytes.isEmpty || bytes.length > 12 * 1024 * 1024) {
     throw const FormatException('图片不能超过 12 MB');
   }
-  final decoded = img.decodeImage(bytes);
+  final decoded = img.decodeJpg(prepareLocalAppearanceImage(bytes));
   if (decoded == null) {
     throw const FormatException('请选择 JPG、PNG 或 WebP 图片');
   }

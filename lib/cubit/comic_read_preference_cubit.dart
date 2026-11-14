@@ -86,37 +86,36 @@ class ComicReadPreferenceCubit extends Cubit<ComicReadPreferenceState> {
     }
   }
 
-  /// 通用写入：以调用方看到的目标值（本漫 tab 是有效值）为 diff 基准
-  /// 做 `updates`，把变化写进本漫独立设置。
+  /// 通用写入：以最新有效值为 diff 基准，把变化写进本漫独立设置。
   ///
   /// 加新设置项时 UI 只调这一个方法，不用再为每个字段写路由。
   /// 返回实际变化的 key（为空表示值没变化，什么都没写）。
   Future<Set<String>> updateField(
-    ReadSettingState effective,
+    ReadSettingState global,
     ReadSettingState Function(ReadSettingState current) updates,
   ) async {
     if (state.uniqueKey.isEmpty) return const {};
-    // 以调用方看到的目标值为 diff 基准：delta 恰好是本次改的键，
-    // 直接合并进 patch，不把其它全局偏差拖进来。
-    final updated = updates(effective);
-    final result = await ComicReadPreferenceService.upsertOverride(
+    final result = ComicReadPreferenceService.upsertOverride(
       state.source,
       state.comicId,
-      effective,
-      updated,
+      global,
+      updates,
     );
-    if (result.changedKeys.isEmpty) return const {};
-    emit(state.copyWith(override: result.override));
+    if (!_overrideEquals(result.override, state.override)) {
+      emit(
+        state.copyWith(
+          override: result.override,
+          clearOverride: result.override == null,
+        ),
+      );
+    }
     return result.changedKeys;
   }
 
   /// 删整行本漫设置：清空 patch + 立 tombstone，同步把删除传出去。
   Future<void> clearOverride() async {
     if (state.uniqueKey.isEmpty) return;
-    await ComicReadPreferenceService.clearPreference(
-      state.source,
-      state.comicId,
-    );
+    ComicReadPreferenceService.clearPreference(state.source, state.comicId);
     emit(state.copyWith(clearOverride: true));
   }
 }
@@ -163,17 +162,17 @@ class ComicReadPreferenceService {
     }
   }
 
-  /// 把 [updated] 相对 [current] 的变化合并进本漫设置并写回。
+  /// 用最新持久化覆盖和 [global] 计算有效值，再合并 [updates] 的变化。
   ///
   /// 只动变化的 key（外加 [includeKeys] 强制记录的键），其余原样保留；
   /// `updatedAt` 取当前 unix 时间。无变化时不写库。
-  static Future<PerComicUpsertResult> upsertOverride(
+  static PerComicUpsertResult upsertOverride(
     String source,
     String comicId,
-    ReadSettingState current,
-    ReadSettingState updated, {
+    ReadSettingState global,
+    ReadSettingState Function(ReadSettingState current) updates, {
     Set<String> includeKeys = const {},
-  }) async {
+  }) {
     final key = keyFor(source, comicId);
     if (key == ':') return const PerComicUpsertResult(null, {});
     final now = DateTime.now().toUtc();
@@ -181,6 +180,8 @@ class ComicReadPreferenceService {
     final query = box.query(ComicReadPreference_.uniqueKey.equals(key)).build();
     try {
       final existing = query.findFirst();
+      final current = resolveEffective(global, existing?.overrideSetting);
+      final updated = updates(current);
       if (existing == null) {
         final entity = ComicReadPreference(
           uniqueKey: key,
@@ -247,7 +248,7 @@ class ComicReadPreferenceService {
   ///
   /// patch 已空，后续写入必然走“有碑先清”分支重记，不会复活旧值；
   /// 墓碑靠 LWW 同步到其它设备。
-  static Future<void> clearPreference(String source, String comicId) async {
+  static void clearPreference(String source, String comicId) {
     final key = keyFor(source, comicId);
     if (key == ':') return;
     final now = DateTime.now().toUtc();

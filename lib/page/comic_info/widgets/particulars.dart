@@ -2,10 +2,10 @@ import 'dart:io';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:path/path.dart' as p;
-import 'package:zephyr/cubit/string_select.dart';
+import 'package:zephyr/page/comic_info/widgets/reading_history_banner.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/service/download/download_byte_amount.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart';
 import 'package:zephyr/object_box/model.dart';
@@ -235,15 +235,6 @@ class _InfoColumnState extends State<_InfoColumn> {
     return roots.values.toList();
   }
 
-  String _formatFileSize(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
-  }
-
   @override
   Widget build(BuildContext context) {
     final displaySource = _resolvePluginDisplayName(widget.from);
@@ -303,7 +294,7 @@ class _InfoColumnState extends State<_InfoColumn> {
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      _formatFileSize(_storageSize!),
+                      downloadByteAmount(_storageSize!),
                       style: context.theme.textTheme.labelMedium?.copyWith(
                         letterSpacing: 0.8,
                         fontWeight: FontWeight.w700,
@@ -325,10 +316,15 @@ class _InfoColumnState extends State<_InfoColumn> {
           spacing: 8,
           runSpacing: 8,
           children: widget.comicInfo.titleMeta
-              .map((item) => _MetaPill(item: item))
+              .map((item) => ComicMetadataCopyPill(item: item))
               .toList(),
         ),
-        _ContinueReadingBanner(onContinueRead: widget.onContinueRead),
+        ComicReadingHistoryBanner(
+          source: widget.from,
+          comicId: widget.comicInfo.id,
+          comicTitle: widget.comicInfo.title,
+          onContinueRead: widget.onContinueRead,
+        ),
       ],
     );
   }
@@ -352,129 +348,32 @@ class _InfoColumnState extends State<_InfoColumn> {
   }
 }
 
-class _ContinueReadingBanner extends StatelessWidget {
-  const _ContinueReadingBanner({required this.onContinueRead});
-
-  final VoidCallback? onContinueRead;
-
-  @override
-  Widget build(BuildContext context) {
-    return BlocSelector<StringSelectCubit, String, String>(
-      selector: (state) => state,
-      builder: (context, stringSelectDate) {
-        if (stringSelectDate.isEmpty) {
-          return const SizedBox.shrink();
-        }
-
-        return Padding(
-          padding: const EdgeInsets.only(top: 14),
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: onContinueRead,
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: context.theme.colorScheme.primary.withValues(
-                    alpha: 0.10,
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: context.theme.colorScheme.primary.withValues(
-                      alpha: 0.30,
-                    ),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 34,
-                      height: 34,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: context.theme.colorScheme.primary.withValues(
-                          alpha: 0.14,
-                        ),
-                        borderRadius: BorderRadius.circular(9),
-                      ),
-                      child: Icon(
-                        Icons.history_rounded,
-                        size: 18,
-                        color: context.theme.colorScheme.primary,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            t.comicInfo.readHistory,
-                            style: context.theme.textTheme.labelMedium
-                                ?.copyWith(
-                                  color: context.theme.colorScheme.primary,
-                                  fontWeight: FontWeight.w800,
-                                  letterSpacing: 0.2,
-                                ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            stringSelectDate,
-                            style: context.theme.textTheme.bodyMedium?.copyWith(
-                              color: context.textColor,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (onContinueRead != null) ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        t.comicInfo.continueRead,
-                        style: context.theme.textTheme.labelLarge?.copyWith(
-                          color: context.theme.colorScheme.primary,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Icon(
-                        Icons.play_arrow_rounded,
-                        size: 20,
-                        color: context.theme.colorScheme.primary,
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _MetaPill extends StatelessWidget {
-  const _MetaPill({required this.item});
+class ComicMetadataCopyPill extends StatelessWidget {
+  const ComicMetadataCopyPill({super.key, required this.item});
 
   final ComicInfoActionItem item;
 
   @override
   Widget build(BuildContext context) {
-    final pill = ConstrainedBox(
-      constraints: const BoxConstraints(minHeight: 38),
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Positioned.fill(
-            child: DecoratedBox(
+    return Material(
+      type: MaterialType.transparency,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onLongPress: () async {
+          final copyText = item.onLongPress?.trim().isNotEmpty == true
+              ? item.onLongPress!.trim()
+              : item.name;
+          await Clipboard.setData(ClipboardData(text: copyText));
+          showSuccessToast(
+            t.comicInfo.copied(label: item.name.let(convertChineseForDisplay)),
+          );
+        },
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 44, minWidth: 44),
+          child: Center(
+            widthFactor: 1,
+            heightFactor: 1,
+            child: Ink(
               decoration: BoxDecoration(
                 color: context.theme.colorScheme.surfaceContainerLow,
                 borderRadius: BorderRadius.circular(12),
@@ -484,35 +383,28 @@ class _MetaPill extends StatelessWidget {
                   ),
                 ),
               ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-            child: Text(
-              item.name.let(convertChineseForDisplay),
-              textAlign: TextAlign.center,
-              softWrap: true,
-              style: context.theme.textTheme.bodySmall?.copyWith(
-                fontWeight: FontWeight.w600,
-                height: 1.15,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 38),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 9,
+                  ),
+                  child: Text(
+                    item.name.let(convertChineseForDisplay),
+                    textAlign: TextAlign.center,
+                    softWrap: true,
+                    style: context.theme.textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                      height: 1.15,
+                    ),
+                  ),
+                ),
               ),
             ),
           ),
-        ],
+        ),
       ),
-    );
-
-    return GestureDetector(
-      onLongPress: () async {
-        final copyText = item.onLongPress?.trim().isNotEmpty == true
-            ? item.onLongPress!.trim()
-            : item.name;
-        await Clipboard.setData(ClipboardData(text: copyText));
-        showSuccessToast(
-          t.comicInfo.copied(label: item.name.let(convertChineseForDisplay)),
-        );
-      },
-      child: pill,
     );
   }
 }

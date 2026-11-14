@@ -27,9 +27,7 @@ class SearchSchemeRenderer {
           widgets.add(SearchBar(aggregateMode: aggregateMode));
           break;
         case 'divider':
-          widgets.add(
-            Divider(height: (config['height'] as num?)?.toDouble() ?? 1),
-          );
+          widgets.add(const SizedBox(height: 8));
           break;
         case 'history':
           final child = HistoryWidget(aggregateMode: aggregateMode);

@@ -1,14 +1,24 @@
+import 'package:zephyr/page/video/video_native_navigation.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_detailed_content.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/widgets/collection_cover_fit.dart';
 import 'package:zephyr/page/search_result/widgets/bottom_loader.dart';
 import 'package:zephyr/page/discover/service/discover_router.dart';
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
+import 'package:zephyr/widgets/comic_entry/comic_record_time.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/cover.dart';
+import 'package:zephyr/widgets/comic_simplify_entry/jm_cover_like_badge.dart';
+import 'package:zephyr/widgets/work_list_divider.dart';
+import 'package:zephyr/service/plugin_account_authentication.dart';
+
+String formatSourceComicTimestamp(String value) =>
+    formatComicRecordTimestamp(value);
 
 class SourceSearchDetailList extends StatelessWidget {
   const SourceSearchDetailList({
@@ -23,6 +33,8 @@ class SourceSearchDetailList extends StatelessWidget {
     this.onReturned,
     this.physics,
     this.shrinkWrap = false,
+    this.collectionLayout = false,
+    this.quietPaging = false,
   });
 
   final List<UnifiedComicListItem> entries;
@@ -34,6 +46,7 @@ class SourceSearchDetailList extends StatelessWidget {
   final ScrollController? controller;
   final ScrollPhysics? physics;
   final bool shrinkWrap;
+  final bool collectionLayout, quietPaging;
   final VoidCallback? onReturned;
 
   @override
@@ -45,9 +58,14 @@ class SourceSearchDetailList extends StatelessWidget {
       slivers: [
         SliverList.builder(
           itemCount: entries.length,
-          itemBuilder: (context, index) => SourceSearchDetailTile(
-            entry: entries[index],
-            onReturned: onReturned,
+          itemBuilder: (context, index) => WorkListRow(
+            divided: index + 1 < entries.length,
+            inset: collectionLayout ? 12 : 14,
+            child: SourceSearchDetailTile(
+              entry: entries[index],
+              collectionLayout: collectionLayout,
+              onReturned: onReturned,
+            ),
           ),
         ),
         if (hasReachedMax)
@@ -57,7 +75,7 @@ class SourceSearchDetailList extends StatelessWidget {
               child: Center(child: Text(t.oldHome.noMore)),
             ),
           ),
-        if (isLoadingMore)
+        if (isLoadingMore && !quietPaging)
           const SliverToBoxAdapter(child: Center(child: BottomLoader())),
         if (loadMoreFailed)
           SliverToBoxAdapter(
@@ -68,7 +86,7 @@ class SourceSearchDetailList extends StatelessWidget {
               ),
             ),
           ),
-        if (!hasReachedMax && !isLoadingMore && !loadMoreFailed)
+        if (!quietPaging && !hasReachedMax && !isLoadingMore && !loadMoreFailed)
           SliverToBoxAdapter(
             child: Center(
               child: TextButton.icon(
@@ -78,6 +96,9 @@ class SourceSearchDetailList extends StatelessWidget {
               ),
             ),
           ),
+        SliverToBoxAdapter(
+          child: SizedBox(height: NativeNavigationInset.scrollBottom(context)),
+        ),
       ],
     );
   }
@@ -88,11 +109,17 @@ class SourceSearchDetailTile extends StatelessWidget {
     super.key,
     required this.entry,
     this.type = ComicEntryType.normal,
+    this.localRecord = false,
+    this.collectionLayout = false,
     this.onReturned,
   });
 
   final UnifiedComicListItem entry;
   final ComicEntryType type;
+
+  /// Local saved-record revision is distinct from a source's comic update.
+  final bool localRecord;
+  final bool collectionLayout;
   final VoidCallback? onReturned;
 
   List<String> _values(String type) => entry
@@ -102,16 +129,10 @@ class SourceSearchDetailTile extends StatelessWidget {
       .toSet()
       .toList();
 
-  String get _updatedAt {
-    final raw = entry.updatedAt.trim();
-    if (raw.isEmpty || raw == '0') return '';
-    final date = DateTime.tryParse(raw);
-    // Some older adapters fill absent dates with the Unix epoch.
-    if (date != null && date.year == 1970 && date.month == 1 && date.day == 1) {
-      return '';
-    }
-    return raw;
-  }
+  bool get _jm => entry.source == PluginAccountAuthenticationService.jm;
+
+  String get _updatedAt =>
+      formatComicRecordTimestamp(entry.updatedAt, epochSeconds: _jm);
 
   void _returned(BuildContext context) {
     if (context.mounted && ModalRoute.of(context)?.isActive == true) {
@@ -123,6 +144,7 @@ class SourceSearchDetailTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final display = watchChineseDisplayConverter(context);
     final authors = _values('author');
     final author = authors.join(' / ');
     final authorActions = [
@@ -156,9 +178,10 @@ class SourceSearchDetailTile extends StatelessWidget {
               .where((part) => part.isNotEmpty && !known.contains(part))
               .join(' · ');
     final categories = _values('categories').join(' · ');
-    final tags = _values(
+    final tagValues = _values(
       'tags',
-    ).where((tag) => !_values('categories').contains(tag)).join(' · ');
+    ).where((tag) => !_values('categories').contains(tag));
+    final tags = (_jm ? tagValues.take(3) : tagValues).join(' · ');
     final aliases = _values(
       'aliases',
     ).where((alias) => alias != entry.title.trim()).join(' / ');
@@ -166,16 +189,18 @@ class SourceSearchDetailTile extends StatelessWidget {
     final updatedAt = _updatedAt;
     final description = (entry.raw['description'] ?? '').toString().trim();
     final pageCount = int.tryParse('${entry.raw['pagesCount'] ?? ''}') ?? 0;
+    final likeCounts = JmCoverLikeScope.maybeOf(context, entry.from);
+    final showTextLikes = likeCounts == null && entry.likesCount > 0;
     final hasStats =
-        entry.likesCount > 0 ||
+        showTextLikes ||
         popularity != null ||
         (entry.finished && statuses.isEmpty) ||
         pageCount > 0;
 
     Widget line(String value, {Color? color, int maxLines = 1}) => Padding(
-      padding: const EdgeInsets.only(top: 4),
+      padding: EdgeInsets.only(top: collectionLayout ? 3 : 4),
       child: Text(
-        convertChineseForDisplay(value),
+        display(value),
         maxLines: maxLines,
         overflow: TextOverflow.ellipsis,
         style: theme.textTheme.bodySmall?.copyWith(
@@ -185,6 +210,75 @@ class SourceSearchDetailTile extends StatelessWidget {
       ),
     );
 
+    Widget coverImage({BoxFit fit = BoxFit.cover}) {
+      final image = CoverWidget(
+        fileServer: entry.cover.url,
+        path: entry.cover.cachePath,
+        id: entry.id,
+        pictureType: PictureType.cover,
+        from: entry.from,
+        width: collectionLayout ? 80 : 84,
+        height: collectionLayout ? 120 : 116,
+        fit: fit,
+        containBackground: collectionLayout,
+      );
+      if (likeCounts == null) return image;
+      return JmCoverLikeVisibility(
+        comicId: entry.id,
+        child: Stack(
+          children: [
+            image,
+            PositionedDirectional(
+              start: JmCoverLikeBadge.inset,
+              end: JmCoverLikeBadge.inset,
+              bottom: JmCoverLikeBadge.inset,
+              child: JmCoverLikeBadge(counts: likeCounts, comicId: entry.id),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (collectionLayout) {
+      final info = entry.toSimplifyEntryInfo();
+      final collectionLabels = [
+        if (!_jm) ..._values('categories').take(1),
+        ...tagValues,
+      ];
+      final visibleLabels = collectionLabels.take(_jm ? 3 : 2).toList();
+      final hiddenLabelCount = collectionLabels.length - visibleLabels.length;
+      final collectionFacts = [
+        if (showTextLikes) t.comicInfo.likes(count: '${entry.likesCount}'),
+        if (popularity != null) t.comicList.popularity(count: popularity),
+        ...visibleLabels,
+        if (hiddenLabelCount > 0) '+$hiddenLabelCount',
+      ].where((value) => value.isNotEmpty).toSet().join(' · ');
+      final collectionByline = detail.isNotEmpty ? detail : secondary;
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        child: InkWell(
+          key: ValueKey('detail-${entry.id}'),
+          onTap: () async {
+            await context.pushRoute(
+              ComicInfoRoute(comicId: entry.id, type: type, from: entry.from),
+            );
+            if (context.mounted) _returned(context);
+          },
+          child: BookshelfDetailedContent(
+            cover: CollectionCoverFitBuilder(
+              builder: (_, fit) => coverImage(fit: fit),
+            ),
+            title: display(entry.title),
+            source: display(collectionByline),
+            metadata: display(collectionFacts),
+            description: display(info.description),
+            time: updatedAt.isEmpty
+                ? ''
+                : t.comicEntry.updatedAt(time: updatedAt),
+          ),
+        ),
+      );
+    }
     return InkWell(
       key: ValueKey('detail-${entry.id}'),
       onTap: () async {
@@ -200,15 +294,7 @@ class SourceSearchDetailTile extends StatelessWidget {
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(7),
-              child: CoverWidget(
-                fileServer: entry.cover.url,
-                path: entry.cover.cachePath,
-                id: entry.id,
-                pictureType: PictureType.cover,
-                from: entry.from,
-                width: 84,
-                height: 116,
-              ),
+              child: coverImage(),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -216,7 +302,7 @@ class SourceSearchDetailTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    convertChineseForDisplay(entry.title),
+                    display(entry.title),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.titleSmall?.copyWith(
@@ -251,9 +337,7 @@ class SourceSearchDetailTile extends StatelessWidget {
                                   if (context.mounted) _returned(context);
                                 },
                                 child: Text(
-                                  convertChineseForDisplay(
-                                    item['label'].toString(),
-                                  ),
+                                  display(item['label'].toString()),
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -271,12 +355,22 @@ class SourceSearchDetailTile extends StatelessWidget {
                           ? '看到：$secondary'
                           : secondary,
                     ),
+                  if (type == ComicEntryType.history &&
+                      comicLastReadTimestamp(entry).isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: ComicLastReadLine(item: entry),
+                    ),
                   if (aliases.isNotEmpty)
                     line(t.comicList.aliases(names: aliases)),
                   if (categories.isNotEmpty) line(categories),
                   if (tags.isNotEmpty) line(tags, color: colors.secondary),
-                  if (updatedAt.isNotEmpty)
-                    line(t.comicEntry.updatedAt(time: updatedAt)),
+                  if (type != ComicEntryType.history && updatedAt.isNotEmpty)
+                    line(
+                      localRecord
+                          ? t.comicEntry.recordUpdatedAt(time: updatedAt)
+                          : t.comicEntry.updatedAt(time: updatedAt),
+                    ),
                   if (description.isNotEmpty) line(description, maxLines: 2),
                   if (hasStats) ...[
                     const SizedBox(height: 5),
@@ -284,7 +378,7 @@ class SourceSearchDetailTile extends StatelessWidget {
                       spacing: 10,
                       runSpacing: 4,
                       children: [
-                        if (entry.likesCount > 0)
+                        if (showTextLikes)
                           Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [

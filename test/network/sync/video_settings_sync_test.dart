@@ -1,3 +1,4 @@
+import 'sync_installed_fixture.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -5,11 +6,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/main.dart';
+import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/network/sync/comic_sync_core.dart';
 import 'package:zephyr/network/sync/sync_service.dart';
+import 'package:zephyr/network/sync/sync_payload_compatibility.dart';
 import 'package:zephyr/object_box/object_box.dart';
 import 'package:zephyr/page/video/video_playback_preferences.dart';
 import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
+import 'package:zephyr/service/plugin_account_sync_coordinator.dart';
 
 class _Remote implements ComicSyncRemoteAdapter {
   final files = <String, List<int>>{};
@@ -83,12 +87,138 @@ void main() {
     objectbox.close();
     await temporary.delete(recursive: true);
   });
-  setUp(() {
+  setUp(() async {
     SharedPreferences.setMockInitialValues({});
     objectbox.pluginConfigBox.removeAll();
     objectbox.pluginInfoBox.removeAll();
+    await installSyncPlugins([
+      'bika',
+      'jm',
+      'copy',
+      'hanime',
+      'omo',
+      'ikun',
+      'modu',
+      'oscar',
+    ]);
     objectbox.userSettingBox.removeAll();
   });
+
+  test(
+    'explicit full backup restores account details and all eight plugin configurations even when auto options are off',
+    () async {
+      // Explicit full backups include retained data even with no installed package.
+      objectbox.pluginInfoBox.removeAll();
+      const disabled = GlobalSettingState(
+        syncSetting: SyncSettingState(syncSettings: false, syncPlugins: false),
+      );
+      objectbox.userSettingBox.put(UserSetting()..globalSetting = disabled);
+      const sources = [
+        'bika',
+        'jm',
+        'copy',
+        'hanime',
+        'omo',
+        'ikun',
+        'modu',
+        'oscar',
+      ];
+      final remote = _Remote();
+      for (final source in sources) {
+        await savePluginConfigValue(source, 'personal.option', source);
+        if (['bika', 'jm'].contains(source)) {
+          await savePluginConfigValue(
+            source,
+            'auth.account',
+            'fixture-$source',
+          );
+          await savePluginConfigValue(
+            source,
+            'auth.password',
+            'fixture-password',
+          );
+        } else if (['copy', 'hanime', 'omo'].contains(source)) {
+          await savePluginConfigValue(source, 'account.credentials', {
+            'version': 1,
+            'account': 'fixture-$source',
+            'password': 'fixture-password',
+            'origin': 'https://$source.test',
+            'deleted': false,
+            'updatedAt': 1,
+          });
+        }
+      }
+      await VideoPlaybackPreferences.save('defaultSpeed', 1.5);
+      await uploadSettingsData(remote, state: disabled, codec: _codec);
+      expect(
+        remote.files,
+        isEmpty,
+        reason: 'disabled automatic setting choices remain respected',
+      );
+      await uploadSettingsData(
+        remote,
+        state: disabled,
+        codec: _codec,
+        includeAll: true,
+      );
+      expect(remote.payload['pluginConfigs'], hasLength(8));
+      SharedPreferences.setMockInitialValues({'sync.device_id': 'new-device'});
+      objectbox.pluginConfigBox.removeAll();
+      await downloadSettingsData(
+        remote,
+        state: disabled,
+        codec: _codec,
+        includeAll: true,
+      );
+      expect((await VideoPlaybackPreferences.read()).defaultSpeed, 1.5);
+      for (final source in sources) {
+        expect(
+          loadPluginConfigValue<String>(
+            source,
+            'personal.option',
+            fallback: '',
+          ),
+          source,
+        );
+        if (['bika', 'jm'].contains(source)) {
+          expect(
+            loadPluginConfigValue<String>(
+              source,
+              'auth.password',
+              fallback: '',
+            ),
+            'fixture-password',
+          );
+        } else if (['copy', 'hanime', 'omo'].contains(source)) {
+          expect(
+            loadPluginConfigValue<Map>(
+              source,
+              'account.credentials',
+              fallback: {},
+            )['account'],
+            'fixture-$source',
+          );
+        } else {
+          expect(
+            loadPluginConfigValue<Map>(
+              source,
+              'account.credentials',
+              fallback: {},
+            ),
+            isEmpty,
+          );
+        }
+      }
+      expect(
+        (await SharedPreferences.getInstance()).getString('sync.device_id'),
+        'new-device',
+      );
+      expect(
+        objectbox.userSettingBox.get(1)!.globalSetting.syncSetting.syncPlugins,
+        isFalse,
+      );
+    },
+  );
 
   test(
     'upload and restore use the existing payload and preserve other plugins',
@@ -230,7 +360,12 @@ void main() {
         },
       };
       remote.replacePayload(legacy);
-      await downloadSettingsData(remote, state: _enabled, codec: _codec);
+      final before = jsonEncode(remote.files);
+      await expectLater(
+        downloadSettingsData(remote, state: _enabled, codec: _codec),
+        throwsA(isA<SyncCompatibilityException>()),
+      );
+      expect(jsonEncode(remote.files), before);
       expect((await VideoPlaybackPreferences.read()).defaultSpeed, 1.25);
     },
   );
@@ -247,6 +382,54 @@ void main() {
     );
     expect(jsonEncode(remote.files), previous);
   });
+
+  for (final archiveContent in [
+    'settings',
+    'other plugin',
+    'same backup',
+    'different backup',
+  ]) {
+    test(
+      'browser restore only schedules the archived backup ($archiveContent)',
+      () async {
+        final remote = _Remote();
+        Future<void> saveBackup(String host) =>
+            savePluginConfigValue('hanime', 'account.backup', {
+              'version': 1,
+              'origin': 'https://$host.fixture.test',
+              'deleted': true,
+            });
+        final hasBackup = archiveContent.endsWith('backup');
+        if (hasBackup) await saveBackup('archive');
+        if (archiveContent == 'other plugin') {
+          await savePluginConfigValue('bika', 'fixture.option', 'remote');
+        }
+        final uploadState = archiveContent == 'settings'
+            ? _enabled.copyWith(
+                syncSetting: _enabled.syncSetting.copyWith(syncPlugins: false),
+              )
+            : _enabled;
+        await uploadSettingsData(remote, state: uploadState, codec: _codec);
+        if (archiveContent == 'other plugin') {
+          await savePluginConfigValue('bika', 'fixture.option', 'local');
+        }
+        if (archiveContent != 'same backup') await saveBackup('device');
+
+        await downloadSettingsData(remote, state: _enabled, codec: _codec);
+
+        final preferences = await SharedPreferences.getInstance();
+        final pending =
+            jsonDecode(
+                  preferences.getString(
+                        PluginAccountSyncCoordinator.pendingKey,
+                      ) ??
+                      '{}',
+                )
+                as Map;
+        expect(pending.keys, hasBackup ? ['hanime'] : isEmpty);
+      },
+    );
+  }
 
   test('forgetting an account is uploaded as an explicit value', () async {
     final remote = _Remote();
@@ -266,4 +449,69 @@ void main() {
       isTrue,
     );
   });
+  test(
+    'main navigation syncs both placements and explicit defaults atomically',
+    () async {
+      const enabled = GlobalSettingState(
+        syncSetting: SyncSettingState(syncSettings: true),
+      );
+      final remote = _Remote();
+      final user = UserSetting(id: 1)..globalSetting = enabled;
+      objectbox.userSettingBox.put(user);
+      await uploadSettingsData(remote, state: enabled, codec: _codec);
+      expect(remote.payload['blocks'], isNot(contains('mainNavigation')));
+      expect(
+        remote.payload['globalSetting'],
+        isNot(contains('mainNavigationSlots')),
+      );
+
+      const placement = 'left,more';
+      user.globalSetting = enabled.copyWith(mainNavigationSlots: placement);
+      objectbox.userSettingBox.put(user);
+      await uploadSettingsData(remote, state: enabled, codec: _codec);
+      final blocks = remote.payload['blocks'] as Map;
+      expect(blocks['mainNavigation']['data'], {
+        'mainNavigationSlots': placement,
+      });
+      expect(
+        blocks['appearance']['data'],
+        isNot(contains('mainNavigationSlots')),
+      );
+      final customizedArchive = remote.payload;
+
+      SharedPreferences.setMockInitialValues({'sync.device_id': 'receiver'});
+      user.globalSetting = enabled;
+      objectbox.userSettingBox.put(user);
+      await downloadSettingsData(remote, state: enabled, codec: _codec);
+      expect(
+        objectbox.userSettingBox.get(1)!.globalSetting.mainNavigationSlots,
+        placement,
+      );
+
+      final legacy = remote.payload;
+      (legacy['blocks'] as Map).remove('mainNavigation');
+      (legacy['globalSetting'] as Map).remove('mainNavigationSlots');
+      remote.replacePayload(legacy);
+      await downloadSettingsData(remote, state: enabled, codec: _codec);
+      expect(
+        objectbox.userSettingBox.get(1)!.globalSetting.mainNavigationSlots,
+        placement,
+      );
+
+      remote.replacePayload(customizedArchive);
+      user.globalSetting = enabled;
+      objectbox.userSettingBox.put(user);
+      await uploadSettingsData(remote, state: enabled, codec: _codec);
+      expect(remote.payload['blocks']['mainNavigation']['data'], {
+        'mainNavigationSlots': '',
+      });
+      user.globalSetting = enabled.copyWith(mainNavigationSlots: 'more,left');
+      objectbox.userSettingBox.put(user);
+      await downloadSettingsData(remote, state: enabled, codec: _codec);
+      expect(
+        objectbox.userSettingBox.get(1)!.globalSetting.mainNavigationSlots,
+        isEmpty,
+      );
+    },
+  );
 }

@@ -56,6 +56,7 @@ abstract class VideoInteractionState with _$VideoInteractionState {
     int? positiveVotes,
     int? negativeVotes,
     int? totalVotes,
+    String? ratingPercentRaw,
     bool? following,
     bool? watchLater,
   }) = _VideoInteractionState;
@@ -107,6 +108,12 @@ abstract class VideoInteractionState with _$VideoInteractionState {
           : null;
     }
 
+    final rating = raw['ratingPercentRaw'];
+    final ratingNumber =
+        rating is String && RegExp(r'^\d{1,3}(?:\.\d{1,6})?%$').hasMatch(rating)
+        ? double.tryParse(rating.substring(0, rating.length - 1))
+        : null;
+
     return VideoInteractionState(
       actor: actor,
       capabilities: capabilities,
@@ -115,6 +122,9 @@ abstract class VideoInteractionState with _$VideoInteractionState {
       positiveVotes: count('positiveVotes'),
       negativeVotes: count('negativeVotes'),
       totalVotes: count('totalVotes'),
+      ratingPercentRaw: ratingNumber != null && ratingNumber <= 100
+          ? rating as String
+          : null,
       following: confirmedValue('following', VideoSiteAction.follow),
       watchLater: confirmedValue('watchLater', VideoSiteAction.watchLater),
     );

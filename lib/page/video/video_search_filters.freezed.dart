@@ -15,7 +15,7 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$VideoSearchFilters {
 
- String get query; String get genre; String get sort; String get date; String get duration; List<String> get tags; bool get anyTag; bool get author; int get page;
+ String get query; String get genre; String get sort; String get date; String get duration; List<String> get tags; bool get anyTag; bool get author; bool get completed; int get page;
 /// Create a copy of VideoSearchFilters
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -27,20 +27,20 @@ $VideoSearchFiltersCopyWith<VideoSearchFilters> get copyWith => _$VideoSearchFil
 @override
 bool operator ==(Object other) {
   final _this = this as VideoSearchFilters;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is VideoSearchFilters&&(identical(other.query, _this.query) || other.query == _this.query)&&(identical(other.genre, _this.genre) || other.genre == _this.genre)&&(identical(other.sort, _this.sort) || other.sort == _this.sort)&&(identical(other.date, _this.date) || other.date == _this.date)&&(identical(other.duration, _this.duration) || other.duration == _this.duration)&&const DeepCollectionEquality().equals(other.tags, _this.tags)&&(identical(other.anyTag, _this.anyTag) || other.anyTag == _this.anyTag)&&(identical(other.author, _this.author) || other.author == _this.author)&&(identical(other.page, _this.page) || other.page == _this.page));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is VideoSearchFilters&&(identical(other.query, _this.query) || other.query == _this.query)&&(identical(other.genre, _this.genre) || other.genre == _this.genre)&&(identical(other.sort, _this.sort) || other.sort == _this.sort)&&(identical(other.date, _this.date) || other.date == _this.date)&&(identical(other.duration, _this.duration) || other.duration == _this.duration)&&const DeepCollectionEquality().equals(other.tags, _this.tags)&&(identical(other.anyTag, _this.anyTag) || other.anyTag == _this.anyTag)&&(identical(other.author, _this.author) || other.author == _this.author)&&(identical(other.completed, _this.completed) || other.completed == _this.completed)&&(identical(other.page, _this.page) || other.page == _this.page));
 }
 
 
 @override
 int get hashCode {
   final _this = this as VideoSearchFilters;
-  return Object.hash(runtimeType,_this.query,_this.genre,_this.sort,_this.date,_this.duration,const DeepCollectionEquality().hash(_this.tags),_this.anyTag,_this.author,_this.page);
+  return Object.hash(runtimeType,_this.query,_this.genre,_this.sort,_this.date,_this.duration,const DeepCollectionEquality().hash(_this.tags),_this.anyTag,_this.author,_this.completed,_this.page);
 }
 
 @override
 String toString() {
   final _this = this as VideoSearchFilters;
-  return 'VideoSearchFilters(query: ${_this.query}, genre: ${_this.genre}, sort: ${_this.sort}, date: ${_this.date}, duration: ${_this.duration}, tags: ${_this.tags}, anyTag: ${_this.anyTag}, author: ${_this.author}, page: ${_this.page})';
+  return 'VideoSearchFilters(query: ${_this.query}, genre: ${_this.genre}, sort: ${_this.sort}, date: ${_this.date}, duration: ${_this.duration}, tags: ${_this.tags}, anyTag: ${_this.anyTag}, author: ${_this.author}, completed: ${_this.completed}, page: ${_this.page})';
 }
 
 
@@ -51,7 +51,7 @@ abstract mixin class $VideoSearchFiltersCopyWith<$Res>  {
   factory $VideoSearchFiltersCopyWith(VideoSearchFilters value, $Res Function(VideoSearchFilters) _then) = _$VideoSearchFiltersCopyWithImpl;
 @useResult
 $Res call({
- String query, String genre, String sort, String date, String duration, List<String> tags, bool anyTag, bool author, int page
+ String query, String genre, String sort, String date, String duration, List<String> tags, bool anyTag, bool author, bool completed, int page
 });
 
 
@@ -68,7 +68,7 @@ class _$VideoSearchFiltersCopyWithImpl<$Res>
 
 /// Create a copy of VideoSearchFilters
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? query = null,Object? genre = null,Object? sort = null,Object? date = null,Object? duration = null,Object? tags = null,Object? anyTag = null,Object? author = null,Object? page = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? query = null,Object? genre = null,Object? sort = null,Object? date = null,Object? duration = null,Object? tags = null,Object? anyTag = null,Object? author = null,Object? completed = null,Object? page = null,}) {
   return _then(VideoSearchFilters(
 query: null == query ? _self.query : query // ignore: cast_nullable_to_non_nullable
 as String,genre: null == genre ? _self.genre : genre // ignore: cast_nullable_to_non_nullable
@@ -78,6 +78,7 @@ as String,duration: null == duration ? _self.duration : duration // ignore: cast
 as String,tags: null == tags ? _self.tags : tags // ignore: cast_nullable_to_non_nullable
 as List<String>,anyTag: null == anyTag ? _self.anyTag : anyTag // ignore: cast_nullable_to_non_nullable
 as bool,author: null == author ? _self.author : author // ignore: cast_nullable_to_non_nullable
+as bool,completed: null == completed ? _self.completed : completed // ignore: cast_nullable_to_non_nullable
 as bool,page: null == page ? _self.page : page // ignore: cast_nullable_to_non_nullable
 as int,
   ));
@@ -164,10 +165,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String query,  String genre,  String sort,  String date,  String duration,  List<String> tags,  bool anyTag,  bool author,  int page)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String query,  String genre,  String sort,  String date,  String duration,  List<String> tags,  bool anyTag,  bool author,  bool completed,  int page)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _VideoSearchFilters() when $default != null:
-return $default(_that.query,_that.genre,_that.sort,_that.date,_that.duration,_that.tags,_that.anyTag,_that.author,_that.page);case _:
+return $default(_that.query,_that.genre,_that.sort,_that.date,_that.duration,_that.tags,_that.anyTag,_that.author,_that.completed,_that.page);case _:
   return orElse();
 
 }
@@ -185,10 +186,10 @@ return $default(_that.query,_that.genre,_that.sort,_that.date,_that.duration,_th
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String query,  String genre,  String sort,  String date,  String duration,  List<String> tags,  bool anyTag,  bool author,  int page)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String query,  String genre,  String sort,  String date,  String duration,  List<String> tags,  bool anyTag,  bool author,  bool completed,  int page)  $default,) {final _that = this;
 switch (_that) {
 case _VideoSearchFilters():
-return $default(_that.query,_that.genre,_that.sort,_that.date,_that.duration,_that.tags,_that.anyTag,_that.author,_that.page);case _:
+return $default(_that.query,_that.genre,_that.sort,_that.date,_that.duration,_that.tags,_that.anyTag,_that.author,_that.completed,_that.page);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -205,10 +206,10 @@ return $default(_that.query,_that.genre,_that.sort,_that.date,_that.duration,_th
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String query,  String genre,  String sort,  String date,  String duration,  List<String> tags,  bool anyTag,  bool author,  int page)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String query,  String genre,  String sort,  String date,  String duration,  List<String> tags,  bool anyTag,  bool author,  bool completed,  int page)?  $default,) {final _that = this;
 switch (_that) {
 case _VideoSearchFilters() when $default != null:
-return $default(_that.query,_that.genre,_that.sort,_that.date,_that.duration,_that.tags,_that.anyTag,_that.author,_that.page);case _:
+return $default(_that.query,_that.genre,_that.sort,_that.date,_that.duration,_that.tags,_that.anyTag,_that.author,_that.completed,_that.page);case _:
   return null;
 
 }
@@ -220,7 +221,7 @@ return $default(_that.query,_that.genre,_that.sort,_that.date,_that.duration,_th
 
 
 class _VideoSearchFilters extends VideoSearchFilters {
-  const _VideoSearchFilters({this.query = '', this.genre = '', this.sort = '', this.date = '', this.duration = '',  List<String> tags = const [], this.anyTag = false, this.author = false, this.page = 1}): _tags = tags,super._();
+  const _VideoSearchFilters({this.query = '', this.genre = '', this.sort = '', this.date = '', this.duration = '',  List<String> tags = const [], this.anyTag = false, this.author = false, this.completed = false, this.page = 1}): _tags = tags,super._();
   
 
 @override@JsonKey() final  String query;
@@ -237,6 +238,7 @@ class _VideoSearchFilters extends VideoSearchFilters {
 
 @override@JsonKey() final  bool anyTag;
 @override@JsonKey() final  bool author;
+@override@JsonKey() final  bool completed;
 @override@JsonKey() final  int page;
 
 /// Create a copy of VideoSearchFilters
@@ -249,18 +251,18 @@ _$VideoSearchFiltersCopyWith<_VideoSearchFilters> get copyWith => __$VideoSearch
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _VideoSearchFilters&&(identical(other.query, query) || other.query == query)&&(identical(other.genre, genre) || other.genre == genre)&&(identical(other.sort, sort) || other.sort == sort)&&(identical(other.date, date) || other.date == date)&&(identical(other.duration, duration) || other.duration == duration)&&const DeepCollectionEquality().equals(other.tags, _tags)&&(identical(other.anyTag, anyTag) || other.anyTag == anyTag)&&(identical(other.author, author) || other.author == author)&&(identical(other.page, page) || other.page == page));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _VideoSearchFilters&&(identical(other.query, query) || other.query == query)&&(identical(other.genre, genre) || other.genre == genre)&&(identical(other.sort, sort) || other.sort == sort)&&(identical(other.date, date) || other.date == date)&&(identical(other.duration, duration) || other.duration == duration)&&const DeepCollectionEquality().equals(other.tags, _tags)&&(identical(other.anyTag, anyTag) || other.anyTag == anyTag)&&(identical(other.author, author) || other.author == author)&&(identical(other.completed, completed) || other.completed == completed)&&(identical(other.page, page) || other.page == page));
 }
 
 
 @override
 int get hashCode {
-    return Object.hash(runtimeType,query,genre,sort,date,duration,const DeepCollectionEquality().hash(_tags),anyTag,author,page);
+    return Object.hash(runtimeType,query,genre,sort,date,duration,const DeepCollectionEquality().hash(_tags),anyTag,author,completed,page);
 }
 
 @override
 String toString() {
-    return 'VideoSearchFilters(query: $query, genre: $genre, sort: $sort, date: $date, duration: $duration, tags: $tags, anyTag: $anyTag, author: $author, page: $page)';
+    return 'VideoSearchFilters(query: $query, genre: $genre, sort: $sort, date: $date, duration: $duration, tags: $tags, anyTag: $anyTag, author: $author, completed: $completed, page: $page)';
 }
 
 
@@ -271,7 +273,7 @@ abstract mixin class _$VideoSearchFiltersCopyWith<$Res> implements $VideoSearchF
   factory _$VideoSearchFiltersCopyWith(_VideoSearchFilters value, $Res Function(_VideoSearchFilters) _then) = __$VideoSearchFiltersCopyWithImpl;
 @override @useResult
 $Res call({
- String query, String genre, String sort, String date, String duration, List<String> tags, bool anyTag, bool author, int page
+ String query, String genre, String sort, String date, String duration, List<String> tags, bool anyTag, bool author, bool completed, int page
 });
 
 
@@ -288,7 +290,7 @@ class __$VideoSearchFiltersCopyWithImpl<$Res>
 
 /// Create a copy of VideoSearchFilters
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? query = null,Object? genre = null,Object? sort = null,Object? date = null,Object? duration = null,Object? tags = null,Object? anyTag = null,Object? author = null,Object? page = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? query = null,Object? genre = null,Object? sort = null,Object? date = null,Object? duration = null,Object? tags = null,Object? anyTag = null,Object? author = null,Object? completed = null,Object? page = null,}) {
   return _then(_VideoSearchFilters(
 query: null == query ? _self.query : query // ignore: cast_nullable_to_non_nullable
 as String,genre: null == genre ? _self.genre : genre // ignore: cast_nullable_to_non_nullable
@@ -298,6 +300,7 @@ as String,duration: null == duration ? _self.duration : duration // ignore: cast
 as String,tags: null == tags ? _self._tags : tags // ignore: cast_nullable_to_non_nullable
 as List<String>,anyTag: null == anyTag ? _self.anyTag : anyTag // ignore: cast_nullable_to_non_nullable
 as bool,author: null == author ? _self.author : author // ignore: cast_nullable_to_non_nullable
+as bool,completed: null == completed ? _self.completed : completed // ignore: cast_nullable_to_non_nullable
 as bool,page: null == page ? _self.page : page // ignore: cast_nullable_to_non_nullable
 as int,
   ));

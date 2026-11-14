@@ -203,8 +203,10 @@ pub async fn webdav_download_text(
         .get_raw(&path)
         .await
         .map_err(|e| anyhow!(rquickjs_playground::tr!("md5-download-failed", e = e)))?;
-    if response.status().as_u16() == 404 {
-        return Ok(String::new());
+    match response.status() {
+        reqwest::StatusCode::NOT_FOUND => return Ok(String::new()),
+        reqwest::StatusCode::OK => {}
+        status => return Err(WebDavStatusError(status.as_u16()).into()),
     }
     let bytes = response
         .bytes()
@@ -427,6 +429,7 @@ fn build_client(host: &str, username: &str, password: &str) -> Result<WebDavClie
         &current_http_client_config(),
         BuildHttpClientOptions {
             no_proxy: false,
+            https_only: false,
             timeout: Some(Duration::from_secs(120)),
             connect_timeout: Some(Duration::from_secs(10)),
             follow_redirects: Some(true),
@@ -655,4 +658,56 @@ fn is_directory_entry(entry: &ListResponse, normalized_href: &str) -> bool {
         prop_stat.status.starts_with("HTTP/1.1 2")
             && prop_stat.prop.resource_type.collection.is_some()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn archive_digest_accepts_success_and_missing_but_rejects_http_errors() {
+        for (status, body, expected) in [
+            (200, "  fixture-digest\n", Some("fixture-digest")),
+            (404, "Not Found", Some("")),
+            (401, "Unauthorized", None),
+            (403, "Forbidden", None),
+            (503, "Service Unavailable", None),
+        ] {
+            let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let host = format!("http://{}/dav", server.local_addr().unwrap());
+            let reply = tokio::spawn(async move {
+                let (mut socket, _) = server.accept().await.unwrap();
+                let mut request = Vec::new();
+                while !request.ends_with(b"\r\n\r\n") {
+                    request.push(socket.read_u8().await.unwrap());
+                }
+                assert!(request.starts_with(b"GET /dav/Breeze_v2/comic.md5 "));
+                let response = format!(
+                    "HTTP/1.1 {status} Fixture\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            });
+            let digest = webdav_download_text(
+                host,
+                "fixture".into(),
+                "fixture".into(),
+                "Breeze_v2".into(),
+                "Breeze_v1".into(),
+                "Breeze_v1".into(),
+                "/Breeze_v2/comic.md5".into(),
+            )
+            .await;
+            reply.await.unwrap();
+            match expected {
+                Some(value) => assert_eq!(digest.unwrap(), value),
+                None => assert!(
+                    digest.is_err(),
+                    "HTTP {status} must not be used as a digest"
+                ),
+            }
+        }
+    }
 }

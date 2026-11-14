@@ -1136,6 +1136,7 @@
           request._bodyNativeBufferId === null || request._bodyNativeBufferId === undefined
             ? null
             : Number(request._bodyNativeBufferId),
+          request.redirect,
         );
         requestId = Number(promise.__hostRequestId);
 

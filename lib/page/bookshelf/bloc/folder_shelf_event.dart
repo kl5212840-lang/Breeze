@@ -1,5 +1,6 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:zephyr/page/bookshelf/cubit/search_status.dart';
+import 'package:zephyr/page/bookshelf/models/shelf_facets.dart';
 
 part 'folder_shelf_event.freezed.dart';
 
@@ -9,6 +10,8 @@ sealed class FolderShelfEvent with _$FolderShelfEvent {
       FolderShelfLoadRequested;
   const factory FolderShelfEvent.enterFolder(String path) =
       FolderShelfEnterFolder;
+  const factory FolderShelfEvent.setFacets(ShelfFacetSelection selection) =
+      FolderShelfSetFacets;
   const factory FolderShelfEvent.goBack() = FolderShelfGoBack;
   const factory FolderShelfEvent.goHome() = FolderShelfGoHome;
   const factory FolderShelfEvent.toggleSort() = FolderShelfToggleSort;
@@ -26,6 +29,7 @@ sealed class FolderShelfEvent with _$FolderShelfEvent {
       FolderShelfToggleFolderSelection;
   const factory FolderShelfEvent.toggleComicSelection(String comicUniqueKey) =
       FolderShelfToggleComicSelection;
+  const factory FolderShelfEvent.clearSelection() = FolderShelfClearSelection;
   const factory FolderShelfEvent.selectAll() = FolderShelfSelectAll;
   const factory FolderShelfEvent.moveSelected(
     Set<String> targetPaths, {

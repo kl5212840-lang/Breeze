@@ -36,15 +36,23 @@ class QjsRuntimeBuildRequest {
   final bool injectFilesystem;
   final QjsRuntimeBundleBuild? bundle;
 
+  /// None snapshots global routing at creation; empty selects system routing.
+  /// A nonempty HTTP/SOCKS URL is immutable for this runtime's lifetime.
+  final String? networkProxy;
+
   const QjsRuntimeBuildRequest({
     required this.runtimeName,
     required this.injectFilesystem,
     this.bundle,
+    this.networkProxy,
   });
 
   @override
   int get hashCode =>
-      runtimeName.hashCode ^ injectFilesystem.hashCode ^ bundle.hashCode;
+      runtimeName.hashCode ^
+      injectFilesystem.hashCode ^
+      bundle.hashCode ^
+      networkProxy.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -53,7 +61,8 @@ class QjsRuntimeBuildRequest {
           runtimeType == other.runtimeType &&
           runtimeName == other.runtimeName &&
           injectFilesystem == other.injectFilesystem &&
-          bundle == other.bundle;
+          bundle == other.bundle &&
+          networkProxy == other.networkProxy;
 }
 
 class QjsRuntimeBundleBuild {

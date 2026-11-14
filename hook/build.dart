@@ -31,7 +31,7 @@ Map<String, String> _extraCargoEnvironmentVariables(
   String projectRoot,
 ) {
   if (codeConfig.targetOS == OS.iOS) {
-    return _iosEnvironmentVariables(codeConfig);
+    return _iosEnvironmentVariables(codeConfig, projectRoot);
   }
   if (codeConfig.targetOS == OS.android) {
     return _androidEnvironmentVariables(codeConfig, projectRoot);
@@ -41,7 +41,10 @@ Map<String, String> _extraCargoEnvironmentVariables(
 
 // ────────────────────────── iOS ──────────────────────────
 
-Map<String, String> _iosEnvironmentVariables(CodeConfig codeConfig) {
+Map<String, String> _iosEnvironmentVariables(
+  CodeConfig codeConfig,
+  String projectRoot,
+) {
   final sdk = switch (codeConfig.iOS.targetSdk) {
     IOSSdk.iPhoneOS => 'iphoneos',
     IOSSdk.iPhoneSimulator => 'iphonesimulator',
@@ -67,14 +70,22 @@ Map<String, String> _iosEnvironmentVariables(CodeConfig codeConfig) {
     final other => throw UnsupportedError('Unsupported iOS SDK: $other'),
   };
   final cFlags = '$minimumVersionFlag -isysroot $sdkRoot';
-  final rustFlags = '-C link-arg=$minimumVersionFlag';
+  final home = Platform.environment['HOME'];
+  final cargoHome =
+      Platform.environment['CARGO_HOME'] ??
+      (home == null ? null : p.join(home, '.cargo'));
+  final rustFlags = [
+    '-Clink-arg=$minimumVersionFlag',
+    '--remap-path-prefix=$projectRoot=.',
+    if (cargoHome != null) '--remap-path-prefix=$cargoHome=/cargo',
+    if (home != null) '--remap-path-prefix=$home=/build-home',
+  ].join('\u001f');
 
   final env = <String, String>{
     'SDKROOT': sdkRoot,
     'IPHONEOS_DEPLOYMENT_TARGET': deploymentTarget,
     'CARGO_TARGET_${targetTripleEnv}_LINKER': linker,
-    'CARGO_TARGET_${targetTripleEnv}_RUSTFLAGS': rustFlags,
-    'RUSTFLAGS': rustFlags,
+    'CARGO_ENCODED_RUSTFLAGS': rustFlags,
     'CFLAGS_$targetTripleEnv': cFlags,
     'CXXFLAGS_$targetTripleEnv': cFlags,
     'CC': linker,

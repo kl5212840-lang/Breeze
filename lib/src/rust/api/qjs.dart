@@ -78,6 +78,12 @@ Future<QjsCancelTasksByGroupResult> qjsCancelTasksByGroup({
   taskGroupKey: taskGroupKey,
 );
 
+Future<List<String>> qjsDrainObservedHttpDomains({
+  required String runtimeName,
+}) => RustLib.instance.api.crateApiQjsQjsDrainObservedHttpDomains(
+  runtimeName: runtimeName,
+);
+
 Future<String> qjsDebugSnapshot({required String runtimeName}) =>
     RustLib.instance.api.crateApiQjsQjsDebugSnapshot(runtimeName: runtimeName);
 

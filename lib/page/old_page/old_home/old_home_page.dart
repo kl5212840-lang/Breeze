@@ -1,3 +1,4 @@
+import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -104,14 +105,19 @@ class _OldHomePageState extends State<OldHomePage> {
           ? FloatingActionButtonLocation.startFloat
           : FloatingActionButtonLocation.endFloat,
       floatingActionButton: panels.length > 1
-          ? FloatingActionButton(
-              heroTag: null,
-              onPressed: () {
-                setState(() {
-                  _tabIndex = effectiveIndex == 0 ? 1 : 0;
-                });
-              },
-              child: const Icon(Icons.swap_horiz),
+          ? Padding(
+              padding: EdgeInsets.only(
+                bottom: NativeNavigationInset.of(context),
+              ),
+              child: FloatingActionButton(
+                heroTag: null,
+                onPressed: () {
+                  setState(() {
+                    _tabIndex = effectiveIndex == 0 ? 1 : 0;
+                  });
+                },
+                child: const Icon(Icons.swap_horiz),
+              ),
             )
           : null,
     );
@@ -295,7 +301,7 @@ class _OldHomePanelAState extends State<_OldHomePanelA>
   Widget build(BuildContext context) {
     super.build(context);
     return SingleChildScrollView(
-      padding: EdgeInsets.zero,
+      padding: EdgeInsets.only(bottom: NativeNavigationInset.of(context)),
       child: Column(
         children: [
           _FunctionSection(
@@ -381,7 +387,7 @@ class _OldHomePanelBState extends State<_OldHomePanelB>
       onNotification: _onScrollNotification,
       child: SingleChildScrollView(
         controller: _scrollController,
-        padding: EdgeInsets.zero,
+        padding: EdgeInsets.only(bottom: NativeNavigationInset.of(context)),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

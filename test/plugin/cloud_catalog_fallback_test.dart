@@ -9,14 +9,18 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
-    'first offline opening includes all five managed plugins and iKun icon',
+    'first offline opening includes all seven published plugins and iKun icon',
     () async {
       SharedPreferences.setMockInitialValues({});
       final entries = decodeCloudPluginCatalog(
         await readCloudPluginCatalogFallback(),
       )!;
-      expect(entries.map(cloudPluginUuid).toSet(), managedPluginUuids);
-      expect(entries, hasLength(5));
+      expect(entries.map(cloudPluginUuid).toSet(), {
+        ...managedPluginUuids,
+        'ccc2fe17-c0a8-4fd8-a596-835772686404',
+        'b27083a4-a643-462a-8204-e6f42c19a5b9',
+      });
+      expect(entries, hasLength(7));
       final ikun = entries.singleWhere(
         (entry) => entry['manifest']['name'] == 'iKun 资源',
       )['manifest'];
@@ -41,7 +45,7 @@ void main() {
     });
     expect(
       decodeCloudPluginCatalog(await readCloudPluginCatalogFallback()),
-      hasLength(5),
+      hasLength(7),
     );
   });
 
@@ -53,7 +57,6 @@ void main() {
           'manifest': {
             'uuid': 'f5387e66-9c58-4b8f-beb7-22a939f79e5d',
             'version': '9.0.0',
-            'releaseSeries': 1,
           },
         },
         {
@@ -64,7 +67,7 @@ void main() {
     final entries = decodeCloudPluginCatalog(
       await readCloudPluginCatalogFallback(),
     )!;
-    expect(entries, hasLength(6));
+    expect(entries, hasLength(8));
     expect(
       entries.singleWhere(
         (entry) =>
@@ -74,4 +77,31 @@ void main() {
     );
     expect(cloudPluginUuid(entries.last), 'official');
   });
+
+  test(
+    'offline startup respects a previously refreshed empty personal list',
+    () async {
+      SharedPreferences.setMockInitialValues({
+        'plugin_store.catalog.sources.v1': jsonEncode({
+          'official': [
+            {
+              'manifest': {'uuid': 'official'},
+            },
+          ],
+          'personal': [],
+          'personalVersioned': true,
+        }),
+        'plugin_store.catalog.v2': jsonEncode([
+          {
+            'repo': personalPluginCatalogRepository,
+            'manifest': {'uuid': 'removed'},
+          },
+        ]),
+      });
+      final entries = decodeCloudPluginCatalog(
+        await readCloudPluginCatalogFallback(),
+      )!;
+      expect(entries.map(cloudPluginUuid), ['official']);
+    },
+  );
 }

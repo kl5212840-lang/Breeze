@@ -3,15 +3,69 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/object_box/model.dart';
+import 'package:zephyr/object_box/objectbox.g.dart';
+import 'package:zephyr/page/bookshelf/models/shelf_facets.dart';
 import 'package:zephyr/page/bookshelf/service/comic_folder_service.dart';
 import 'package:zephyr/page/bookshelf/service/comic_link_service.dart';
+import 'package:zephyr/page/bookshelf/service/shelf_facet_adapters.dart';
 
 import '../test_helper.dart';
+import '../download_fixture.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(TestObjectBoxHelper.setUpTestObjectBox);
   tearDownAll(TestObjectBoxHelper.tearDownTestObjectBox);
   tearDown(TestObjectBoxHelper.cleanComicFolderBoxes);
+
+  Future<void> waitForDownloadDeletion(int id) async {
+    await objectbox.unifiedDownloadBox
+        .query(UnifiedComicDownload_.id.equals(id))
+        .watch(triggerImmediately: true)
+        .firstWhere((query) => query.find().isEmpty)
+        .timeout(const Duration(seconds: 3));
+  }
+
+  test('moving to a vanished folder preserves the root favorite', () {
+    const type = ComicFolderType.favorite;
+    const key = 'test:comic1';
+    final favorite = createTestFavorite(key)..comicId = 'comic1';
+    objectbox.unifiedFavoriteBox.put(favorite);
+    ComicLinkService.addComic(key, null, type);
+    final target = ComicFolderService.createFolder('', 'target', type);
+    final path = ComicFolderService.folderPath(target);
+    final snapshot = loadComicShelfFacetIndex(type: type);
+    ComicFolderService.deleteFolder(path, type);
+
+    var rejected = false;
+    try {
+      moveComicFromFacetScope(
+        key,
+        const ShelfFacetSelection(),
+        {path},
+        currentFolder: '',
+        snapshot: snapshot,
+        type: type,
+      );
+    } on StateError {
+      rejected = true;
+    }
+    expect(objectbox.unifiedFavoriteBox.get(favorite.id)!.deleted, isFalse);
+    expect(ComicLinkService.listLinks(null, type).single.comicUniqueKey, key);
+    expect(rejected, isTrue);
+  });
+
+  test('a missing parent never aliases a same-name root folder', () {
+    const type = ComicFolderType.favorite;
+    final parent = ComicFolderService.createFolder('', 'parent', type);
+    final parentPath = ComicFolderService.folderPath(parent);
+    final nested = ComicFolderService.createFolder(parentPath, 'child', type);
+    final nestedPath = ComicFolderService.folderPath(nested);
+    final root = ComicFolderService.createFolder('', 'child', type);
+    ComicFolderService.deleteFolder(parentPath, type);
+    expect(ComicFolderService.folderSyncIdByPath(nestedPath, type), isNull);
+    expect(ComicFolderService.folderSyncIdByPath('/child', type), root.syncId);
+  });
 
   group('ComicFolderService', () {
     test('createFolder creates folder at root', () {
@@ -110,6 +164,23 @@ void main() {
       expect(ComicFolderService.folderPath(renamed), '/new');
     });
 
+    test('rename from a stale path leaves both same-name folders alone', () {
+      const type = ComicFolderType.favorite;
+      ComicFolderService.createFolder('', 'parent', type);
+      final nested = ComicFolderService.createFolder('/parent', 'child', type);
+      final root = ComicFolderService.createFolder('', 'child', type);
+      ComicFolderService.renameFolder('/parent', 'renamed-parent', type);
+
+      ComicFolderService.renameFolder('/parent/child', 'new-name', type);
+
+      expect(objectbox.comicFolderBox.get(root.id)!.name, 'child');
+      expect(objectbox.comicFolderBox.get(nested.id)!.name, 'child');
+      expect(
+        ComicFolderService.folderSyncIdByPath('/renamed-parent/child', type),
+        nested.syncId,
+      );
+    });
+
     test('renameFolder duplicate active throws', () {
       ComicFolderService.createFolder('', 'a', ComicFolderType.favorite);
       final b = ComicFolderService.createFolder(
@@ -172,6 +243,63 @@ void main() {
       ComicFolderService.deleteFolder('', ComicFolderType.favorite);
       // No exception and nothing to assert; root has no entity.
       expect(true, isTrue);
+    });
+
+    test('delete from a stale path leaves the same-name root tree alone', () {
+      const type = ComicFolderType.favorite;
+      ComicFolderService.createFolder('', 'parent', type);
+      final nested = ComicFolderService.createFolder('/parent', 'child', type);
+      final root = ComicFolderService.createFolder('', 'child', type);
+      final descendant = ComicFolderService.createFolder(
+        '/child',
+        'leaf',
+        type,
+      );
+      ComicFolderService.renameFolder('/parent', 'renamed-parent', type);
+
+      ComicFolderService.deleteFolder('/parent/child', type);
+
+      for (final folder in [root, nested, descendant]) {
+        expect(objectbox.comicFolderBox.get(folder.id)!.deletedAt, isNull);
+      }
+    });
+
+    test('batch move and copy ignore a stale same-name source path', () {
+      const type = ComicFolderType.favorite;
+      ComicFolderService.createFolder('', 'parent', type);
+      ComicFolderService.createFolder('/parent', 'child', type);
+      final root = ComicFolderService.createFolder('', 'child', type);
+      ComicFolderService.createFolder('', 'target', type);
+      ComicFolderService.deleteFolder('/parent', type);
+
+      ComicFolderService.batchCopyFolders({'/parent/child'}, '/target', type);
+      ComicFolderService.batchMoveFolders({'/parent/child'}, '/target', type);
+
+      expect(ComicFolderService.listChildFolders('/target', type), isEmpty);
+      expect(objectbox.comicFolderBox.get(root.id)!.parentSyncId, isNull);
+    });
+
+    test('batch move and copy reject a target deleted before confirmation', () {
+      const type = ComicFolderType.favorite;
+      ComicFolderService.createFolder('', 'parent', type);
+      final source = ComicFolderService.createFolder('/parent', 'child', type);
+      ComicFolderService.createFolder('', 'target', type);
+      ComicFolderService.deleteFolder('/target', type);
+
+      for (final operation in [
+        ComicFolderService.batchMoveFolders,
+        ComicFolderService.batchCopyFolders,
+      ]) {
+        expect(
+          () => operation({'/parent/child'}, '/target', type),
+          throwsA(isA<StateError>()),
+        );
+        expect(ComicFolderService.folderSyncIdByPath('/child', type), isNull);
+        expect(
+          ComicFolderService.folderSyncIdByPath('/parent/child', type),
+          source.syncId,
+        );
+      }
     });
 
     test('batchMoveFolders moves folder to new parent', () {
@@ -418,23 +546,23 @@ void main() {
     });
 
     test('removeComic deletes download files when last link', () async {
-      final tempDir = await Directory.systemTemp.createTemp(
-        'breeze_download_test_',
-      );
+      await useIsolatedDownloadFixture();
+      final tempDir = await createDownloadFixture('test', 'comic1');
       final download = createTestDownload(
         'test:comic1',
         storageRoot: tempDir.path,
-      );
+      )..comicId = 'comic1';
       objectbox.unifiedDownloadBox.put(download);
       ComicLinkService.addComic('test:comic1', null, ComicFolderType.download);
 
+      final removed = waitForDownloadDeletion(download.id);
       ComicLinkService.removeComic(
         'test:comic1',
         null,
         ComicFolderType.download,
       );
 
-      expect(objectbox.unifiedDownloadBox.get(download.id), isNull);
+      await removed;
       expect(await tempDir.exists(), isFalse);
     });
 
@@ -715,6 +843,11 @@ void main() {
         ComicFolderType.favorite,
       );
       final childPath = ComicFolderService.folderPath(child);
+      final sameNameAtRoot = ComicFolderService.createFolder(
+        '',
+        'child',
+        ComicFolderType.favorite,
+      );
 
       ComicFolderService.batchDeleteFolders({
         parentPath,
@@ -723,6 +856,10 @@ void main() {
 
       expect(objectbox.comicFolderBox.get(parent.id)!.deletedAt, isNotNull);
       expect(objectbox.comicFolderBox.get(child.id)!.deletedAt, isNotNull);
+      expect(
+        objectbox.comicFolderBox.get(sameNameAtRoot.id)!.deletedAt,
+        isNull,
+      );
     });
 
     test('createFolder under deleted parent falls back to root semantics', () {
@@ -764,7 +901,7 @@ void main() {
       expect(link.folderSyncId, isNull);
     });
 
-    test('removeComic from deleted folder removes root-level link', () {
+    test('removeComic can clean links to a soft-deleted folder', () {
       final folder = ComicFolderService.createFolder(
         '',
         'f',
@@ -774,7 +911,6 @@ void main() {
       ComicLinkService.addComic('test:comic1', path, ComicFolderType.favorite);
       ComicFolderService.deleteFolder(path, ComicFolderType.favorite);
 
-      // Removing by the deleted path should operate on root-level fallback link.
       ComicLinkService.removeComic(
         'test:comic1',
         path,
@@ -785,6 +921,17 @@ void main() {
         ComicLinkService.linksOfComic('test:comic1', ComicFolderType.favorite),
         isEmpty,
       );
+    });
+
+    test('a missing directory never shows or removes root records', () {
+      const type = ComicFolderType.favorite;
+      const key = 'test:comic1';
+      ComicFolderService.createFolder('', 'root folder', type);
+      ComicLinkService.addComic(key, null, type);
+      expect(ComicFolderService.listChildFolders('/missing', type), isEmpty);
+      expect(ComicLinkService.listLinks('/missing', type), isEmpty);
+      ComicLinkService.removeComic(key, '/missing', type);
+      expect(ComicLinkService.listLinks(null, type).single.comicUniqueKey, key);
     });
 
     test('moveComic to same folder is no-op', () {
@@ -881,9 +1028,8 @@ void main() {
 
   group('download folder edge cases', () {
     test('delete download folder removes nested files', () async {
-      final tempDir = await Directory.systemTemp.createTemp(
-        'breeze_download_nested_',
-      );
+      await useIsolatedDownloadFixture();
+      final tempDir = await createDownloadFixture('test', 'comic1');
       final nestedDir = Directory('${tempDir.path}/chapters');
       await nestedDir.create();
       await File('${nestedDir.path}/01.jpg').writeAsString('fake');
@@ -891,7 +1037,7 @@ void main() {
       final download = createTestDownload(
         'test:comic1',
         storageRoot: tempDir.path,
-      );
+      )..comicId = 'comic1';
       objectbox.unifiedDownloadBox.put(download);
 
       final folder = ComicFolderService.createFolder(
@@ -902,11 +1048,12 @@ void main() {
       final path = ComicFolderService.folderPath(folder);
       ComicLinkService.addComic('test:comic1', path, ComicFolderType.download);
 
+      final removed = waitForDownloadDeletion(download.id);
       ComicFolderService.deleteFolder(path, ComicFolderType.download);
       ComicLinkService.removeLinksInFolderTree(path, ComicFolderType.download);
 
+      await removed;
       expect(await tempDir.exists(), isFalse);
-      expect(objectbox.unifiedDownloadBox.get(download.id), isNull);
     });
   });
 }

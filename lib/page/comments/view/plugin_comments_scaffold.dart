@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:zephyr/widgets/picture_bloc/picture_recovery_region.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'dart:io';
@@ -23,11 +25,13 @@ class PluginCommentsScaffold extends StatefulWidget {
     required this.from,
     required this.comicId,
     required this.comicTitle,
+    this.pluginCall,
   });
 
   final String from;
   final String comicId;
   final String comicTitle;
+  final CommentPluginCall? pluginCall;
 
   @override
   State<PluginCommentsScaffold> createState() => _PluginCommentsScaffoldState();
@@ -36,6 +40,7 @@ class PluginCommentsScaffold extends StatefulWidget {
 class _PluginCommentsScaffoldState extends State<PluginCommentsScaffold> {
   final ScrollController _scrollController = ScrollController();
   CommentsCubit? _commentsCubit;
+  bool _composerOpen = false;
 
   @override
   void initState() {
@@ -52,13 +57,16 @@ class _PluginCommentsScaffoldState extends State<PluginCommentsScaffold> {
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
-      create: (_) =>
-          CommentsCubit(from: widget.from, comicId: widget.comicId)
-            ..loadInitial(),
+      create: (_) => CommentsCubit(
+        from: widget.from,
+        comicId: widget.comicId,
+        call: widget.pluginCall,
+      )..loadInitial(),
       child: BlocListener<CommentsCubit, CommentsViewState>(
         listenWhen: (previous, current) =>
             previous.noticeId != current.noticeId &&
-            current.noticeMessage.trim().isNotEmpty,
+            current.noticeMessage.trim().isNotEmpty &&
+            (!_composerOpen || current.noticeMessage == t.comments.postSuccess),
         listener: (context, state) {
           ScaffoldMessenger.of(
             context,
@@ -160,12 +168,15 @@ class _PluginCommentsScaffoldState extends State<PluginCommentsScaffold> {
             key: ValueKey(
               'comment_${item.id}_${index}_${item.avatarUrl}_${item.avatarPath}',
             ),
-            child: _buildCommentCell(
-              item,
-              cubit: cubit,
-              state: state,
-              isReply: false,
-              keySeed: '$index',
+            child: Builder(
+              builder: (itemContext) => _buildCommentCell(
+                item,
+                anchorContext: itemContext,
+                cubit: cubit,
+                state: state,
+                isReply: false,
+                keySeed: '$index',
+              ),
             ),
           );
         },
@@ -197,11 +208,13 @@ class _PluginCommentsScaffoldState extends State<PluginCommentsScaffold> {
     required CommentsViewState state,
     required bool isReply,
     required String keySeed,
+    BuildContext? anchorContext,
   }) {
     final replies = state.replyItems[item.id] ?? const <CommentItem>[];
     final isExpanded = state.expandedIds.contains(item.id);
     final canExpand = item.replyCount > 0 || item.replies.isNotEmpty;
     final loadingReplies = state.replyLoading[item.id] == true;
+    final replyError = cubit.replyError(item.id);
     final hasReachedMaxReplies = state.replyHasReachedMax[item.id] == true;
 
     final colorScheme = Theme.of(context).colorScheme;
@@ -211,8 +224,8 @@ class _PluginCommentsScaffoldState extends State<PluginCommentsScaffold> {
       padding: EdgeInsets.only(
         left: isReply ? 56 : 16,
         right: 16,
-        top: 16,
-        bottom: 12,
+        top: 8,
+        bottom: 8,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -228,9 +241,8 @@ class _PluginCommentsScaffoldState extends State<PluginCommentsScaffold> {
                   children: [
                     Text(
                       item.authorName.let(convertChineseForDisplay),
-                      style: textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: colorScheme.primary,
+                      style: textTheme.labelLarge?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -241,53 +253,45 @@ class _PluginCommentsScaffoldState extends State<PluginCommentsScaffold> {
                         fontSize: 14,
                       ),
                     ),
-                    const SizedBox(height: 8),
                     Row(
                       children: [
-                        if (item.createdAt.isNotEmpty)
-                          Text(
-                            item.createdAt,
-                            style: textTheme.bodySmall?.copyWith(
-                              color: colorScheme.onSurfaceVariant.withValues(
-                                alpha: 0.8,
-                              ),
-                            ),
-                          ),
-                        const SizedBox(width: 16),
-                        if (!isReply && canExpand)
-                          GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: () => cubit.toggleReplies(item),
-                            child: Text(
-                              isExpanded
-                                  ? t.comments.collapseReplies
-                                  : t.comments.replyCount(
+                        Expanded(
+                          child: Wrap(
+                            spacing: 8,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              if (item.createdAt.isNotEmpty)
+                                Text(
+                                  item.createdAt,
+                                  style: textTheme.bodySmall?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              if (!isReply && canExpand && !isExpanded)
+                                TextButton(
+                                  style: TextButton.styleFrom(
+                                    minimumSize: const Size(44, 44),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 6,
+                                    ),
+                                  ),
+                                  onPressed: () => cubit.toggleReplies(item),
+                                  child: Text(
+                                    t.comments.replyCount(
                                       count: item.replyCount,
                                     ),
-                              style: textTheme.bodySmall?.copyWith(
-                                color: colorScheme.primary,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
+                                  ),
+                                ),
+                            ],
                           ),
-                        const Spacer(),
+                        ),
                         if (state.canCommentReply && !isReply)
-                          GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: state.posting
+                          IconButton(
+                            tooltip: t.comments.postReply,
+                            onPressed: state.posting
                                 ? null
                                 : () => _postReply(cubit, item),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 4,
-                                vertical: 2,
-                              ),
-                              child: Icon(
-                                Icons.reply_rounded,
-                                size: 18,
-                                color: colorScheme.onSurfaceVariant,
-                              ),
-                            ),
+                            icon: const Icon(Icons.reply_rounded, size: 18),
                           ),
                       ],
                     ),
@@ -319,7 +323,17 @@ class _PluginCommentsScaffoldState extends State<PluginCommentsScaffold> {
                   keySeed: '$keySeed-$i',
                 ),
               ),
-            if (replies.isEmpty && !loadingReplies)
+            if (replyError != null && !loadingReplies)
+              Padding(
+                padding: const EdgeInsets.only(left: 48, right: 16, bottom: 8),
+                child: TextButton.icon(
+                  key: ValueKey('comment-replies-retry.${item.id}'),
+                  onPressed: () => cubit.retryReplies(item),
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: Text('$replyError · ${t.common.retry}'),
+                ),
+              ),
+            if (replies.isEmpty && !loadingReplies && replyError == null)
               Padding(
                 padding: const EdgeInsets.only(left: 48, right: 16, bottom: 8),
                 child: Align(
@@ -330,7 +344,7 @@ class _PluginCommentsScaffoldState extends State<PluginCommentsScaffold> {
                   ),
                 ),
               ),
-            if (!hasReachedMaxReplies && !loadingReplies)
+            if (!hasReachedMaxReplies && !loadingReplies && replyError == null)
               Padding(
                 padding: const EdgeInsets.only(left: 48, right: 16, bottom: 8),
                 child: Align(
@@ -341,6 +355,30 @@ class _PluginCommentsScaffoldState extends State<PluginCommentsScaffold> {
                   ),
                 ),
               ),
+            Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: TextButton(
+                key: ValueKey('comment-replies-collapse.${item.id}'),
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(44, 44),
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
+                ),
+                onPressed: () {
+                  // Keep the parent in view before removing a long reply block.
+                  if (anchorContext != null) {
+                    unawaited(
+                      Scrollable.ensureVisible(
+                        anchorContext,
+                        alignmentPolicy:
+                            ScrollPositionAlignmentPolicy.keepVisibleAtStart,
+                      ),
+                    );
+                  }
+                  cubit.toggleReplies(item);
+                },
+                child: Text(t.comments.collapseReplies),
+              ),
+            ),
           ],
         ],
       ),
@@ -370,120 +408,182 @@ class _PluginCommentsScaffoldState extends State<PluginCommentsScaffold> {
       width: size,
       height: size,
       child: BlocProvider(
-        create: (_) => PictureBloc()..add(GetPicture(pictureInfo)),
+        key: ValueKey(pictureInfo),
+        create: (_) =>
+            PictureBloc(initiallyActive: false)..add(GetPicture(pictureInfo)),
         child: BlocBuilder<PictureBloc, PictureLoadState>(
           builder: (context, state) {
-            switch (state.status) {
-              case PictureLoadStatus.initial:
-                return CircleAvatar(
-                  radius: size / 2,
-                  child: Icon(Icons.person, size: size * 0.6),
-                );
-              case PictureLoadStatus.success:
-                if (pictureInfo.url.contains('nopic-Male.gif')) {
-                  return ClipOval(
-                    child: Image.asset(
-                      'asset/image/assets/default_cover.png',
-                      width: size,
-                      height: size,
-                      fit: BoxFit.cover,
-                    ),
-                  );
-                }
-                return GestureDetector(
-                  onTap: () => context.pushRoute(
-                    FullRouteImageRoute(imagePath: state.imagePath!),
-                  ),
-                  child: ClipOval(
-                    child: SizedBox(
-                      width: size,
-                      height: size,
-                      child: Image.file(
-                        File(state.imagePath!),
-                        fit: BoxFit.cover,
-                      ),
-                    ),
-                  ),
-                );
-              case PictureLoadStatus.failure:
-                if (state.result.toString().contains('404')) {
-                  return ClipOval(
-                    child: Image.asset(
-                      'asset/image/assets/default_cover.png',
-                      width: size,
-                      height: size,
-                      fit: BoxFit.cover,
-                    ),
-                  );
-                }
-                return InkWell(
-                  onTap: () {
-                    context.read<PictureBloc>().add(GetPicture(pictureInfo));
-                  },
-                  child: CircleAvatar(
-                    radius: size / 2,
-                    child: Icon(Icons.refresh),
-                  ),
-                );
-            }
+            return PictureRecoveryRegion(
+              bloc: context.read<PictureBloc>(),
+              child: Builder(
+                builder: (context) {
+                  switch (state.status) {
+                    case PictureLoadStatus.initial:
+                      return CircleAvatar(
+                        radius: size / 2,
+                        child: Icon(Icons.person, size: size * 0.6),
+                      );
+                    case PictureLoadStatus.success:
+                      if (pictureInfo.url.contains('nopic-Male.gif')) {
+                        return ClipOval(
+                          child: Image.asset(
+                            'asset/image/assets/default_cover.png',
+                            width: size,
+                            height: size,
+                            fit: BoxFit.cover,
+                          ),
+                        );
+                      }
+                      return GestureDetector(
+                        onTap: () => context.pushRoute(
+                          FullRouteImageRoute(imagePath: state.imagePath!),
+                        ),
+                        child: ClipOval(
+                          child: SizedBox(
+                            width: size,
+                            height: size,
+                            child: Image.file(
+                              File(state.imagePath!),
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, error, _) {
+                                unawaited(
+                                  context
+                                      .read<PictureBloc>()
+                                      .reportDecodeFailure(
+                                        error,
+                                        imagePath: state.imagePath,
+                                      ),
+                                );
+                                return const SizedBox.shrink();
+                              },
+                            ),
+                          ),
+                        ),
+                      );
+                    case PictureLoadStatus.failure:
+                      if (state.result.toString().contains('404')) {
+                        return ClipOval(
+                          child: Image.asset(
+                            'asset/image/assets/default_cover.png',
+                            width: size,
+                            height: size,
+                            fit: BoxFit.cover,
+                          ),
+                        );
+                      }
+                      return InkWell(
+                        onTap: () {
+                          context.read<PictureBloc>().add(
+                            GetPicture(pictureInfo),
+                          );
+                        },
+                        child: CircleAvatar(
+                          radius: size / 2,
+                          child: Icon(Icons.refresh),
+                        ),
+                      );
+                  }
+                },
+              ),
+            );
           },
         ),
       ),
     );
   }
 
-  Future<void> _postComicComment(CommentsCubit cubit) async {
-    final content = await _openInputDialog(
-      title: t.comments.postComment,
-      hint: t.comments.postCommentHint,
-    );
-    if (content.isEmpty) {
-      return;
-    }
-    await cubit.postComicComment(content);
-  }
+  Future<void> _postComicComment(CommentsCubit cubit) => _openInputDialog(
+    cubit: cubit,
+    title: t.comments.postComment,
+    hint: t.comments.postCommentHint,
+    send: (text, generation) =>
+        cubit.postComicComment(text, generation: generation),
+  );
 
-  Future<void> _postReply(CommentsCubit cubit, CommentItem item) async {
-    final content = await _openInputDialog(
-      title: t.comments.postReply,
-      hint: t.comments.postReplyHint,
-    );
-    if (content.isEmpty) {
-      return;
-    }
-    await cubit.postReply(item, content);
-  }
+  Future<void> _postReply(CommentsCubit cubit, CommentItem item) =>
+      _openInputDialog(
+        cubit: cubit,
+        title: t.comments.postReply,
+        hint: t.comments.postReplyHint,
+        send: (text, generation) =>
+            cubit.postReply(item, text, generation: generation),
+      );
 
-  Future<String> _openInputDialog({
+  Future<void> _openInputDialog({
+    required CommentsCubit cubit,
     required String title,
     required String hint,
+    required Future<bool> Function(String, int) send,
   }) async {
-    final controller = TextEditingController();
-    final result = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: Text(title),
-          content: TextField(
-            controller: controller,
-            maxLines: null,
-            decoration: InputDecoration(hintText: hint),
+    if (_composerOpen) return;
+    _composerOpen = true;
+    final generation = cubit.feedGeneration;
+    var draft = '';
+    var sending = false;
+    String? failure;
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, update) => PopScope(
+            canPop: !sending,
+            child: AlertDialog(
+              scrollable: true,
+              title: Text(title),
+              content: TextField(
+                enabled: !sending,
+                minLines: 2,
+                maxLines: 5,
+                onChanged: (value) => update(() => draft = value),
+                decoration: InputDecoration(
+                  hintText: hint,
+                  errorText: failure,
+                  errorMaxLines: 4,
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: sending
+                      ? null
+                      : () => Navigator.pop(dialogContext),
+                  child: Text(t.comments.cancel),
+                ),
+                ElevatedButton(
+                  onPressed: sending || draft.trim().isEmpty
+                      ? null
+                      : () async {
+                          if (!mounted || cubit.isClosed) return;
+                          update(() {
+                            sending = true;
+                            failure = null;
+                          });
+                          final noticeId = cubit.state.noticeId;
+                          final success = await send(draft.trim(), generation);
+                          if (!mounted || !context.mounted) return;
+                          if (success) {
+                            Navigator.pop(dialogContext);
+                          } else {
+                            update(() {
+                              sending = false;
+                              failure = cubit.state.noticeId == noticeId
+                                  ? t.videoCommunity.publishingUnavailable
+                                  : cubit.state.noticeMessage;
+                            });
+                          }
+                        },
+                  child: sending
+                      ? Text(t.videoCommunity.submitting)
+                      : Text(t.comments.confirm),
+                ),
+              ],
+            ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(''),
-              child: Text(t.comments.cancel),
-            ),
-            ElevatedButton(
-              onPressed: () =>
-                  Navigator.of(dialogContext).pop(controller.text.trim()),
-              child: Text(t.comments.confirm),
-            ),
-          ],
-        );
-      },
-    );
-    return (result ?? '').trim();
+        ),
+      );
+    } finally {
+      _composerOpen = false;
+    }
   }
 
   void _onScroll() {

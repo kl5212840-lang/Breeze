@@ -1,6 +1,8 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
 import 'package:zephyr/page/source_shell/source_list_view_toggle.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/widgets/source_choice_menu.dart';
 
 /// Shared controls for source search and personal record lists.
 class SourceListFilterBar extends StatelessWidget {
@@ -19,10 +21,15 @@ class SourceListFilterBar extends StatelessWidget {
     this.pageLabel,
     this.onPageTap,
     this.leading,
+    this.trailingAction,
+    this.categoriesOnly = false,
+    this.lockedCategories = const {},
+    this.onLockedCategoryTap,
+    this.contentInset,
   });
 
   final List<String> categories;
-  final Widget? leading;
+  final Widget? leading, trailingAction;
   final Set<String> blockedCategories;
   final ValueChanged<String> onCategoryTap;
   final VoidCallback? onClearBlockedCategories;
@@ -34,6 +41,10 @@ class SourceListFilterBar extends StatelessWidget {
   final Key? viewToggleKey;
   final String? pageLabel;
   final VoidCallback? onPageTap;
+  final bool categoriesOnly;
+  final Set<String> lockedCategories;
+  final ValueChanged<String>? onLockedCategoryTap;
+  final double? contentInset;
 
   static const _categoryColors = <Color>[
     Color(0xFFF4B546),
@@ -48,139 +59,216 @@ class SourceListFilterBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final display = watchChineseDisplayConverter(context);
+    final clear = SourceChromeIconButton(
+      key: const ValueKey('source-list.clear-blocked'),
+      tooltip: '清除屏蔽 (${blockedCategories.length})',
+      onPressed: onClearBlockedCategories,
+      icon: Icons.filter_alt_off_outlined,
+      symbol: 'xmark',
+    );
+    final painter = TextPainter(
+      text: TextSpan(text: '标签', style: Theme.of(context).textTheme.labelLarge),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout();
+    final categoryHeight = (painter.height + 20).clamp(44.0, double.infinity);
+    painter.dispose();
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (categories.isNotEmpty)
-          SizedBox(
-            height: 52,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              itemCount: categories.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 8),
-              itemBuilder: (context, index) {
-                final category = categories[index];
-                final blocked = blockedCategories.contains(category);
-                final tint = _categoryColors[index % _categoryColors.length];
-                final fill = blocked
-                    ? scheme.surfaceContainerHighest
-                    : Color.lerp(tint, scheme.surface, isDark ? 0.55 : 0.16)!;
-                return Center(
-                  child: Tooltip(
-                    message: blocked ? '点击恢复' : '点击屏蔽',
-                    child: ActionChip(
-                      key: ValueKey('category-$category'),
-                      label: Text(convertChineseForDisplay(category)),
-                      avatar: blocked
-                          ? const Icon(Icons.block, size: 15)
-                          : null,
-                      backgroundColor: fill,
-                      labelStyle: TextStyle(
-                        color: blocked
-                            ? scheme.onSurfaceVariant
-                            : scheme.onSurface,
-                      ),
-                      side: BorderSide(
-                        color: blocked ? scheme.outlineVariant : tint,
-                      ),
-                      onPressed: () => onCategoryTap(category),
-                    ),
+        if (categories.isNotEmpty ||
+            categoriesOnly &&
+                blockedCategories.isNotEmpty &&
+                onClearBlockedCategories != null)
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: categoryHeight,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    itemCount: categories.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 6),
+                    itemBuilder: (context, index) {
+                      final category = categories[index];
+                      final blocked = blockedCategories.contains(category);
+                      final locked = lockedCategories.contains(category);
+                      final tint =
+                          _categoryColors[index % _categoryColors.length];
+                      final fill = blocked
+                          ? scheme.surfaceContainerHighest
+                          : Color.lerp(
+                              tint,
+                              scheme.surface,
+                              isDark ? 0.83 : 0.84,
+                            )!;
+                      return Center(
+                        child: Tooltip(
+                          message: locked
+                              ? '已在插件设置中屏蔽'
+                              : blocked
+                              ? '点击恢复'
+                              : '点击屏蔽',
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: locked
+                                ? () => onLockedCategoryTap?.call(category)
+                                : null,
+                            child: ActionChip(
+                              key: ValueKey('category-$category'),
+                              visualDensity: const VisualDensity(
+                                horizontal: -2,
+                                vertical: -1,
+                              ),
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.padded,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 2,
+                              ),
+                              labelPadding: EdgeInsets.zero,
+                              label: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                    ),
+                                    child: Text(
+                                      display(category),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                  if (blocked)
+                                    PositionedDirectional(
+                                      start: 0,
+                                      top: 0,
+                                      bottom: 0,
+                                      child: Center(
+                                        child: Icon(
+                                          locked
+                                              ? Icons.lock_outline
+                                              : Icons.block,
+                                          size: 15,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              backgroundColor: fill,
+                              disabledColor: scheme.surfaceContainerHighest,
+                              labelStyle: TextStyle(
+                                color: locked
+                                    ? scheme.onSurface.withValues(alpha: .38)
+                                    : blocked
+                                    ? scheme.onSurfaceVariant
+                                    : scheme.onSurface,
+                              ),
+                              side: BorderSide(
+                                color: blocked
+                                    ? scheme.outlineVariant
+                                    : tint.withValues(alpha: .45),
+                              ),
+                              onPressed: locked
+                                  ? null
+                                  : () => onCategoryTap(category),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+              if (categoriesOnly &&
+                  blockedCategories.isNotEmpty &&
+                  onClearBlockedCategories != null)
+                clear,
+            ],
+          ),
+        if (!categoriesOnly)
+          Padding(
+            padding: EdgeInsetsDirectional.fromSTEB(
+              contentInset ?? 12,
+              0,
+              contentInset ?? 8,
+              4,
+            ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final hasClear =
+                    blockedCategories.isNotEmpty &&
+                    onClearBlockedCategories != null;
+                final sortWidth = SourceChoiceMenu.triggerWidth(
+                  context,
+                  sortOptions.values,
+                  selectionIndicator: true,
+                  maximumWidth: (constraints.maxWidth - 60).clamp(
+                    44.0,
+                    double.infinity,
                   ),
                 );
-              },
-            ),
-          ),
-        ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 44),
-          child: Row(
-            children: [
-              const SizedBox(width: 12),
-              if (leading != null) Flexible(flex: 3, child: leading!),
-              if (blockedCategories.isNotEmpty &&
-                  onClearBlockedCategories != null)
-                IconButton(
-                  tooltip: '清除屏蔽 (${blockedCategories.length})',
-                  onPressed: onClearBlockedCategories,
-                  icon: const Icon(Icons.filter_alt_off_outlined),
-                )
-              else if (categories.isNotEmpty)
-                Flexible(
-                  child: Text(
-                    '点标签可屏蔽',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-              if (pageLabel != null && onPageTap != null)
-                Flexible(
-                  flex: 2,
-                  child: Tooltip(
-                    message: pageLabel!,
-                    child: TextButton(
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 5),
-                        minimumSize: const Size(0, 44),
+                final sort = SourceChoiceMenu<String>(
+                  key: const ValueKey('source-list.sort'),
+                  tooltip: '排序',
+                  label:
+                      sortOptions[sortValue] ??
+                      sortOptions.values.firstOrNull ??
+                      '',
+                  value: sortValue,
+                  options: sortOptions,
+                  optionIcons: {
+                    for (final key in sortOptions.keys)
+                      key: (
+                        icon: Icons.sort_rounded,
+                        symbol: 'arrow.up.arrow.down',
                       ),
-                      onPressed: onPageTap,
-                      child: Text(
-                        pageLabel!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                ),
-              if (leading == null) const Spacer(),
-              if (sortOptions.isNotEmpty)
-                Flexible(
-                  flex: 2,
-                  child: PopupMenuButton<String>(
-                    tooltip: '排序',
-                    initialValue: sortValue,
-                    onSelected: onSortChanged,
-                    itemBuilder: (context) => [
-                      for (final option in sortOptions.entries)
-                        PopupMenuItem(
-                          value: option.key,
-                          child: Text(option.value),
-                        ),
-                    ],
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(minHeight: 44),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                  },
+                  selectionIndicator: true,
+                  fitToOptions: true,
+                  fillAvailableWidth: true,
+                  maximumWidth: sortWidth,
+                  onChanged: onSortChanged,
+                );
+                return Row(
+                  key: const ValueKey('source-list.management'),
+                  children: [
+                    Expanded(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
                         child: Row(
-                          mainAxisSize: MainAxisSize.min,
+                          key: const ValueKey('source-list.manage-actions'),
                           children: [
-                            Flexible(
-                              child: Text(
-                                sortOptions[sortValue] ??
-                                    sortOptions.values.first,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                            ?leading,
+                            if (pageLabel != null && onPageTap != null)
+                              TextButton(
+                                style: TextButton.styleFrom(
+                                  foregroundColor: scheme.onSurfaceVariant,
+                                  minimumSize: const Size(44, 44),
+                                ),
+                                onPressed: onPageTap,
+                                child: Text(pageLabel!),
                               ),
-                            ),
-                            const Icon(Icons.arrow_drop_down, size: 20),
+                            if (sortOptions.isNotEmpty)
+                              SizedBox(width: sortWidth, child: sort),
+                            if (hasClear) clear,
                           ],
                         ),
                       ),
                     ),
-                  ),
-                ),
-              SourceListViewToggle(
-                key: viewToggleKey,
-                detailed: detailedView,
-                onChanged: onViewChanged,
-              ),
-              const SizedBox(width: 4),
-            ],
+                    const SizedBox(width: 4),
+                    ?trailingAction,
+                    SourceListViewToggle(
+                      key: viewToggleKey,
+                      detailed: detailedView,
+                      onChanged: onViewChanged,
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
-        ),
       ],
     );
   }

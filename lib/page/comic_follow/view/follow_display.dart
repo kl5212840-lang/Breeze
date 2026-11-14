@@ -68,11 +68,11 @@ String formatFollowCheckTime(DateTime time, {DateTime? now}) {
 
 /// 阅读进度 0..1，数据缺失或越界时钳制。
 double followReadProgress({
-  required int readOrder,
+  required int chapterPosition,
   required int detectedTotal,
 }) {
-  if (readOrder <= 0 || detectedTotal <= 0) {
+  if (chapterPosition <= 0 || detectedTotal <= 0) {
     return 0;
   }
-  return (readOrder / detectedTotal).clamp(0.0, 1.0).toDouble();
+  return (chapterPosition / detectedTotal).clamp(0.0, 1.0).toDouble();
 }

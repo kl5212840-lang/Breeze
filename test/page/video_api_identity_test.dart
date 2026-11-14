@@ -47,6 +47,35 @@ void main() {
     );
   });
   test(
+    'new source paths retain episode identity, history and public sharing',
+    () {
+      for (final detail in [
+        'https://www.mdzyapi.com/vod/7/',
+        'https://www.omofuna.com/anime/3d7144c241243398fd28b0e2.html',
+      ]) {
+        final watch = Uri.parse('$detail?line=one&episode=2');
+        expect(videoPlaybackIdentity(watch), watch);
+        expect(videoPublicPage(watch), Uri.parse(detail));
+        expect(VideoWatchRecord.canonicalUrl(watch), watch);
+        expect(videoPlaybackIdentity(Uri.parse(detail)), isNull);
+        expect(
+          videoPlaybackProgressKey(watch),
+          isNot(
+            videoPlaybackProgressKey(Uri.parse('$detail?line=one&episode=3')),
+          ),
+        );
+      }
+      for (final url in [
+        'https://www.mdzyapi.com/vod/0/?line=a&episode=b',
+        'https://www.omofuna.com/anime/invalid.html?line=a&episode=b',
+        'https://cdn.example/video.mp4?line=a&episode=b',
+      ]) {
+        expect(videoPlaybackIdentity(Uri.parse(url)), isNull);
+        expect(videoPublicPage(Uri.parse(url)), isNull);
+      }
+    },
+  );
+  test(
     'item metadata is sanitized and cloud export excludes playback URLs',
     () {
       final item = ApiVideoItem.fromJson({

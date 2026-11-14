@@ -5,8 +5,40 @@ import 'package:zephyr/main.dart' show eventBus;
 import 'package:zephyr/page/source_shell/view/source_shell_page.dart';
 import 'package:zephyr/page/source_shell/models/source_shell_section.dart';
 import 'package:zephyr/util/event/event.dart';
+import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 
 void main() {
+  testWidgets('profile tab is the only account entry when present', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: SourceShellPage(
+          source: 'test-source',
+          sourceName: 'Test Source',
+          sections: [
+            SourceShellSection.more(title: '分类', actions: []),
+            SourceShellSection.profile(),
+          ],
+        ),
+      ),
+    );
+    expect(find.byTooltip(t.sourceShell.account), findsNothing);
+    expect(find.widgetWithText(NavigationDestination, '我的'), findsOneWidget);
+    expect(find.byType(SearchQueryField), findsOneWidget);
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: SourceShellPage(
+          key: ValueKey('without-profile'),
+          source: 'test-source',
+          sourceName: 'Test Source',
+          sections: [],
+        ),
+      ),
+    );
+    expect(find.byTooltip(t.sourceShell.account), findsNothing);
+  });
+
   testWidgets('login failure is inline and clears after login succeeds', (
     tester,
   ) async {

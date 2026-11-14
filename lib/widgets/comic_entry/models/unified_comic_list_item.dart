@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/json/json_value.dart';
+import 'package:zephyr/util/json/shelf_metadata_fields.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_info.dart';
 
 part 'unified_comic_list_item.freezed.dart';
@@ -78,8 +81,46 @@ abstract class UnifiedComicListItem with _$UnifiedComicListItem {
   ComicSimplifyEntryInfo toSimplifyEntryInfo({
     PictureType pictureType = PictureType.cover,
   }) {
+    // Persisted rows retain the original metadata in raw. Prefer it so malformed
+    // object values cannot become labels through the general list mapper.
+    final rawMetadata = raw['metadata'];
+    final fields = shelfFacetFieldsFromMetadata(
+      rawMetadata is String
+          ? rawMetadata
+          : jsonEncode(
+              rawMetadata is List
+                  ? rawMetadata
+                  : metadata.map((item) => item.toJson()).toList(),
+            ),
+    );
+    final detailMetadata = <String>[
+      for (final (field, _) in const [
+        ('author', '作者'),
+        ('category', '分类'),
+        ('tags', '标签'),
+      ])
+        if (fields[field]?.isNotEmpty == true) fields[field]!.join(' / '),
+    ].join(' · ');
+    var detailPopularity = 0;
+    final rawTitleMeta = raw['titleMeta'];
+    if (viewsCount <= 0 && rawTitleMeta is String) {
+      for (final item in decodeJsonListOfMaps(rawTitleMeta)) {
+        final name = item['name'];
+        const prefix = '热度：';
+        if (name is String && name.startsWith(prefix)) {
+          detailPopularity = int.tryParse(name.substring(prefix.length)) ?? 0;
+          break;
+        }
+      }
+    }
     return ComicSimplifyEntryInfo(
       title: title,
+      description: raw['description'] is String
+          ? (raw['description'] as String).trim()
+          : '',
+      detailMetadata: detailMetadata,
+      detailViewCount: viewsCount,
+      detailPopularity: detailPopularity,
       id: id,
       fileServer: cover.url,
       path: cover.cachePath,

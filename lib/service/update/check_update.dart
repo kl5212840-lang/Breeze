@@ -1,7 +1,5 @@
-import 'dart:convert';
 import 'dart:io';
 
-import 'package:auto_route/auto_route.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:markdown_widget/widget/markdown_block.dart';
@@ -10,251 +8,354 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:permission_guard/permission_guard.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:zephyr/type/pipe.dart';
-import 'package:zephyr/util/get_path.dart';
-import 'package:zephyr/network/utils/github_proxy.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/main.dart';
+import 'package:zephyr/network/utils/github_proxy.dart';
+import 'package:zephyr/service/update/app_update_reminder_preferences.dart';
+import 'package:zephyr/service/update/app_update_version.dart';
+import 'package:zephyr/service/update/json/github_release_json.dart';
+import 'package:zephyr/util/get_path.dart';
 import 'package:zephyr/widgets/toast.dart';
 
-import 'package:zephyr/main.dart';
-import 'package:zephyr/service/update/json/github_release_json.dart';
+const _iosRepo = 'kl5212840-lang/Breeze';
+const _upstreamRepo = 'deretame/Breeze';
+const _upstreamRepoCurrent = 'breeze-project-org/Breeze';
+const _requestTimeout = Duration(seconds: 3);
 
 Future<String> getAppVersion() async {
-  String version = 'Unknown';
-
   try {
-    final PackageInfo packageInfo = await PackageInfo.fromPlatform();
-    version = packageInfo.version;
+    return (await PackageInfo.fromPlatform()).version;
   } catch (e, stackTrace) {
     logger.e(e, stackTrace: stackTrace);
+    return 'Unknown';
   }
-
-  return version;
 }
 
-Future<GithubReleaseJson?> getCloudVersion() async {
-  if (Platform.isIOS) {
+Future<GithubReleaseJson?> _loadLatestRelease() async {
+  final repo = Platform.isIOS ? _iosRepo : _upstreamRepo;
+  GithubReleaseJson? parse(Object? json) {
+    if (json is! Map<String, dynamic>) return null;
     try {
-      final release = await fetchReleaseData(
-        'https://api.github.com/repos/kl5212840-lang/Breeze/releases/latest',
-      );
-      return GithubReleaseJson.fromJson(release);
-    } catch (e, stackTrace) {
-      logger.w('无法获取本分支 iOS 更新信息', error: e, stackTrace: stackTrace);
+      return AppUpdateRelease.tryParse(json, repo: repo);
+    } catch (error) {
+      logger.w('应用更新元数据格式无效', error: error);
       return null;
     }
   }
 
-  const releasesApi =
-      "https://api.github.com/repos/deretame/Breeze/releases/latest";
-
-  try {
-    logger.d('尝试使用自建 API: $breezeLatestReleaseApi');
-    final response = await fetch(
-      breezeLatestReleaseApi,
-      headers: {'Accept': 'application/json, text/plain, */*'},
-    );
-    final body = response.text.trim();
-    if (response.ok && body.isNotEmpty) {
-      return GithubReleaseJson.fromJson(jsonDecode(body));
+  final client = WindHttp.distribution(connectTimeout: _requestTimeout);
+  Future<GithubReleaseJson?> read(String url) async {
+    try {
+      final response = await client.fetch(
+        url,
+        headers: const {'Accept': 'application/json, text/plain, */*'},
+        timeout: _requestTimeout,
+      );
+      return response.ok ? parse(response.json) : null;
+    } catch (error) {
+      logger.w('应用更新通道不可用: $url', error: error);
+      return null;
     }
-  } catch (e, stackTrace) {
-    logger.w(
-      '自建 API 通道失败: $breezeLatestReleaseApi',
-      error: e,
-      stackTrace: stackTrace,
-    );
   }
 
-  try {
-    final temp = await fetch(
-      "https://breeze-version.s3.bitiful.net/breeze-version.json",
-    );
-    final tempJson = temp.json;
-    var version = (tempJson is Map ? tempJson['version'] : null) ?? 'latest';
-
-    const ghCdnMirrors = [
+  if (!Platform.isIOS) {
+    final direct = await read(breezeLatestReleaseApi);
+    if (direct != null) return direct;
+    var ref = 'latest';
+    try {
+      final pointer = await client.fetch(
+        'https://breeze-version.s3.bitiful.net/breeze-version.json',
+        timeout: _requestTimeout,
+      );
+      if (pointer.ok) {
+        final json = pointer.json;
+        final version = json is Map ? json['version'] : null;
+        if (version is String && RegExp(r'^[\w.-]+$').hasMatch(version)) {
+          ref = version;
+        }
+      }
+    } catch (error) {
+      logger.w('应用更新 CDN 索引不可用', error: error);
+    }
+    const mirrors = [
       'https://cdn.jsdmirror.com/',
       'https://cdn.jsdmirror.cn/',
       'https://jsd.onmicrosoft.cn/',
       'https://cdn.jsdelivr.net/',
     ];
+    for (final mirror in mirrors) {
+      final release = await read(
+        '${mirror}gh/$_upstreamRepo@$ref/update-tag-version/latest-release.json',
+      );
+      if (release != null) return release;
+    }
+  }
 
-    for (final mirror in ghCdnMirrors) {
-      final url =
-          '${mirror}gh/deretame/Breeze@$version/update-tag-version/latest-release.json';
-      logger.d('尝试使用 GitHub CDN 镜像: $url');
-      try {
-        final response = await fetch(
-          url,
-          headers: {'Accept': 'application/json, text/plain, */*'},
-        );
-        final body = response.text.trim();
-        if (response.ok && body.isNotEmpty) {
-          return GithubReleaseJson.fromJson(jsonDecode(body));
-        }
-      } catch (e, stackTrace) {
-        logger.w('CDN 镜像通道失败: $url', error: e, stackTrace: stackTrace);
+  try {
+    GithubReleaseJson? latest;
+    await fetchReleaseData(
+      'https://api.github.com/repos/$repo/releases/latest',
+      requestTimeout: _requestTimeout,
+      accepts: (json) => (latest = parse(json)) != null,
+    );
+    return latest;
+  } catch (error) {
+    logger.w('无法获取应用更新信息', error: error);
+    return null;
+  }
+}
+
+/// Validates the release channel and the exact release asset selected for Android.
+abstract final class AppUpdateRelease {
+  static GithubReleaseJson? tryParse(
+    Map<String, dynamic> json, {
+    required String repo,
+  }) {
+    final release = GithubReleaseJson.fromJson(json);
+    final version = AppUpdateVersion.parse(release.tagName);
+    final path = _releasePath(release.htmlUrl, repo);
+    if (release.draft ||
+        release.prerelease ||
+        version == null ||
+        version.isPreview ||
+        path == null ||
+        path.length != 5 ||
+        path[3] != 'tag' ||
+        path[4] != release.tagName) {
+      return null;
+    }
+    return release;
+  }
+
+  static Uri? androidAsset(
+    GithubReleaseJson release, {
+    required String repo,
+    required String abi,
+  }) {
+    if (abi.isEmpty) return null;
+    final abiInName = RegExp(
+      '(?:^|[-.])${RegExp.escape(abi)}'
+      r'(?:[-.]|$)',
+    );
+    for (final asset in release.assets) {
+      final path = _releasePath(asset.browserDownloadUrl, repo);
+      if (path == null ||
+          path.length != 6 ||
+          path[3] != 'download' ||
+          path[4] != release.tagName) {
+        continue;
+      }
+      final name = path.last.toLowerCase();
+      if (abiInName.hasMatch(name) &&
+          name.endsWith('.apk') &&
+          !name.contains('skia')) {
+        return Uri.parse(asset.browserDownloadUrl);
       }
     }
-  } catch (e) {
-    logger.e(e);
+    return null;
   }
 
-  while (true) {
-    try {
-      return await fetchReleaseData(
-        releasesApi,
-      ).let(GithubReleaseJson.fromJson);
-    } catch (e) {
-      logger.e(e);
-      await Future.delayed(const Duration(minutes: 5));
+  static List<String>? _releasePath(String url, String repo) {
+    final uri = Uri.tryParse(url);
+    if (uri == null ||
+        uri.scheme != 'https' ||
+        uri.host != 'github.com' ||
+        uri.port != 443 ||
+        uri.userInfo.isNotEmpty ||
+        uri.hasQuery ||
+        uri.hasFragment) {
+      return null;
     }
+    final segments = uri.pathSegments;
+    if (segments.length < 3 || segments[2] != 'releases') return null;
+    final actualRepo = '${segments[0]}/${segments[1]}'.toLowerCase();
+    if (actualRepo == repo.toLowerCase() ||
+        (repo == _upstreamRepo &&
+            actualRepo == _upstreamRepoCurrent.toLowerCase())) {
+      return segments;
+    }
+    return null;
   }
 }
 
-bool isUpdateAvailable(String cloudVersion, String localVersion) {
-  logger.d('App version: $localVersion\nCloud version: $cloudVersion');
-
-  cloudVersion = cloudVersion.replaceFirst('v', '');
-
-  final cloudVersionParts = cloudVersion.split('.');
-  final localVersionParts = localVersion.split('.');
-
-  for (int i = 0; i < 3; i++) {
-    final int cloudPart = int.parse(cloudVersionParts[i]);
-    final int localPart = int.parse(localVersionParts[i]);
-
-    if (cloudPart > localPart) {
-      return true;
-    } else if (cloudPart < localPart) {
-      return false;
-    }
-  }
-
-  return false;
-}
-
-Future<void> installApk(String apkUrl) async {
-  if (await _requestInstallPackagesPermission()) {
-    try {
-      String tempDir = await getCachePath();
-      String apkFilePath = p.join(tempDir, 'app.apk');
-
-      if (_isGithubReleaseDownloadUrl(apkUrl)) {
-        await smartDownload(apkUrl, apkFilePath);
-      } else {
-        final response = await fetch(apkUrl);
-        await File(apkFilePath).writeAsBytes(response.body);
-      }
-
-      OpenFile.open(apkFilePath);
-    } catch (e) {
-      showErrorToast(t.update.apkDownloadFailed);
-    }
-  } else {
-    showErrorToast(t.update.installPermissionRequired);
-  }
-}
-
-Future<bool> _requestInstallPackagesPermission() async {
-  if (Platform.isAndroid) {
+Future<void> _installApk(Uri apk) async {
+  try {
     var status = await Permission.requestInstallPackages.status;
-    if (status.isGranted) {
-      return true;
-    } else if (status.isDenied) {
-      var requestResult = await Permission.requestInstallPackages.request();
-      return requestResult.isGranted;
+    if (status.isDenied) {
+      status = await Permission.requestInstallPackages.request();
     }
+    if (!status.isGranted) {
+      showErrorToast(t.update.installPermissionRequired);
+      return;
+    }
+    final apkFilePath = p.join(await getCachePath(), 'app.apk');
+    await smartDownload(apk.toString(), apkFilePath);
+    await OpenFile.open(apkFilePath);
+  } catch (error, stackTrace) {
+    logger.w('应用更新安装包无法打开', error: error, stackTrace: stackTrace);
+    showErrorToast(t.update.apkDownloadFailed);
   }
-  return false;
 }
 
-bool _isGithubReleaseDownloadUrl(String url) {
-  final uri = Uri.tryParse(url);
-  if (uri == null || uri.scheme != 'https') {
-    return false;
+typedef _AppUpdateResult = ({
+  AppUpdateVersion current,
+  AppUpdateVersion latest,
+  GithubReleaseJson release,
+});
+
+Future<_AppUpdateResult?>? _inFlightCheck;
+bool _checkingAutomatically = false;
+
+Future<_AppUpdateResult?> _checkAppUpdate() async {
+  final running = _inFlightCheck;
+  if (running != null) return running;
+
+  Future<_AppUpdateResult?> load() async {
+    try {
+      final current = AppUpdateVersion.parse(
+        await getAppVersion().timeout(_requestTimeout),
+      );
+      if (current == null) return null;
+      final release = await _loadLatestRelease();
+      if (release == null) return null;
+      final latest = AppUpdateVersion.parse(release.tagName)!;
+      return (current: current, latest: latest, release: release);
+    } catch (error) {
+      logger.w('检查应用更新失败', error: error);
+      return null;
+    }
   }
 
-  final host = uri.host.toLowerCase();
-  if (host != 'github.com' && host != 'www.github.com') {
-    return false;
+  final check = _inFlightCheck = load();
+  try {
+    return await check;
+  } finally {
+    _inFlightCheck = null;
   }
+}
 
-  final segments = uri.pathSegments;
-  if (segments.length < 6) {
-    return false;
+bool _canPresentUpdate(BuildContext context) =>
+    ModalRoute.of(context)?.isCurrent != false;
+
+Future<void> checkUpdateReminder(BuildContext context) async {
+  if (!context.mounted || _checkingAutomatically) return;
+  _checkingAutomatically = true;
+  try {
+    final prefs = await AppUpdateReminderPreferences.load();
+    if (!context.mounted) return;
+    final allowed = await prefs.beginAutomaticCheck(DateTime.now());
+    if (!allowed || !prefs.enabled || !context.mounted) return;
+    final result = await _checkAppUpdate();
+    if (!context.mounted ||
+        result == null ||
+        result.latest.compareTo(result.current) <= 0 ||
+        !prefs.canNotify(result.latest) ||
+        !_canPresentUpdate(context) ||
+        WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed ||
+        Overlay.maybeOf(context, rootOverlay: true) == null) {
+      return;
+    }
+    showActionToast(
+      context,
+      ToastEvent(
+        type: ToastType.info,
+        message: t.update.available(version: result.release.tagName),
+        actionLabel: t.update.details,
+        deduplicationKey: ('app-update', result.latest.toString()),
+        duration: const Duration(seconds: 6),
+        onTap: () async {
+          if (context.mounted && prefs.enabled && _canPresentUpdate(context)) {
+            await _showReleaseDetails(context, result.release);
+          }
+        },
+      ),
+    );
+    await prefs.markNotified(result.latest);
+  } catch (error) {
+    logger.w('应用更新提醒不可用', error: error);
+  } finally {
+    _checkingAutomatically = false;
   }
-
-  return segments[2] == 'releases' && segments[3] == 'download';
 }
 
 Future<void> checkUpdate(BuildContext context) async {
-  if (!context.mounted) return;
-  final temp = await getCloudVersion();
-  if (temp == null) return;
-  final cloudVersion = temp.tagName;
-  final releaseInfo = temp.body;
-  final String localVersion = await getAppVersion();
-  final url = temp.htmlUrl;
-  DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
-  String arch = t.update.unknownArch;
-  try {
-    if (Platform.isAndroid) {
-      AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
-      List<String> abis = androidInfo.supportedAbis;
-      if (abis.isNotEmpty) {
-        arch = abis.first;
-        logger.d(arch);
-      }
-    }
-  } catch (e) {
-    logger.e(e);
-    return;
+  final result = await _checkAppUpdate();
+  if (!context.mounted || !_canPresentUpdate(context)) return;
+  if (result == null) {
+    showErrorToast(t.update.checkFailed, context: context);
+  } else if (result.latest.compareTo(result.current) <= 0) {
+    showInfoToast(t.update.upToDate, context: context);
+  } else {
+    await _showReleaseDetails(context, result.release);
   }
+}
 
-  if (isUpdateAvailable(cloudVersion, localVersion)) {
-    if (!context.mounted) return;
-    var releaseNotes = releaseInfo;
-    var releasePageUrl = url;
-
-    if (!context.mounted) return;
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(t.update.newVersion),
-          content: SingleChildScrollView(
-            child: MarkdownBlock(data: '# $cloudVersion\n$releaseNotes'),
-          ),
-          actions: [
-            TextButton(
-              child: Text(t.common.cancel),
-              onPressed: () => context.pop(),
-            ),
-            TextButton(
-              child: Text(t.update.goToGitHub),
-              onPressed: () {
-                launchUrl(Uri.parse(releasePageUrl));
-                context.pop();
-              },
-            ),
-            if (Platform.isAndroid)
-              TextButton(
-                child: Text(t.update.downloadInstall),
-                onPressed: () async {
-                  context.pop();
-                  for (var apkUrl in temp.assets) {
-                    if (apkUrl.browserDownloadUrl.contains(arch) &&
-                        !apkUrl.browserDownloadUrl.contains("skia")) {
-                      await installApk(apkUrl.browserDownloadUrl);
-                    }
-                  }
-                },
-              ),
-          ],
+Future<void> _showReleaseDetails(
+  BuildContext context,
+  GithubReleaseJson release,
+) async {
+  Uri? apk;
+  if (Platform.isAndroid) {
+    try {
+      final device = await DeviceInfoPlugin().androidInfo.timeout(
+        _requestTimeout,
+      );
+      if (device.supportedAbis.isNotEmpty) {
+        apk = AppUpdateRelease.androidAsset(
+          release,
+          repo: _upstreamRepo,
+          abi: device.supportedAbis.first,
         );
-      },
-    );
+      }
+    } catch (error) {
+      logger.w('无法确认 Android 安装包架构', error: error);
+    }
   }
+  if (!context.mounted || !_canPresentUpdate(context)) return;
+  final download = apk;
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text(t.update.newVersion),
+      content: SingleChildScrollView(
+        child: MarkdownBlock(data: '# ${release.tagName}\n${release.body}'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          child: Text(t.common.cancel),
+        ),
+        TextButton(
+          onPressed: () async {
+            Navigator.of(dialogContext).pop();
+            try {
+              if (await launchUrl(
+                Uri.parse(release.htmlUrl),
+                mode: LaunchMode.externalApplication,
+              )) {
+                return;
+              }
+            } catch (error) {
+              logger.w('无法打开应用更新页面', error: error);
+            }
+            if (context.mounted) {
+              showErrorToast(
+                t.changelog.cannotOpenLink(url: release.htmlUrl),
+                context: context,
+              );
+            }
+          },
+          child: Text(t.update.goToGitHub),
+        ),
+        if (download != null)
+          TextButton(
+            onPressed: () async {
+              Navigator.of(dialogContext).pop();
+              await _installApk(download);
+            },
+            child: Text(t.update.downloadInstall),
+          ),
+      ],
+    ),
+  );
 }

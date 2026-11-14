@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:zephyr/page/video/video_site_action_models.dart';
 import 'package:zephyr/page/video/video_comment_drafts.dart';
 import 'package:zephyr/page/video/video_download_choice.dart';
+import 'package:zephyr/page/video/video_download_resolution.dart';
 
 /// Browser-local work: credentials and CSRF remain in WebKit. Results contain
 /// only display data, capability booleans and bounded failure categories.
@@ -13,8 +14,8 @@ const videoSiteOperationBody = r'''
   const same = u => u.origin === expected.origin && u.protocol === 'https:' && !u.username && !u.password;
   const current = new URL(location.href);
   for (const key of Array.from(current.searchParams.keys())) if (key.startsWith('__cf_chl_')) current.searchParams.delete(key);
-  if (!same(current) || current.pathname !== expected.pathname ||
-      current.search !== expected.search) return { status: 'changed' };
+  if (!same(current) || operation !== 'downloadChoices' && (current.pathname !== expected.pathname ||
+      current.search !== expected.search)) return { status: 'changed' };
   const stateKey = '__breezeNativeVideoWork';
   const state = window[stateKey] ||= { jobs: Object.create(null), comments: null, replies: Object.create(null) };
   const ownProfile = doc => {
@@ -58,8 +59,26 @@ const videoSiteOperationBody = r'''
   };
   const fieldValue = (form, name) => form?.querySelector('[name="' + name + '"]')?.value;
   const voteCount = (form, name) => {
-    const value = fieldValue(form, name);
+    const fields = form?.querySelectorAll('[name="' + name + '"]');
+    const value = fields?.length === 1 ? fields[0].value : null;
     return /^\d+$/.test(value || '') && Number.isSafeInteger(Number(value)) ? Number(value) : null;
+  };
+  const voteTally = form => {
+    const positiveVotes = voteCount(form, 'likes-count');
+    const negativeVotes = voteCount(form, 'unlikes-count');
+    const sum = positiveVotes !== null && negativeVotes !== null
+      ? positiveVotes + negativeVotes : null;
+    const totalVotes = Number.isSafeInteger(sum) ? sum : null;
+    const buttons = form?.querySelectorAll('#video-like-btn');
+    const button = buttons?.length === 1 ? buttons[0].cloneNode(true) : null;
+    button?.querySelectorAll('i, svg, [aria-hidden="true"]').forEach(icon => icon.remove());
+    const label = (button?.textContent || '').trim().match(/^(\d{1,3}(?:\.\d{1,6})?)%\s*(?:\((\d{1,3}(?:,\d{3})+|\d+)\))?$/);
+    const displayed = label?.[2] === undefined ? null : Number(label[2].replace(/,/g, ''));
+    const shownTotal = Number.isSafeInteger(displayed) ? displayed : null;
+    const consistentTotal = shownTotal === null || totalVotes === null || shownTotal === totalVotes;
+    const ratingPercentRaw = label && Number(label[1]) <= 100 && consistentTotal
+      ? label[1] + '%' : null;
+    return { positiveVotes, negativeVotes, totalVotes: totalVotes ?? shownTotal, ratingPercentRaw };
   };
   const saveForm = doc => {
     const form = formFor(doc, '/save', ['playlist-video-id']);
@@ -76,20 +95,34 @@ const videoSiteOperationBody = r'''
       like.querySelector('[name="like-user-id"]').value === userId && ['', '1'].includes(fieldValue(like,'like-status'));
     const canDislike = canLike && ['', '1'].includes(fieldValue(like,'unlike-status')) &&
       voteCount(like,'likes-count') !== null && voteCount(like,'unlikes-count') !== null;
-    const positiveVotes = voteCount(like,'likes-count'), negativeVotes = voteCount(like,'unlikes-count');
+    const tally = fieldValue(like, 'like-foreign-id') === id ? voteTally(like) : voteTally(null);
     const canFollow = !!profile && !!follow && /^[0-9]+$/.test(follow.querySelector('[name="subscribe-artist-id"]').value) &&
       follow.querySelector('[name="subscribe-user-id"]').value === userId && ['', '1'].includes(fieldValue(follow,'subscribe-status'));
     const canCreatePlaylist = !!profile && !!create && create.querySelector('[name="create-playlist-video-id"]').value === id;
     const canSave = !!profile && !!csrfValue(doc) && watchDocument(doc) && !!saveForm(doc);
     const capability = supported => actor === 'signedOut' ? 'login' : actor === 'unknown' ? 'unknown' : supported ? 'ready' : 'unrecognized';
     return { actor, signedIn: !!profile, canLike, canDislike, canFollow, canCreatePlaylist,
-      positiveVotes, negativeVotes, totalVotes: positiveVotes !== null && negativeVotes !== null && Number.isSafeInteger(positiveVotes + negativeVotes) ? positiveVotes + negativeVotes : null,
+      ...tally,
       disliked: canDislike ? fieldValue(like,'unlike-status') === '1' : null,
       liked: canLike ? like.querySelector('[name="like-status"]').value === '1' : null,
       following: canFollow ? follow.querySelector('[name="subscribe-status"]').value === '1' : null,
       watchLater: canSave ? checkedValue(doc, 'save') : null,
       capabilities: { like: capability(canLike), dislike: capability(canDislike), follow: capability(canFollow), createPlaylist: capability(canCreatePlaylist),
         playlists: capability(canSave), watchLater: capability(canSave), comments: 'ready' } };
+  };
+  const sameVoteCounts = (a, b) => a.positiveVotes === b.positiveVotes && a.negativeVotes === b.negativeVotes;
+  const withRecentVoteTally = (value, doc) => {
+    const receipt = state.voteTally;
+    if (!receipt || receipt.page !== expected.href || Date.now() > receipt.until ||
+        receipt.owner !== ownProfile(doc)?.href || receipt.owner !== ownProfile(document)?.href ||
+        receipt.liked !== value.liked || receipt.disliked !== value.disliked) return value;
+    if (value.positiveVotes === null || value.negativeVotes === null ||
+        sameVoteCounts(value, receipt.previous) ||
+        sameVoteCounts(value, receipt.tally) && value.ratingPercentRaw === null) {
+      return { ...value, ...receipt.tally };
+    }
+    state.voteTally = null;
+    return value;
   };
   const playlistForm = doc => {
     const id = expected.pathname === '/playlist' ? expected.searchParams.get('list') : '';
@@ -191,9 +224,7 @@ const videoSiteOperationBody = r'''
     return { ...result, revision: version };
   };
   const post = async (form, path, changes = {}, tokenDocument = document) => {
-    const visible = new URL(location.href);
-    for (const key of Array.from(visible.searchParams.keys())) if (key.startsWith('__cf_chl_')) visible.searchParams.delete(key);
-    if (!same(visible) || visible.pathname !== expected.pathname || visible.search !== expected.search) throw 'changed';
+    requireCurrentPage();
     if ((!form && path !== '/save') || !own(document)) throw own(document) ? 'unsupported' : 'login';
     const actorId = ownProfile(document)?.pathname.match(/^\/user\/(\d+)/)?.[1];
     for (const name of ['like-user-id', 'subscribe-user-id', 'comment-user-id']) {
@@ -245,8 +276,14 @@ const videoSiteOperationBody = r'''
         }
       }
       // Fragments remain in WebKit; only the confirmed entity is returned.
-      return {accepted:result.success === true, checkbox:typeof result.checkbox === 'string' ? result.checkbox : null};
+      return {accepted:result.success === true, checkbox:typeof result.checkbox === 'string' ? result.checkbox : null,
+        likeBtn:path === '/like' && typeof result.likeBtn === 'string' ? result.likeBtn : null};
     } catch (error) { if (error === 'rejected') throw error; return {accepted:false}; }
+  };
+  const requireCurrentPage = () => {
+    const visible = new URL(location.href);
+    for (const key of Array.from(visible.searchParams.keys())) if (key.startsWith('__cf_chl_')) visible.searchParams.delete(key);
+    if (!same(visible) || visible.pathname !== expected.pathname || visible.search !== expected.search) throw 'changed';
   };
   const requireOwner = doc => {
     const live = ownProfile(document), fresh = ownProfile(doc);
@@ -382,7 +419,7 @@ const videoSiteOperationBody = r'''
     return enabled;
   };
   if (Object.values(state.jobs).some(job => job.pending)) return { status: 'busy' };
-  if (operation === 'state') return { status: 'ok', ...interaction(document) };
+  if (operation === 'state') return { status: 'ok', ...withRecentVoteTally(interaction(document), document) };
   if (!['downloadChoices', 'reconcileCreatedPlaylist', 'refreshState', 'playlists', 'playlistMembership', 'savePlaylist', 'watchLaterState', 'watchLater', 'comments', 'replies', 'comment', 'reply', 'like', 'dislike', 'follow', 'createPlaylist', 'updatePlaylist', 'deletePlaylist'].includes(operation)) return { status: 'unsupported' };
   const id = typeof requestId === 'string' ? requestId : String(Date.now()) + '-' + Math.random().toString(36).slice(2);
   const job = state.jobs[id] = { pending: true, controller, result: null };
@@ -392,12 +429,18 @@ const videoSiteOperationBody = r'''
     try {
       let result;
       if (operation === 'downloadChoices') {
+        if(expected.pathname!=='/watch' || !/^[0-9]+$/.test(expected.searchParams.get('v') || ''))throw 'unsupported';
+        const owner=ownProfile(document)?.href || '';
         const fresh = parse(await get(expected.href));
+        if((ownProfile(fresh)?.href || '')!==owner)throw 'changed';
+        if(!watchDocument(fresh))throw 'unsupported';
         const link = fresh.querySelector('a#downloadBtn[href]');
         const target = new URL(link?.getAttribute('href') || '', expected);
         if (!link || !same(target) || target.pathname !== '/download' ||
             target.searchParams.get('v') !== expected.searchParams.get('v') || Array.from(target.searchParams.keys()).some(key => key !== 'v')) throw 'unsupported';
         const doc = parse(await get(target.href)), choices = [], seen = new Set();
+        const downloadOwner=ownProfile(doc)?.href;
+        if((ownProfile(document)?.href || '')!==owner || downloadOwner && downloadOwner!==owner)throw 'changed';
         for (const node of Array.from(doc.querySelectorAll('a[data-url][download]')).slice(0,20)) {
           try {
             const url = new URL(node.getAttribute('data-url'));
@@ -423,14 +466,14 @@ const videoSiteOperationBody = r'''
         const doc = parse(await get(expected.href));
         if (ownProfile(doc) && ownProfile(document) && ownProfile(doc).href !== ownProfile(document).href) throw 'changed';
         state.actionDocument = ownProfile(doc) ? doc : null;
-        result = { ...interaction(doc), refreshed: true };
+        result = { ...withRecentVoteTally(interaction(doc), doc), refreshed: true };
       } else if (operation === 'playlists') result = await readPlaylists(payload.page ?? 1);
       else if (operation === 'watchLaterState') {
         const fresh = parse(await get(expected.href));
-        result = { ...interaction(fresh), watchLater: await readMembership('save', fresh), refreshed: true };
+        result = { ...withRecentVoteTally(interaction(fresh), fresh), watchLater: await readMembership('save', fresh), refreshed: true };
       } else if (operation === 'watchLater') {
         const enabled = await saveMembership('save', payload.enabled);
-        result = { ...interaction(document), watchLater: enabled };
+        result = { ...withRecentVoteTally(interaction(document), document), watchLater: enabled };
       } else if (operation === 'playlistMembership' || operation === 'savePlaylist') {
         if (!/^[A-Za-z0-9_-]{1,80}$/.test(payload.id || '') || payload.id === 'save' || !state.playlistPages?.[payload.id]) throw 'unsupported';
         const issued = state.playlistPages[payload.id];
@@ -449,7 +492,7 @@ const videoSiteOperationBody = r'''
         if (state.replies?.[payload.id]?.url !== expected.href) await commentPage(payload.id);
         const form = formFor(state.replies[payload.id].doc, '/replyComment', ['reply-comment-id', 'reply-comment-text']);
         if (form?.querySelector('[name="reply-comment-id"]')?.value !== payload.id) throw 'unsupported';
-        const count = comments(state.replies[payload.id].doc, true).items.filter(c => c.text === payload.text.trim()).length;
+        const count = comments(state.replies[payload.id].doc, true, payload.id).items.filter(c => c.text === payload.text.trim()).length;
         const accepted = await post(form, '/replyComment', { 'reply-comment-text': payload.text.trim() });
         result = await commentPage(payload.id);
         if (!accepted.accepted && result.items.filter(c => c.text === payload.text.trim()).length <= count) throw 'unconfirmed';
@@ -525,7 +568,8 @@ const videoSiteOperationBody = r'''
         // toggle cannot accidentally perform the opposite of the user's intent.
         const initial = payload.enabled === undefined ? document : parse(await get(expected.href));
         if (ownProfile(initial)?.href !== ownProfile(document)?.href) throw 'changed';
-        const before = interaction(initial), vote = operation === 'like' || operation === 'dislike';
+        const before = interaction(initial);
+        const vote = operation === 'like' || operation === 'dislike';
         const dislike = operation === 'dislike';
         if (!(vote ? dislike ? before.canDislike : before.canLike : before.canFollow)) throw own(initial) ? 'unsupported' : 'login';
         const key = vote ? dislike ? 'disliked' : 'liked' : 'following';
@@ -534,15 +578,39 @@ const videoSiteOperationBody = r'''
         const fields = vote ? ['like-foreign-id','like-status','like-user-id'] : ['subscribe-user-id','subscribe-artist-id','subscribe-status'];
         const form = formFor(initial, path, fields);
         let confirmed = initial;
-        if (before[key] === desired) result = before;
+        if (before[key] === desired) result = withRecentVoteTally(before, initial);
         else {
           // Original handlers serialize current states; polarity chooses the vote.
-          await post(form, path, vote ? {'like-is-positive':dislike ? '0' : '1'} : {});
+          const receipt = await post(form, path, vote ? {'like-is-positive':dislike ? '0' : '1'} : {}, vote ? initial : document);
           const doc = parse(await get(expected.href));
-          if (ownProfile(doc)?.href !== ownProfile(initial)?.href) throw 'changed';
+          requireCurrentPage();
+          const owner = ownProfile(initial)?.href;
+          if (!owner || ownProfile(doc)?.href !== owner || ownProfile(document)?.href !== owner) throw 'changed';
           const afterForm = formFor(doc,path,fields);
           if (fieldValue(afterForm,vote ? 'like-foreign-id' : 'subscribe-artist-id') !== fieldValue(form,vote ? 'like-foreign-id' : 'subscribe-artist-id')) throw 'changed';
           result = interaction(doc);
+          if (vote) {
+            state.voteTally = null;
+            // The first-party response replaces its vote form immediately.
+            // Only use its public numbers after an independent GET confirms
+            // both choices for the same user and video.
+            if (receipt.likeBtn && result[key] === desired && result.disliked !== null && result.liked !== null) {
+              const replacement = formFor(parse(receipt.likeBtn), path, fields);
+              const confirmedState = ['like-status', 'unlike-status'].every(name =>
+                ['', '1'].includes(fieldValue(replacement, name)) &&
+                fieldValue(replacement, name) === fieldValue(afterForm, name));
+              const tally = voteTally(replacement);
+              if (confirmedState && tally.positiveVotes !== null && tally.negativeVotes !== null && tally.totalVotes !== null &&
+                  fieldValue(replacement, 'like-foreign-id') === expected.searchParams.get('v') &&
+                  fieldValue(replacement, 'like-user-id') === fieldValue(afterForm, 'like-user-id')) {
+                state.voteTally = { page: expected.href, owner, liked: result.liked, disliked: result.disliked,
+                  previous: before, tally, until: Date.now() + 30000 };
+                result = withRecentVoteTally(result, doc);
+              }
+            }
+          } else {
+            result = withRecentVoteTally(result, doc);
+          }
           confirmed = doc;
         }
         if (!result.signedIn) throw 'login';
@@ -614,15 +682,11 @@ class VideoSiteOperations {
   VideoCommentDraft commentDraft(String? replyId) =>
       _draftGeneration == _drafts.generation
       ? _drafts.read(_draftKey(replyId))
-      : (text: '', unconfirmed: false);
+      : const VideoCommentDraft(text: '');
 
-  void retainCommentDraft(
-    String? replyId,
-    String text, {
-    bool unconfirmed = false,
-  }) {
+  void retainCommentDraft(String? replyId, String text) {
     if (_disposed || _draftGeneration != _drafts.generation) return;
-    _drafts.write(_draftKey(replyId), text, unconfirmed: unconfirmed);
+    _drafts.write(_draftKey(replyId), text);
   }
 
   bool _busy = false, _disposed = false;
@@ -631,15 +695,37 @@ class VideoSiteOperations {
   Completer<void>? _idle;
 
   bool get writeInFlight => _activeWrite;
+  bool get busy => _busy;
+  bool get ownsCommentSession =>
+      !_disposed && _draftGeneration == _drafts.generation;
 
   Future<void> get whenIdle => _idle?.future ?? Future.value();
 
   Future<void> cancelRead() async {
     if (!_busy || _activeWrite) return;
-    _cancelReadRequested = true;
     final pending = whenIdle;
-    _cancelJob();
+    try {
+      await _stopOwnedRead();
+    } catch (_) {
+      // The bounded local run still drops cancelled results. Overlay cleanup
+      // waits for that owner even when the page cannot acknowledge the abort.
+    }
     await pending;
+  }
+
+  Future<void> _stopOwnedRead() async {
+    if (!_busy || _activeWrite) return;
+    _cancelReadRequested = true;
+    final id = _job;
+    if (id == null) return;
+    final result = _decode(
+      await evaluate(
+        videoSiteOperationPollScript(id, cancel: true),
+      ).timeout(const Duration(seconds: 2)),
+    );
+    if (!const {'cancelled', 'changed'}.contains(result['status']))
+      throw StateError('Owned site read did not acknowledge cancellation');
+    if (_job == id) _job = null;
   }
 
   String? _job;
@@ -788,13 +874,45 @@ class VideoSiteOperations {
   Future<VideoSiteResult<VideoCommentThread>> submitComment(
     String text, {
     String? replyId,
-  }) async => _typed(
-    await run(replyId == null ? 'comment' : 'reply', {
-      'text': text,
-      'id': ?replyId,
-    }),
-    VideoCommentThread.fromWire,
-  );
+  }) async {
+    if (_disposed || _draftGeneration != _drafts.generation) {
+      return (
+        status: VideoSiteStatus.changed,
+        value: null,
+        writeUnconfirmed: false,
+      );
+    }
+    final key = _draftKey(replyId), body = text.trim();
+    final current = _drafts.read(key);
+    if (current.unconfirmed && current.text.trim() == body) {
+      return (
+        status: VideoSiteStatus.unconfirmed,
+        value: null,
+        writeUnconfirmed: true,
+      );
+    }
+    // Own the pending submission before crossing into WebKit. The comments
+    // pane can disappear, or the browser can be disposed before readback.
+    final submitted = _drafts.write(key, text, unconfirmed: true);
+    final result = _typed(
+      await run(replyId == null ? 'comment' : 'reply', {
+        'text': body,
+        'id': ?replyId,
+      }),
+      VideoCommentThread.fromWire,
+    );
+    if (_draftGeneration != _drafts.generation) {
+      return (
+        status: VideoSiteStatus.changed,
+        value: null,
+        writeUnconfirmed: false,
+      );
+    }
+    if (result.status != VideoSiteStatus.changed && !result.writeUnconfirmed) {
+      _drafts.settleSubmission(key, submitted, posted: result.value != null);
+    }
+    return result;
+  }
 
   static VideoSiteResult<T> _typed<T>(
     Map<String, dynamic> raw,
@@ -819,6 +937,7 @@ class VideoSiteOperations {
     String operation, [
     Map<String, dynamic> payload = const {},
   ]) async {
+    VideoDownloadResolutionOwner.current?.check();
     if (_disposed) return {'status': 'changed'};
     if (_busy) return {'status': 'busy'};
     final write = const {
@@ -846,6 +965,9 @@ class VideoSiteOperations {
     // Know the browser job before evaluating its start. Even a late or lost
     // start response can then be cancelled when this route is disposed.
     _job = '${DateTime.now().microsecondsSinceEpoch}-${_sequence++}';
+    final removeResolutionCancel = write
+        ? null
+        : VideoDownloadResolutionOwner.current?.onCancel(_stopOwnedRead);
     try {
       var result = _decode(
         await evaluate(
@@ -993,6 +1115,7 @@ class VideoSiteOperations {
       }
       return {'status': write ? 'unconfirmed' : 'network'};
     } finally {
+      removeResolutionCancel?.call();
       _cancelJob();
       _busy = false;
       _activeWrite = false;

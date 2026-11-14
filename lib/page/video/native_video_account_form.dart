@@ -1,11 +1,13 @@
+import 'package:zephyr/widgets/collection_cover_privacy.dart';
 import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:zephyr/widgets/local_appearance_image_picker.dart';
+import 'package:zephyr/widgets/user_image_editor.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:mime/mime.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/login/login_error_message.dart';
 import 'package:zephyr/page/video/video_thumbnail.dart';
 
 typedef VideoAccountFormSubmit =
@@ -61,11 +63,11 @@ class NativeVideoAccountFormState extends State<NativeVideoAccountForm>
   String? _pending, _notice;
   String _originalName = '', _originalEmail = '';
   bool _loading = true, _working = false, _dirty = false;
-  bool _unconfirmed = false;
+  bool _unconfirmed = false, _choosingPhoto = false;
   int _readGeneration = 0, _seconds = 0;
   Timer? _deadline, _otpTimer;
 
-  bool get _busy => _working || widget.submitting;
+  bool get _busy => _working || _choosingPhoto || widget.submitting;
   bool get _hasSecrets =>
       _oldPassword.text.isNotEmpty ||
       _newPassword.text.isNotEmpty ||
@@ -304,6 +306,7 @@ class NativeVideoAccountFormState extends State<NativeVideoAccountForm>
       _pending = operation;
       if (operation == 'profile') _expectedProfile = Map.of(values);
     });
+    var preserveSecrets = false;
     try {
       final result = await widget.submit(operation, values);
       if (!mounted) return;
@@ -316,6 +319,7 @@ class NativeVideoAccountFormState extends State<NativeVideoAccountForm>
         return;
       }
       if (result != 'submitted') {
+        preserveSecrets = result == 'invalid';
         setState(() {
           _working = false;
           _pending = null;
@@ -339,18 +343,28 @@ class NativeVideoAccountFormState extends State<NativeVideoAccountForm>
         });
       });
       if (operation == 'requestOtp') _observeOtpRequest();
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       setState(() {
         _working = false;
-        _unconfirmed = true;
-        _notice = t.videoSiteAccount.unconfirmed;
+        final kind = classifyLoginFailure(error);
+        preserveSecrets = kind == LoginFailureKind.credentials;
+        _unconfirmed = !preserveSecrets;
+        if (preserveSecrets) {
+          _pending = null;
+          _expectedProfile = null;
+        }
+        _notice = kind == LoginFailureKind.unknown
+            ? t.videoSiteAccount.unconfirmed
+            : userFacingLoginFailureMessage(kind);
       });
     } finally {
       // A login redirect can dispose the entire task before JS replies.
       // dispose already clears these controllers; never touch them afterwards.
-      if (mounted && operation == 'password') _clearPasswords();
-      if (mounted && operation == 'verifyOtp') _otp.clear();
+      if (mounted && operation == 'password' && !preserveSecrets) {
+        _clearPasswords();
+      }
+      if (mounted && operation == 'verifyOtp' && !preserveSecrets) _otp.clear();
       if (operation == 'avatar' && mounted) {
         setState(() {
           _photo = null;
@@ -406,31 +420,41 @@ class NativeVideoAccountFormState extends State<NativeVideoAccountForm>
 
   Future<void> _choosePhoto() async {
     if (_busy || _unconfirmed) return;
+    final page = widget.page, generation = _readGeneration;
+    setState(() => _choosingPhoto = true);
     try {
-      final file = await ImagePicker().pickImage(
-        source: ImageSource.gallery,
-        requestFullMetadata: false,
+      final bytes = await pickUserImageBytes();
+      if (bytes == null ||
+          !mounted ||
+          page != widget.page ||
+          generation != _readGeneration) {
+        return;
+      }
+      final prepared = await prepareUserImageForEditing(bytes);
+      if (!mounted || page != widget.page || generation != _readGeneration) {
+        return;
+      }
+      final edited = await showUserImageEditor(
+        context,
+        bytes: prepared,
+        title: t.imageEditor.title,
+        aspectRatio: 1,
       );
-      if (file == null || !mounted) return;
-      final bytes = await file.readAsBytes();
-      if (!mounted) return;
-      final mime = lookupMimeType(file.name, headerBytes: bytes);
-      if (!const [
-        'image/png',
-        'image/gif',
-        'image/jpeg',
-        'image/webp',
-      ].contains(mime)) {
-        setState(() => _notice = t.videoSiteAccount.invalidPhoto);
+      if (edited == null ||
+          !mounted ||
+          page != widget.page ||
+          generation != _readGeneration) {
         return;
       }
       setState(() {
-        _photo = bytes;
-        _photoMime = mime;
+        _photo = edited;
+        _photoMime = 'image/jpeg';
         _notice = null;
       });
     } catch (_) {
       if (mounted) setState(() => _notice = t.videoSiteAccount.invalidPhoto);
+    } finally {
+      if (mounted) setState(() => _choosingPhoto = false);
     }
   }
 
@@ -554,9 +578,12 @@ class NativeVideoAccountFormState extends State<NativeVideoAccountForm>
                               )
                             : (_metadata['avatarUrl']?.toString().isNotEmpty ??
                                   false)
-                            ? VideoThumbnail(
-                                url: _metadata['avatarUrl'].toString(),
-                                referrer: widget.page,
+                            ? CollectionCoverPrivacyScope(
+                                enabled: false,
+                                child: VideoThumbnail(
+                                  url: _metadata['avatarUrl'].toString(),
+                                  referrer: widget.page,
+                                ),
                               )
                             : const Icon(Icons.person_outline, size: 32),
                       ),
@@ -571,8 +598,16 @@ class NativeVideoAccountFormState extends State<NativeVideoAccountForm>
                               : _metadata['avatarReady'] == true
                               ? _choosePhoto
                               : _leaveForWebsite,
-                          icon: const Icon(Icons.photo_library_outlined),
-                          label: Text(t.videoSiteAccount.choosePhoto),
+                          icon: Icon(
+                            _metadata['avatarReady'] == true
+                                ? Icons.photo_library_outlined
+                                : Icons.open_in_new_rounded,
+                          ),
+                          label: Text(
+                            _metadata['avatarReady'] == true
+                                ? t.videoSiteAccount.choosePhoto
+                                : t.sourceProfile.openWebsiteAccount,
+                          ),
                         ),
                       ),
                     ),
@@ -778,10 +813,12 @@ class NativeVideoAccountFormState extends State<NativeVideoAccountForm>
                     icon: const Icon(Icons.refresh),
                     label: Text(t.videoSiteAccount.refresh),
                   ),
-                  TextButton(
-                    onPressed: _busy ? null : _leaveForWebsite,
-                    child: Text(t.videoSiteAccount.website),
-                  ),
+                  if (_metadata['supported'] == true &&
+                      _metadata['avatarReady'] == true)
+                    TextButton(
+                      onPressed: _busy ? null : _leaveForWebsite,
+                      child: Text(t.videoSiteAccount.website),
+                    ),
                 ],
               ),
             ],

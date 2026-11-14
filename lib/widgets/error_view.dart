@@ -1,8 +1,8 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
-import 'package:zephyr/util/error_filter.dart';
 
 class ErrorView extends StatelessWidget {
+  /// Localized or formatted by the caller while it still has the error type.
   final String errorMessage;
   final VoidCallback onRetry;
 
@@ -19,7 +19,7 @@ class ErrorView extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: <Widget>[
           Text(
-            userFacingErrorMessage(errorMessage),
+            errorMessage,
             maxLines: 5,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(fontSize: 20),

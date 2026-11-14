@@ -52,10 +52,10 @@ class EpisodeDownloadStatusState {
 
   bool isDownloaded(DownloadChapter chapter) {
     // O(1)：已下载集合里存的就是 DownloadChapter.id，章节的
-    // id / requestId / order 字符串任一命中即视为已下载。
+    // id / requestId 精确匹配；展示顺序不能作为另一个章节的身份。
     if (downloadedIds.contains(chapter.id)) return true;
     if (downloadedIds.contains(chapter.effectiveRequestId)) return true;
-    return downloadedIds.contains(chapter.order.toString());
+    return false;
   }
 
   /// 章节行按 已下载 > 下载中 > 排队中 > 失败 > 未下载 的优先级显示状态。

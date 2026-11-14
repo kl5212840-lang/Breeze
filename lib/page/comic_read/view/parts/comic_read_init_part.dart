@@ -11,6 +11,7 @@ extension _ComicReadInitPart on _ComicReadPageState {
       readerCubit: context.read<ReaderCubit>(),
       pageController: _pageController,
       transformationController: _transformationController,
+      vsync: this,
       onToggleMenu: _toggleVisibility,
       onToggleDesktopFullscreen: _lifecycleController.toggleDesktopFullscreen,
       onRefreshState: () => _refreshState(() {}),
@@ -87,6 +88,79 @@ extension _ComicReadInitPart on _ComicReadPageState {
     final perComicCubit = context.read<ComicReadPreferenceCubit>();
     final readerCubit = context.read<ReaderCubit>();
     final seamlessCubit = context.read<ReaderSeamlessCubit>();
+    ReadSettingState effectiveSetting() =>
+        ComicReadPreferenceService.resolveEffective(
+          globalSettingCubit.state.readSetting,
+          perComicCubit.state.override,
+        );
+    (int, int, bool, bool)? lastChapterSlot;
+    ReaderSeamlessState? lastSeamlessState;
+    var lastChapterPages = const <ReaderChapterPage>[];
+    List<ReaderChapterPage> chapterPages(int slot, ReadSettingState setting) {
+      final state = seamlessCubit.state;
+      final key = (
+        slot,
+        setting.readMode,
+        setting.doublePageMode,
+        setting.doublePageLeadingBlank,
+      );
+      if (key != lastChapterSlot || !identical(state, lastSeamlessState)) {
+        lastChapterPages = _resolveChapterPages(seamlessCubit, slot, setting);
+        lastChapterSlot = key;
+        lastSeamlessState = state;
+      }
+      return lastChapterPages;
+    }
+
+    final decodedPages = <(String, int)>{};
+    HistorySnapshot? lastDecodedSnapshot;
+    List<ReaderChapterPage> displayedPages(int slot, ReadSettingState setting) {
+      final pages = chapterPages(slot, setting);
+      return [
+        for (final page in pages)
+          if (decodedPages.contains((page.chapterId, page.pageIndex)))
+            (
+              chapterId: page.chapterId,
+              pageIndex: page.pageIndex,
+              lastVisiblePage:
+                  decodedPages.contains((page.chapterId, page.lastVisiblePage))
+                  ? page.lastVisiblePage
+                  : page.pageIndex,
+              pageCount: page.pageCount,
+            ),
+      ];
+    }
+
+    HistorySnapshot? decodedSnapshot(List<ReaderChapterPage> pages) {
+      if (pages.isEmpty) return lastDecodedSnapshot;
+      final primary = pages.first;
+      final chapter = seamlessCubit.state.loadedChapters
+          .where((chapter) => chapter.epInfo.epId == primary.chapterId)
+          .firstOrNull;
+      return lastDecodedSnapshot = HistorySnapshot(
+        pageIndex: primary.pageIndex + 1,
+        chapterOrder: chapter?.order ?? widget.order,
+        epInfo: chapter?.epInfo ?? _initialEpInfo,
+        chapterPages: pages,
+      );
+    }
+
+    _observeChapterPages = (slot) {
+      final setting = effectiveSetting();
+      _historyController.observePages(() {
+        final pages = displayedPages(slot, setting);
+        decodedSnapshot(pages);
+        return pages;
+      });
+    };
+    _onPageDecoded = (chapter, page) {
+      final key = (chapter, page);
+      decodedPages
+        ..remove(key)
+        ..add(key);
+      if (decodedPages.length > 128) decodedPages.remove(decodedPages.first);
+      _observeChapterPages(readerCubit.state.currentSlot);
+    };
 
     _historyController = ReaderHistoryController(
       comicId: comicId,
@@ -94,30 +168,81 @@ extension _ComicReadInitPart on _ComicReadPageState {
       from: widget.from,
       comicInfo: widget.comicInfo,
       stringSelectCubit: context.read<StringSelectCubit>(),
-      getStoredPageIndex: () {
-        final setting = ComicReadPreferenceService.resolveEffective(
-          globalSettingCubit.state.readSetting,
-          perComicCubit.state.override,
-        );
-        final globalSlotIndex = readerCubit.state.currentSlot;
-        final slotIndex = seamlessCubit.isSeamlessEnabled()
-            ? seamlessCubit.mapGlobalToLocalSlot(globalSlotIndex)
-            : globalSlotIndex;
-        final enableDoublePage = setting.doublePageMode;
-        return getStoredHistoryPageIndex(
-          slotIndex: slotIndex,
-          enableDoublePage: enableDoublePage,
-          insertLeadingBlank:
-              enableDoublePage && setting.doublePageLeadingBlank,
-        );
+      getSnapshot: () => decodedSnapshot(
+        displayedPages(readerCubit.state.currentSlot, effectiveSetting()),
+      ),
+      getEntryChapterId: () => _initialEpInfo.epId,
+      getEntryPageCount: () => _initialEpInfo.docs.length,
+      getEntryChapterKeys: () {
+        final download = comicInfo;
+        return download is UnifiedComicDownload
+            ? localDownloadChapterHistoryKeys(download, _initialEpInfo.epId)
+            : [_initialEpInfo.epId];
       },
-      getCurrentChapterOrder: () => _jumpChapter.order,
-      getEpInfo: () => epInfo,
       isHistoryEntry: () => _isHistory,
-      jumpToGlobalSlot: (target) => _jumpToGlobalSlot(target),
+      isDownloadEntry: () => _isOffline,
+      jumpToGlobalSlot: (target) async {
+        await _jumpToGlobalSlot(
+          target,
+          isStillActive: () => _historyController.ownsSession,
+        );
+        await WidgetsBinding.instance.endOfFrame;
+      },
     );
 
     unawaited(_historyController.init());
+  }
+
+  List<ReaderChapterPage> _resolveChapterPages(
+    ReaderSeamlessCubit seamless,
+    int slot,
+    ReadSettingState setting,
+  ) {
+    if (!seamless.isSeamlessEnabled()) {
+      final pageCount = _initialEpInfo.docs.length;
+      final doublePage = setting.doublePageMode;
+      final leadingBlank = doublePage && setting.doublePageLeadingBlank;
+      final page = getDisplayPageNumber(
+        slotIndex: slot,
+        enableDoublePage: doublePage,
+        insertLeadingBlank: leadingBlank,
+      );
+      if (slot < 0 || page > pageCount) return const [];
+      final spread = doublePage && (!leadingBlank || slot > 0);
+      return [
+        (
+          chapterId: _initialEpInfo.epId,
+          pageIndex: page,
+          lastVisiblePage: spread && page < pageCount ? page + 1 : page,
+          pageCount: pageCount,
+        ),
+      ];
+    }
+
+    final images = seamless.resolveHistorySlotImages(slot, setting);
+    if (images == null) return const [];
+    final (first, second) = images;
+    ReaderChapterPage? progress(ReadModeEntry entry, ReadModeEntry? trailing) {
+      final chapter = seamless.state.loadedChapters
+          .where((chapter) => chapter.order == entry.chapterOrder)
+          .firstOrNull;
+      final page = entry.chapterPageIndex! + 1;
+      if (chapter == null) return null;
+      return (
+        chapterId: chapter.epInfo.epId,
+        pageIndex: page,
+        lastVisiblePage: trailing == null
+            ? page
+            : trailing.chapterPageIndex! + 1,
+        pageCount: chapter.epInfo.docs.length,
+      );
+    }
+
+    final sameChapter = second?.chapterOrder == first.chapterOrder;
+    return [
+      ?progress(first, sameChapter ? second : null),
+      if (second != null && !sameChapter) ?progress(second, null),
+    ];
   }
 
   // 初始化生命周期控制器，订阅菜单/设置变化并执行首帧同步。

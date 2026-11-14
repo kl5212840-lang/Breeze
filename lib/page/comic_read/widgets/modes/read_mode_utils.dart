@@ -99,48 +99,64 @@ class ReadModeDoublePageSlot {
 /// 规则：
 /// - 遇到过渡条目单独占一个槽位；
 /// - 普通图片两两合并为一个槽位（左 + 可选右），若下一条是过渡则右侧为空；
-/// - [insertLeadingBlank] 为 true 时，每个连续图片段开头先插入「空白 | 首页」。
+/// - 不跨章拼双页。启用 [insertLeadingBlank] 时每章以「空白 | 首页」开始。
 List<ReadModeDoublePageSlot> buildReadModeDoublePageSlots(
   List<ReadModeEntry> entries, {
   bool insertLeadingBlank = false,
 }) {
   final slots = <ReadModeDoublePageSlot>[];
-  var i = 0;
-  var needLeadingBlank = insertLeadingBlank;
-  while (i < entries.length) {
-    final current = entries[i];
-    if (current.type == ReadModeEntryType.transition) {
-      slots.add(
-        ReadModeDoublePageSlot.transition(
-          ReadModeSlotItem(entryIndex: i, entry: current),
-        ),
-      );
-      i++;
-      needLeadingBlank = insertLeadingBlank;
-      continue;
-    }
-
-    if (needLeadingBlank) {
-      slots.add(
-        ReadModeDoublePageSlot.images(
-          right: ReadModeSlotItem(entryIndex: i, entry: current),
-        ),
-      );
-      i++;
-      needLeadingBlank = false;
-      continue;
-    }
-
-    final left = ReadModeSlotItem(entryIndex: i, entry: current);
-    i++;
-    ReadModeSlotItem? right;
-    if (i < entries.length && entries[i].type == ReadModeEntryType.image) {
-      right = ReadModeSlotItem(entryIndex: i, entry: entries[i]);
-      i++;
-    }
-    slots.add(ReadModeDoublePageSlot.images(left: left, right: right));
-  }
+  forEachReadModeSlot(
+    entries: entries,
+    enableDoublePage: true,
+    insertLeadingBlank: insertLeadingBlank,
+    onSlot: (_, primary, secondary) {
+      final entry = entries[primary];
+      final first = ReadModeSlotItem(entryIndex: primary, entry: entry);
+      if (entry.type == ReadModeEntryType.transition) {
+        slots.add(ReadModeDoublePageSlot.transition(first));
+      } else if (insertLeadingBlank && entry.chapterPageIndex == 0) {
+        slots.add(ReadModeDoublePageSlot.images(right: first));
+      } else {
+        slots.add(
+          ReadModeDoublePageSlot.images(
+            left: first,
+            right: secondary == null
+                ? null
+                : ReadModeSlotItem(
+                    entryIndex: secondary,
+                    entry: entries[secondary],
+                  ),
+          ),
+        );
+      }
+    },
+  );
   return slots;
+}
+
+/// The chapter is the pairing boundary even when no transition is shown.
+void forEachReadModeSlot({
+  required List<ReadModeEntry> entries,
+  required bool enableDoublePage,
+  required bool insertLeadingBlank,
+  required void Function(int slot, int primary, int? secondary) onSlot,
+}) {
+  var index = 0;
+  var slot = 0;
+  while (index < entries.length) {
+    final primary = index++;
+    final entry = entries[primary];
+    int? secondary;
+    if (enableDoublePage &&
+        entry.type == ReadModeEntryType.image &&
+        !(insertLeadingBlank && entry.chapterPageIndex == 0) &&
+        index < entries.length &&
+        entries[index].type == ReadModeEntryType.image &&
+        entries[index].chapterOrder == entry.chapterOrder) {
+      secondary = index++;
+    }
+    onSlot(slot++, primary, secondary);
+  }
 }
 
 /// 为 [entry] 构建一个居中的过渡卡片容器。

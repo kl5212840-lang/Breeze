@@ -1,10 +1,13 @@
-import 'package:zephyr/widgets/comic_simplify_entry/selection_badge.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/object_box/model.dart';
+import 'package:zephyr/page/bookshelf/bloc/folder_shelf_state.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_content_layout.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_folder_card.dart';
 import 'package:zephyr/type/pipe.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
-import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry.dart'
-    show kComicCardBorderRadius;
+import 'package:zephyr/service/folder_cover_identity.dart';
+import 'package:zephyr/widgets/folder_cover_menu.dart';
+import 'package:zephyr/service/folder_cover_service.dart';
 
 class FolderShelfItem extends StatelessWidget {
   const FolderShelfItem({
@@ -15,164 +18,42 @@ class FolderShelfItem extends StatelessWidget {
     this.onSecondaryTapDown,
     this.selectionMode = false,
     this.isSelected = false,
+    this.count,
+    this.subtitle = '',
+    this.view = BookshelfContentView.grid,
+    this.canEditCover,
+    this.menu,
   });
-
   final ComicFolder folder;
+  final ComicShelfFolderCount? count;
   final VoidCallback? onTap;
   final GestureLongPressStartCallback? onLongPress;
   final GestureTapDownCallback? onSecondaryTapDown;
-  final bool selectionMode;
-  final bool isSelected;
+  final bool selectionMode, isSelected;
+  final String subtitle;
+  final BookshelfContentView view;
+  final bool Function()? canEditCover;
+  final Widget? menu;
 
   @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final height = width / 0.75;
-        final theme = Theme.of(context);
-        final colorScheme = theme.colorScheme;
-
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onTap,
-          onLongPressStart: onLongPress,
-          onSecondaryTapDown: onSecondaryTapDown,
-          child: SizedBox(
-            width: width,
-            height: height,
-            child: Card(
-              margin: EdgeInsets.zero,
-              elevation: isSelected ? 4 : 2,
-              shadowColor: Colors.black.withValues(alpha: 0.12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(kComicCardBorderRadius),
-                side: isSelected
-                    ? BorderSide(color: colorScheme.primary, width: 2.5)
-                    : BorderSide(
-                        color: colorScheme.outline.withValues(alpha: 0.12),
-                        width: 1,
-                      ),
-              ),
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(kComicCardBorderRadius),
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      isSelected
-                          ? colorScheme.primaryContainer
-                          : colorScheme.surfaceContainerHighest.withValues(
-                              alpha: 0.7,
-                            ),
-                      colorScheme.surfaceContainerHighest.withValues(
-                        alpha: 0.3,
-                      ),
-                    ],
-                  ),
-                ),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    // 文件夹图标
-                    Center(
-                      child: Icon(
-                        Icons.folder_rounded,
-                        size: width * 0.42,
-                        color: colorScheme.primary.withValues(alpha: 0.72),
-                      ),
-                    ),
-                    // 底部标题渐变遮罩
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              Colors.transparent,
-                              Colors.black.withValues(alpha: 0.68),
-                            ],
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            stops: const [0.0, 0.75],
-                          ),
-                          borderRadius: const BorderRadius.only(
-                            bottomLeft: Radius.circular(kComicCardBorderRadius),
-                            bottomRight: Radius.circular(
-                              kComicCardBorderRadius,
-                            ),
-                          ),
-                        ),
-                        padding: const EdgeInsets.fromLTRB(8, 24, 8, 8),
-                        child: Text(
-                          folder.name.let(convertChineseForDisplay),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                            shadows: [
-                              Shadow(
-                                offset: Offset(0, 1),
-                                blurRadius: 3,
-                                color: Colors.black54,
-                              ),
-                            ],
-                          ),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.start,
-                        ),
-                      ),
-                    ),
-                    // 选择指示器
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: ComicSelectionBadge(
-                        visible: selectionMode,
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 180),
-                          width: 28,
-                          height: 28,
-                          decoration: BoxDecoration(
-                            color: isSelected
-                                ? colorScheme.primary
-                                : colorScheme.surface,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                              color: colorScheme.surface,
-                              width: 2,
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.25),
-                                blurRadius: 6,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: Icon(
-                            isSelected
-                                ? Icons.check_rounded
-                                : Icons.radio_button_unchecked_rounded,
-                            color: isSelected
-                                ? colorScheme.onPrimary
-                                : colorScheme.onSurfaceVariant,
-                            size: 18,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
+  Widget build(BuildContext context) => BookshelfFolderCard(
+    title: folder.name.let(convertChineseForDisplay),
+    imageKey: FolderCoverIdentity.comic(folder.syncId),
+    menu:
+        menu ??
+        FolderCoverMenu(
+          onCover: view == BookshelfContentView.grid,
+          target: FolderCoverService.comic(folder, canRun: canEditCover),
+          canRun: canEditCover,
+        ),
+    subtitle: subtitle,
+    workCount: count?.works,
+    subfolderCount: count?.subfolders,
+    view: view,
+    onTap: onTap,
+    onLongPress: onLongPress,
+    onSecondaryTapDown: onSecondaryTapDown,
+    selectionMode: selectionMode,
+    isSelected: isSelected,
+  );
 }

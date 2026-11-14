@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/login/login_error_message.dart';
+import 'package:zephyr/page/video/video_account_credentials.dart';
 
 class NativeVideoAuthForm extends StatefulWidget {
   const NativeVideoAuthForm({
@@ -14,10 +16,28 @@ class NativeVideoAuthForm extends StatefulWidget {
     this.onForgotPassword,
     this.onExternalAuthentication,
     this.siteRejected = false,
+    this.siteErrorKind = '',
     this.revision = 0,
+    this.credentials,
+    this.loginUsername,
+    this.saveCredentials,
+    this.clearCredentials,
+    this.accountIsEmail = true,
+    this.verification,
+    this.allowRegistration = true,
+    this.allowRetryAfterRejection = false,
+    this.saveAccountLabel,
   });
+  final bool accountIsEmail, allowRegistration, allowRetryAfterRejection;
+  final Widget? verification;
+  final String? saveAccountLabel;
+  final String? loginUsername;
+  final VideoAccountCredentials? credentials;
+  final Future<void> Function(String, String)? saveCredentials;
+  final Future<void> Function()? clearCredentials;
   final bool registration, hasRemember, siteRejected;
   final int revision;
+  final String siteErrorKind;
   final Future<String> Function(
     String email,
     String password,
@@ -39,10 +59,29 @@ class _NativeVideoAuthFormState extends State<NativeVideoAuthForm> {
   final _name = TextEditingController();
   final _password = TextEditingController();
   bool _remember = false, _busy = false, _visible = false;
-  bool _unconfirmed = false;
+  bool _unconfirmed = false, _rememberCredentials = false;
   int _submissionRevision = 0;
   Timer? _deadline;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _unconfirmed =
+        widget.siteRejected &&
+        widget.siteErrorKind != LoginFailureKind.credentials.name &&
+        !widget.allowRetryAfterRejection;
+    final saved = widget.credentials;
+    if (!widget.registration) {
+      if (widget.loginUsername case final name?) {
+        _email.text = name;
+      } else if (saved != null) {
+        _email.text = saved.account;
+        _password.text = saved.password;
+        _rememberCredentials = true;
+      }
+    }
+  }
 
   @override
   void didUpdateWidget(covariant NativeVideoAuthForm oldWidget) {
@@ -51,7 +90,10 @@ class _NativeVideoAuthFormState extends State<NativeVideoAuthForm> {
       _submissionRevision++;
       _deadline?.cancel();
       _busy = false;
-      _unconfirmed = false;
+      _unconfirmed =
+          widget.siteRejected &&
+          widget.siteErrorKind != LoginFailureKind.credentials.name &&
+          !widget.allowRetryAfterRejection;
       _error = null;
     }
   }
@@ -73,7 +115,17 @@ class _NativeVideoAuthFormState extends State<NativeVideoAuthForm> {
       _busy = true;
       _error = null;
     });
+    var sending = false;
     try {
+      if (_rememberCredentials && widget.saveCredentials != null) {
+        await widget.saveCredentials!(_email.text.trim(), _password.text);
+      }
+      if (!_rememberCredentials &&
+          widget.credentials != null &&
+          widget.clearCredentials != null) {
+        await widget.clearCredentials!();
+      }
+      sending = true;
       final result = await widget.submit(
         _email.text.trim(),
         _password.text,
@@ -104,11 +156,16 @@ class _NativeVideoAuthFormState extends State<NativeVideoAuthForm> {
       }
       // A successful submission is not proof of login. Site navigation or
       // validation will replace/update this form; the host checks identity.
-    } catch (_) {
+    } catch (error) {
       if (mounted && revision == _submissionRevision) {
         setState(() {
-          _error = t.videoCommunity.authUnconfirmed;
-          _unconfirmed = true;
+          final kind = classifyLoginFailure(error);
+          _error = !sending
+              ? t.error.saveFailed
+              : kind == LoginFailureKind.unknown
+              ? t.videoCommunity.authUnconfirmed
+              : userFacingLoginFailureMessage(kind);
+          _unconfirmed = sending && kind != LoginFailureKind.credentials;
         });
       }
     } finally {
@@ -144,16 +201,29 @@ class _NativeVideoAuthFormState extends State<NativeVideoAuthForm> {
               TextFormField(
                 controller: _email,
                 enabled: !_busy,
-                autofillHints: const [AutofillHints.email],
-                keyboardType: TextInputType.emailAddress,
+                autofillHints: [
+                  widget.accountIsEmail
+                      ? AutofillHints.email
+                      : AutofillHints.username,
+                ],
+                keyboardType: widget.accountIsEmail
+                    ? TextInputType.emailAddress
+                    : TextInputType.text,
                 textInputAction: TextInputAction.next,
                 autocorrect: false,
-                decoration: InputDecoration(labelText: t.videoCommunity.email),
-                validator: (v) =>
-                    v == null ||
-                        !RegExp(
-                          r'^[^\s@]+@[^\s@]+\.[^\s@]+$',
-                        ).hasMatch(v.trim())
+                decoration: InputDecoration(
+                  labelText: widget.accountIsEmail
+                      ? t.videoCommunity.email
+                      : t.videoCommunity.displayName,
+                ),
+                validator: (v) => !widget.accountIsEmail
+                    ? (v?.trim().isNotEmpty == true
+                          ? null
+                          : t.videoCommunity.required)
+                    : v == null ||
+                          !RegExp(
+                            r'^[^\s@]+@[^\s@]+\.[^\s@]+$',
+                          ).hasMatch(v.trim())
                     ? t.videoCommunity.invalidEmail
                     : null,
               ),
@@ -202,6 +272,10 @@ class _NativeVideoAuthFormState extends State<NativeVideoAuthForm> {
                     v?.isNotEmpty != true ? t.videoCommunity.required : null,
                 onFieldSubmitted: (_) => unawaited(_submit()),
               ),
+              if (widget.verification != null) ...[
+                const SizedBox(height: 16),
+                widget.verification!,
+              ],
               if (widget.hasRemember)
                 CheckboxListTile(
                   contentPadding: EdgeInsets.zero,
@@ -212,12 +286,31 @@ class _NativeVideoAuthFormState extends State<NativeVideoAuthForm> {
                       ? null
                       : (v) => setState(() => _remember = v == true),
                 ),
+              if (!widget.registration && widget.saveCredentials != null)
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: _rememberCredentials,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: Text(
+                    widget.saveAccountLabel ??
+                        t.videoCommunity.rememberCredentials,
+                  ),
+                  onChanged: _busy
+                      ? null
+                      : (v) => setState(() => _rememberCredentials = v == true),
+                ),
               if (_error != null || widget.siteRejected) ...[
                 const SizedBox(height: 16),
                 Semantics(
                   liveRegion: true,
                   child: Text(
-                    _error ?? t.videoCommunity.authFailed,
+                    _error ??
+                        (loginFailureKindFromCode(widget.siteErrorKind) ==
+                                LoginFailureKind.unknown
+                            ? t.videoCommunity.authFailed
+                            : userFacingLoginFailureMessage(
+                                loginFailureKindFromCode(widget.siteErrorKind),
+                              )),
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.error,
                     ),
@@ -236,14 +329,15 @@ class _NativeVideoAuthFormState extends State<NativeVideoAuthForm> {
                 ),
               ),
               const SizedBox(height: 8),
-              TextButton(
-                onPressed: _busy ? null : widget.onChangeMode,
-                child: Text(
-                  widget.registration
-                      ? t.videoCommunity.haveAccount
-                      : t.videoCommunity.createAccount,
+              if (widget.allowRegistration)
+                TextButton(
+                  onPressed: _busy ? null : widget.onChangeMode,
+                  child: Text(
+                    widget.registration
+                        ? t.videoCommunity.haveAccount
+                        : t.videoCommunity.createAccount,
+                  ),
                 ),
-              ),
               if (!widget.registration && widget.onForgotPassword != null)
                 TextButton(
                   onPressed: _busy ? null : widget.onForgotPassword,

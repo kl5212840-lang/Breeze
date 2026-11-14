@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result};
 use flutter_rust_bridge::frb;
@@ -49,7 +49,12 @@ pub async fn create_data_backup_zip(
                 }
             }
 
-            zip.finish()
+            let mut writer = zip
+                .finish()
+                .context(rquickjs_playground::tr!("failed-to-finish-zip-write"))?;
+            // BufWriter's drop ignores its last write error (e.g. full disk).
+            writer
+                .flush()
                 .context(rquickjs_playground::tr!("failed-to-finish-zip-write"))?;
             Ok::<(), anyhow::Error>(())
         })
@@ -113,8 +118,18 @@ pub async fn extract_data_backup_zip(zip_path: String, extract_dir: String) -> R
 
                 let entry_path = entry.name().to_string();
 
-                // 简单防御 zip slip：拒绝包含 .. 的路径
-                if entry_path.split('/').any(|s| s == "..") {
+                // Backup entries are relative ZIP paths on every platform.
+                // An absolute path makes PathBuf::join discard extract_root.
+                let relative = Path::new(&entry_path);
+                if entry_path.contains('\\')
+                    || relative.is_absolute()
+                    || relative.components().any(|part| {
+                        matches!(
+                            part,
+                            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                        )
+                    })
+                {
                     anyhow::bail!(rquickjs_playground::tr!(
                         "found-illegal-zip-entry-path",
                         arg0 = entry_path
@@ -229,7 +244,8 @@ fn add_file_to_zip<W: Write + std::io::Seek>(
         rquickjs_playground::tr!("failed-to-open-file-2", arg0 = src_path.display())
     })?;
 
-    zip.start_file(zip_name, *options)
+    let len = src_file.metadata()?.len();
+    zip.start_file(zip_name, file_options(*options, len))
         .with_context(|| rquickjs_playground::tr!("failed-to-create-zip-entry", arg0 = zip_name))?;
 
     let mut buffer = [0u8; 64 * 1024];
@@ -246,4 +262,156 @@ fn add_file_to_zip<W: Write + std::io::Seek>(
     }
 
     Ok(())
+}
+
+fn file_options(options: FileOptions<'_, ()>, len: u64) -> FileOptions<'_, ()> {
+    // The archive's central directory switches to ZIP64 automatically; an
+    // individual stored entry needs the larger local header before streaming.
+    options.large_file(len >= zip::ZIP64_BYTES_THR)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct TempDir(PathBuf);
+    impl TempDir {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "breeze-backup-zip-test-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+        fn path(&self, name: &str) -> PathBuf {
+            self.0.join(name)
+        }
+    }
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn backup_zip_uses_zip64_entry_headers_only_at_the_size_boundary() {
+        for (declared_size, expected_zip64) in [
+            (zip::ZIP64_BYTES_THR - 1, false),
+            (zip::ZIP64_BYTES_THR, true),
+            (zip::ZIP64_BYTES_THR + 1, true),
+        ] {
+            // A tiny payload exercises the real ZIP writer/reader while the
+            // simulated file length exercises the header selection boundary.
+            let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
+            let options =
+                FileOptions::<()>::default().compression_method(CompressionMethod::Stored);
+            zip.start_file("video.mp4", file_options(options, declared_size))
+                .unwrap();
+            zip.write_all(b"fixture").unwrap();
+            let cursor = zip.finish().unwrap();
+            let extra_length = u16::from_le_bytes([cursor.get_ref()[28], cursor.get_ref()[29]]);
+            assert_eq!(extra_length == 20, expected_zip64);
+            let mut archive = zip::ZipArchive::new(cursor).unwrap();
+            let mut value = String::new();
+            archive
+                .by_name("video.mp4")
+                .unwrap()
+                .read_to_string(&mut value)
+                .unwrap();
+            assert_eq!(value, "fixture");
+        }
+    }
+
+    #[tokio::test]
+    async fn backup_zip_roundtrip_includes_portable_data_and_rejects_parent_path() {
+        let temp = TempDir::new();
+        let source = temp.path("source");
+        std::fs::create_dir(&source).unwrap();
+        let fixtures = [
+            (
+                "config.json",
+                r#"{"version":"fixture","includeDownloads":false}"#,
+            ),
+            ("objectbox.json", r#"{"pluginConfig":[]}"#),
+            (
+                "portable-data.json",
+                r#"{"format":"breeze-portable-data","version":1,"preferences":{},"videoLibrary":{}}"#,
+            ),
+        ];
+        for (name, contents) in fixtures {
+            std::fs::write(source.join(name), contents).unwrap();
+        }
+        let zip = temp.path("backup.zip");
+        let extracted = temp.path("extracted");
+        create_data_backup_zip(
+            zip.to_string_lossy().into_owned(),
+            source.to_string_lossy().into_owned(),
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            read_data_backup_config(zip.to_string_lossy().into_owned())
+                .await
+                .unwrap(),
+            fixtures[0].1
+        );
+        extract_data_backup_zip(
+            zip.to_string_lossy().into_owned(),
+            extracted.to_string_lossy().into_owned(),
+        )
+        .await
+        .unwrap();
+        for (name, contents) in fixtures {
+            assert_eq!(
+                std::fs::read_to_string(extracted.join(name)).unwrap(),
+                contents
+            );
+        }
+
+        let bad_zip = temp.path("bad.zip");
+        let mut bad = ZipWriter::new(File::create(&bad_zip).unwrap());
+        bad.start_file("../escape.txt", FileOptions::<()>::default())
+            .unwrap();
+        bad.write_all(b"fixture").unwrap();
+        bad.finish().unwrap();
+        assert!(
+            extract_data_backup_zip(
+                bad_zip.to_string_lossy().into_owned(),
+                temp.path("bad-extracted").to_string_lossy().into_owned()
+            )
+            .await
+            .is_err()
+        );
+        assert!(!temp.path("escape.txt").exists());
+        for (index, name) in [
+            temp.path("absolute.txt").to_string_lossy().into_owned(),
+            "..\\escape.txt".to_string(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let path = temp.path(&format!("invalid-{index}.zip"));
+            let mut zip = ZipWriter::new(File::create(&path).unwrap());
+            zip.start_file(name, FileOptions::<()>::default()).unwrap();
+            zip.write_all(b"fixture").unwrap();
+            zip.finish().unwrap();
+            assert!(
+                extract_data_backup_zip(
+                    path.to_string_lossy().into_owned(),
+                    temp.path("invalid-extracted")
+                        .to_string_lossy()
+                        .into_owned()
+                )
+                .await
+                .is_err()
+            );
+        }
+        assert!(!temp.path("absolute.txt").exists());
+    }
 }

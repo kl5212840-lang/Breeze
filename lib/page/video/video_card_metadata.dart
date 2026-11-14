@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_public_metadata.dart';
 import 'package:zephyr/page/video/video_thumbnail.dart';
+import 'package:zephyr/page/video/video_cover_overlay.dart';
 
 /// The same source duration badge is used by catalog, shelf and detail cards.
 /// Episode selection stays in the opposite corner and has independent meaning.
@@ -18,64 +19,34 @@ class VideoCardCover extends StatelessWidget {
   final VideoPublicMetadata metadata;
   final bool current;
   @override
-  Widget build(BuildContext context) => Stack(
-    fit: StackFit.expand,
-    children: [
-      VideoThumbnail(url: url, referrer: referrer),
-      if (metadata.duration case final duration?)
-        PositionedDirectional(
-          bottom: 4,
-          start: 4,
-          end: 4,
-          child: Align(
-            alignment: AlignmentDirectional.centerEnd,
-            child: Tooltip(
-              message: t.videoMetadata.duration(value: duration),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: .76),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 4,
-                    vertical: 2,
-                  ),
-                  child: Text(
-                    duration,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: Colors.white,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
+  Widget build(BuildContext context) => VideoCoverOverlay(
+    durationText: metadata.duration ?? '',
+    child: Stack(
+      fit: StackFit.expand,
+      children: [
+        VideoThumbnail(url: url, referrer: referrer),
+        if (current)
+          PositionedDirectional(
+            top: 4,
+            start: 4,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                child: Text(
+                  t.videoPlayback.currentEpisode,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
                   ),
                 ),
               ),
             ),
           ),
-        ),
-      if (current)
-        PositionedDirectional(
-          top: 4,
-          start: 4,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primaryContainer,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-              child: Text(
-                t.videoPlayback.currentEpisode,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onPrimaryContainer,
-                ),
-              ),
-            ),
-          ),
-        ),
-    ],
+      ],
+    ),
   );
 }
 
@@ -106,6 +77,10 @@ class VideoCardFacts extends StatelessWidget {
         t.videoMetadata.views(value: value),
       if (metadata.ratingLabel case final value?)
         t.videoMetadata.rating(value: value),
+      if (metadata.positiveVotes case final value?)
+        t.videoMetadata.positiveVotes(count: value),
+      if (metadata.totalVotes case final value?)
+        t.videoMetadata.totalVotes(count: value),
     ].join(' · ');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

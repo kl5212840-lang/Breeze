@@ -2,8 +2,7 @@ import 'dart:convert';
 
 import 'package:minio/minio.dart';
 import 'package:zephyr/config/global/global.dart';
-
-import 'package:zephyr/main.dart';
+import 'package:zephyr/network/http/wind_http.dart';
 
 Future<void> testWebDavServer(
   String host,
@@ -20,33 +19,21 @@ Future<void> testWebDavServer(
     receiveTimeout: const Duration(seconds: 10),
   );
 
-  try {
-    logger.d('请求 URL: ${client.baseUrl}\n请求头: ${client.defaultHeaders}');
+  final response = await client.fetch('/', method: 'OPTIONS');
+  final code = response.status;
+  if (code < 200 || code >= 300) {
+    throw Exception('WebDAV 服务返回异常状态码: $code');
+  }
 
-    final response = await client.fetch('/', method: 'OPTIONS');
+  final propfindResponse = await client.fetch(
+    '/${appName}_$syncVersion/',
+    method: 'PROPFIND',
+    headers: {'Depth': '0'},
+  );
 
-    final code = response.status;
-    if (code < 200 || code >= 300) {
-      throw Exception('WebDAV 服务返回异常状态码: ${response.status}');
-    }
-
-    final propfindResponse = await client.fetch(
-      '/${appName}_$syncVersion/',
-      method: 'PROPFIND',
-      headers: {'Depth': '0'},
-    );
-
-    final propfindCode = propfindResponse.status;
-    if (propfindCode == 207 || propfindCode == 404) {
-      logger.d(
-        'WebDAV 服务可用\n支持的 HTTP 方法: ${response.header('allow') ?? response.headers['allow']}',
-      );
-      return;
-    }
-
+  final propfindCode = propfindResponse.status;
+  if (propfindCode != 207 && propfindCode != 404) {
     throw Exception('WebDAV PROPFIND 检查失败，状态码: $propfindCode');
-  } catch (e) {
-    throw Exception('连接失败: $e');
   }
 }
 
@@ -79,13 +66,9 @@ Future<void> testS3Server({
     pathStyle: pathStyle,
   );
 
-  try {
-    final exists = await minio.bucketExists(bucket);
-    if (!exists) {
-      throw Exception('S3 Bucket 不存在或没有访问权限');
-    }
-  } catch (e) {
-    throw Exception('S3 连接失败: $e');
+  final exists = await minio.bucketExists(bucket);
+  if (!exists) {
+    throw Exception('S3 Bucket 不存在或没有访问权限');
   }
 }
 

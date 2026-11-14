@@ -1,41 +1,47 @@
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
-import 'package:zephyr/page/comic_info/method/get_plugin_detail.dart';
-import 'package:zephyr/i18n/strings.g.dart';
-import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/service/comic_follow/comic_follow_chapter_reader.dart';
+import 'package:zephyr/service/comic_follow/comic_follow_reminders.dart';
 
-const _kMaxRetryCount = 3;
-const _kComicUpdateChannelId = 'comic_update_channel';
-final _kComicUpdateChannelName = t.comicFollow.updateChannelName;
-final _kComicUpdateChannelDesc = t.comicFollow.updateChannelDesc;
+export 'package:zephyr/service/comic_follow/comic_follow_chapter_reader.dart'
+    show ComicFollowDetection;
 
-class ComicFollowDetection {
-  const ComicFollowDetection({
-    required this.chapterCount,
-    required this.latestChapterTitle,
+abstract interface class ComicFollowRepository {
+  void putFollow(ComicFollow follow);
+  List<ComicFollow> listActiveFollows();
+  Map<String, UnifiedComicHistory> listActiveHistories();
+  UnifiedComicHistory? getActiveHistoryByUniqueKey(String uniqueKey);
+  ComicFollow? getFollowByUniqueKey(String uniqueKey);
+  Future<ComicFollowDetection?> detectChapter(
+    ComicFollow follow, {
+    bool Function()? canContinue,
   });
-
-  final int chapterCount;
-  final String latestChapterTitle;
+  Future<void> notifyUpdate(
+    int updateCount, {
+    Map<String, int> updates = const {},
+    bool Function(String key, int count)? canDeliver,
+  });
 }
 
-class ComicFollowService {
+class ComicFollowService implements ComicFollowRepository {
   static final ComicFollowService instance = ComicFollowService._();
 
   ComicFollowService._();
+  final _chapterReader = ComicFollowChapterReader();
 
   String uniqueKey(String source, String comicId) {
     return '${source.trim()}:${comicId.trim()}';
   }
 
   /// 保存或更新追更记录（直接写入数据库）
+  @override
   void putFollow(ComicFollow follow) {
     objectbox.comicFollowBox.put(follow);
   }
 
   /// 查询全部未删除的追更记录
+  @override
   List<ComicFollow> listActiveFollows() {
     final query = objectbox.comicFollowBox
         .query(ComicFollow_.deleted.equals(false))
@@ -50,6 +56,7 @@ class ComicFollowService {
   }
 
   /// 查询未删除的阅读历史，供追更页关联阅读进度和最后阅读时间。
+  @override
   Map<String, UnifiedComicHistory> listActiveHistories() {
     return {
       for (final history in objectbox.unifiedHistoryBox.getAll())
@@ -57,7 +64,24 @@ class ComicFollowService {
     };
   }
 
+  @override
+  UnifiedComicHistory? getActiveHistoryByUniqueKey(String uniqueKey) {
+    final query = objectbox.unifiedHistoryBox
+        .query(
+          UnifiedComicHistory_.uniqueKey
+              .equals(uniqueKey)
+              .and(UnifiedComicHistory_.deleted.equals(false)),
+        )
+        .build();
+    try {
+      return query.findFirst();
+    } finally {
+      query.close();
+    }
+  }
+
   /// 按 uniqueKey 查询追更记录（包含已删除的），用于更新或复活旧记录
+  @override
   ComicFollow? getFollowByUniqueKey(String uniqueKey) {
     final query = objectbox.comicFollowBox
         .query(ComicFollow_.uniqueKey.equals(uniqueKey))
@@ -69,89 +93,37 @@ class ComicFollowService {
     }
   }
 
-  /// 检测单部漫画的当前章节，失败时返回 null，最多重试 3 次
-  Future<ComicFollowDetection?> detectChapter(ComicFollow follow) async {
-    for (var attempt = 0; attempt < _kMaxRetryCount; attempt++) {
-      try {
-        final result = await getComicDetailByPlugin(
-          follow.comicId,
-          follow.source,
-        );
-        final eps = result.normalInfo.eps;
-        final latest = eps.isEmpty
-            ? null
-            : eps.reduce(
-                (left, right) => left.order >= right.order ? left : right,
-              );
-        return ComicFollowDetection(
-          chapterCount: eps.length,
-          latestChapterTitle: latest == null ? '' : latest.name,
-        );
-      } catch (e, s) {
-        logger.w(
-          '追更检测失败 ${follow.source}:${follow.comicId} (attempt ${attempt + 1}/$_kMaxRetryCount)',
-          error: e,
-          stackTrace: s,
-        );
-        if (attempt < _kMaxRetryCount - 1) {
-          await Future.delayed(const Duration(seconds: 1));
-        }
-      }
+  /// 检查章节时无需登录；只有具体作品的权限响应能要求登录。
+  @override
+  Future<ComicFollowDetection?> detectChapter(
+    ComicFollow follow, {
+    bool Function()? canContinue,
+  }) async {
+    final result = await _chapterReader.detect(
+      follow,
+      canContinue: canContinue,
+    );
+    if (result?.failure case final failure?) {
+      logger.d('追更检查 ${follow.source}: ${failure.name}');
     }
-    return null;
+    return result;
   }
 
-  /// 发送更新通知与应用内提示
-  Future<void> notifyUpdate(int updateCount) async {
-    final title = t.comicFollow.updateTitle;
-    final body = updateCount == 1
-        ? t.comicFollow.updatedComicsSingle
-        : t.comicFollow.updatedComicsMultiple(count: updateCount);
-
+  /// In-app attention follows a local preference; this never posts to the OS.
+  @override
+  Future<void> notifyUpdate(
+    int updateCount, {
+    Map<String, int> updates = const {},
+    bool Function(String key, int count)? canDeliver,
+  }) async {
+    if (updateCount <= 0 || updates.isEmpty) return;
     try {
-      await flutterLocalNotificationsPlugin.show(
-        id: DateTime.now().millisecondsSinceEpoch % 2147483647,
-        title: title,
-        body: body,
-        notificationDetails: _notificationDetails(),
+      await ComicFollowReminderController.instance.notifyUpdates(
+        updates,
+        canDeliver: canDeliver,
       );
-    } catch (e, s) {
-      logger.e('追更通知发送失败', error: e, stackTrace: s);
+    } catch (error, stackTrace) {
+      logger.e('追更应用内提醒未能保存或显示', error: error, stackTrace: stackTrace);
     }
-
-    try {
-      eventBus.fire(
-        ToastEvent(
-          type: ToastType.info,
-          title: title,
-          message: body,
-          duration: const Duration(seconds: 3),
-        ),
-      );
-    } catch (e, s) {
-      logger.e('追更 Toast 发送失败', error: e, stackTrace: s);
-    }
-  }
-
-  NotificationDetails _notificationDetails() {
-    final androidDetails = AndroidNotificationDetails(
-      _kComicUpdateChannelId,
-      _kComicUpdateChannelName,
-      channelDescription: _kComicUpdateChannelDesc,
-      importance: Importance.defaultImportance,
-      priority: Priority.defaultPriority,
-    );
-    const darwinDetails = DarwinNotificationDetails();
-    final linuxDetails = LinuxNotificationDetails(
-      urgency: LinuxNotificationUrgency.normal,
-    );
-    const windowsDetails = WindowsNotificationDetails();
-    return NotificationDetails(
-      android: androidDetails,
-      iOS: darwinDetails,
-      macOS: darwinDetails,
-      linux: linuxDetails,
-      windows: windowsDetails,
-    );
   }
 }

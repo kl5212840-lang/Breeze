@@ -10,12 +10,15 @@ class DownloadTaskCancelledException implements Exception {
 }
 
 final Map<String, Completer<void>> _downloadCancelSignals = {};
+final Set<String> _preserveCancelledFiles = {};
 
 void prepareDownloadCancelSignal(String taskKey) {
   _downloadCancelSignals.remove(taskKey);
+  _preserveCancelledFiles.remove(taskKey);
 }
 
-void triggerDownloadCancelSignal(String taskKey) {
+void triggerDownloadCancelSignal(String taskKey, {bool preserveFiles = false}) {
+  if (preserveFiles) _preserveCancelledFiles.add(taskKey);
   final completer = _downloadCancelSignals.putIfAbsent(
     taskKey,
     () => Completer<void>(),
@@ -27,7 +30,11 @@ void triggerDownloadCancelSignal(String taskKey) {
 
 void clearDownloadCancelSignal(String taskKey) {
   _downloadCancelSignals.remove(taskKey);
+  _preserveCancelledFiles.remove(taskKey);
 }
+
+bool preserveCancelledDownloadFiles(String taskKey) =>
+    _preserveCancelledFiles.contains(taskKey);
 
 bool isDownloadCancelSignaled(String taskKey) {
   final completer = _downloadCancelSignals[taskKey];

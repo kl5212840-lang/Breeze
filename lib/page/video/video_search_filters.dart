@@ -18,6 +18,7 @@ abstract class VideoSearchFilters with _$VideoSearchFilters {
     @Default([]) List<String> tags,
     @Default(false) bool anyTag,
     @Default(false) bool author,
+    @Default(false) bool completed,
     @Default(1) int page,
   }) = _VideoSearchFilters;
 
@@ -105,6 +106,7 @@ abstract class VideoSearchFilters with _$VideoSearchFilters {
     duration: '',
     tags: [],
     anyTag: false,
+    completed: false,
     page: 1,
   );
 
@@ -112,7 +114,8 @@ abstract class VideoSearchFilters with _$VideoSearchFilters {
       [genre, sort, date, duration].where((value) => value.isNotEmpty).length +
       _tags(tags).length +
       (anyTag ? 1 : 0) +
-      (author ? 1 : 0);
+      (author ? 1 : 0) +
+      (completed ? 1 : 0);
 }
 
 @freezed

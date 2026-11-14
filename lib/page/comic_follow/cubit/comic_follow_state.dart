@@ -1,5 +1,6 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:zephyr/object_box/model.dart';
+import 'package:zephyr/service/comic_follow/comic_follow_check_failure.dart';
 
 part 'comic_follow_state.freezed.dart';
 
@@ -17,6 +18,10 @@ abstract class ComicFollowState with _$ComicFollowState {
     @Default(ComicFollowStatus.initial) ComicFollowStatus status,
     @Default(<ComicFollow>[]) List<ComicFollow> items,
     @Default(false) bool isCheckingUpdates,
+    @Default(<String>{}) Set<String> checkingKeys,
+    @Default(<String, ComicFollowCheckFailure>{})
+    Map<String, ComicFollowCheckFailure> checkErrors,
+    @Default(<String, DateTime>{}) Map<String, DateTime> lastAttempts,
     @Default('') String result,
     @Default(0) int revision,
     @Default(<String, UnifiedComicHistory>{})
@@ -40,28 +45,14 @@ abstract class ComicFollowState with _$ComicFollowState {
   UnifiedComicHistory? historyFor(ComicFollow follow) =>
       histories[follow.uniqueKey];
 
-  bool hasUnreadUpdate(ComicFollow follow) {
-    if (!follow.hasUpdate ||
-        follow.detectedChapterCount <= follow.lastChapterCount) {
-      return false;
-    }
-
-    final history = historyFor(follow);
-    if (history == null || history.chapterOrder <= 0) {
-      return true;
-    }
-    return history.chapterOrder < follow.detectedChapterCount;
-  }
+  // A plugin's order is a sorting key, not a count of read chapters.
+  bool hasUnreadUpdate(ComicFollow follow) =>
+      follow.hasUpdate && follow.detectedChapterCount > follow.lastChapterCount;
 
   int unreadChapterCount(ComicFollow follow) {
     if (!hasUnreadUpdate(follow)) return 0;
 
-    final history = historyFor(follow);
-    final readChapterOrder = history?.chapterOrder ?? 0;
-    final readBaseline = readChapterOrder > follow.lastChapterCount
-        ? readChapterOrder
-        : follow.lastChapterCount;
-    return (follow.detectedChapterCount - readBaseline).clamp(
+    return (follow.detectedChapterCount - follow.lastChapterCount).clamp(
       0,
       follow.detectedChapterCount,
     );

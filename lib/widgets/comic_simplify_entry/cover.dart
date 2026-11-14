@@ -1,15 +1,33 @@
+import 'package:zephyr/widgets/picture_bloc/picture_recovery_region.dart';
+import 'package:zephyr/widgets/soft_cover_background.dart';
+import 'package:zephyr/widgets/collection_cover_fit.dart';
 import 'dart:async';
 import 'dart:io';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/main.dart';
+import 'package:zephyr/widgets/collection_cover_privacy.dart';
 import 'package:zephyr/util/context/context_extensions.dart';
 
 import 'package:zephyr/widgets/picture_bloc/bloc/picture_bloc.dart';
 import 'package:zephyr/widgets/picture_bloc/models/picture_info.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry.dart';
+import 'package:zephyr/page/source_shell/source_experience_scope.dart';
+
+/// Decode inside a size budget while preserving the source aspect ratio.
+/// The display fit is a paint choice and does not alter the image cache key.
+ImageProvider createCoverImageProvider(
+  String path, {
+  required int width,
+  required int height,
+}) => ResizeImage(
+  FileImage(File(path)),
+  policy: ResizeImagePolicy.fit,
+  width: width,
+  height: height,
+);
 
 class CoverWidget extends StatefulWidget {
   final String fileServer;
@@ -20,6 +38,9 @@ class CoverWidget extends StatefulWidget {
   final bool roundedCorner;
   final double? width;
   final double? height;
+  final IconData categoryFallbackIcon;
+  final BoxFit fit;
+  final bool containBackground;
 
   const CoverWidget({
     super.key,
@@ -31,6 +52,9 @@ class CoverWidget extends StatefulWidget {
     this.roundedCorner = true,
     this.width,
     this.height,
+    this.categoryFallbackIcon = Icons.auto_stories_outlined,
+    this.fit = BoxFit.cover,
+    this.containBackground = false,
   });
 
   @override
@@ -50,7 +74,7 @@ class _CoverWidgetState extends State<CoverWidget> {
     // Bloc 由 State 持有：build 里只引用，不创建。
     // Keep image requests tied to picture identity instead of selection/layout.
     // BlocProvider.create itself is lazy; ordinary rebuilds do not create IO.
-    _bloc = PictureBloc()..add(GetPicture(_pictureInfo));
+    _bloc = PictureBloc(initiallyActive: false)..add(GetPicture(_pictureInfo));
   }
 
   @override
@@ -69,7 +93,8 @@ class _CoverWidgetState extends State<CoverWidget> {
       // PictureBloc drops requests while busy. A new picture identity needs
       // its own bloc, otherwise a slow previous request can win or drop it.
       final previous = _bloc;
-      _bloc = PictureBloc()..add(GetPicture(_pictureInfo));
+      _bloc = PictureBloc(initiallyActive: false)
+        ..add(GetPicture(_pictureInfo));
       unawaited(previous.close());
     }
   }
@@ -92,6 +117,14 @@ class _CoverWidgetState extends State<CoverWidget> {
 
   @override
   Widget build(BuildContext context) {
+    final fit = widget.pictureType == PictureType.user
+        ? widget.fit
+        : CollectionCoverFitScope.maybeOf(context) ?? widget.fit;
+    final softBackground =
+        widget.pictureType != PictureType.user &&
+        fit == BoxFit.contain &&
+        (widget.containBackground ||
+            CollectionCoverFitScope.maybeOf(context) != null);
     final width = widget.width ?? context.screenWidth * 0.3;
     final height = widget.height ?? (context.screenWidth * 0.3) / 0.75;
     final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
@@ -102,93 +135,131 @@ class _CoverWidgetState extends State<CoverWidget> {
       child: SizedBox(
         width: width,
         height: height,
-        child: BlocBuilder<PictureBloc, PictureLoadState>(
-          bloc: _bloc,
-          // 只在图片路径/状态变化时重建，避免无关 rebuild 重新 resolve。
-          buildWhen: (prev, curr) =>
-              prev.status != curr.status ||
-              prev.imagePath != curr.imagePath ||
-              prev.result != curr.result,
-          builder: (context, state) {
-            switch (state.status) {
-              case PictureLoadStatus.initial:
-                if (widget.pictureType == PictureType.category) {
-                  return const _CategoryCoverFallback();
-                }
-                return Container(
-                  width: width,
-                  height: height,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[200],
-                    borderRadius: BorderRadius.circular(
-                      widget.roundedCorner ? kComicCardBorderRadius : 0.0,
-                    ),
-                  ),
-                  child: Center(
-                    child: Icon(Icons.image, color: Colors.grey[300], size: 30),
-                  ),
-                );
-              case PictureLoadStatus.success:
-                // image 对象缓存：选中切换等无关 rebuild 不 new provider，
-                // DecorationImage 相等就不重新 resolve，封面不闪。
-                final key = (
-                  path: state.imagePath!,
-                  width: decodeWidth < 1 ? 1 : decodeWidth,
-                  height: decodeHeight < 1 ? 1 : decodeHeight,
-                );
-                if (_imageKey != key) {
-                  _imageKey = key;
-                  _imageProvider = ResizeImage(
-                    FileImage(File(key.path)),
-                    width: key.width,
-                    height: key.height,
-                  );
-                }
-                return RepaintBoundary(
-                  child: Container(
-                    width: width,
-                    height: height,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(
-                        widget.roundedCorner ? 5.0 : 0.0,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(
+            widget.roundedCorner ? kComicCardBorderRadius : 0,
+          ),
+          child: BlocBuilder<PictureBloc, PictureLoadState>(
+            bloc: _bloc,
+            // 只在图片路径/状态变化时重建，避免无关 rebuild 重新 resolve。
+            buildWhen: (prev, curr) =>
+                prev.status != curr.status ||
+                prev.imagePath != curr.imagePath ||
+                prev.result != curr.result,
+            builder: (context, state) {
+              final colors = Theme.of(context).colorScheme;
+              // The replacement artwork belongs to privacy, so it must be
+              // present before the original cover path resolves on remount.
+              Widget surface(Widget pixels, {Widget? feedback}) =>
+                  PictureRecoveryRegion(
+                    bloc: _bloc,
+                    child: ColoredBox(
+                      color: colors.surfaceContainerHigh,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          CollectionCoverPrivacy(
+                            enabled: widget.pictureType != PictureType.user,
+                            fit: fit,
+                            child: pixels,
+                          ),
+                          ?feedback,
+                        ],
                       ),
-                      image: DecorationImage(
+                    ),
+                  );
+
+              switch (state.status) {
+                case PictureLoadStatus.initial:
+                  return surface(
+                    widget.pictureType == PictureType.category
+                        ? _CategoryCoverFallback(
+                            icon: widget.categoryFallbackIcon,
+                          )
+                        : Center(
+                            child: Icon(
+                              Icons.image,
+                              color: colors.onSurfaceVariant,
+                              size: 30,
+                            ),
+                          ),
+                  );
+                case PictureLoadStatus.success:
+                  final key = (
+                    path: state.imagePath!,
+                    width: decodeWidth < 1 ? 1 : decodeWidth,
+                    height: decodeHeight < 1 ? 1 : decodeHeight,
+                  );
+                  if (_imageKey != key) {
+                    _imageKey = key;
+                    _imageProvider = createCoverImageProvider(
+                      key.path,
+                      width: key.width,
+                      height: key.height,
+                    );
+                  }
+                  final image = _imageProvider!;
+                  final bloc = _bloc;
+                  return surface(
+                    SourceImageFilterQualityBuilder(
+                      source: widget.from,
+                      builder: (context, filterQuality) => RepaintBoundary(
+                        child: SoftCoverBackground(
+                          image: image,
+                          enabled: softBackground,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(
+                                widget.roundedCorner ? 5.0 : 0.0,
+                              ),
+                              image: DecorationImage(
+                                fit: fit,
+                                filterQuality: filterQuality,
+                                image: image,
+                                onError: (error, stackTrace) {
+                                  unawaited(
+                                    bloc.reportDecodeFailure(
+                                      error,
+                                      imagePath: key.path,
+                                    ),
+                                  );
+                                  logger.d(
+                                    '图片解码失败: ${key.path}',
+                                    error: error,
+                                    stackTrace: stackTrace,
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                case PictureLoadStatus.failure:
+                  if (widget.pictureType == PictureType.category) {
+                    return surface(
+                      _CategoryCoverFallback(icon: widget.categoryFallbackIcon),
+                    );
+                  }
+                  if (_bloc.pictureNotFound) {
+                    return surface(
+                      Image.asset(
+                        'asset/image/error_image/404.png',
                         fit: BoxFit.cover,
-                        image: _imageProvider!,
-                        onError: (error, stackTrace) {
-                          logger.d(
-                            '图片解码失败: ${state.imagePath}',
-                            error: error,
-                            stackTrace: stackTrace,
-                          );
-                        },
                       ),
-                    ),
-                  ),
-                );
-              case PictureLoadStatus.failure:
-                if (widget.pictureType == PictureType.category) {
-                  return const _CategoryCoverFallback();
-                }
-                if (state.result.toString().contains('404')) {
-                  return ClipRRect(
-                    borderRadius: BorderRadius.circular(kComicCardBorderRadius),
-                    child: Image.asset(
-                      'asset/image/error_image/404.png',
-                      fit: BoxFit.cover,
+                    );
+                  }
+                  return surface(
+                    const SizedBox.expand(),
+                    feedback: InkWell(
+                      onTap: () => _bloc.add(GetPicture(_pictureInfo)),
+                      child: const Center(child: Icon(Icons.refresh)),
                     ),
                   );
-                } else {
-                  return InkWell(
-                    onTap: () {
-                      context.read<PictureBloc>().add(GetPicture(_pictureInfo));
-                    },
-                    child: Center(child: Icon(Icons.refresh)),
-                  );
-                }
-            }
-          },
+              }
+            },
+          ),
         ),
       ),
     );
@@ -196,7 +267,9 @@ class _CoverWidgetState extends State<CoverWidget> {
 }
 
 class _CategoryCoverFallback extends StatelessWidget {
-  const _CategoryCoverFallback();
+  const _CategoryCoverFallback({required this.icon});
+
+  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
@@ -207,11 +280,7 @@ class _CategoryCoverFallback extends StatelessWidget {
         borderRadius: BorderRadius.circular(kComicCardBorderRadius),
       ),
       child: Center(
-        child: Icon(
-          Icons.auto_stories_outlined,
-          size: 36,
-          color: colors.onPrimaryContainer,
-        ),
+        child: Icon(icon, size: 36, color: colors.onPrimaryContainer),
       ),
     );
   }

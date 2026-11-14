@@ -59,7 +59,7 @@ Future<String> getDbPath() async {
 }
 
 /// 获取文件存储路径
-Future<String> getFilePath() async {
+Future<String> getFilePath({bool create = true}) async {
   String path;
   if (_isPortableStrategy) {
     final appDir = await getAppDirectory();
@@ -69,7 +69,7 @@ Future<String> getFilePath() async {
     path = p.join(appDir, "files");
   }
 
-  await _ensureDirExists(path);
+  if (create) await _ensureDirExists(path);
   return path;
 }
 

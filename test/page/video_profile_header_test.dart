@@ -144,6 +144,10 @@ void main() {
     expect(tester.getSize(button).height, greaterThanOrEqualTo(44));
     await tester.tap(button);
     expect(settings, 1);
+    final avatar = find.byTooltip(t.videoSiteAccount.title);
+    expect(tester.getSize(avatar).shortestSide, greaterThanOrEqualTo(44));
+    await tester.tap(avatar);
+    expect(settings, 2);
     expect(tester.takeException(), isNull);
   });
 }

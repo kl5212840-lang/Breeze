@@ -2,6 +2,49 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zephyr/page/comic_info/method/chapter_group.dart';
 
 void main() {
+  test(
+    'folded chapter groups keep their identity when display order changes',
+    () {
+      const titles = ['卷一', '卷二', '卷一', '卷二'];
+      final forward = splitLongChapterGroups(
+        groupIndicesByTitle(titles.length, (i) => titles[i]),
+      );
+      final reverse = splitLongChapterGroups(
+        groupIndicesByTitle(titles.length, (i) => titles[titles.length - 1 - i]),
+      );
+      final folded = {forward.first.collapseKey};
+      expect(reverse.first.title, '卷二');
+      expect(folded.contains(reverse.first.collapseKey), isFalse);
+      expect(folded.contains(reverse.last.collapseKey), isTrue);
+    },
+  );
+
+  test('split ranges stay distinct from source groups with the same label', () {
+    final groups = splitLongChapterGroups([
+      ChapterGroup(title: '卷一', items: List.generate(51, (i) => i)),
+      ChapterGroup(title: '卷一 1-50', items: [51]),
+    ]);
+    expect(groups.first.title, groups.last.title);
+    expect(groups.map((group) => group.collapseKey).toSet(), hasLength(3));
+  });
+
+  test(
+    'long groups split in displayed order, including reversed and untitled groups',
+    () {
+      final input = [for (var i = 100; i >= 0; i--) i];
+      final groups = splitLongChapterGroups([
+        ChapterGroup(title: '卷一', items: input),
+        ChapterGroup(title: '', items: [1, 2]),
+      ]);
+      expect(groups.map((g) => g.title), [
+        '卷一 1-50',
+        '卷一 51-100',
+        '卷一 101-101',
+        '',
+      ]);
+      expect(groups.expand((g) => g.items).take(101), input);
+    },
+  );
   test('顶层 groupTitle 去空白，缺省为空=不分组', () {
     expect(resolveChapterGroupTitle(groupTitle: '连载'), '连载');
     expect(resolveChapterGroupTitle(groupTitle: ' 单行本 '), '单行本');

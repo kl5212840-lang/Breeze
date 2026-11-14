@@ -1,9 +1,11 @@
+import 'package:zephyr/page/video/omo_network.dart';
 import 'dart:async';
 import 'dart:convert';
 
 import 'package:zephyr/i18n/i18n_helper.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/i18n/system_locale_service.dart';
+import 'package:zephyr/service/checkin/auto_checkin_notices.dart';
 import 'package:zephyr/service/update/check_update.dart';
 import 'package:zephyr/src/rust/api/localization.dart';
 import 'package:zephyr/src/rust/api/qjs.dart';
@@ -17,6 +19,15 @@ void _register(
 }
 
 void registerDartTools() {
+  _register(
+    'breeze.omo.poll',
+    (data) => OmoNetworkContext.bridgeFetch(data, poll: true),
+  );
+  _register('breeze.omo.fetch', (data) => OmoNetworkContext.bridgeFetch(data));
+  _register(
+    'breeze.omo.cancel',
+    (data) => OmoNetworkContext.bridgeFetch(data, cancel: true),
+  );
   _register("dart.getAppVersion", (_) async {
     return jsonEncode(await getAppVersion());
   });
@@ -40,12 +51,14 @@ void registerDartTools() {
     });
   });
 
+  _register('breeze.checkin.completed', AutoCheckinNotices.instance.report);
   _register('flutter.showToast', (String data) async {
     final args = jsonDecode(data) as List<dynamic>;
     final payload = args[1];
     final json = payload is String
         ? jsonDecode(payload) as Map<String, dynamic>
         : payload as Map<String, dynamic>;
+    if (isLegacyBikaAutoCheckinToast(args[0], json)) return '';
     final message = json['message'] as String? ?? '';
     final title = json['title'] as String?;
     final level = json['level'] as String? ?? 'info';

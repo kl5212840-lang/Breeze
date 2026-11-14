@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:uuid/uuid.dart';
 import 'package:zephyr/i18n/strings.g.dart';
@@ -6,6 +7,8 @@ import 'package:zephyr/main.dart';
 import 'package:zephyr/network/sync/sync_device_id.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
+import 'package:zephyr/service/local_appearance_images.dart';
+import 'package:zephyr/service/folder_cover_identity.dart';
 
 const String kComicFolderRootPath = '';
 
@@ -22,17 +25,33 @@ class ComicFolderService {
     String? path,
     ComicFolderType type, {
     bool includeDeleted = false,
+  }) => _findFolderByPath(path, type, includeDeleted: includeDeleted)?.syncId;
+
+  static ComicFolder? _findFolderByPath(
+    String? path,
+    ComicFolderType type, {
+    bool includeDeleted = false,
   }) {
     if (path == null || path.isEmpty) return null;
-    var condition = ComicFolder_.uniqueKey.equals(_uniqueKey(path, type));
+    final parentPath = _parentPath(path);
+    final parentId = folderSyncIdByPath(
+      parentPath,
+      type,
+      includeDeleted: includeDeleted,
+    );
+    if (parentPath.isNotEmpty && parentId == null) return null;
+    var condition = ComicFolder_.uniqueKey.equals(
+      _keyForFolderName(path.split('/').last, type, parentId),
+    );
     if (!includeDeleted) {
       condition = condition.and(ComicFolder_.deletedAt.isNull());
     }
-    final folder = objectbox.comicFolderBox
-        .query(condition)
-        .build()
-        .findFirst();
-    return folder?.syncId;
+    final query = objectbox.comicFolderBox.query(condition).build();
+    try {
+      return query.findFirst();
+    } finally {
+      query.close();
+    }
   }
 
   /// 根据文件夹的 parentSyncId 链计算其显示路径（如 /a/b）。
@@ -59,21 +78,21 @@ class ComicFolderService {
     return {for (final folder in all) folder.syncId: folder};
   }
 
-  static String _folderPath(String parentPath, String name) {
-    final safeName = name.trim();
-    if (parentPath == kComicFolderRootPath) {
-      return '/$safeName';
-    }
-    return '$parentPath/$safeName';
-  }
+  static String _keyForFolderName(
+    String name,
+    ComicFolderType type,
+    String? parentSyncId,
+  ) => '${parentSyncId ?? ''}|$name|${type.name}';
 
-  static String _uniqueKey(String path, ComicFolderType type) {
-    final parentPath = _parentPath(path);
-    final parentSyncId = parentPath == kComicFolderRootPath
-        ? ''
-        : (folderSyncIdByPath(parentPath, type) ?? '');
-    final name = path == kComicFolderRootPath ? '' : path.split('/').last;
-    return '$parentSyncId|$name|${type.name}';
+  static ComicFolder? _findFolderByUniqueKey(String uniqueKey) {
+    final query = objectbox.comicFolderBox
+        .query(ComicFolder_.uniqueKey.equals(uniqueKey))
+        .build();
+    try {
+      return query.findFirst();
+    } finally {
+      query.close();
+    }
   }
 
   static String? _parentSyncIdByPath(String? parentPath, ComicFolderType type) {
@@ -122,6 +141,7 @@ class ComicFolderService {
     bool sortAscending = false,
   }) {
     final parentSyncId = _parentSyncIdByPath(parentPath, type);
+    if (parentPath.isNotEmpty && parentSyncId == null) return const [];
     final condition = parentSyncId == null
         ? ComicFolder_.parentSyncId.isNull()
         : ComicFolder_.parentSyncId.equals(parentSyncId);
@@ -172,14 +192,8 @@ class ComicFolderService {
   }
 
   /// 获取文件夹名称
-  static String? folderName(String path, ComicFolderType type) {
-    if (path == kComicFolderRootPath) return null;
-    final folder = objectbox.comicFolderBox
-        .query(ComicFolder_.uniqueKey.equals(_uniqueKey(path, type)))
-        .build()
-        .findFirst();
-    return folder?.name;
-  }
+  static String? folderName(String path, ComicFolderType type) =>
+      _findFolderByPath(path, type, includeDeleted: true)?.name;
 
   /// 创建文件夹
   static ComicFolder createFolder(
@@ -195,14 +209,10 @@ class ComicFolderService {
       throw ArgumentError(t.bookshelf.folderNameSlash);
     }
 
-    final newPath = _folderPath(parentPath, safeName);
-    final uniqueKey = _uniqueKey(newPath, type);
     final parentSyncId = _parentSyncIdByPath(parentPath, type);
+    final uniqueKey = _keyForFolderName(safeName, type, parentSyncId);
 
-    final existed = objectbox.comicFolderBox
-        .query(ComicFolder_.uniqueKey.equals(uniqueKey))
-        .build()
-        .findFirst();
+    final existed = _findFolderByUniqueKey(uniqueKey);
     if (existed != null) {
       if (existed.deletedAt != null) {
         //  Tombstone 复活
@@ -237,43 +247,52 @@ class ComicFolderService {
   /// 软删除文件夹及其下所有子文件夹
   static void deleteFolder(String path, ComicFolderType type) {
     if (path == kComicFolderRootPath) return;
-    final now = _now();
+    final deleted = objectbox.store.runInTransaction(TxMode.write, () {
+      final folder = _findFolderByPath(path, type);
+      if (folder == null) return const <String>{};
 
-    final folder = objectbox.comicFolderBox
-        .query(ComicFolder_.uniqueKey.equals(_uniqueKey(path, type)))
-        .build()
-        .findFirst();
-    if (folder == null || folder.deletedAt != null) return;
-
-    folder
-      ..deletedAt = now
-      ..updatedAt = now
-      ..versionVectorJson = _bumpVersionVector(folder.versionVectorJson);
-    objectbox.comicFolderBox.put(folder);
-
-    // 级联删除子文件夹（软删除）
-    final subtreeSyncIds = _collectSubtreeSyncIds(folder.syncId, type);
-    subtreeSyncIds.remove(folder.syncId);
-    if (subtreeSyncIds.isEmpty) return;
-
-    final childQuery = objectbox.comicFolderBox
-        .query(ComicFolder_.syncId.oneOf(subtreeSyncIds.toList()))
-        .build();
-    try {
-      final children = childQuery.find();
-      for (final child in children) {
-        if (child.deletedAt != null) continue;
-        child
-          ..deletedAt = now
-          ..updatedAt = now
-          ..versionVectorJson = _bumpVersionVector(child.versionVectorJson);
+      final now = _now();
+      final subtreeSyncIds = _collectSubtreeSyncIds(folder.syncId, type);
+      final query = objectbox.comicFolderBox
+          .query(
+            ComicFolder_.typeData
+                .equals(type.name)
+                .and(ComicFolder_.deletedAt.isNull())
+                .and(ComicFolder_.syncId.oneOf(subtreeSyncIds.toList())),
+          )
+          .build();
+      try {
+        final subtree = query.find();
+        for (final child in subtree) {
+          child
+            ..deletedAt = now
+            ..updatedAt = now
+            ..versionVectorJson = _bumpVersionVector(child.versionVectorJson);
+        }
+        objectbox.comicFolderBox.putMany(subtree);
+      } finally {
+        query.close();
       }
-      if (children.isNotEmpty) {
-        objectbox.comicFolderBox.putMany(children);
-      }
-    } finally {
-      childQuery.close();
+      return subtreeSyncIds;
+    });
+    for (final syncId in deleted) {
+      _removeCover(syncId);
     }
+  }
+
+  static void _removeCover(String syncId) {
+    final images = LocalAppearanceImages.instance;
+    final key = FolderCoverIdentity.comic(syncId);
+    if (!images.paths.value.containsKey(key)) return;
+    unawaited(
+      images.remove(key).catchError((Object error, StackTrace stack) {
+        logger.e(
+          'Folder artwork cleanup failed',
+          error: error,
+          stackTrace: stack,
+        );
+      }),
+    );
   }
 
   /// 重命名文件夹
@@ -284,36 +303,30 @@ class ComicFolderService {
       throw ArgumentError(t.bookshelf.folderNameSlash);
     }
 
-    final folder = objectbox.comicFolderBox
-        .query(ComicFolder_.uniqueKey.equals(_uniqueKey(path, type)))
-        .build()
-        .findFirst();
-    if (folder == null || folder.deletedAt != null) return;
+    objectbox.store.runInTransaction(TxMode.write, () {
+      final folder = _findFolderByPath(path, type);
+      if (folder == null) return;
 
-    final parentPath = _parentPath(path);
-    final newPath = _folderPath(parentPath, safeName);
-    final newUniqueKey = _uniqueKey(newPath, type);
-
-    // 检查目标名称是否冲突
-    final duplicated = objectbox.comicFolderBox
-        .query(ComicFolder_.uniqueKey.equals(newUniqueKey))
-        .build()
-        .findFirst();
-    if (duplicated != null && duplicated.id != folder.id) {
-      if (duplicated.deletedAt == null) {
-        throw StateError(t.bookshelf.folderNameExists);
+      final newUniqueKey = _keyForFolderName(
+        safeName,
+        type,
+        folder.parentSyncId,
+      );
+      final duplicated = _findFolderByUniqueKey(newUniqueKey);
+      if (duplicated != null && duplicated.id != folder.id) {
+        if (duplicated.deletedAt == null) {
+          throw StateError(t.bookshelf.folderNameExists);
+        }
+        objectbox.comicFolderBox.remove(duplicated.id);
       }
-      //  Tombstone 冲突：先物理删除旧的 tombstone
-      objectbox.comicFolderBox.remove(duplicated.id);
-    }
 
-    final now = _now();
-    folder
-      ..name = safeName
-      ..uniqueKey = newUniqueKey
-      ..updatedAt = now
-      ..versionVectorJson = _bumpVersionVector(folder.versionVectorJson);
-    objectbox.comicFolderBox.put(folder);
+      folder
+        ..name = safeName
+        ..uniqueKey = newUniqueKey
+        ..updatedAt = _now()
+        ..versionVectorJson = _bumpVersionVector(folder.versionVectorJson);
+      objectbox.comicFolderBox.put(folder);
+    });
   }
 
   // ==================== 批量操作 ====================
@@ -325,38 +338,41 @@ class ComicFolderService {
     String targetPath,
     ComicFolderType type,
   ) {
+    if (paths.isEmpty) return;
     for (final path in paths) {
       _validateMoveTarget(path, targetPath);
     }
 
-    final now = _now();
-    for (final path in paths) {
-      final folder = objectbox.comicFolderBox
-          .query(ComicFolder_.uniqueKey.equals(_uniqueKey(path, type)))
-          .build()
-          .findFirst();
-      if (folder == null || folder.deletedAt != null) continue;
+    objectbox.store.runInTransaction(TxMode.write, () {
+      final targetParentSyncId = _resolveDestination(targetPath, type);
+      final now = _now();
+      for (final path in paths) {
+        final folder = _findFolderByPath(path, type);
+        if (folder == null) continue;
 
-      final folderName = folder.name;
-      final newPath = _folderPath(targetPath, folderName);
-      final newUniqueKey = _uniqueKey(newPath, type);
-
-      // 目标位置若存在 tombstone，先物理清理
-      final duplicated = objectbox.comicFolderBox
-          .query(ComicFolder_.uniqueKey.equals(newUniqueKey))
-          .build()
-          .findFirst();
-      if (duplicated != null && duplicated.id != folder.id) {
-        if (duplicated.deletedAt == null) {
-          throw StateError(
-            t.bookshelf.targetFolderNameExists(name: folderName),
-          );
+        final newUniqueKey = _keyForFolderName(
+          folder.name,
+          type,
+          targetParentSyncId,
+        );
+        final duplicated = _findFolderByUniqueKey(newUniqueKey);
+        if (duplicated != null && duplicated.id != folder.id) {
+          if (duplicated.deletedAt == null) {
+            throw StateError(
+              t.bookshelf.targetFolderNameExists(name: folder.name),
+            );
+          }
+          objectbox.comicFolderBox.remove(duplicated.id);
         }
-        objectbox.comicFolderBox.remove(duplicated.id);
-      }
 
-      _moveFolderInternal(folder, newPath, now, type);
-    }
+        folder
+          ..parentSyncId = targetParentSyncId
+          ..uniqueKey = newUniqueKey
+          ..updatedAt = now
+          ..versionVectorJson = _bumpVersionVector(folder.versionVectorJson);
+        objectbox.comicFolderBox.put(folder);
+      }
+    });
   }
 
   /// 批量复制文件夹到目标路径下。
@@ -366,23 +382,22 @@ class ComicFolderService {
     String targetPath,
     ComicFolderType type,
   ) {
+    if (paths.isEmpty) return;
     for (final path in paths) {
       if (path == targetPath || targetPath.startsWith('$path/')) {
         throw StateError(t.bookshelf.cannotCopyFolderToSelfOrChild);
       }
     }
 
-    final now = _now();
-    final targetParentSyncId = _parentSyncIdByPath(targetPath, type);
-    for (final path in paths) {
-      final sourceFolder = objectbox.comicFolderBox
-          .query(ComicFolder_.uniqueKey.equals(_uniqueKey(path, type)))
-          .build()
-          .findFirst();
-      if (sourceFolder == null || sourceFolder.deletedAt != null) continue;
-
-      _copyFolderRecursive(sourceFolder, targetParentSyncId, type, now);
-    }
+    objectbox.store.runInTransaction(TxMode.write, () {
+      final targetParentSyncId = _resolveDestination(targetPath, type);
+      final now = _now();
+      for (final path in paths) {
+        final sourceFolder = _findFolderByPath(path, type);
+        if (sourceFolder == null) continue;
+        _copyFolderRecursive(sourceFolder, targetParentSyncId, type, now);
+      }
+    });
   }
 
   /// 批量删除文件夹（递归软删除）。
@@ -401,23 +416,11 @@ class ComicFolderService {
     }
   }
 
-  /// 移动单个文件夹的内部实现（不校验，直接执行）。
-  static void _moveFolderInternal(
-    ComicFolder folder,
-    String newPath,
-    int now,
-    ComicFolderType type,
-  ) {
-    final newUniqueKey = _uniqueKey(newPath, type);
-    final newParentSyncId = _parentSyncIdByPath(_parentPath(newPath), type);
-
-    folder
-      ..name = newPath.split('/').last
-      ..parentSyncId = newParentSyncId
-      ..uniqueKey = newUniqueKey
-      ..updatedAt = now
-      ..versionVectorJson = _bumpVersionVector(folder.versionVectorJson);
-    objectbox.comicFolderBox.put(folder);
+  static String? _resolveDestination(String path, ComicFolderType type) {
+    if (path == kComicFolderRootPath) return null;
+    final syncId = folderSyncIdByPath(path, type);
+    if (syncId == null) throw StateError(t.bookshelf.moveTargetUnavailable);
+    return syncId;
   }
 
   /// 递归复制文件夹。
@@ -433,10 +436,7 @@ class ComicFolderService {
     var suffix = 1;
     while (true) {
       final candidateKey = '$parentKey|$targetName|${type.name}';
-      final exists = objectbox.comicFolderBox
-          .query(ComicFolder_.uniqueKey.equals(candidateKey))
-          .build()
-          .findFirst();
+      final exists = _findFolderByUniqueKey(candidateKey);
       if (exists == null) break;
       suffix++;
       targetName = '${sourceFolder.name} ($suffix)';

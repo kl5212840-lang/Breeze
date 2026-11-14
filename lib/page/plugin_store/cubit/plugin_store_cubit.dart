@@ -62,13 +62,15 @@ class PluginStoreCubit extends Cubit<PluginStoreState> {
             .toList();
         emit(state.copyWith(cloudPlugins: saved));
       }
-      final payload = await fetchCloudPluginListWithCdnFallback(
-        fallback: fallback,
-      );
+      final catalog = await fetchCloudPluginListWithCdnFallback();
       if (!current()) return;
-      final decoded = jsonDecode(payload);
-      final entries = asJsonList(decoded)
-          .map((item) => CloudPluginItem.fromJson(asJsonMap(item)))
+      final entries = catalog.entries
+          .map(
+            (entry) => CloudPluginItem.fromJson(
+              entry.json,
+              formalRelease: entry.formalRelease,
+            ),
+          )
           .where((item) => item.manifest.uuid.trim().isNotEmpty)
           .toList();
 
@@ -93,17 +95,23 @@ class PluginStoreCubit extends Cubit<PluginStoreState> {
     }
   }
 
-  Future<void> installFromCloud(CloudPluginItem item) async {
+  Future<void> installFromCloud(
+    CloudPluginItem item, {
+    bool reinstall = false,
+  }) async {
     if (state.installing) {
       return;
     }
     final name = item.manifest.name.trim().isEmpty
-        ? item.repo
+        ? item.repo.split('/').last.trim()
         : item.manifest.name.trim();
     _beginInstall(t.plugin.installingFromCloud(name: name));
 
     try {
-      final message = await PluginInstallService.I.installFromCloud(item);
+      final message = await PluginInstallService.I.installFromCloud(
+        item,
+        reinstall: reinstall,
+      );
       _reportInstallSuccess(message);
     } catch (e) {
       _reportInstallFailure(

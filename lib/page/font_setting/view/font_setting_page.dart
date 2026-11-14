@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/touch_hover_intent.dart';
 import 'package:auto_route/annotations.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:material_ui/material_ui.dart';
@@ -7,8 +8,14 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/widgets/toast.dart';
 
 @RoutePage()
-class FontSettingPage extends StatelessWidget {
+class FontSettingPage extends StatefulWidget {
   const FontSettingPage({super.key});
+  @override
+  State<FontSettingPage> createState() => _FontSettingPageState();
+}
+
+class _FontSettingPageState extends State<FontSettingPage> {
+  bool _busy = false;
 
   static const _weights = <int>[100, 200, 300, 400, 500, 600, 700, 800, 900];
   static final _sampleText = t.fontSetting.sampleText;
@@ -24,7 +31,7 @@ class FontSettingPage extends StatelessWidget {
         actions: [
           IconButton(
             tooltip: t.fontSetting.clear,
-            onPressed: _clearAll,
+            onPressed: _busy ? null : _clearAll,
             icon: const Icon(Icons.restart_alt_outlined),
           ),
         ],
@@ -46,10 +53,10 @@ class FontSettingPage extends StatelessWidget {
                   label: fontWeightLabels[weight]!,
                   filePath: filePath,
                   sampleText: _sampleText,
-                  onPick: () => _pickWeight(weight),
-                  onClear: filePath.isEmpty
+                  onPick: _busy ? null : () => _pickWeight(weight),
+                  onClear: _busy || filePath.isEmpty
                       ? null
-                      : () => _saveWeight(weight, ''),
+                      : () => _clearWeight(weight, filePath),
                 );
               }),
               const SizedBox(height: 24),
@@ -60,19 +67,32 @@ class FontSettingPage extends StatelessWidget {
     );
   }
 
-  Future<void> _pickWeight(int weight) async {
+  Future<void> _run(Future<void> Function() operation) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await operation();
+    } catch (_) {
+      if (mounted) showErrorToast(t.fontSetting.operationFailed);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _pickWeight(int weight) => _run(() async {
     const typeGroup = XTypeGroup(
       label: 'font',
       extensions: ['ttf', 'otf', 'ttc'],
       uniformTypeIdentifiers: ['public.font'],
     );
     final file = await openFile(acceptedTypeGroups: [typeGroup]);
-    if (file == null) return;
+    if (file == null || !mounted) return;
     await _saveWeight(weight, file.path);
-  }
+  });
 
   Future<void> _saveWeight(int weight, String filePath) async {
     final ok = await FontProfileController.instance.setPath(weight, filePath);
+    if (!mounted) return;
     if (!ok) {
       showErrorToast(t.fontSetting.loadFailed);
       return;
@@ -82,10 +102,69 @@ class FontSettingPage extends StatelessWidget {
     );
   }
 
-  Future<void> _clearAll() async {
-    await FontProfileController.instance.clearAll();
-    showSuccessToast(t.fontSetting.allCleared);
+  Future<bool> _confirmClear({int? weight}) async {
+    var decided = false;
+    void finish(BuildContext dialog, bool result) {
+      if (decided ||
+          !dialog.mounted ||
+          ModalRoute.of(dialog)?.isCurrent != true) {
+        return;
+      }
+      decided = true;
+      Navigator.pop(dialog, result);
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        scrollable: true,
+        title: Text(
+          weight == null
+              ? t.fontSetting.clearAllConfirmTitle
+              : t.fontSetting.clearFileConfirmTitle,
+        ),
+        content: Text(
+          weight == null
+              ? t.fontSetting.clearAllConfirm
+              : t.fontSetting.clearFileConfirm(weight: weight),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => finish(dialog, false),
+            child: Text(t.common.cancel),
+          ),
+          TextButton(
+            onPressed: () => finish(dialog, true),
+            child: Text(
+              t.common.remove,
+              style: TextStyle(color: Theme.of(dialog).colorScheme.error),
+            ),
+          ),
+        ],
+      ),
+    );
+    return confirmed == true && mounted;
   }
+
+  Future<void> _clearWeight(int weight, String expectedPath) => _run(() async {
+    if (!await _confirmClear(weight: weight)) return;
+    if (FontProfileController.instance.pathForWeight(weight) != expectedPath) {
+      return;
+    }
+    await _saveWeight(weight, '');
+  });
+
+  Future<void> _clearAll() => _run(() async {
+    final expected = {...FontProfileController.instance.paths};
+    if (!await _confirmClear()) return;
+    final current = FontProfileController.instance.paths;
+    if (current.length != expected.length ||
+        expected.entries.any((entry) => current[entry.key] != entry.value)) {
+      return;
+    }
+    await FontProfileController.instance.clearAll();
+    if (mounted) showSuccessToast(t.fontSetting.allCleared);
+  });
 }
 
 class _FontWeightTile extends StatelessWidget {
@@ -102,7 +181,7 @@ class _FontWeightTile extends StatelessWidget {
   final String label;
   final String filePath;
   final String sampleText;
-  final VoidCallback onPick;
+  final VoidCallback? onPick;
   final VoidCallback? onClear;
 
   @override
@@ -144,27 +223,60 @@ class _FontWeightTile extends StatelessWidget {
                 style: theme.textTheme.bodySmall,
               ),
             Text(sampleText, style: previewStyle),
+            const SizedBox(height: 4),
+            Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (onClear != null) ...[
+                    _action(
+                      identity: (weight, 'font-button:0'),
+                      tooltip: t.fontSetting.clearFile,
+                      onPressed: onClear,
+                      icon: Icons.close_outlined,
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                  _action(
+                    identity: (weight, 'font-button:1'),
+                    tooltip: t.fontSetting.selectFile,
+                    onPressed: onPick,
+                    icon: Icons.folder_open_outlined,
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
-      trailing: Wrap(
-        spacing: 4,
-        children: [
-          if (onClear != null)
-            IconButton(
-              tooltip: t.fontSetting.clearFile,
-              onPressed: onClear,
-              icon: const Icon(Icons.close_outlined),
-            ),
-          IconButton(
-            tooltip: t.fontSetting.selectFile,
-            onPressed: onPick,
-            icon: const Icon(Icons.folder_open_outlined),
-          ),
-        ],
-      ),
     );
   }
+
+  Widget _action({
+    required Object identity,
+    required String tooltip,
+    required VoidCallback? onPressed,
+    required IconData icon,
+  }) => TouchHoverIntent(
+    identity: identity,
+    builder: (context, hover) {
+      final style = IconButton.styleFrom(
+        minimumSize: const Size(44, 44),
+        fixedSize: const Size(44, 44),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.standard,
+      );
+      return IconButton(
+        style: style.copyWith(
+          overlayColor: hover.overlayColor(style.overlayColor),
+        ),
+        tooltip: tooltip,
+        onPressed: onPressed,
+        icon: Icon(icon),
+      );
+    },
+  );
 
   FontWeight _toFontWeight(int weight) {
     switch (weight) {

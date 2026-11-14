@@ -62,6 +62,167 @@ impl Default for HttpClientConfig {
     }
 }
 
+impl HttpClientConfig {
+    /// Apply a visit's immutable route to a snapshot, without changing globals.
+    /// An empty route disables client proxies; OS VPN/TUN routing still applies.
+    pub fn with_network_proxy(mut self, proxy: Option<&str>) -> AnyResult<Self> {
+        let Some(proxy) = proxy else { return Ok(self) };
+        let proxy = proxy.trim();
+        self.use_http_proxy = false;
+        self.use_socks5_proxy = false;
+        self.http_proxy = None;
+        self.socks5_proxy = None;
+        if proxy.is_empty() {
+            return Ok(self);
+        }
+        let url = reqwest::Url::parse(proxy).context("invalid runtime network proxy")?;
+        if !matches!(url.scheme(), "http" | "https" | "socks5" | "socks5h")
+            || url.host_str().is_none()
+            || url.port_or_known_default().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || !matches!(url.path(), "" | "/")
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(anyhow!("invalid runtime network proxy"));
+        }
+        if matches!(url.scheme(), "http" | "https") {
+            self.use_http_proxy = true;
+            self.http_proxy = Some(url.to_string());
+        } else {
+            self.use_socks5_proxy = true;
+            self.socks5_proxy = Some(url.to_string());
+        }
+        Ok(self)
+    }
+}
+
+/// Shared by the primary and one-shot contexts of one runtime. Both target
+/// checks and I/O use this owned snapshot even after an async thread hop.
+pub(crate) struct RuntimeHttpClient {
+    pub(crate) config: HttpClientConfig,
+    pub(crate) client: ClientWithMiddleware,
+    no_redirect_client: OnceLock<AnyResult<ClientWithMiddleware>>,
+    observed_domains: Mutex<std::collections::VecDeque<String>>,
+}
+
+impl RuntimeHttpClient {
+    pub(crate) fn new(config: HttpClientConfig) -> AnyResult<Self> {
+        let client = build_http_client_ex(
+            &config,
+            BuildHttpClientOptions {
+                no_proxy: !config.use_http_proxy && !config.use_socks5_proxy,
+                ..Default::default()
+            },
+        )?;
+        Ok(Self {
+            config,
+            client,
+            no_redirect_client: OnceLock::new(),
+            observed_domains: Mutex::new(std::collections::VecDeque::new()),
+        })
+    }
+
+    fn client_for_redirect(&self, policy: Option<&str>) -> AnyResult<&ClientWithMiddleware> {
+        if !matches!(policy, Some("error" | "manual")) {
+            return Ok(&self.client);
+        }
+        self.no_redirect_client
+            .get_or_init(|| {
+                build_http_client_ex(
+                    &self.config,
+                    BuildHttpClientOptions {
+                        no_proxy: !self.config.use_http_proxy && !self.config.use_socks5_proxy,
+                        follow_redirects: Some(false),
+                        ..Default::default()
+                    },
+                )
+            })
+            .as_ref()
+            .map_err(|error| anyhow!("{error:#}"))
+    }
+
+    /// Only host-owned completed HTTP responses can populate this queue.
+    /// Observation is best effort and never delays or fails a plugin request.
+    fn observe_response(&self, requested: &str, final_url: &str, status: u16) {
+        if !(200..300).contains(&status) {
+            return;
+        }
+        let Ok(mut domains) = self.observed_domains.try_lock() else {
+            return;
+        };
+        for host in [requested, final_url]
+            .into_iter()
+            .filter_map(public_https_domain)
+        {
+            if domains.contains(&host) {
+                continue;
+            }
+            if domains.len() == 64 {
+                domains.pop_front();
+            }
+            domains.push_back(host);
+        }
+    }
+
+    pub(crate) fn drain_observed_domains(&self) -> Vec<String> {
+        self.observed_domains
+            .try_lock()
+            .map(|mut domains| domains.drain(..).collect())
+            .unwrap_or_default()
+    }
+}
+
+/// Syntactic public-domain filtering only: no DNS or additional network I/O.
+/// IP literals and private/reserved naming namespaces never become routing rules.
+fn public_https_domain(value: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(value).ok()?;
+    if parsed.scheme() != "https" {
+        return None;
+    }
+    let url::Host::Domain(domain) = parsed.host()? else {
+        return None;
+    };
+    let host = domain.trim_end_matches('.').to_ascii_lowercase();
+    if host.len() > 253 || !host.contains('.') || host.parse::<IpAddr>().is_ok() {
+        return None;
+    }
+    if host.split('.').any(|label| {
+        label.is_empty()
+            || label.len() > 63
+            || label.starts_with('-')
+            || label.ends_with('-')
+            || !label
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    }) {
+        return None;
+    }
+    for reserved in [
+        "localhost",
+        "local",
+        "internal",
+        "intranet",
+        "lan",
+        "home",
+        "home.arpa",
+        "arpa",
+        "test",
+        "invalid",
+        "example",
+        "onion",
+        "example.com",
+        "example.org",
+        "example.net",
+    ] {
+        if host == reserved || host.ends_with(&format!(".{reserved}")) {
+            return None;
+        }
+    }
+    Some(host)
+}
+
 pub(crate) struct HttpClientState {
     config: HttpClientConfig,
 }
@@ -273,29 +434,6 @@ pub fn current_http_client_config() -> HttpClientConfig {
         .unwrap_or_default()
 }
 
-thread_local! {
-    static WORKER_HTTP_CONFIG: std::cell::RefCell<Option<HttpClientConfig>> = const { std::cell::RefCell::new(None) };
-}
-
-pub fn set_worker_http_config(config: HttpClientConfig) {
-    WORKER_HTTP_CONFIG.with(|c| *c.borrow_mut() = Some(config));
-}
-
-fn worker_http_config() -> HttpClientConfig {
-    WORKER_HTTP_CONFIG.with(|c| {
-        c.borrow()
-            .clone()
-            .unwrap_or_else(current_http_client_config)
-    })
-}
-
-fn http_client() -> AnyResult<ClientWithMiddleware> {
-    let state = http_client_state_cell()
-        .lock()
-        .map_err(|_| anyhow!(crate::tr!("http-client-state-lock-is-poisoned")))?;
-    build_http_client(&state.config)
-}
-
 fn normalize_http_proxy_url(raw: &str) -> String {
     let value = raw.trim();
     if value.contains("://") {
@@ -316,6 +454,7 @@ fn normalize_socks5_proxy_url(raw: &str) -> String {
 #[derive(Debug, Clone, Default)]
 pub struct BuildHttpClientOptions {
     pub no_proxy: bool,
+    pub https_only: bool,
     pub timeout: Option<Duration>,
     pub connect_timeout: Option<Duration>,
     pub follow_redirects: Option<bool>,
@@ -332,7 +471,9 @@ pub fn build_http_client_ex(
     config: &HttpClientConfig,
     options: BuildHttpClientOptions,
 ) -> AnyResult<ClientWithMiddleware> {
-    let mut builder = Client::builder().timeout(options.timeout.unwrap_or(Duration::from_secs(30)));
+    let mut builder = Client::builder()
+        .https_only(options.https_only)
+        .timeout(options.timeout.unwrap_or(Duration::from_secs(30)));
     if let Some(connect_timeout) = options.connect_timeout {
         builder = builder.connect_timeout(connect_timeout);
     }
@@ -387,14 +528,16 @@ pub fn build_http_client_ex(
     Ok(wrap_http_client(client))
 }
 
-pub fn http_request_promise(
-    ctx: Ctx<'_>,
+pub(crate) fn http_request_promise<'js>(
+    ctx: Ctx<'js>,
     method: String,
     url: String,
     headers_json: String,
     body: Option<String>,
     body_native_buffer_id: Option<u64>,
-) -> rquickjs::Result<QjsValue<'_>> {
+    redirect: Option<String>,
+    http: Arc<RuntimeHttpClient>,
+) -> rquickjs::Result<QjsValue<'js>> {
     let id = HTTP_REQ_ID.fetch_add(1, Ordering::Relaxed);
     let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
     {
@@ -407,13 +550,10 @@ pub fn http_request_promise(
     // 实际 HTTP 请求放进独立 tokio 任务，由 tokio 的 I/O 驱动直接轮询，
     // 不经过 rquickjs 的 Spawner（那会被 JS 事件泵以固定节奏轮询，导致
     // 分块到达的大响应体逐块慢读）。JS 面只等一个 oneshot 结果。
-    // 注意：任务跑在独立多线程 runtime 的线程上，那里没有 QJS worker 的
-    // thread-local 配置，必须把当前 worker 配置带过去，否则内网拦截/代理
-    // 设置会不一致。
-    let work_cfg = worker_http_config();
+    // Carry the runtime's client/config as owned data, never thread-local state:
+    // this future can resume on a different global-runtime worker after await.
     let cleanup_id = id;
     let work = async move {
-        set_worker_http_config(work_cfg);
         let sem = Arc::clone(http_io_sem());
         let permit = match timeout(Duration::from_secs(15), sem.acquire_owned()).await {
             Ok(Ok(permit)) => permit,
@@ -437,7 +577,7 @@ pub fn http_request_promise(
                 })
                 .to_string())
             }
-            r = http_request_inner_async(method, url, headers_json, body, body_native_buffer_id) => r,
+            r = http_request_inner_async(method, url, headers_json, body, body_native_buffer_id, redirect, http) => r,
         };
 
         drop(permit);
@@ -503,17 +643,19 @@ async fn http_request_inner_async(
     headers_json: String,
     body: Option<String>,
     body_native_buffer_id: Option<u64>,
+    redirect: Option<String>,
+    http: Arc<RuntimeHttpClient>,
 ) -> AnyResult<String> {
     let method =
         Method::from_bytes(method.as_bytes()).context(crate::tr!("failed-to-parse-http-method"))?;
-    ensure_http_target_allowed(&url).await?;
+    ensure_http_target_allowed(&url, &http.config).await?;
     let mut headers_map = Map::new();
     let headers_value: Value = serde_json::from_str(&headers_json)
         .context(crate::tr!("failed-to-parse-http-headers-json"))?;
-    let client = http_client()?;
     let mut formdata_body = false;
     let mut plain_headers: Vec<(String, String)> = Vec::new();
 
+    let client = http.client_for_redirect(redirect.as_deref())?;
     let mut builder = client.request(method, &url);
 
     if let Value::Object(obj) = headers_value {
@@ -558,6 +700,10 @@ async fn http_request_inner_async(
         .await
         .context(crate::tr!("failed-to-send-http-request"))?;
     let status = response.status();
+    if redirect.as_deref() == Some("error") && status.is_redirection() {
+        // Do not expose a possibly sensitive Location or consume its target.
+        return Err(anyhow!("HTTP redirect blocked by request policy"));
+    }
     let final_url = response.url().to_string();
 
     for (name, value) in response.headers() {
@@ -573,6 +719,9 @@ async fn http_request_inner_async(
         .await
         .context(crate::tr!("failed-to-read-http-response-body-bytes"))?
         .to_vec();
+
+    // Capture only a successfully completed response, never headers/body/secrets.
+    http.observe_response(&url, &final_url, status.as_u16());
 
     let native_buffer_id = NATIVE_BUF_ID.fetch_add(1, Ordering::Relaxed);
     let body_len = body_bytes.len();
@@ -607,8 +756,7 @@ async fn http_request_inner_async(
     .to_string())
 }
 
-async fn ensure_http_target_allowed(url: &str) -> AnyResult<()> {
-    let config = worker_http_config();
+async fn ensure_http_target_allowed(url: &str, config: &HttpClientConfig) -> AnyResult<()> {
     if config.allow_private_network {
         return Ok(());
     }
@@ -667,6 +815,98 @@ fn is_private_or_local_ipv6(ip: Ipv6Addr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn observed_domains_accept_only_public_https_hostnames() {
+        assert_eq!(
+            public_https_domain("https://CDN.publisher.org./private/path?token=secret#fragment"),
+            Some("cdn.publisher.org".into())
+        );
+        assert_eq!(
+            public_https_domain("https://user:secret@images.publisher.org:8443/picture"),
+            Some("images.publisher.org".into())
+        );
+        for value in [
+            "http://cdn.publisher.org/video",
+            "https://localhost/",
+            "https://foo.local/",
+            "https://intranet/",
+            "https://foo.internal/",
+            "https://foo.lan/",
+            "https://foo.home.arpa/",
+            "https://foo.test/",
+            "https://foo.invalid/",
+            "https://example.com/",
+            "https://sub.example.net/",
+            "https://foo.onion/",
+            "https://127.0.0.1/",
+            "https://8.8.8.8/",
+            "https://[::1]/",
+            "https://[2606:4700:4700::1111]/",
+            "https://bad_label.publisher.org/",
+            "not a URL",
+        ] {
+            assert_eq!(public_https_domain(value), None, "{value}");
+        }
+    }
+
+    #[tokio::test]
+    async fn observed_domains_are_status_gated_host_only_deduplicated_and_drained() {
+        let client = RuntimeHttpClient::new(HttpClientConfig::default()).unwrap();
+        for status in [199, 301, 404, 500] {
+            client.observe_response(
+                "https://api.publisher.org/",
+                "https://cdn.publisher.org/",
+                status,
+            );
+        }
+        assert!(client.drain_observed_domains().is_empty());
+        client.observe_response(
+            "https://api.publisher.org/path?account=secret",
+            "https://cdn.publisher.org/file?token=secret",
+            200,
+        );
+        client.observe_response(
+            "https://api.publisher.org/other",
+            "https://cdn.publisher.org/other",
+            206,
+        );
+        assert_eq!(
+            client.drain_observed_domains(),
+            ["api.publisher.org", "cdn.publisher.org"]
+        );
+        assert!(client.drain_observed_domains().is_empty());
+    }
+
+    #[tokio::test]
+    async fn observed_domains_are_runtime_owned_and_bounded_without_blocking() {
+        let first = RuntimeHttpClient::new(HttpClientConfig::default()).unwrap();
+        let second = RuntimeHttpClient::new(HttpClientConfig::default()).unwrap();
+        for index in 0..100 {
+            let url = format!("https://cdn{index}.publisher.org/private");
+            first.observe_response(&url, &url, 200);
+        }
+        assert!(second.drain_observed_domains().is_empty());
+        let domains = first.drain_observed_domains();
+        assert_eq!(domains.len(), 64);
+        assert_eq!(domains.first().unwrap(), "cdn36.publisher.org");
+        assert_eq!(domains.last().unwrap(), "cdn99.publisher.org");
+        let lock = first.observed_domains.lock().unwrap();
+        // A contended observer cannot hold up successful HTTP completion.
+        first.observe_response(
+            "https://api.publisher.org/",
+            "https://cdn.publisher.org/",
+            200,
+        );
+        assert!(first.drain_observed_domains().is_empty());
+        drop(lock);
+        first.observe_response(
+            "https://api.publisher.org/",
+            "https://cdn.publisher.org/",
+            200,
+        );
+        assert_eq!(first.drain_observed_domains().len(), 2);
+    }
 
     #[tokio::test]
     async fn blocked_request_middleware_returns_before_io() {

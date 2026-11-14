@@ -5,15 +5,29 @@ import 'package:minio/minio.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 
 import 'package:zephyr/network/sync/comic_sync_core.dart';
+import 'package:zephyr/network/sync/sync_archive_context.dart';
+import 'package:zephyr/network/sync/sync_archive_adapter.dart';
+import 'package:zephyr/network/sync/sync_failure.dart';
 
-class S3SyncService implements ComicSyncRemoteAdapter {
-  S3SyncService(this._settings) : _minio = _createMinio(_settings) {
+class S3SyncService
+    implements
+        ComicSyncRemoteAdapter,
+        LegacyPluginPurgeTransport,
+        FullCloudReplaceTransport {
+  S3SyncService(this._settings, {this.archive = SyncArchiveContext.current})
+    : _minio = _createMinio(_settings) {
     if (!isConfigured(_settings)) {
       throw Exception('S3 配置不完整');
     }
   }
 
   final GlobalSettingState _settings;
+  final SyncArchiveContext archive;
+  String get _root => archive.root;
+  void _writable() {
+    if (archive.readOnly) throw const LegacyArchiveReadOnly();
+  }
+
   final Minio _minio;
 
   static bool isConfigured(GlobalSettingState settings) {
@@ -52,12 +66,7 @@ class S3SyncService implements ComicSyncRemoteAdapter {
           return value;
         }
       } on MinioS3Error catch (e) {
-        final code = e.error?.code;
-        if (code == 'NoSuchKey' ||
-            code == 'NotFound' ||
-            code == 'NoSuchObject') {
-          continue;
-        }
+        if (_isMissingObject(e)) continue;
         throw Exception('S3 md5 下载失败: ${e.message}');
       }
     }
@@ -66,6 +75,7 @@ class S3SyncService implements ComicSyncRemoteAdapter {
 
   @override
   Future<void> uploadRemoteMd5(String value) async {
+    _writable();
     final bytes = utf8.encode(value);
     final data = Uint8List.fromList(bytes);
     await _minio.putObject(
@@ -105,11 +115,16 @@ class S3SyncService implements ComicSyncRemoteAdapter {
   @override
   Future<List<int>> downloadRemoteFile(String remotePath) async {
     final objectKey = _toManagedObjectKey(remotePath);
-    final stream = await _minio.getObject(
-      _settings.syncSetting.s3Setting.bucket,
-      objectKey,
-    );
-    return _collectStream(stream);
+    try {
+      final stream = await _minio.getObject(
+        _settings.syncSetting.s3Setting.bucket,
+        objectKey,
+      );
+      return await _collectStream(stream);
+    } on MinioS3Error catch (error) {
+      if (_isMissingObject(error)) throw const SyncRemoteFileNotFound();
+      rethrow;
+    }
   }
 
   @override
@@ -118,6 +133,7 @@ class S3SyncService implements ComicSyncRemoteAdapter {
     List<int> data, {
     String contentType = 'application/octet-stream',
   }) async {
+    _writable();
     final remoteObject = _toManagedObjectKey(remotePath);
 
     await _minio.putObject(
@@ -128,8 +144,37 @@ class S3SyncService implements ComicSyncRemoteAdapter {
     );
   }
 
+  /// Separate, explicit source-deletion capability. Ordinary upload/delete
+  /// retain _writable(); only canonical managed legacy files can reach here.
+  @override
+  Future<void> rewriteLegacySnapshotForPluginPurge(
+    String physicalPath,
+    List<int> data,
+  ) async {
+    final path = validateLegacyPluginPurgePath(archive, physicalPath);
+    await _minio.putObject(
+      _settings.syncSetting.s3Setting.bucket,
+      path,
+      Stream<Uint8List>.value(Uint8List.fromList(data)),
+      size: data.length,
+    );
+  }
+
+  @override
+  Future<void> deleteLegacyFilesForFullReplace(
+    List<String> physicalPaths,
+  ) async {
+    final paths = physicalPaths
+        .map((path) => validateFullReplaceLegacyPath(archive, path))
+        .toList();
+    for (final path in paths) {
+      await _minio.removeObject(_settings.syncSetting.s3Setting.bucket, path);
+    }
+  }
+
   @override
   Future<void> deleteRemoteFiles(List<String> remotePaths) async {
+    _writable();
     if (remotePaths.isEmpty) {
       return;
     }
@@ -148,29 +193,20 @@ class S3SyncService implements ComicSyncRemoteAdapter {
       try {
         await _minio.removeObject(_settings.syncSetting.s3Setting.bucket, path);
       } on MinioS3Error catch (e) {
-        final code = e.error?.code;
-        if (code == 'NoSuchKey' ||
-            code == 'NotFound' ||
-            code == 'NoSuchObject') {
-          continue;
-        }
+        if (_isMissingObject(e)) continue;
         throw Exception('S3 文件删除失败: ${e.message}');
       }
     }
   }
 
-  String get _syncRootPrefix => '${ComicSyncCore.syncRemoteRootName}/';
+  bool _isMissingObject(MinioS3Error error) => switch (error.error?.code) {
+    'NoSuchKey' || 'NotFound' || 'NoSuchObject' => true,
+    _ => false,
+  };
 
-  String get _legacyDataPrefix => '${ComicSyncCore.legacyDataRootName}/';
+  String get _syncRootPrefix => '$_root/';
 
-  String get _legacySettingsPrefix =>
-      '${ComicSyncCore.legacySettingsRootName}/';
-
-  List<String> get _listPrefixes => [
-    _syncRootPrefix,
-    _legacyDataPrefix,
-    _legacySettingsPrefix,
-  ];
+  List<String> get _listPrefixes => [_syncRootPrefix];
 
   String get _md5ObjectKey =>
       '$_syncRootPrefix${ComicSyncCore.comicMd5FileName}';
@@ -182,10 +218,11 @@ class S3SyncService implements ComicSyncRemoteAdapter {
     if (normalized.isEmpty) {
       return _syncRootPrefix;
     }
-    if (normalized.startsWith(_syncRootPrefix) ||
-        normalized.startsWith(_legacyDataPrefix) ||
-        normalized.startsWith(_legacySettingsPrefix)) {
+    if (normalized.startsWith(_syncRootPrefix)) {
       return normalized;
+    }
+    if (normalized.contains('/')) {
+      throw StateError('Archive path is outside its root');
     }
     return '$_syncRootPrefix$normalized';
   }

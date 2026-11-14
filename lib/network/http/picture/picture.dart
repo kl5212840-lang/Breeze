@@ -1,14 +1,22 @@
+import 'package:zephyr/service/image_recovery.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as file_path;
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart';
+import 'package:zephyr/page/comic_read/method/image_header_size.dart';
 import 'package:zephyr/page/setting/real_sr/service/real_sr_super_resolution.dart';
+import 'package:zephyr/page/source_shell/source_experience_preferences.dart'
+    show bikaPlusSourceId;
 import 'package:zephyr/service/download/download_asset_store.dart';
 import 'package:zephyr/service/download/download_cancel_signal.dart';
+import 'package:zephyr/service/download/download_retry.dart'
+    show isNonRetryableDownloadFailure;
 import 'package:zephyr/src/rust/api/simple.dart';
 import 'package:zephyr/src/rust/decode/decode.dart';
 import 'package:zephyr/type/enum.dart';
@@ -88,6 +96,43 @@ bool _parseIsJmResult(Object? decoded) {
   return decoded == true;
 }
 
+/// Bika+ can return the same media path with a different URL for another
+/// quality. Its image fetch uses the returned URL, including its query.
+String onlinePictureCacheVariant({
+  required String from,
+  required String url,
+  required PictureType type,
+}) {
+  if (type != PictureType.page || normalizePluginId(from) != bikaPlusSourceId) {
+    return '';
+  }
+  final uri = Uri.tryParse(url.trim());
+  if (uri == null ||
+      uri.host.isEmpty ||
+      (uri.scheme != 'https' && uri.scheme != 'http')) {
+    return '';
+  }
+  return sha256
+      .convert(utf8.encode(uri.removeFragment().toString()))
+      .toString();
+}
+
+/// Some catalog providers only return a public image URL. This identity is
+/// restricted to online artwork: chapters still require their storage path.
+String _onlinePicturePath(String path, String url, PictureType type) {
+  final original = path.trim();
+  if (original.isNotEmpty || type == PictureType.page) return original;
+  final uri = Uri.tryParse(url.trim());
+  if (uri == null ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty ||
+      (uri.scheme != 'https' && uri.scheme != 'http')) {
+    return '';
+  }
+  final identity = sha256.convert(utf8.encode(uri.removeFragment().toString()));
+  return 'online-url-$identity';
+}
+
 Future<String> getCachePicture({
   required String from,
   String url = '',
@@ -100,6 +145,117 @@ Future<String> getCachePicture({
   int index = 0,
   bool applyRealSr = true,
   bool usePlugin = true,
+  int priority = 0,
+  bool prefetch = false,
+  bool useDownloads = true,
+  bool Function()? isCurrent,
+}) async {
+  final source = normalizePluginId(from);
+  final generation = pluginSessionWriteFence.generation(source);
+  bool current() =>
+      isCurrent?.call() != false &&
+      !pluginSessionWriteFence.isChanging(source) &&
+      pluginSessionWriteFence.generation(source) == generation;
+  final key = jsonEncode([
+    source,
+    generation,
+    cartoonId,
+    chapterId,
+    storageChapterId,
+    pictureType.name,
+    path,
+    url,
+    usePlugin,
+    useDownloads,
+    {...?extern}..remove('priority'),
+  ]);
+  final result = await ImageRecoveryHub.requests.run<String>(
+    key,
+    () => _getCachePictureRaw(
+      from: from,
+      url: url,
+      path: path,
+      cartoonId: cartoonId,
+      chapterId: chapterId,
+      storageChapterId: storageChapterId,
+      pictureType: pictureType,
+      extern: {...?extern, 'priority': priority},
+      index: index,
+      applyRealSr: false,
+      usePlugin: usePlugin,
+      useDownloads: useDownloads,
+      isCurrent: () =>
+          !pluginSessionWriteFence.isChanging(source) &&
+          pluginSessionWriteFence.generation(source) == generation,
+    ),
+    priority: priority,
+    current: current,
+    cover: pictureType != PictureType.page,
+  );
+  if (!current()) throw const ImageRecoverySuperseded();
+  if (!prefetch &&
+      applyRealSr &&
+      pictureType == PictureType.page &&
+      result != '404') {
+    await ImageRecoveryHub.requests.run<void>(
+      'upscale:$result',
+      () => RealSrSuperResolution.upscaleAndConvertToWebp(result),
+      priority: priority,
+      current: current,
+    );
+  }
+  return result;
+}
+
+/// Invalidate only the exact reloadable cache reported by a decoder. A managed
+/// download is never deleted or silently replaced by an online image.
+Future<bool> invalidateCachedPicture({
+  required String from,
+  required String path,
+  required String imagePath,
+  String url = '',
+  String cartoonId = '1',
+  String chapterId = '',
+  String storageChapterId = '',
+  PictureType pictureType = PictureType.page,
+}) async {
+  final directPath = _onlinePicturePath(path, url, pictureType);
+  if (directPath.isEmpty) return false;
+  final store = DownloadAssetStore(
+    from: normalizePluginId(from),
+    path: directPath,
+    cartoonId: cartoonId,
+    chapterId: chapterId,
+    storageChapterId: storageChapterId,
+    pictureType: pictureType,
+    cacheVariant: onlinePictureCacheVariant(
+      from: from,
+      url: url,
+      type: pictureType,
+    ),
+  );
+  final download = await store.findExistingDownload();
+  if (download?.path == imagePath) return false;
+  final cache = await store.findCanonicalCache();
+  if (cache?.path != imagePath) return false;
+  await File(imagePath).delete();
+  return true;
+}
+
+Future<String> _getCachePictureRaw({
+  required String from,
+  String url = '',
+  String path = '',
+  String cartoonId = '1',
+  String chapterId = '',
+  String storageChapterId = '',
+  PictureType pictureType = PictureType.page,
+  Map<String, dynamic>? extern,
+  int index = 0,
+  bool applyRealSr = true,
+  bool usePlugin = true,
+  bool useDownloads = true,
+  bool Function()? isCurrent,
 }) async {
   final resolvedFrom = normalizePluginId(from);
   if (resolvedFrom.isEmpty) {
@@ -107,7 +263,7 @@ Future<String> getCachePicture({
   }
   if (url.contains("nopic-Male.gif")) return "nopic-Male.gif";
 
-  final directPath = path.trim();
+  final directPath = _onlinePicturePath(path, url, pictureType);
   if (directPath.isEmpty) {
     return '404';
   }
@@ -119,8 +275,15 @@ Future<String> getCachePicture({
     chapterId: chapterId,
     storageChapterId: storageChapterId,
     pictureType: pictureType,
+    cacheVariant: onlinePictureCacheVariant(
+      from: resolvedFrom,
+      url: url,
+      type: pictureType,
+    ),
   );
-  final existingDownload = await assetStore.findExistingDownload();
+  final existingDownload = !useDownloads || path.trim().isEmpty
+      ? null
+      : await assetStore.findExistingDownload();
 
   if (existingDownload != null) {
     try {
@@ -137,6 +300,12 @@ Future<String> getCachePicture({
         error: e,
       );
     }
+  }
+
+  // Downloaded reader pages have no remote URL. The saved file must
+  // exist in the download store; a transient online cache is not a copy.
+  if (pictureType == PictureType.page && url.isEmpty) {
+    throw const DownloadPictureNotFoundException('');
   }
 
   final existingCache = await assetStore.findCanonicalCache();
@@ -163,7 +332,7 @@ Future<String> getCachePicture({
   }
 
   if (url.isEmpty) {
-    throw Exception('404');
+    throw const DownloadPictureNotFoundException('');
   }
 
   final newCacheFilePath = await assetStore.canonicalCachePath();
@@ -193,6 +362,15 @@ Future<String> getCachePicture({
       );
     }
     imageData = response.body;
+    _checkImagePayload(imageData, url);
+  }
+
+  if (isCurrent?.call() == false) throw const ImageRecoverySuperseded();
+  void confirmTransport() {
+    if (isCurrent?.call() == false) throw const ImageRecoverySuperseded();
+    ImageRecoveryHub.instance.noteSuccessfulRequest(
+      imageHost: Uri.tryParse(url)?.host ?? '',
+    );
   }
 
   final shouldDeobfuscateCache = await _shouldApplyJmDeobfuscation(
@@ -200,6 +378,7 @@ Future<String> getCachePicture({
     pictureType: pictureType,
     probePlugin: usePlugin,
   );
+  if (isCurrent?.call() == false) throw const ImageRecoverySuperseded();
   if (shouldDeobfuscateCache) {
     await decodeAndSaveImage(
       imageData,
@@ -212,6 +391,7 @@ Future<String> getCachePicture({
       if (pictureType == PictureType.page && applyRealSr) {
         await RealSrSuperResolution.upscaleAndConvertToWebp(newCacheFilePath);
       }
+      confirmTransport();
       return newCacheFilePath;
     } else {
       throw Exception('图片保存失败');
@@ -228,6 +408,7 @@ Future<String> getCachePicture({
     if (pictureType == PictureType.page && applyRealSr) {
       await RealSrSuperResolution.upscaleAndConvertToWebp(newCacheFilePath);
     }
+    confirmTransport();
     return newCacheFilePath;
   } else {
     throw Exception('图片保存失败');
@@ -242,28 +423,40 @@ Future<String> getCachePicture({
 Future<String> findCachedPicturePath({
   required String from,
   String path = '',
+  String url = '',
   String cartoonId = '1',
   String chapterId = '',
   String storageChapterId = '',
   PictureType pictureType = PictureType.page,
+  bool? offlineReader,
 }) async {
   final resolvedFrom = normalizePluginId(from);
   if (resolvedFrom.isEmpty) {
     return '';
   }
 
-  final directPath = path.trim();
+  final directPath = _onlinePicturePath(path, url, pictureType);
   if (directPath.isEmpty) {
     return '';
   }
-  final existing = await DownloadAssetStore(
+  final assetStore = DownloadAssetStore(
     from: resolvedFrom,
     path: directPath,
     cartoonId: cartoonId,
     chapterId: chapterId,
     storageChapterId: storageChapterId,
     pictureType: pictureType,
-  ).findExisting();
+    cacheVariant: onlinePictureCacheVariant(
+      from: resolvedFrom,
+      url: url,
+      type: pictureType,
+    ),
+  );
+  final existing = switch (offlineReader) {
+    true => await assetStore.findExistingDownload(),
+    false => await assetStore.findCanonicalCache(),
+    null => await assetStore.findExisting(),
+  };
   if (existing == null) return '';
   return existing.path;
 }
@@ -306,6 +499,32 @@ Future<String> downloadPicture({
   return result.path;
 }
 
+/// Uses the same isolated-page check as the final writer. Native pre-submission
+/// can omit already committed pages without treating arbitrary cached bytes as
+/// a completed download.
+Future<bool> hasCommittedDownloadPage({
+  required String from,
+  required String path,
+  required String cartoonId,
+  required String chapterId,
+  required String storageChapterId,
+}) async {
+  final existing = await DownloadAssetStore(
+    from: from,
+    path: path,
+    cartoonId: cartoonId,
+    chapterId: chapterId,
+    storageChapterId: storageChapterId,
+    pictureType: PictureType.page,
+  ).findCanonicalDownload();
+  if (existing == null) return false;
+  try {
+    return await _hasIsolatedDownloadPage(existing.path);
+  } on FileSystemException {
+    return false;
+  }
+}
+
 Future<DownloadPictureResult> downloadPictureResult({
   required String from,
   String url = '',
@@ -320,6 +539,9 @@ Future<DownloadPictureResult> downloadPictureResult({
   bool Function()? shouldRetryUntilSuccess,
   Map<String, dynamic> extern = const <String, dynamic>{},
   bool applyRealSr = true,
+  bool isolatedPage = false,
+  int requestTimeoutMs = 30000,
+  Future<Uint8List> Function()? preparedImage,
 }) async {
   final resolvedFrom = normalizePluginId(from);
   if (resolvedFrom.isEmpty) {
@@ -350,9 +572,16 @@ Future<DownloadPictureResult> downloadPictureResult({
     chapterId: chapterId,
     storageChapterId: storageChapterId,
     pictureType: pictureType,
+    cacheVariant: onlinePictureCacheVariant(
+      from: resolvedFrom,
+      url: url,
+      type: pictureType,
+    ),
   );
   final existingDownload = await assetStore.findCanonicalDownload();
-  if (existingDownload != null) {
+  if (existingDownload != null &&
+      (!isolatedPage ||
+          await _hasIsolatedDownloadPage(existingDownload.path))) {
     return DownloadPictureResult(
       status: DownloadPictureResultStatus.existing,
       path: existingDownload.path,
@@ -361,9 +590,23 @@ Future<DownloadPictureResult> downloadPictureResult({
   }
 
   // 下载时缓存只检查新的 canonical 路径，不兼容旧缓存。
-  final existingCache = await assetStore.findCanonicalCache();
+  final existingCache = isolatedPage
+      ? null
+      : await assetStore.findCanonicalCache();
   if (existingCache != null) {
     try {
+      // A previous version may have cached a gateway response. Never promote
+      // those bytes to the user's durable offline copy.
+      final cached = await File(existingCache.path).open();
+      try {
+        _checkImagePayload(
+          await cached.read(96),
+          url,
+          length: await cached.length(),
+        );
+      } finally {
+        await cached.close();
+      }
       final canonicalDownloadPath = await assetStore.canonicalDownloadPath();
       await assetStore.copyFileAtomically(
         sourcePath: existingCache.path,
@@ -375,24 +618,26 @@ Future<DownloadPictureResult> downloadPictureResult({
         path: canonicalDownloadPath,
         location: DownloadAssetLocation.canonicalDownload,
       );
-    } catch (e) {
+    } catch (e, stackTrace) {
+      // A target write can fail while the cached source remains usable.
+      if (e is FileSystemException && await File(existingCache.path).exists()) {
+        return DownloadPictureResult(
+          status: DownloadPictureResultStatus.failed,
+          error: e,
+          errorStackTrace: stackTrace,
+        );
+      }
       logger.w(
         'downloadPicture: 新缓存不可复制，准备重新下载: ${existingCache.path}',
         error: e,
       );
-      try {
-        await File(existingCache.path).delete();
-      } catch (deleteError) {
-        logger.e(
-          'downloadPicture: 删除不可复用缓存失败: ${existingCache.path}',
-          error: deleteError,
-        );
-      }
     }
   }
 
   // 新下载路径和新缓存路径都没有命中后，才兼容查找旧下载布局。
-  final legacyDownload = await assetStore.findLegacyDownload();
+  final legacyDownload = isolatedPage
+      ? null
+      : await assetStore.findLegacyDownload();
   if (legacyDownload != null) {
     try {
       final canonicalDownloadPath = await assetStore.migrateDownload(
@@ -413,16 +658,23 @@ Future<DownloadPictureResult> downloadPictureResult({
 
   Uint8List imageData;
   try {
-    imageData = await downloadImageWithRetry(
-      url,
-      source: resolvedFrom,
-      retry: retry,
-      shouldRetryUntilSuccess: shouldRetryUntilSuccess,
-      qjsName: qjsName,
-      qjsTaskGroupKey: qjsTaskGroupKey,
-      extern: extern,
-      maxRetries: 10,
-    );
+    imageData =
+        await (preparedImage?.call() ??
+            downloadImageWithRetry(
+              url,
+              source: resolvedFrom,
+              retry: retry,
+              shouldRetryUntilSuccess: shouldRetryUntilSuccess,
+              qjsName: qjsName,
+              qjsTaskGroupKey: qjsTaskGroupKey,
+              extern: extern,
+              maxRetries: 10,
+              requestTimeoutMs: requestTimeoutMs,
+            ));
+    _checkImagePayload(imageData, url);
+    if (isolatedPage && !_hasDownloadImageHeader(imageData)) {
+      throw const DownloadPictureInvalidPayload(incomplete: false);
+    }
   } catch (e, stackTrace) {
     if (_isDownloadTaskCancelledError(e) || _isQjsRuntimeCancelledError(e)) {
       rethrow;
@@ -521,81 +773,65 @@ Future<void> deleteComicDownloadDirectory(
   String from,
   String comicId, {
   String? legacyStorageRoot,
+  bool strict = false,
 }) async {
-  final legacyRoot = legacyStorageRoot?.trim() ?? '';
-  if (legacyRoot.isNotEmpty && file_path.isAbsolute(legacyRoot)) {
-    try {
-      final legacyDirectory = Directory(legacyRoot);
-      if (legacyDirectory.existsSync()) {
-        legacyDirectory.deleteSync(recursive: true);
-      }
-    } catch (e) {
-      logger.w('同步删除历史下载目录失败: $legacyRoot', error: e);
-    }
-  }
-
   final downloadRoot = await getDownloadPath();
-  String? canonicalRoot;
-  try {
-    canonicalRoot = file_path.join(
-      downloadRoot,
-      encodePath(path: normalizePluginId(from)),
-      encodePath(path: comicId.trim()),
-    );
-  } catch (e) {
-    logger.d('生成新下载目录失败，继续清理旧目录: $comicId, error=$e');
-  }
-  final legacyEncodedRoot = await _buildComicDownloadRoot(
-    from,
-    comicId,
-    encoded: true,
-  );
-  final legacyRawRoot = await _buildComicDownloadRoot(
-    from,
-    comicId,
-    encoded: false,
-  );
+  final source = normalizePluginId(from);
+  final id = comicId.trim();
+  final encodedId = encodePath(path: id);
+  final candidates = {
+    file_path.join(downloadRoot, encodePath(path: source), encodedId),
+    if (DownloadAssetStore.isLegacyPathSegment(source)) ...{
+      file_path.join(downloadRoot, source, 'original', encodedId),
+      if (DownloadAssetStore.isLegacyPathSegment(id))
+        file_path.join(downloadRoot, source, 'original', id),
+    },
+  };
 
-  if (canonicalRoot != null &&
-      DownloadAssetStore.isWithinRoot(downloadRoot, canonicalRoot)) {
-    await _tryDeleteDirectory(canonicalRoot);
-  }
-  if (DownloadAssetStore.isWithinRoot(downloadRoot, legacyEncodedRoot)) {
-    await _tryDeleteDirectory(legacyEncodedRoot);
-  }
-  if (DownloadAssetStore.isWithinRoot(downloadRoot, legacyRawRoot)) {
-    await _tryDeleteDirectory(legacyRawRoot);
-  } else {
-    logger.w('跳过越界的历史下载目录删除: $legacyRawRoot');
-  }
-
-  // 旧记录可能保存了当前平台之外的绝对 storageRoot。正常读取不依赖它；
-  // 删除下载记录时，如果调用方明确传入且该目录仍存在，则兼容清理这个
-  // 历史目录，避免旧版本导入的数据留下孤立文件。
-}
-
-Future<String> _buildComicDownloadRoot(
-  String from,
-  String comicId, {
-  required bool encoded,
-}) async {
-  return file_path.join(
-    await getDownloadPath(),
-    normalizePluginId(from),
-    'original',
-    encoded ? encodePath(path: comicId.trim()) : comicId.trim(),
-  );
-}
-
-Future<void> _tryDeleteDirectory(String path) async {
-  final dir = Directory(path);
-  if (await dir.exists()) {
+  // Preflight every layout before deleting any files. Older unencoded IDs and
+  // linked directories must never authorize deletion outside this work.
+  final owned = <String>[];
+  for (final path in candidates) {
     try {
-      await dir.delete(recursive: true);
-    } catch (e) {
-      logger.w('删除目录失败: $path, error: $e');
+      if (await _downloadDirectoryExists(downloadRoot, path)) owned.add(path);
+    } on FileSystemException catch (error) {
+      if (strict) rethrow;
+      logger.w('跳过不安全的下载目录', error: error);
     }
   }
+  for (final path in owned) {
+    try {
+      if (await _downloadDirectoryExists(downloadRoot, path)) {
+        await Directory(path).delete(recursive: true);
+      }
+    } on FileSystemException catch (error) {
+      if (strict) rethrow;
+      logger.w('删除下载目录失败', error: error);
+    }
+  }
+
+  // storageRoot can come from another device or an old backup. It is not
+  // authority to recursively delete a directory. The three supported layouts
+  // above are resolved from this app's download root and comic identity.
+}
+
+Future<bool> _downloadDirectoryExists(String root, String path) async {
+  final base = file_path.normalize(file_path.absolute(root));
+  final target = file_path.normalize(file_path.absolute(path));
+  if (!file_path.isWithin(base, target)) {
+    throw FileSystemException('Download directory is outside its root', path);
+  }
+  var current = base;
+  final segments = file_path.split(file_path.relative(target, from: base));
+  for (final segment in ['', ...segments]) {
+    current = file_path.join(current, segment);
+    final type = await FileSystemEntity.type(current, followLinks: false);
+    if (type == FileSystemEntityType.notFound) return false;
+    if (type != FileSystemEntityType.directory) {
+      throw FileSystemException('Unsafe download directory', current);
+    }
+  }
+  return true;
 }
 
 Future<Uint8List> downloadImageWithRetry(
@@ -607,6 +843,7 @@ Future<Uint8List> downloadImageWithRetry(
   String? qjsName,
   String qjsTaskGroupKey = '',
   Map<String, dynamic> extern = const <String, dynamic>{},
+  int requestTimeoutMs = 30000,
 }) async {
   var attempts = 0;
   while (true) {
@@ -620,7 +857,7 @@ Future<Uint8List> downloadImageWithRetry(
       final runtimeName = qjsName?.trim().isNotEmpty == true
           ? qjsName!.trim()
           : pluginId;
-      final args = <String, dynamic>{"url": url, "timeoutMs": 30000};
+      final args = <String, dynamic>{'url': url, 'timeoutMs': requestTimeoutMs};
       if (qjsTaskGroupKey.isNotEmpty) {
         args["taskGroupKey"] = qjsTaskGroupKey;
       }
@@ -640,10 +877,11 @@ Future<Uint8List> downloadImageWithRetry(
       );
 
       if (result.error != null) {
+        final code = result.statusCode ?? imageFailureHttpStatus(result.error!);
         throw DownloadPictureHttpException(
           url,
           result.error!,
-          statusCode: result.statusCode,
+          statusCode: code,
           responseBodyLength: result.responseBodyLength,
         );
       }
@@ -670,9 +908,7 @@ Future<Uint8List> downloadImageWithRetry(
       }
 
       final bytes = result.bytes;
-      if (bytes.isEmpty) {
-        throw DownloadPictureEmptyDataException(url);
-      }
+      _checkImagePayload(bytes, url);
 
       return bytes;
     } catch (e) {
@@ -701,6 +937,7 @@ Future<Uint8List> downloadImageWithRetry(
           error: e,
         );
       }
+      if (isNonRetryableDownloadFailure(e)) rethrow;
       logger.w('fetchImageBytes failed source=$source url=$url error=$e');
 
       if (e is TimeoutException) {
@@ -760,7 +997,10 @@ class DownloadPictureResult {
       status == DownloadPictureResultStatus.downloaded;
 }
 
-class DownloadPictureNotFoundException implements Exception {
+class DownloadPictureNotFoundException
+    implements Exception, ImageFailureEvidence {
+  @override
+  bool get retryable => false;
   const DownloadPictureNotFoundException(this.url, [this.cause]);
 
   final String url;
@@ -776,7 +1016,14 @@ class DownloadPictureNotFoundException implements Exception {
   }
 }
 
-class DownloadPictureHttpException implements Exception {
+class DownloadPictureHttpException implements Exception, ImageFailureEvidence {
+  @override
+  bool get retryable =>
+      (statusCode == null && imageFailureIsTransient(message)) ||
+      statusCode == 408 ||
+      statusCode == 425 ||
+      statusCode == 429 ||
+      (statusCode ?? 0) >= 500;
   const DownloadPictureHttpException(
     this.url,
     this.message, {
@@ -797,13 +1044,102 @@ class DownloadPictureHttpException implements Exception {
   }
 }
 
-class DownloadPictureEmptyDataException implements Exception {
+class DownloadPictureEmptyDataException
+    implements Exception, ImageFailureEvidence {
+  @override
+  bool get retryable => false;
   const DownloadPictureEmptyDataException(this.url);
 
   final String url;
 
   @override
   String toString() => '图片下载返回空数据: $url';
+}
+
+class DownloadPictureInvalidPayload implements Exception, ImageFailureEvidence {
+  const DownloadPictureInvalidPayload({required this.incomplete});
+  final bool incomplete;
+
+  @override
+  bool get retryable => incomplete;
+
+  @override
+  String toString() => incomplete ? '图片数据未传完整' : '站点返回了非图片内容';
+}
+
+final _imageTextResponse = RegExp(
+  r'^(?:<!doctype\s+html|<html\b|<head\b|<body\b|<script\b|\{|\[)',
+  caseSensitive: false,
+);
+
+const _downloadImageHeaderBytes = 256 * 1024;
+
+bool _hasDownloadImageHeader(Uint8List bytes) {
+  if (bytes.length > _downloadImageHeaderBytes) {
+    bytes = Uint8List.sublistView(bytes, 0, _downloadImageHeaderBytes);
+  }
+  if (parseImageHeaderSize(bytes) != null) return true;
+  if (bytes.length < 16) return false;
+  final format = String.fromCharCodes(bytes, 4, 12);
+  return format == 'ftypavif' || format == 'ftypavis';
+}
+
+Future<bool> _hasIsolatedDownloadPage(String path) async {
+  final file = await File(path).open();
+  try {
+    final bytes = await file.read(_downloadImageHeaderBytes);
+    try {
+      _checkImagePayload(bytes, '', length: await file.length());
+    } on DownloadPictureInvalidPayload {
+      return false;
+    } on DownloadPictureEmptyDataException {
+      return false;
+    }
+    return _hasDownloadImageHeader(bytes);
+  } finally {
+    await file.close();
+  }
+}
+
+/// Cheap checks for unambiguous false successes. Leave other formats to the
+/// platform decoder; scanning or decoding every image twice hurts scrolling.
+void _checkImagePayload(Uint8List bytes, String url, {int? length}) {
+  if (bytes.isEmpty) throw DownloadPictureEmptyDataException(url);
+  final total = length ?? bytes.length;
+  if (bytes.length >= 12 &&
+      bytes[0] == 0x52 &&
+      bytes[1] == 0x49 &&
+      bytes[2] == 0x46 &&
+      bytes[3] == 0x46 &&
+      bytes[8] == 0x57 &&
+      bytes[9] == 0x45 &&
+      bytes[10] == 0x42 &&
+      bytes[11] == 0x50) {
+    final declared = ByteData.sublistView(bytes).getUint32(4, Endian.little);
+    if (declared + 8 > total) {
+      throw const DownloadPictureInvalidPayload(incomplete: true);
+    }
+    return;
+  }
+  final first = bytes.first;
+  if (first == 0x3c ||
+      first == 0x7b ||
+      first == 0x5b ||
+      first == 0xef ||
+      first == 0x20 ||
+      (first >= 9 && first <= 13)) {
+    final offset =
+        bytes.length >= 3 &&
+            first == 0xef &&
+            bytes[1] == 0xbb &&
+            bytes[2] == 0xbf
+        ? 3
+        : 0;
+    final prefix = String.fromCharCodes(bytes.take(96).skip(offset)).trimLeft();
+    if (_imageTextResponse.hasMatch(prefix)) {
+      throw const DownloadPictureInvalidPayload(incomplete: false);
+    }
+  }
 }
 
 Future<void> _delayWithCancel({

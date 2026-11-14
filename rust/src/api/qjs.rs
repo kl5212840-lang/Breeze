@@ -88,6 +88,11 @@ pub async fn qjs_cancel_tasks_by_group(
 }
 
 #[frb]
+pub async fn qjs_drain_observed_http_domains(runtime_name: String) -> Result<Vec<String>> {
+    crate::qjs::qjs_drain_observed_http_domains(runtime_name).await
+}
+
+#[frb]
 pub async fn qjs_debug_snapshot(runtime_name: String) -> Result<String> {
     crate::qjs::qjs_debug_snapshot(runtime_name).await
 }

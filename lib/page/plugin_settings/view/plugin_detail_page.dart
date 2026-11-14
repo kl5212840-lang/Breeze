@@ -5,6 +5,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/page/plugin_settings/models/plugin_detail.dart';
+import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/util/json/json_value.dart';
@@ -102,14 +104,17 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
     final home = _detail?.homeWithFallback(_cachedHome) ?? '';
     return Scaffold(
       appBar: AppBar(
+        leading: const SourceBackButton(),
         title: Text(widget.pluginDisplayName),
         actions: [
           if (home.isNotEmpty)
-            IconButton(
+            SourceChromeIconButton(
               tooltip: t.plugin.homepage,
-              icon: const Icon(Icons.home_outlined),
+              icon: Icons.home_outlined,
+              symbol: 'house',
               onPressed: () => _openHome(home),
             ),
+          const SizedBox(width: 12),
         ],
       ),
       body: _buildBody(colorScheme),
@@ -192,6 +197,7 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
             width: 88,
             height: 88,
             child: PluginIcon(
+              pluginUuid: widget.pluginUuid,
               url: _iconUrl,
               placeholder: ColoredBox(
                 color: colorScheme.surfaceContainerHighest,

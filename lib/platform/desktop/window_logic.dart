@@ -212,6 +212,13 @@ class WindowLogic {
 
   static Future<void> saveCloseBehavior(DesktopCloseBehavior value) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_closeBehaviorPrefsKey, value.name);
+    try {
+      if (!await prefs.setString(_closeBehaviorPrefsKey, value.name)) {
+        throw StateError('Desktop close preference save failed');
+      }
+    } catch (_) {
+      await prefs.reload();
+      rethrow;
+    }
   }
 }

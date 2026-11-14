@@ -4,6 +4,8 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/source_shell/source_diagnostic_preferences.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/page/setting/common/setting_ui.dart';
+import 'package:zephyr/widgets/breeze_switch.dart';
 
 class SourceDiagnosticToolsTile extends StatefulWidget {
   const SourceDiagnosticToolsTile({super.key, required this.source});
@@ -77,13 +79,23 @@ class _SourceDiagnosticToolsTileState extends State<SourceDiagnosticToolsTile> {
   }
 
   @override
-  Widget build(BuildContext context) => SwitchListTile.adaptive(
-    key: ValueKey('source-diagnostic-tools.${widget.source}'),
-    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-    secondary: const Icon(Icons.bug_report_outlined),
-    title: Text(t.sourceShell.diagnosticTools),
-    subtitle: Text(t.sourceShell.diagnosticToolsDescription),
-    value: _enabled,
-    onChanged: _loading || _saving ? null : _save,
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      BreezeSwitchListTile(
+        SwitchListTile.adaptive(
+          key: ValueKey('source-diagnostic-tools.${widget.source}'),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 4,
+          ),
+          secondary: const Icon(Icons.bug_report_outlined),
+          title: Text(t.sourceShell.diagnosticTools),
+          value: _enabled,
+          onChanged: _loading || _saving ? null : _save,
+        ),
+      ),
+      SettingRowDescription(t.sourceShell.diagnosticToolsDescription),
+    ],
   );
 }

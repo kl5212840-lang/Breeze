@@ -1,50 +1,79 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/widgets/touch_hover_intent.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/config/router/router.gr.dart';
+import 'package:zephyr/page/comic_follow/comic_follow_navigation.dart';
+import 'package:zephyr/page/download/download_center_navigation.dart';
+import 'package:zephyr/page/navigation/main_navigation_layout.dart';
+import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/comic_follow/cubit/comic_follow_cubit.dart';
+import 'package:zephyr/page/comic_follow/widgets/comic_follow_reminder_widgets.dart';
 
 class SettingsWidget extends StatelessWidget {
   const SettingsWidget({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final slots = context.select(
+      (GlobalSettingCubit? cubit) => cubit?.state.mainNavigationSlots,
+    );
+    final layout = MainNavigationLayout.decode(slots ?? '');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildSectionTitle(context, t.more.common, Icons.widgets_outlined),
-        ListTile(
-          leading: const Icon(Icons.download_outlined),
-          title: Text(t.more.downloadTasks),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => context.pushRoute(DownloadTaskRoute()),
-        ),
-        ListTile(
+        _row(
+          'sync',
           leading: const Icon(Icons.sync_outlined),
           title: Text(t.more.sync),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => context.pushRoute(SyncSettingRoute()),
         ),
-        BlocSelector<ComicFollowCubit, ComicFollowState, int>(
-          selector: (state) => state.updateCount,
-          builder: (context, updateCount) {
-            return ListTile(
-              leading: const Icon(Icons.notifications_active_outlined),
-              title: Text(t.more.comicFollow),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (updateCount > 0) _UpdateBadge(count: updateCount),
-                  const Icon(Icons.chevron_right),
-                ],
-              ),
-              onTap: () => context.pushRoute(ComicFollowRoute()),
-            );
-          },
-        ),
-        ListTile(
+        if (slots == null || !layout.contains(MainNavigationDestination.follow))
+          BlocSelector<ComicFollowCubit, ComicFollowState, int>(
+            selector: (state) => state.updateCount,
+            builder: (context, updateCount) {
+              return _row(
+                'follow',
+                leading: const Icon(Icons.notifications_active_outlined),
+                title: Text(t.more.comicFollow),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (updateCount > 0)
+                      ComicFollowReminderBadge(
+                        child: _UpdateBadge(count: updateCount),
+                      ),
+                    const Icon(Icons.chevron_right),
+                  ],
+                ),
+                onTap: () async {
+                  if (!await ComicFollowNavigation.open() && context.mounted) {
+                    await context.pushRoute(ComicFollowRoute());
+                  }
+                },
+              );
+            },
+          ),
+        if (!layout.contains(MainNavigationDestination.downloads))
+          _row(
+            'downloads',
+            leading: const Icon(Icons.download_outlined),
+            title: Text(t.common.download),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              if (!await DownloadCenterNavigation.open(from: context) &&
+                  context.mounted) {
+                showErrorToast(t.videoPlayback.actionFailed, context: context);
+              }
+            },
+          ),
+        _row(
+          'settings',
           leading: const Icon(Icons.settings_outlined),
           title: Text(t.settings.globalTitle),
           trailing: const Icon(Icons.chevron_right),
@@ -53,13 +82,15 @@ class SettingsWidget extends StatelessWidget {
         const SizedBox(height: 8),
         const Divider(height: 1, thickness: 0.3),
         _buildSectionTitle(context, t.more.others, Icons.more_horiz),
-        ListTile(
+        _row(
+          'changelog',
           leading: const Icon(Icons.history),
           title: Text(t.more.changelog),
           trailing: const Icon(Icons.chevron_right),
           onTap: () => context.pushRoute(ChangelogRoute()),
         ),
-        ListTile(
+        _row(
+          'about',
           leading: const Icon(Icons.info_outline),
           title: Text(t.about.title),
           trailing: const Icon(Icons.chevron_right),
@@ -68,6 +99,23 @@ class SettingsWidget extends StatelessWidget {
       ],
     );
   }
+
+  Widget _row(
+    String id, {
+    required Widget leading,
+    required Widget title,
+    required Widget trailing,
+    required VoidCallback onTap,
+  }) => TouchHoverIntent(
+    identity: id,
+    builder: (context, hover) => ListTile(
+      hoverColor: hover.hoverColor(),
+      leading: leading,
+      title: title,
+      trailing: trailing,
+      onTap: onTap,
+    ),
+  );
 
   Widget _buildSectionTitle(BuildContext context, String title, IconData icon) {
     return Padding(

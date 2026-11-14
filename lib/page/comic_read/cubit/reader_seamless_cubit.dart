@@ -1,8 +1,13 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/main.dart' show eventBus;
+import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart'
+    show normalizePluginId;
+import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
 import 'package:zephyr/page/comic_info/method/get_plugin_detail.dart';
 import 'package:zephyr/page/comic_read/cubit/image_size_cubit.dart';
 import 'package:zephyr/page/comic_read/cubit/reader_seamless_state.dart';
@@ -11,10 +16,15 @@ import 'package:zephyr/page/comic_read/method/get_plugin_read_snapshot.dart';
 import 'package:zephyr/page/comic_read/model/normal_comic_ep_info.dart';
 import 'package:zephyr/page/comic_read/model/seamless_transition_state.dart';
 import 'package:zephyr/page/comic_read/widgets/layout/read_layout.dart';
+import 'package:zephyr/page/comic_read/widgets/modes/read_mode_transition_style.dart';
 import 'package:zephyr/page/comic_read/widgets/modes/read_mode_utils.dart';
 import 'package:zephyr/page/download/adapters/download_chapter_adapter.dart';
-import 'package:zephyr/page/download/adapters/download_chapter_matcher.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/service/page_read_tasks.dart';
 import 'package:zephyr/type/enum.dart';
+import 'package:zephyr/util/event/event.dart';
+
+typedef ReaderBoundaryAnchor = ({int slot, ReadSettingState setting});
 
 /// 边界解析动作的结果。
 ///
@@ -48,15 +58,57 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     required this._type,
     required this._comicInfo,
     required this._initialOrder,
-  }) : super(const ReaderSeamlessState()) {
+    Future<NormalComicEpInfo> Function(int order)? readChapter,
+  }) : _readChapterOverride = readChapter,
+       super(const ReaderSeamlessState()) {
     _initChapterCatalog();
   }
 
+  final Future<NormalComicEpInfo> Function(int order)? _readChapterOverride;
   final String _comicId;
   final String _from;
   final ComicEntryType _type;
   final dynamic _comicInfo;
   final int _initialOrder;
+
+  int _prefetchEpoch = 0;
+  int? _requestedPrefetchCount;
+  bool _prefetchActive = true;
+  final _reads = PageReadTasks();
+  final _chapterReads = <int, Future<NormalComicEpInfo>>{};
+
+  @override
+  Future<void> close() {
+    unawaited(_reads.cancel());
+    return super.close();
+  }
+
+  void configurePrefetch({required int count, required bool active}) {
+    final bounded = count.clamp(1, 3).toInt();
+    if (_requestedPrefetchCount == bounded && _prefetchActive == active) return;
+    _requestedPrefetchCount = bounded;
+    _prefetchActive = active;
+    ++_prefetchEpoch;
+    final keep = <int>{};
+    if (state.loadedChapters.isNotEmpty) {
+      var order = state.loadedChapters.last.order;
+      for (var i = 0; i < bounded; i++) {
+        final next = _nextOrderOf(order);
+        if (next == null) break;
+        keep.add(next);
+        order = next;
+      }
+    }
+    _emit(
+      state.copyWith(
+        prefetchedChapterInfoByOrder: {
+          for (final e in state.prefetchedChapterInfoByOrder.entries)
+            if (keep.contains(e.key)) e.key: e.value,
+        },
+      ),
+    );
+    if (active) unawaited(_prefetchNextChaptersIfNeeded(bounded));
+  }
 
   static const int _nextPrefetchThreshold = 2;
   static const int _nextAutoResolveThreshold = 1;
@@ -71,7 +123,11 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
   // ==================== 生命周期 / 初始化 ====================
 
   void _initChapterCatalog() {
-    _chapterRefs = resolveUnifiedComicChapters(_comicInfo, _from);
+    _chapterRefs = resolveReaderChapters(
+      _comicInfo,
+      _from,
+      offline: _isDownloadEntryType,
+    );
     _chapterOrderToCatalogIndex = <int, int>{};
     for (var i = 0; i < _chapterRefs.length; i++) {
       _chapterOrderToCatalogIndex[_chapterRefs[i].order] = i;
@@ -86,7 +142,7 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
   ) {
     if (state.loadedChapters.isNotEmpty) return;
     _addLoadedChapter(order: initialOrder, epInfo: initialEpInfo);
-    _ensureEdgeTransitionsVisible(notify: false);
+    if (isSeamlessEnabled()) _ensureEdgeTransitionsVisible(notify: false);
     final contextByOrder = _resolveImageSlotContextByChapterOrder(
       chapterOrder: initialOrder,
       readSetting: readSetting,
@@ -109,7 +165,11 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
 
   // ==================== 公共查询接口 ====================
 
-  bool isSeamlessEnabled() => _catalogChapters().length > 1;
+  // The inline layout uses chapter order as its slot identity. Catalogs
+  // with repeated numbers use the existing exact-ID chapter routes instead.
+  bool isSeamlessEnabled() =>
+      _chapterRefs.length > 1 &&
+      _chapterOrderToCatalogIndex.length == _chapterRefs.length;
 
   bool canLoadPreviousChapter() {
     final chapters = _catalogChapters();
@@ -149,12 +209,10 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     if (entries.isEmpty) return const <ReadModeEntry>[];
 
     final result = <ReadModeEntry>[];
-    _forEachDisplaySlot(
-      entryCount: entries.length,
+    forEachReadModeSlot(
+      entries: entries,
       enableDoublePage: readSetting.doublePageMode,
       insertLeadingBlank: _insertLeadingBlank(readSetting),
-      isTransitionAt: (entryIndex) =>
-          entries[entryIndex].type == ReadModeEntryType.transition,
       onSlot: (slotIndex, primaryEntryIndex, secondaryEntryIndex) {
         if (slotIndex <= globalSlot || result.length >= count) return;
 
@@ -172,8 +230,33 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
         }
       },
     );
+    // The latest image window can spill into prefetched chapter metadata
+    // without appending an unread chapter or moving the reader's position.
+    var order = state.loadedChapters.last.order;
+    while (result.length < count) {
+      final next = _nextOrderOf(order);
+      final chapter = state.prefetchedChapterInfoByOrder[next];
+      if (next == null || chapter == null) break;
+      for (
+        var page = 0;
+        page < chapter.docs.length && result.length < count;
+        page++
+      ) {
+        result.add(_pageEntry(next, chapter, page));
+      }
+      order = next;
+    }
     return result;
   }
+
+  ReadModeEntry _pageEntry(int order, NormalComicEpInfo chapter, int page) =>
+      ReadModeEntry.image(
+        doc: chapter.docs[page],
+        chapterId: chapter.epId,
+        chapterOrder: order,
+        chapterTitle: chapter.epName,
+        chapterPageIndex: page,
+      );
 
   UnifiedComicChapterRef? chapterRefByOrder(int order) {
     final chapters = _catalogChapters();
@@ -210,16 +293,11 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
       final epInfo = state.loadedChapters.isNotEmpty
           ? state.loadedChapters.first.epInfo
           : NormalComicEpInfo();
-      return List<ReadModeEntry>.generate(epInfo.docs.length, (index) {
-        final doc = epInfo.docs[index];
-        return ReadModeEntry.image(
-          doc: doc,
-          chapterId: epInfo.epId,
-          chapterOrder: _initialOrder,
-          chapterTitle: epInfo.epName,
-          chapterPageIndex: index,
-        );
-      }, growable: false);
+      return List<ReadModeEntry>.generate(
+        epInfo.docs.length,
+        (index) => _pageEntry(_initialOrder, epInfo, index),
+        growable: false,
+      );
     }
 
     final entries = <ReadModeEntry>[];
@@ -247,16 +325,7 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
         pageIndex < chapter.epInfo.docs.length;
         pageIndex++
       ) {
-        final doc = chapter.epInfo.docs[pageIndex];
-        entries.add(
-          ReadModeEntry.image(
-            doc: doc,
-            chapterId: chapter.epInfo.epId,
-            chapterOrder: chapter.order,
-            chapterTitle: chapter.epInfo.epName,
-            chapterPageIndex: pageIndex,
-          ),
-        );
+        entries.add(_pageEntry(chapterOrder, chapter.epInfo, pageIndex));
       }
     }
 
@@ -290,124 +359,53 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     int targetGlobalSlot,
     ReadSettingState readSetting,
     ImageSizeCubit imageSizeCubit,
-    double contentWidth,
-  ) {
-    if (targetGlobalSlot <= 0) return 0.0;
+    double contentWidth, {
+    required double viewportHeight,
+  }) {
+    if (targetGlobalSlot <= 0) return 0;
 
     final entries = buildColumnEntries(readSetting);
-    if (entries.isEmpty) return 0.0;
+    final transitionStyle = ReadModeTransitionStyle.column(
+      shortEdge: math.min(contentWidth, viewportHeight),
+    );
+    final imageWidth = readSetting.doublePageMode
+        ? (contentWidth / 2).clamp(1.0, contentWidth)
+        : contentWidth;
 
-    final slotEntries = _resolveDisplaySlotEntries(
-      targetSlot: targetGlobalSlot,
-      entryCount: entries.length,
+    double imageHeight(ReadModeEntry entry) {
+      final index = resolveStableSizeCacheIndex(
+        chapterOrder: entry.chapterOrder,
+        localPageIndex: entry.chapterPageIndex ?? 0,
+      );
+      final size = imageSizeCubit.state.getSizeValue(index);
+      if (size.width <= 0 || size.height <= 0) return 1;
+      return math.max(1, size.height * imageWidth / size.width);
+    }
+
+    var height = 0.0;
+    forEachReadModeSlot(
+      entries: entries,
       enableDoublePage: readSetting.doublePageMode,
       insertLeadingBlank: _insertLeadingBlank(readSetting),
-      isTransitionAt: (entryIndex) =>
-          entries[entryIndex].type == ReadModeEntryType.transition,
-    );
-    if (slotEntries == null) return 0.0;
-
-    final targetEntryIndex = slotEntries.$1;
-    if (targetEntryIndex <= 0) return 0.0;
-
-    var totalHeight = 0.0;
-    for (var i = 0; i < targetEntryIndex; i++) {
-      final entry = entries[i];
-      if (entry.type == ReadModeEntryType.transition) {
-        totalHeight += contentWidth;
-        continue;
-      }
-
-      final localPageIndex = entry.chapterPageIndex ?? 0;
-      final cacheIndex = resolveStableSizeCacheIndex(
-        chapterOrder: entry.chapterOrder,
-        localPageIndex: localPageIndex,
-      );
-      final size = imageSizeCubit.state.getSizeValue(cacheIndex);
-
-      if (size.width > 0 && size.height > 0) {
-        totalHeight += size.height * (contentWidth / size.width);
-      } else {
-        totalHeight += imageSizeCubit.state.defaultHeight;
-      }
-    }
-    return totalHeight;
-  }
-
-  List<ReadModeEntry> buildRowEntries(ReadSettingState readSetting) {
-    if (!isSeamlessEnabled() || state.loadedChapters.isEmpty) {
-      final epInfo = state.loadedChapters.isNotEmpty
-          ? state.loadedChapters.first.epInfo
-          : NormalComicEpInfo();
-      return List<ReadModeEntry>.generate(epInfo.docs.length, (index) {
-        final doc = epInfo.docs[index];
-        return ReadModeEntry.image(
-          doc: doc,
-          chapterId: epInfo.epId,
-          chapterOrder: _initialOrder,
-          chapterTitle: epInfo.epName,
-          chapterPageIndex: index,
-        );
-      }, growable: false);
-    }
-
-    final entries = <ReadModeEntry>[];
-    for (var i = 0; i < state.loadedChapters.length; i++) {
-      final chapter = state.loadedChapters[i];
-      final chapterOrder = chapter.order;
-      if (_shouldShowTransition(nextOrder: chapterOrder)) {
-        final previousOrder = _previousOrderOf(chapterOrder);
-        if (previousOrder != null) {
-          entries.add(
-            ReadModeEntry.transition(
-              chapterOrder: chapterOrder,
-              chapterTitle: chapterTitleByOrder(chapterOrder),
-              previousChapterOrder: previousOrder,
-              previousChapterTitle: chapterTitleByOrder(previousOrder),
-              transitionStatus: _transitionStatusByNextOrderValue(chapterOrder),
-            ),
-          );
+      onSlot: (slot, first, second) {
+        if (slot >= targetGlobalSlot) return;
+        final entry = entries[first];
+        if (entry.type == ReadModeEntryType.transition) {
+          height +=
+              transitionStyle.fixedCardSize!.height +
+              transitionStyle.outerPadding!.vertical;
+        } else {
+          height += second == null
+              ? imageHeight(entry)
+              : math.max(imageHeight(entry), imageHeight(entries[second]));
         }
-      }
-      for (
-        var pageIndex = 0;
-        pageIndex < chapter.epInfo.docs.length;
-        pageIndex++
-      ) {
-        final doc = chapter.epInfo.docs[pageIndex];
-        entries.add(
-          ReadModeEntry.image(
-            doc: doc,
-            chapterId: chapter.epInfo.epId,
-            chapterOrder: chapter.order,
-            chapterTitle: chapter.epInfo.epName,
-            chapterPageIndex: pageIndex,
-          ),
-        );
-      }
-    }
-
-    final endBoundaryNextOrder = _nextOrderOf(state.loadedChapters.last.order);
-    if (endBoundaryNextOrder != null &&
-        _shouldShowTransition(nextOrder: endBoundaryNextOrder)) {
-      final previousOrder = _previousOrderOf(endBoundaryNextOrder);
-      if (previousOrder != null) {
-        entries.add(
-          ReadModeEntry.transition(
-            chapterOrder: endBoundaryNextOrder,
-            chapterTitle: chapterTitleByOrder(endBoundaryNextOrder),
-            previousChapterOrder: previousOrder,
-            previousChapterTitle: chapterTitleByOrder(previousOrder),
-            transitionStatus: _transitionStatusByNextOrderValue(
-              endBoundaryNextOrder,
-            ),
-          ),
-        );
-      }
-    }
-
-    return entries;
+      },
+    );
+    return height;
   }
+
+  List<ReadModeEntry> buildRowEntries(ReadSettingState readSetting) =>
+      buildColumnEntries(readSetting);
 
   int resolveTotalSlots(ReadSettingState readSetting) {
     final fallback = state.loadedChapters.isNotEmpty
@@ -425,24 +423,29 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     if (isColumnReadMode(readSetting.readMode)) {
       final entries = buildColumnEntries(readSetting);
       return _resolveDisplaySlotCount(
-        entryCount: entries.length,
+        entries: entries,
         enableDoublePage: readSetting.doublePageMode,
         insertLeadingBlank: _insertLeadingBlank(readSetting),
-        isTransitionAt: (entryIndex) =>
-            entries[entryIndex].type == ReadModeEntryType.transition,
       );
     }
     final entries = buildRowEntries(readSetting);
     return _resolveDisplaySlotCount(
-      entryCount: entries.length,
+      entries: entries,
       enableDoublePage: readSetting.doublePageMode,
       insertLeadingBlank: _insertLeadingBlank(readSetting),
-      isTransitionAt: (entryIndex) =>
-          entries[entryIndex].type == ReadModeEntryType.transition,
     );
   }
 
   // ==================== 槽位映射 ====================
+
+  /// Read directly from the same state that maps the visible slot. Widget
+  /// listeners update chapter controls asynchronously and may still be stale.
+  SeamlessChapter? get currentLoadedChapter {
+    final order = state.currentChapterOrder;
+    return state.loadedChapters
+        .where((chapter) => chapter.order == order)
+        .firstOrNull;
+  }
 
   int mapGlobalToLocalSlot(int globalIndex) {
     final local = globalIndex - state.currentChapterStartSlot;
@@ -469,11 +472,9 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
       final entries = buildColumnEntries(readSetting);
       final slotEntries = _resolveDisplaySlotEntries(
         targetSlot: globalSlot,
-        entryCount: entries.length,
+        entries: entries,
         enableDoublePage: readSetting.doublePageMode,
         insertLeadingBlank: _insertLeadingBlank(readSetting),
-        isTransitionAt: (entryIndex) =>
-            entries[entryIndex].type == ReadModeEntryType.transition,
       );
       if (slotEntries == null) return false;
       return entries[slotEntries.$1].type == ReadModeEntryType.transition;
@@ -482,11 +483,9 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     final entries = buildRowEntries(readSetting);
     final slotEntries = _resolveDisplaySlotEntries(
       targetSlot: globalSlot,
-      entryCount: entries.length,
+      entries: entries,
       enableDoublePage: readSetting.doublePageMode,
       insertLeadingBlank: _insertLeadingBlank(readSetting),
-      isTransitionAt: (entryIndex) =>
-          entries[entryIndex].type == ReadModeEntryType.transition,
     );
     if (slotEntries == null) return false;
     return entries[slotEntries.$1].type == ReadModeEntryType.transition;
@@ -503,11 +502,9 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
       final entries = buildColumnEntries(readSetting);
       final slotEntries = _resolveDisplaySlotEntries(
         targetSlot: globalSlot,
-        entryCount: entries.length,
+        entries: entries,
         enableDoublePage: readSetting.doublePageMode,
         insertLeadingBlank: _insertLeadingBlank(readSetting),
-        isTransitionAt: (entryIndex) =>
-            entries[entryIndex].type == ReadModeEntryType.transition,
       );
       if (slotEntries == null) return null;
       final entry = entries[slotEntries.$1];
@@ -518,11 +515,9 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     final entries = buildRowEntries(readSetting);
     final slotEntries = _resolveDisplaySlotEntries(
       targetSlot: globalSlot,
-      entryCount: entries.length,
+      entries: entries,
       enableDoublePage: readSetting.doublePageMode,
       insertLeadingBlank: _insertLeadingBlank(readSetting),
-      isTransitionAt: (entryIndex) =>
-          entries[entryIndex].type == ReadModeEntryType.transition,
     );
     if (slotEntries == null) return null;
     final entry = entries[slotEntries.$1];
@@ -541,6 +536,27 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
       result += 1;
     }
     return result;
+  }
+
+  /// Image pages represented by a slot, excluding standalone transition cards.
+  (ReadModeEntry, ReadModeEntry?)? resolveHistorySlotImages(
+    int globalSlot,
+    ReadSettingState readSetting,
+  ) {
+    final entries = isColumnReadMode(readSetting.readMode)
+        ? buildColumnEntries(readSetting)
+        : buildRowEntries(readSetting);
+    final indices = _resolveDisplaySlotEntries(
+      targetSlot: globalSlot,
+      entries: entries,
+      enableDoublePage: readSetting.doublePageMode,
+      insertLeadingBlank: _insertLeadingBlank(readSetting),
+    );
+    if (indices == null) return null;
+    final (first, second) = indices;
+    final primary = entries[first];
+    if (primary.type != ReadModeEntryType.image) return null;
+    return (primary, second == null ? null : entries[second]);
   }
 
   int resolveEntryDefaultGlobalSlot(ReadSettingState readSetting) {
@@ -571,8 +587,9 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
   /// [SeamlessBoundaryResult.targetGlobalSlot] 重新定位视图。
   Future<SeamlessBoundaryResult> onGlobalSlotObserved(
     int globalSlot,
-    ReadSettingState readSetting,
-  ) async {
+    ReadSettingState readSetting, {
+    ReaderBoundaryAnchor? Function()? readAnchor,
+  }) async {
     _applyCurrentChapterByGlobalSlot(globalSlot, readSetting);
     if (state.loadedChapters.isEmpty || isClosed) {
       return const SeamlessBoundaryResult();
@@ -583,10 +600,17 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
       readSetting,
     );
     if (transitionNextOrder != null) {
+      if (_resolveTargetOrderForBoundary(transitionNextOrder) == null ||
+          (_isDownloadEntryType &&
+              state.transitionStatusByNextOrder[transitionNextOrder] ==
+                  SeamlessTransitionStatus.error)) {
+        return const SeamlessBoundaryResult();
+      }
       return _ensureBoundaryResolved(
         nextOrder: transitionNextOrder,
         currentGlobalSlot: globalSlot,
         readSetting: readSetting,
+        readAnchor: readAnchor,
       );
     }
 
@@ -594,13 +618,22 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     if (totalSlots <= 0) return const SeamlessBoundaryResult();
 
     final remainToEnd = totalSlots - globalSlot - 1;
-    if (remainToEnd <= _nextAutoResolveThreshold && canLoadNextChapter()) {
+    if (remainToEnd <= _nextAutoResolveThreshold &&
+        canLoadNextChapter() &&
+        (!_isDownloadEntryType ||
+            state.currentChapterOrder == state.loadedChapters.last.order)) {
       final nextOrder = _resolveAdjacentChapterOrder(previous: false);
+      if (_isDownloadEntryType &&
+          state.transitionStatusByNextOrder[nextOrder] ==
+              SeamlessTransitionStatus.error) {
+        return const SeamlessBoundaryResult();
+      }
       if (nextOrder != null) {
         return _ensureBoundaryResolved(
           nextOrder: nextOrder,
           currentGlobalSlot: globalSlot,
           readSetting: readSetting,
+          readAnchor: readAnchor,
         );
       }
     }
@@ -615,8 +648,9 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
   Future<SeamlessBoundaryResult> triggerBoundary({
     required bool previous,
     required ReadSettingState readSetting,
+    ReaderBoundaryAnchor? Function()? readAnchor,
   }) async {
-    if (state.loadedChapters.isEmpty || isClosed) {
+    if (!isSeamlessEnabled() || state.loadedChapters.isEmpty || isClosed) {
       return const SeamlessBoundaryResult();
     }
 
@@ -626,7 +660,7 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
       }
       final nextOrder = state.loadedChapters.first.order;
       final revealed = _revealTransition(nextOrder: nextOrder);
-      if (revealed) {
+      if (revealed && !_isDownloadEntryType) {
         _setTransitionStatus(nextOrder, SeamlessTransitionStatus.hidden);
         return SeamlessBoundaryResult(
           targetGlobalSlot: state.currentChapterStartSlot + 1,
@@ -636,6 +670,8 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
         nextOrder: nextOrder,
         currentGlobalSlot: state.currentChapterStartSlot,
         readSetting: readSetting,
+        readAnchor: readAnchor,
+        promptForLogin: true,
       );
     }
 
@@ -649,12 +685,15 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
       _setTransitionStatus(nextOrder, SeamlessTransitionStatus.hidden);
     }
     final status = _transitionStatusByNextOrderValue(nextOrder);
-    if (status == SeamlessTransitionStatus.hidden ||
+    if (_isDownloadEntryType ||
+        status == SeamlessTransitionStatus.hidden ||
         status == SeamlessTransitionStatus.error) {
       return _ensureBoundaryResolved(
         nextOrder: nextOrder,
         currentGlobalSlot: state.currentChapterStartSlot,
         readSetting: readSetting,
+        readAnchor: readAnchor,
+        promptForLogin: true,
       );
     } else {
       await _prefetchNextChaptersIfNeeded(readSetting.preloadChapterCount);
@@ -666,25 +705,56 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
   Future<SeamlessBoundaryResult> onTransitionAction(
     int nextOrder,
     ReadSettingState readSetting,
-    int currentGlobalSlot,
-  ) async {
+    int currentGlobalSlot, {
+    ReaderBoundaryAnchor? Function()? readAnchor,
+  }) async {
+    if (!isSeamlessEnabled() || isClosed) return const SeamlessBoundaryResult();
+    final startingAnchor = readAnchor?.call();
     _revealTransition(nextOrder: nextOrder);
-    return _ensureBoundaryResolved(
+    final result = await _ensureBoundaryResolved(
       nextOrder: nextOrder,
       currentGlobalSlot: currentGlobalSlot,
       readSetting: readSetting,
+      readAnchor: readAnchor,
+      promptForLogin: true,
     );
+    if (isClosed ||
+        result.targetGlobalSlot != null ||
+        _resolveTargetOrderForBoundary(nextOrder) != null) {
+      return result;
+    }
+    final anchor = readAnchor?.call();
+    final slot = anchor?.slot ?? currentGlobalSlot;
+    final setting = anchor?.setting ?? readSetting;
+    if (anchor != startingAnchor &&
+        transitionNextOrderByGlobalSlot(slot, setting) != nextOrder) {
+      return result;
+    }
+    final target = _resolveImageSlotContextByChapterOrder(
+      chapterOrder: nextOrder,
+      readSetting: setting,
+    );
+    return target == null
+        ? result
+        : SeamlessBoundaryResult(
+            didLoad: result.didLoad,
+            targetGlobalSlot: target.chapterStartSlot,
+          );
   }
 
   // ==================== 内部：章节加载 ====================
 
   Future<void> _prefetchNextChaptersIfNeeded(int requestedCount) async {
-    if (state.loadedChapters.isEmpty || isClosed) return;
+    if (!isSeamlessEnabled() || state.loadedChapters.isEmpty || isClosed)
+      return;
 
-    final count = requestedCount.clamp(1, 3).toInt();
+    if (!_prefetchActive) return;
+    final epoch = _prefetchEpoch;
+    // A boundary can finish after the user changes the live prefetch setting.
+    final count = _requestedPrefetchCount ?? requestedCount.clamp(1, 3).toInt();
     var anchorOrder = state.loadedChapters.last.order;
     for (var i = 0; i < count; i++) {
-      if (isClosed) return;
+      if (isClosed || !_prefetchActive || epoch != _prefetchEpoch) return;
       final nextOrder = _nextOrderOf(anchorOrder);
       if (nextOrder == null) return;
       await _prefetchChapterByOrderIfNeeded(nextOrder);
@@ -694,11 +764,43 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
 
   Future<void> _prefetchChapterByOrderIfNeeded(int order) async {
     if (_isOrderLoaded(order)) return;
+    if (_isDownloadEntryType &&
+        state.transitionStatusByNextOrder[order] ==
+            SeamlessTransitionStatus.error) {
+      return;
+    }
     if (state.prefetchedChapterInfoByOrder.containsKey(order)) return;
-    if (state.prefetchingChapterOrders.contains(order)) return;
+    final epoch = _prefetchEpoch;
+    final isVisible = state.visibleTransitionNextOrders.contains(order);
+    if (state.prefetchingChapterOrders.contains(order)) {
+      final pending = _chapterReads[order];
+      if (pending == null) return;
+      try {
+        final chapterInfo = await pending;
+        if (isClosed ||
+            !_prefetchActive ||
+            epoch != _prefetchEpoch ||
+            _isOrderLoaded(order))
+          return;
+        if (chapterInfo.length <= 0 || chapterInfo.docs.isEmpty) {
+          if (isVisible)
+            _setTransitionStatus(order, SeamlessTransitionStatus.error);
+          return;
+        }
+        _setPrefetchedChapterInfo(order, chapterInfo);
+        if (isVisible)
+          _setTransitionStatus(order, SeamlessTransitionStatus.ready);
+      } catch (_) {
+        if (!isClosed &&
+            _prefetchActive &&
+            epoch == _prefetchEpoch &&
+            isVisible)
+          _setTransitionStatus(order, SeamlessTransitionStatus.error);
+      }
+      return;
+    }
     if (state.loadingChapterOrders.contains(order)) return;
 
-    final isVisible = state.visibleTransitionNextOrders.contains(order);
     _addPrefetchingOrder(order);
     if (isVisible) {
       _setTransitionStatus(order, SeamlessTransitionStatus.loading);
@@ -706,7 +808,11 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
 
     try {
       final chapterInfo = await _readChapterByOrder(order);
-      if (isClosed) return;
+      if (isClosed ||
+          !_prefetchActive ||
+          epoch != _prefetchEpoch ||
+          _isOrderLoaded(order))
+        return;
       if (chapterInfo.length <= 0 || chapterInfo.docs.isEmpty) {
         if (isVisible) {
           _setTransitionStatus(order, SeamlessTransitionStatus.error);
@@ -719,7 +825,10 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
         _setTransitionStatus(order, SeamlessTransitionStatus.ready);
       }
     } catch (_) {
-      if (isVisible) {
+      if (!isClosed &&
+          _prefetchActive &&
+          epoch == _prefetchEpoch &&
+          isVisible) {
         _setTransitionStatus(order, SeamlessTransitionStatus.error);
       }
     } finally {
@@ -731,6 +840,8 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     required int nextOrder,
     required int currentGlobalSlot,
     required ReadSettingState readSetting,
+    bool promptForLogin = false,
+    ReaderBoundaryAnchor? Function()? readAnchor,
   }) async {
     if (!state.visibleTransitionNextOrders.contains(nextOrder)) {
       _revealTransition(nextOrder: nextOrder);
@@ -746,8 +857,15 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     }
 
     _addLoadingOrder(targetOrder);
-    _setTransitionStatus(nextOrder, SeamlessTransitionStatus.loading);
+    if (!_isDownloadEntryType ||
+        state.transitionStatusByNextOrder[nextOrder] !=
+            SeamlessTransitionStatus.error) {
+      _setTransitionStatus(nextOrder, SeamlessTransitionStatus.loading);
+    }
 
+    final startingAnchor = readAnchor?.call();
+    final source = normalizePluginId(_from);
+    final generation = pluginSessionWriteFence.generation(source);
     try {
       final prefetched = state.prefetchedChapterInfoByOrder[targetOrder];
       final chapterInfo = prefetched ?? await _readChapterByOrder(targetOrder);
@@ -763,7 +881,14 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
       }
 
       final shouldPrepend = _shouldPrependOrder(targetOrder);
-      final previousTotalSlots = resolveTotalSlots(readSetting);
+      // A previous chapter may arrive after the reader has scrolled or
+      // changed layout. Shift the latest anchor in the current layout.
+      final latestAnchor = shouldPrepend ? readAnchor?.call() : null;
+      final layout = latestAnchor?.setting ?? readSetting;
+      final anchor = latestAnchor != null && latestAnchor != startingAnchor
+          ? latestAnchor.slot
+          : currentGlobalSlot;
+      final previousTotalSlots = shouldPrepend ? resolveTotalSlots(layout) : 0;
       if (!_isOrderLoaded(targetOrder)) {
         _addLoadedChapter(order: targetOrder, epInfo: chapterInfo);
         unawaited(
@@ -775,19 +900,30 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
       _setTransitionStatus(nextOrder, SeamlessTransitionStatus.ready);
 
       if (shouldPrepend) {
-        final latestTotalSlots = resolveTotalSlots(readSetting);
+        final latestTotalSlots = resolveTotalSlots(layout);
         final shiftBy = (latestTotalSlots - previousTotalSlots).clamp(
           0,
           999999999,
         );
         return SeamlessBoundaryResult(
           didLoad: true,
-          targetGlobalSlot: currentGlobalSlot + shiftBy,
+          targetGlobalSlot: anchor + shiftBy,
           prependedSlotCount: shiftBy,
         );
       }
       return const SeamlessBoundaryResult(didLoad: true);
-    } catch (_) {
+    } catch (error) {
+      if (!isClosed &&
+          promptForLogin &&
+          error is PluginLoginRequiredException &&
+          pluginSessionWriteFence.generation(source) == generation) {
+        eventBus.fire(
+          NeedLogin(
+            from: error.payload.pluginId,
+            message: error.payload.message,
+          ),
+        );
+      }
       _setTransitionStatus(nextOrder, SeamlessTransitionStatus.error);
       return const SeamlessBoundaryResult();
     } finally {
@@ -795,28 +931,52 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     }
   }
 
-  Future<NormalComicEpInfo> _readChapterByOrder(int order) async {
+  Future<NormalComicEpInfo> _readChapterByOrder(int order) =>
+      _chapterReads.putIfAbsent(order, () {
+        final task = _loadChapterByOrder(order);
+        return task.whenComplete(() {
+          // Map.remove returns the shared Future itself; returning it from
+          // whenComplete would make this completion wait on itself forever.
+          _chapterReads.remove(order);
+        });
+      });
+
+  Future<NormalComicEpInfo> _loadChapterByOrder(int order) async {
+    if (_readChapterOverride != null) return _readChapterOverride(order);
+    final selected = chapterRefByOrder(order);
+    if (selected == null) throw StateError('Chapter unavailable');
     if (_isDownloadEntryType) {
-      return getPluginInfoFromLocal(_from, _comicId, order);
+      return getPluginInfoFromLocal(
+        _from,
+        _comicId,
+        order,
+        chapterKey: selected.id,
+      );
     }
-    final chapterRefs = resolveUnifiedComicChapters(_comicInfo, _from);
     const adapter = DownloadChapterAdapter();
-    const matcher = DownloadChapterMatcher();
-    final chapters = chapterRefs.map(adapter.fromChapterRef).toList();
-    final chapter =
-        matcher.findByOrder(chapters, order) ??
-        (chapters.isNotEmpty ? chapters.first : null);
-    return getPluginReadSnapshot(
-      _comicId,
-      order,
+    final chapter = adapter.fromChapterRef(selected);
+    final source = normalizePluginId(_from);
+    final generation = pluginSessionWriteFence.generation(source);
+    final result = await _reads.run(
       _from,
-      _comicInfo,
-      chapter?.id,
-      chapter?.effectiveRequestId ?? '',
-      chapter?.id ?? '',
-      chapter?.effectiveStorageId ?? '',
-      Map<String, dynamic>.from(chapter?.extern ?? const <String, dynamic>{}),
+      (group) => getPluginReadSnapshot(
+        _comicId,
+        order,
+        _from,
+        _comicInfo,
+        chapter.id,
+        chapter.effectiveRequestId,
+        chapter.id,
+        chapter.effectiveStorageId,
+        Map<String, dynamic>.from(chapter.extern),
+        taskGroupKey: group,
+        notifyUnauthorized: false,
+      ),
     );
+    if (pluginSessionWriteFence.generation(source) != generation) {
+      throw const PluginSessionChanged();
+    }
+    return result;
   }
 
   // ==================== 内部：状态更新辅助 ====================
@@ -1007,6 +1167,12 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     if (previousOrder == null) {
       return SeamlessTransitionStatus.hidden;
     }
+    if (_isDownloadEntryType) {
+      return state.transitionStatusByNextOrder[nextOrder] ==
+              SeamlessTransitionStatus.error
+          ? SeamlessTransitionStatus.error
+          : SeamlessTransitionStatus.local;
+    }
     final bothSidesLoaded =
         _isOrderLoaded(previousOrder) && _isOrderLoaded(nextOrder);
     if (bothSidesLoaded) {
@@ -1068,7 +1234,14 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
   bool _shouldShowTransition({required int nextOrder}) {
     if (!state.visibleTransitionNextOrders.contains(nextOrder)) return false;
     final previousOrder = _previousOrderOf(nextOrder);
-    return previousOrder != null;
+    if (previousOrder == null) return false;
+    if (!_isDownloadEntryType) return true;
+    // The tail card already occupies its final slot while the chapter is
+    // opening. Keep a leading card hidden until the previous chapter is
+    // inserted, so resuming this chapter never opens on a boundary.
+    return _isOrderLoaded(previousOrder) ||
+        state.transitionStatusByNextOrder[nextOrder] ==
+            SeamlessTransitionStatus.error;
   }
 
   bool _isOrderLoaded(int order) {
@@ -1153,11 +1326,9 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
   }) {
     final slotEntries = _resolveDisplaySlotEntries(
       targetSlot: globalSlot,
-      entryCount: entries.length,
+      entries: entries,
       enableDoublePage: enableDoublePage,
       insertLeadingBlank: insertLeadingBlank,
-      isTransitionAt: (entryIndex) =>
-          entries[entryIndex].type == ReadModeEntryType.transition,
     );
     if (slotEntries == null) return null;
     final current = entries[slotEntries.$1];
@@ -1166,12 +1337,10 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
 
     var chapterStartSlot = -1;
     var chapterSlotCount = 0;
-    _forEachDisplaySlot(
-      entryCount: entries.length,
+    forEachReadModeSlot(
+      entries: entries,
       enableDoublePage: enableDoublePage,
       insertLeadingBlank: insertLeadingBlank,
-      isTransitionAt: (entryIndex) =>
-          entries[entryIndex].type == ReadModeEntryType.transition,
       onSlot: (slotIndex, primaryEntryIndex, secondaryEntryIndex) {
         final order = _chapterOrderOfImageEntry(entries[primaryEntryIndex]);
         if (order == null || order != chapterOrder) return;
@@ -1195,12 +1364,10 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
   }) {
     var chapterStartSlot = -1;
     var chapterSlotCount = 0;
-    _forEachDisplaySlot(
-      entryCount: entries.length,
+    forEachReadModeSlot(
+      entries: entries,
       enableDoublePage: enableDoublePage,
       insertLeadingBlank: insertLeadingBlank,
-      isTransitionAt: (entryIndex) =>
-          entries[entryIndex].type == ReadModeEntryType.transition,
       onSlot: (slotIndex, primaryEntryIndex, secondaryEntryIndex) {
         final order = _chapterOrderOfImageEntry(entries[primaryEntryIndex]);
         if (order == null || order != chapterOrder) return;
@@ -1217,18 +1384,16 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
   }
 
   int _resolveDisplaySlotCount({
-    required int entryCount,
+    required List<ReadModeEntry> entries,
     required bool enableDoublePage,
     required bool insertLeadingBlank,
-    required bool Function(int entryIndex) isTransitionAt,
   }) {
-    if (entryCount <= 0) return 0;
+    if (entries.isEmpty) return 0;
     var count = 0;
-    _forEachDisplaySlot(
-      entryCount: entryCount,
+    forEachReadModeSlot(
+      entries: entries,
       enableDoublePage: enableDoublePage,
       insertLeadingBlank: insertLeadingBlank,
-      isTransitionAt: isTransitionAt,
       onSlot: (slotIndex, primaryEntryIndex, secondaryEntryIndex) {
         count = slotIndex + 1;
       },
@@ -1238,74 +1403,22 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
 
   (int, int?)? _resolveDisplaySlotEntries({
     required int targetSlot,
-    required int entryCount,
+    required List<ReadModeEntry> entries,
     required bool enableDoublePage,
     required bool insertLeadingBlank,
-    required bool Function(int entryIndex) isTransitionAt,
   }) {
-    if (targetSlot < 0 || entryCount <= 0) return null;
+    if (targetSlot < 0 || entries.isEmpty) return null;
     (int, int?)? result;
-    _forEachDisplaySlot(
-      entryCount: entryCount,
+    forEachReadModeSlot(
+      entries: entries,
       enableDoublePage: enableDoublePage,
       insertLeadingBlank: insertLeadingBlank,
-      isTransitionAt: isTransitionAt,
       onSlot: (slotIndex, primaryEntryIndex, secondaryEntryIndex) {
         if (slotIndex != targetSlot || result != null) return;
         result = (primaryEntryIndex, secondaryEntryIndex);
       },
     );
     return result;
-  }
-
-  /// 与 [buildReadModeDoublePageSlots] 保持一致的槽位遍历。
-  ///
-  /// 首页留白槽位以「该页图片 entry 为 primary、secondary 为 null」表示，
-  /// 仅用于槽位计数/章节归属；UI 侧单独渲染左侧空白。
-  void _forEachDisplaySlot({
-    required int entryCount,
-    required bool enableDoublePage,
-    required bool insertLeadingBlank,
-    required bool Function(int entryIndex) isTransitionAt,
-    required void Function(
-      int slotIndex,
-      int primaryEntryIndex,
-      int? secondaryEntryIndex,
-    )
-    onSlot,
-  }) {
-    var slotIndex = 0;
-    var entryIndex = 0;
-    var needLeadingBlank = enableDoublePage && insertLeadingBlank;
-    while (entryIndex < entryCount) {
-      final primaryEntryIndex = entryIndex;
-      if (!enableDoublePage || isTransitionAt(primaryEntryIndex)) {
-        onSlot(slotIndex, primaryEntryIndex, null);
-        slotIndex++;
-        entryIndex++;
-        if (enableDoublePage && isTransitionAt(primaryEntryIndex)) {
-          needLeadingBlank = insertLeadingBlank;
-        }
-        continue;
-      }
-
-      if (needLeadingBlank) {
-        onSlot(slotIndex, primaryEntryIndex, null);
-        slotIndex++;
-        entryIndex++;
-        needLeadingBlank = false;
-        continue;
-      }
-
-      entryIndex++;
-      int? secondaryEntryIndex;
-      if (entryIndex < entryCount && !isTransitionAt(entryIndex)) {
-        secondaryEntryIndex = entryIndex;
-        entryIndex++;
-      }
-      onSlot(slotIndex, primaryEntryIndex, secondaryEntryIndex);
-      slotIndex++;
-    }
   }
 }
 

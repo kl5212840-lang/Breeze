@@ -1,4 +1,8 @@
-import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/widgets/image_recovery_region.dart';
+import 'package:zephyr/service/image_recovery.dart';
+import 'package:zephyr/service/reader/reader_history_service.dart'
+    show HistorySnapshot, ReaderChapterPage;
+import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -20,7 +24,11 @@ import 'package:zephyr/page/comic_read/controller/reader_image_prefetch_controll
 import 'package:zephyr/page/comic_read/controller/reader_orientation_controller.dart';
 import 'package:zephyr/page/comic_read/cubit/reader_state.dart';
 import 'package:zephyr/page/comic_read/model/normal_comic_ep_info.dart';
+import 'package:zephyr/object_box/model.dart' show UnifiedComicDownload;
 import 'package:zephyr/page/comic_read/type/chapter_extern.dart';
+import 'package:zephyr/page/comic_read/widgets/chrome/reader_tool_glyph.dart';
+import 'package:zephyr/page/comic_read/widgets/modes/read_mode_utils.dart';
+import 'package:zephyr/page/comic_read/widgets/image/read_image_widget.dart';
 import 'package:zephyr/platform/eink/eink_refresh.dart';
 import 'package:zephyr/util/context/context_extensions.dart';
 import 'package:zephyr/type/enum.dart';
@@ -70,7 +78,10 @@ class ComicReadPage extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      SourceExperienceBoundary(source: from, builder: _buildSourcePage);
+
+  Widget _buildSourcePage(BuildContext context) {
     return MultiBlocProvider(
       providers: [
         BlocProvider(
@@ -151,7 +162,7 @@ class _ComicReadPage extends StatefulWidget {
 }
 
 class _ComicReadPageState extends State<_ComicReadPage>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   dynamic get comicInfo => widget.comicInfo;
   String get comicId => widget.comicId;
 
@@ -162,12 +173,18 @@ class _ComicReadPageState extends State<_ComicReadPage>
   late final ReaderActionController _actionController; // 统一动作控制器
   late final ReaderVolumeController _volumeController; // 音量键翻页控制器
   late final ReaderHistoryController _historyController; // 历史记录控制器
+  late final ComicReadPreferenceCubit _readPreferences;
+  late final ReaderSeamlessCubit _seamless;
+  late final void Function(int) _observeChapterPages;
+  late final void Function(String, int) _onPageDecoded;
   late final ReaderAutoReadController _autoReadController; // 自动阅读控制器
   late final ReaderSystemUiController _systemUiController; // 系统 UI 控制器
   late final ReaderLifecycleController _lifecycleController; // 生命周期控制器
   late final ReaderOrientationController _orientationController;
   late final ReaderInputController _inputController; // 输入控制器
-  final _imagePrefetchController = ReaderImagePrefetchController();
+  late final _imagePrefetchController = ReaderImagePrefetchController(
+    useDownloads: _isOffline,
+  );
   NormalComicEpInfo epInfo = NormalComicEpInfo(); // 通用漫画章节信息
   NormalComicEpInfo _initialEpInfo = NormalComicEpInfo();
   late final ListObserverController observerController; // 列表观察控制器
@@ -178,10 +195,16 @@ class _ComicReadPageState extends State<_ComicReadPage>
   StreamSubscription<bool>? _volumeKeyPageTurnSubscription;
   StreamSubscription<dynamic>? _perComicVolumeKeySubscription;
   StreamSubscription<ReaderState>? _einkRefreshSubscription;
+  StreamSubscription<void>? _readerRecoverySubscription;
+  bool _readerRegionActive = false;
   int _einkLastSlot = -1;
   int _einkTurnCount = 0;
   bool _isScrollLockedByMultiTouch = false;
   bool _isUserScrollActive = false; // 用户是否正在拖拽/惯性滚动列表
+
+  bool get _isOffline =>
+      _type == ComicEntryType.download ||
+      _type == ComicEntryType.historyAndDownload;
 
   bool get _isHistory =>
       _type == ComicEntryType.history ||
@@ -192,12 +215,14 @@ class _ComicReadPageState extends State<_ComicReadPage>
     super.initState();
     observerController = ListObserverController(controller: scrollController);
     _type = widget.type;
-    // 绑定本漫独立阅读设置（仅 readMode），供有效值计算使用。
-    context.read<ComicReadPreferenceCubit>().bind(widget.from, widget.comicId);
-
+    _readPreferences = context.read<ComicReadPreferenceCubit>();
+    _seamless = context.read<ReaderSeamlessCubit>();
     _initAutoReadController();
     _initSystemUiController();
     _initHistoryController();
+    // Claim history (and capture the outgoing reader's final position) before
+    // rebinding the shared preference cubit to this reader.
+    _readPreferences.bind(widget.from, widget.comicId);
     _initVolumeController();
     _initLifecycleController();
     _orientationController = ReaderOrientationController();
@@ -208,6 +233,11 @@ class _ComicReadPageState extends State<_ComicReadPage>
     _inputController.init();
     _initVolumeKeyPageTurnSubscription();
     _initEinkAutoRefresh();
+    _readerRecoverySubscription = ImageRecoveryHub.instance.recovered.listen((
+      _,
+    ) {
+      unawaited(_recoverCurrentReadingPosition());
+    });
 
     WidgetsBinding.instance.addObserver(this);
     _lifecycleController.init();
@@ -222,30 +252,36 @@ class _ComicReadPageState extends State<_ComicReadPage>
   @override
   void didUpdateWidget(covariant _ComicReadPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.from != widget.from ||
+        oldWidget.comicId != widget.comicId ||
+        oldWidget.order != widget.order ||
+        oldWidget.chapterId != widget.chapterId) {
+      _inputController.resetViewerTransformIfNeeded();
+    }
     if (oldWidget.from != widget.from || oldWidget.comicId != widget.comicId) {
-      context.read<ComicReadPreferenceCubit>().bind(
-        widget.from,
-        widget.comicId,
-      );
+      _readPreferences.bind(widget.from, widget.comicId);
     }
   }
 
   @override
   void dispose() {
+    final ownedHistorySession = _historyController.ownsSession;
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_lifecycleController.dispose());
     _volumeKeyPageTurnSubscription?.cancel();
     _perComicVolumeKeySubscription?.cancel();
     _einkRefreshSubscription?.cancel();
+    _readerRecoverySubscription?.cancel();
     _inputController.dispose();
     _imagePrefetchController.dispose();
+    _seamless.configurePrefetch(count: 1, active: false);
     _volumeController.dispose();
     _pageController.dispose();
     _transformationController.dispose();
     unawaited(_orientationController.restorePortrait());
-    try {
-      context.read<ComicReadPreferenceCubit>().unbind();
-    } catch (_) {}
+    if (ownedHistorySession && !_readPreferences.isClosed) {
+      _readPreferences.unbind();
+    }
     super.dispose();
   }
 
@@ -254,101 +290,182 @@ class _ComicReadPageState extends State<_ComicReadPage>
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    body: BlocListener<ReaderSeamlessCubit, ReaderSeamlessState>(
-      listener: (context, seamlessState) {
-        final order = seamlessState.currentChapterOrder;
-        if (order != null && order != _jumpChapter.order) {
-          _syncJumpChapterState(order: order);
-        }
-        // 章节加载/卸载会改变总槽位和条目，触发重建以同步 ReaderCubit.totalSlots。
-        setState(() {});
-      },
-      child: BlocBuilder<PageBloc, PageState>(
-        builder: (context, state) {
-          switch (state.status) {
-            case PageStatus.initial:
-              return SafeArea(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SourceBackButton(onPressed: () => context.pop()),
-                    const Expanded(
-                      child: Center(child: CircularProgressIndicator()),
-                    ),
-                  ],
-                ),
-              );
-            case PageStatus.failure:
-              return ComicErrorWidget(
-                state: state,
-                event: PageEvent(
-                  comicId,
-                  widget.order,
-                  widget.chapterId,
-                  widget.requestId,
-                  widget.storageChapterId,
-                  widget.logicalKey,
-                  widget.chapterExtern,
-                  widget.from,
-                  widget.type,
-                  comicInfo: comicInfo,
-                ),
-              );
-            case PageStatus.success:
-              if (!_lifecycleController.hasBootstrappedReadState) {
-                _lifecycleController.markReadStateBootstrapped();
-                epInfo = state.epInfo!;
-                _initialEpInfo = state.epInfo!;
-                final readSetting = context.readEffectiveReadSetting();
-                context.read<ReaderSeamlessCubit>().bootstrap(
-                  epInfo,
-                  widget.order,
-                  readSetting,
+  Widget build(BuildContext context) => ImageRecoveryRegion(
+    onActiveChanged: _setRecoveryActive,
+    child: Scaffold(
+      body: BlocListener<ReaderSeamlessCubit, ReaderSeamlessState>(
+        listener: (context, seamlessState) {
+          final order = seamlessState.currentChapterOrder;
+          if (order != null && order != _jumpChapter.order) {
+            _syncJumpChapterState(order: order);
+          }
+          // 章节加载/卸载会改变总槽位和条目，触发重建以同步 ReaderCubit.totalSlots。
+          setState(() {});
+        },
+        child: BlocBuilder<PageBloc, PageState>(
+          builder: (context, state) {
+            switch (state.status) {
+              case PageStatus.initial:
+                return _pendingReader(
+                  const Center(child: CircularProgressIndicator()),
                 );
-              }
-              return ComicReadSuccessWidget(
-                comicId: comicId,
-                from: widget.from,
-                epInfo: _initialEpInfo,
-                chapterOrder: widget.order,
-                resolveTotalSlots: (readSetting) => context
-                    .read<ReaderSeamlessCubit>()
-                    .resolveTotalSlots(readSetting),
-                buildInteractiveViewer: (_) =>
-                    _inputController.buildInteractiveViewer(),
-                buildPageCount: (_) => _pageCountWidget(),
-                buildAppBar: (_) => _comicReadAppBar(),
-                buildBottom: (innerContext) => _bottomWidget(innerContext),
-                buildAutoReadControl: (_) => _autoReadControlWidget(),
-                buildEinkControl: (_) => _einkRefreshControlWidget(),
-                onReady: (innerContext, readSetting, readMode) {
-                  _syncAutoRead(readSetting: readSetting, readMode: readMode);
-                  _prefetchImagesAroundSlot(
-                    context.read<ReaderCubit>().state.currentSlot,
+              case PageStatus.failure:
+                return _pendingReader(
+                  ComicErrorWidget(
+                    state: state,
+                    event: PageEvent(
+                      comicId,
+                      widget.order,
+                      widget.chapterId,
+                      widget.requestId,
+                      widget.storageChapterId,
+                      widget.logicalKey,
+                      widget.chapterExtern,
+                      widget.from,
+                      widget.type,
+                      comicInfo: comicInfo,
+                    ),
+                  ),
+                );
+              case PageStatus.success:
+                if (!_lifecycleController.hasBootstrappedReadState) {
+                  _lifecycleController.markReadStateBootstrapped();
+                  epInfo = state.epInfo!;
+                  _initialEpInfo = state.epInfo!;
+                  final readSetting = context.readEffectiveReadSetting();
+                  context.read<ReaderSeamlessCubit>().bootstrap(
+                    epInfo,
+                    widget.order,
                     readSetting,
                   );
-                  _imageSizeContext = innerContext;
-                  _historyController.markLoaded();
-                  unawaited(
-                    _historyController.handleHistoryScroll(innerContext),
-                  );
-                },
-              );
-          }
-        },
+                }
+                return ComicReadSuccessWidget(
+                  comicId: comicId,
+                  from: widget.from,
+                  epInfo: _initialEpInfo,
+                  chapterOrder: widget.order,
+                  offlineReader: _isOffline,
+                  ownsReaderSession: () => _historyController.ownsSession,
+                  resolveTotalSlots: (readSetting) => context
+                      .read<ReaderSeamlessCubit>()
+                      .resolveTotalSlots(readSetting),
+                  buildInteractiveViewer: (_) => ReaderDecodedImageScope(
+                    onDecoded: _onPageDecoded,
+                    offline: _isOffline,
+                    child: _inputController.buildInteractiveViewer(),
+                  ),
+                  buildPageCount: (_) => _pageCountWidget(),
+                  buildAppBar: (_) => _comicReadAppBar(),
+                  buildBottom: (innerContext) => _bottomWidget(innerContext),
+                  buildPending: (_) => _pendingReader(
+                    const Center(child: CircularProgressIndicator()),
+                    chapterTitle: epInfo.epName,
+                  ),
+                  buildAutoReadControl: (_) => _autoReadControlWidget(),
+                  buildEinkControl: (_) => _einkRefreshControlWidget(),
+                  onReady: (innerContext, readSetting, readMode) {
+                    _syncAutoRead(readSetting: readSetting, readMode: readMode);
+                    _prefetchImagesAroundSlot(
+                      context.read<ReaderCubit>().state.currentSlot,
+                      readSetting,
+                    );
+                    _imageSizeContext = innerContext;
+                    _historyController.handleHistoryScroll(innerContext);
+                  },
+                );
+            }
+          },
+        ),
       ),
     ),
   );
+
+  void _setRecoveryActive(bool active) {
+    _readerRegionActive = active;
+    if (!active) _inputController.stopZoomAnimation();
+    _autoReadController.setVisible(active && _historyController.ownsSession);
+    context.read<PageBloc>().setRecoveryActive(active);
+    _imagePrefetchController.setActive(active);
+    final setting = context.readEffectiveReadSetting();
+    context.read<ReaderSeamlessCubit>().configurePrefetch(
+      count: setting.preloadChapterCount,
+      active: active && _historyController.ownsSession,
+    );
+    if (active) unawaited(_recoverCurrentReadingPosition());
+  }
+
   @override
   void didChangeMetrics() {
+    _inputController.stopZoomAnimation();
     _lifecycleController.didChangeMetrics();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _lifecycleController.didChangeAppLifecycleState(state);
+    if (state != AppLifecycleState.resumed)
+      _inputController.stopZoomAnimation();
+    final active =
+        state == AppLifecycleState.resumed &&
+        _readerRegionActive &&
+        _historyController.ownsSession;
+    _autoReadController.setVisible(active);
+    _imagePrefetchController.setActive(active);
+    if (mounted) {
+      final setting = context.readEffectiveReadSetting();
+      context.read<ReaderSeamlessCubit>().configurePrefetch(
+        count: setting.preloadChapterCount,
+        active: active,
+      );
+      if (active)
+        _prefetchImagesAroundSlot(
+          context.read<ReaderCubit>().state.currentSlot,
+          setting,
+        );
+    }
   }
+
+  Future<void> _recoverCurrentReadingPosition() async {
+    if (!mounted ||
+        !_readerRegionActive ||
+        !_historyController.ownsSession ||
+        ModalRoute.of(context)?.isCurrent == false)
+      return;
+    final hub = ImageRecoveryHub.instance;
+    if (!hub.foreground || !hub.online) return;
+    final readSetting = context.readEffectiveReadSetting();
+    final reader = context.read<ReaderCubit>();
+    _prefetchImagesAroundSlot(reader.state.currentSlot, readSetting);
+    final seamless = context.read<ReaderSeamlessCubit>();
+    final result = await seamless.onGlobalSlotObserved(
+      reader.state.currentSlot,
+      readSetting,
+      readAnchor: _readBoundaryAnchor,
+    );
+    if (!_canRecoverReadingPosition) return;
+    if (result.targetGlobalSlot case final target?) {
+      await _jumpToGlobalSlot(
+        target,
+        prependedSlotCount: result.prependedSlotCount,
+        isStillActive: () => _canRecoverReadingPosition,
+      );
+    }
+  }
+
+  ReaderBoundaryAnchor? _readBoundaryAnchor() {
+    if (!mounted || !_historyController.ownsSession) return null;
+    return (
+      slot: context.read<ReaderCubit>().state.currentSlot,
+      setting: context.readEffectiveReadSetting(),
+    );
+  }
+
+  bool get _canRecoverReadingPosition =>
+      mounted &&
+      _readerRegionActive &&
+      _historyController.ownsSession &&
+      ImageRecoveryHub.instance.foreground &&
+      ModalRoute.of(context)?.isCurrent != false;
 
   void _refreshState(VoidCallback fn) {
     // 统一走这里触发刷新，避免在异步回调中误调用 setState。
@@ -359,8 +476,9 @@ class _ComicReadPageState extends State<_ComicReadPage>
   Future<void> _jumpToGlobalSlot(
     int targetGlobalSlot, {
     int prependedSlotCount = 0,
+    bool Function()? isStillActive,
   }) async {
-    if (!mounted) return;
+    if (!mounted || isStillActive?.call() == false) return;
     final cubit = context.read<ReaderCubit>();
     final readSetting = context.readEffectiveReadSetting();
     final seamlessCubit = context.read<ReaderSeamlessCubit>();
@@ -393,6 +511,7 @@ class _ComicReadPageState extends State<_ComicReadPage>
               readSetting,
               imageSizeCubit,
               contentWidth,
+              viewportHeight: MediaQuery.sizeOf(context).height,
             );
         if (estimatedHeight > 0) {
           final newOffset = estimatedHeight + getReaderTopOffset(context);
@@ -406,7 +525,10 @@ class _ComicReadPageState extends State<_ComicReadPage>
       }
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !scrollController.hasClients) return;
+        if (!mounted ||
+            isStillActive?.call() == false ||
+            !scrollController.hasClients)
+          return;
         observerController.jumpTo(
           index: safeTarget,
           offset: (offset) => getReaderTopOffset(context),
@@ -416,7 +538,7 @@ class _ComicReadPageState extends State<_ComicReadPage>
     }
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || isStillActive?.call() == false) return;
       if (_pageController.hasClients) {
         _pageController.jumpToPage(safeTarget);
       }

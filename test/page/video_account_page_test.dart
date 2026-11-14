@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/main.dart' show eventBus;
+import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/page/video/video_account_backup.dart';
 import 'package:zephyr/page/video/video_account_page.dart';
 
@@ -35,6 +37,9 @@ void main() {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
+      final feedback = <ToastEvent>[];
+      final subscription = eventBus.on<ToastEvent>().listen(feedback.add);
+      addTearDown(subscription.cancel);
       final pending = Completer<void>();
       var writes = 0;
       final service = VideoAccountService(
@@ -86,7 +91,9 @@ void main() {
       );
       pending.complete();
       await _pump(tester);
-      expect(find.text(t.videoAccount.backupDone), findsOneWidget);
+      expect(feedback, hasLength(1));
+      expect(feedback.single.type, ToastType.success);
+      expect(feedback.single.message, t.videoAccount.backupDone);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     },
@@ -95,6 +102,9 @@ void main() {
   testWidgets(
     'expired or missing backups can be removed without changing browser cookies',
     (tester) async {
+      final feedback = <ToastEvent>[];
+      final subscription = eventBus.on<ToastEvent>().listen(feedback.add);
+      addTearDown(subscription.cancel);
       final cookies = _Cookies();
       var forgotten = 0;
       final service = VideoAccountService(
@@ -135,7 +145,9 @@ void main() {
       await _pump(tester);
       expect(forgotten, 1);
       expect(cookies.writes, 0);
-      expect(find.text(t.videoAccount.forgotten), findsOneWidget);
+      expect(feedback, hasLength(1));
+      expect(feedback.single.type, ToastType.success);
+      expect(feedback.single.message, t.videoAccount.forgotten);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );

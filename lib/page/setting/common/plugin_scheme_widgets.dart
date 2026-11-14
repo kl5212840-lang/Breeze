@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/touch_hover_intent.dart';
 import 'dart:convert';
 
 import 'package:material_ui/material_ui.dart';
@@ -5,9 +6,10 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/network/http/plugin/unified_plugin_envelope.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
-import 'package:zephyr/widgets/fluent_dropdown.dart';
+import 'package:zephyr/widgets/source_choice_menu.dart';
 import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/util/json/json_value.dart';
+import 'package:zephyr/widgets/breeze_switch.dart';
 
 class PluginSettingSchemeSection extends StatefulWidget {
   const PluginSettingSchemeSection({
@@ -58,9 +60,18 @@ class _PluginSettingSchemeSectionState
           return ListTile(
             title: Text(t.plugin.pluginSettingsLoadFailed),
             subtitle: Text(snapshot.error.toString()),
-            trailing: IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: () => setState(() => _future = _load()),
+            trailing: TouchHoverIntent(
+              identity: (widget.from, 'retry'),
+              builder: (context, hover) {
+                const style = ButtonStyle();
+                return IconButton(
+                  style: style.copyWith(
+                    overlayColor: hover.overlayColor(style.overlayColor),
+                  ),
+                  icon: const Icon(Icons.refresh),
+                  onPressed: () => setState(() => _future = _load()),
+                );
+              },
             ),
           );
         }
@@ -112,10 +123,11 @@ class _PluginSettingSchemeSectionState
           : (options.isEmpty ? '' : options.first);
       return ListTile(
         title: Text(label),
-        trailing: FluentDropdown<String>(
+        trailing: SourceChoiceMenu<String>(
+          label: effectiveValue,
+          tooltip: label,
           value: effectiveValue,
-          displayValue: effectiveValue,
-          items: {for (final option in options) option: option},
+          options: {for (final option in options) option: option},
           onChanged: options.isEmpty
               ? null
               : (next) async {
@@ -127,29 +139,39 @@ class _PluginSettingSchemeSectionState
 
     if (kind == 'switch') {
       final current = value == true;
-      return SwitchListTile(
-        title: Text(label),
-        value: current,
-        onChanged: (next) async {
-          await _persistField(key, next);
-        },
+      return TouchHoverIntent(
+        identity: key,
+        builder: (context, hover) => BreezeSwitchListTile(
+          SwitchListTile.adaptive(
+            hoverColor: hover.hoverColor(),
+            title: Text(label),
+            value: current,
+            onChanged: (next) async {
+              await _persistField(key, next);
+            },
+          ),
+        ),
       );
     }
 
-    return ListTile(
-      title: Text(label),
-      subtitle: Text(value?.toString() ?? ''),
-      trailing: const Icon(Icons.edit_outlined),
-      onTap: () async {
-        final next = await _showInputDialog(
-          context,
-          title: label,
-          initialValue: value?.toString() ?? '',
-          obscure: kind == 'password',
-        );
-        if (next == null) return;
-        await _persistField(key, next);
-      },
+    return TouchHoverIntent(
+      identity: key,
+      builder: (context, hover) => ListTile(
+        hoverColor: hover.hoverColor(),
+        title: Text(label),
+        subtitle: Text(value?.toString() ?? ''),
+        trailing: const Icon(Icons.edit_outlined),
+        onTap: () async {
+          final next = await showPluginSettingInputDialog(
+            context,
+            title: label,
+            initialValue: value?.toString() ?? '',
+            obscure: kind == 'password',
+          );
+          if (next == null || !mounted) return;
+          await _persistField(key, next);
+        },
+      ),
     );
   }
 
@@ -200,7 +222,7 @@ class _PluginAdvancedActionSectionState
       future: _future,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return const ListTile(title: Text('高级能力加载中...'));
+          return ListTile(title: Text(t.common.loading));
         }
         if (snapshot.hasError || !snapshot.hasData) {
           return const SizedBox.shrink();
@@ -217,47 +239,51 @@ class _PluginAdvancedActionSectionState
           children: actions.map((action) {
             final title = action['title']?.toString() ?? t.plugin.unnamedAction;
             final fnPath = action['fnPath']?.toString() ?? '';
-            return ListTile(
-              leading: const Icon(Icons.extension_outlined),
-              title: Text(title),
-              subtitle: Text(fnPath),
-              onTap: () async {
-                if (fnPath.isEmpty) {
-                  showInfoToast(t.plugin.actionNotExecutable);
-                  return;
-                }
+            return TouchHoverIntent(
+              identity: fnPath,
+              builder: (context, hover) => ListTile(
+                hoverColor: hover.hoverColor(),
+                leading: const Icon(Icons.extension_outlined),
+                title: Text(title),
+                subtitle: Text(fnPath),
+                onTap: () async {
+                  if (fnPath.isEmpty) {
+                    showInfoToast(t.plugin.actionNotExecutable);
+                    return;
+                  }
 
-                try {
-                  final dialogContext = this.context;
-                  final result = await callUnifiedComicPlugin(
-                    from: widget.from,
-                    fnPath: fnPath,
-                    core: const <String, dynamic>{},
-                    extern: const <String, dynamic>{},
-                  );
+                  try {
+                    final dialogContext = this.context;
+                    final result = await callUnifiedComicPlugin(
+                      from: widget.from,
+                      fnPath: fnPath,
+                      core: const <String, dynamic>{},
+                      extern: const <String, dynamic>{},
+                    );
 
-                  if (!dialogContext.mounted) return;
-                  await showDialog<void>(
-                    context: dialogContext,
-                    builder: (context) => AlertDialog(
-                      title: Text(title),
-                      content: SingleChildScrollView(
-                        child: SelectableText(
-                          const JsonEncoder.withIndent('  ').convert(result),
+                    if (!dialogContext.mounted) return;
+                    await showDialog<void>(
+                      context: dialogContext,
+                      builder: (context) => AlertDialog(
+                        title: Text(title),
+                        content: SingleChildScrollView(
+                          child: SelectableText(
+                            const JsonEncoder.withIndent('  ').convert(result),
+                          ),
                         ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            child: Text(t.common.close),
+                          ),
+                        ],
                       ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.of(context).pop(),
-                          child: Text(t.common.close),
-                        ),
-                      ],
-                    ),
-                  );
-                } catch (e) {
-                  showInfoToast(t.plugin.executeFailed(error: e));
-                }
-              },
+                    );
+                  } catch (e) {
+                    showInfoToast(t.plugin.executeFailed(error: e));
+                  }
+                },
+              ),
             );
           }).toList(),
         );
@@ -266,21 +292,27 @@ class _PluginAdvancedActionSectionState
   }
 }
 
-Future<String?> _showInputDialog(
+Future<String?> showPluginSettingInputDialog(
   BuildContext context, {
   required String title,
   required String initialValue,
   required bool obscure,
 }) async {
-  final controller = TextEditingController(text: initialValue);
-  final value = await showDialog<String>(
+  var value = initialValue;
+  return showDialog<String>(
     context: context,
     builder: (context) => AlertDialog(
       title: Text(title),
-      content: TextField(
-        controller: controller,
+      scrollable: true,
+      content: TextFormField(
+        initialValue: initialValue,
         autofocus: true,
         obscureText: obscure,
+        autocorrect: !obscure,
+        enableSuggestions: !obscure,
+        textInputAction: TextInputAction.done,
+        onChanged: (next) => value = next,
+        onFieldSubmitted: (next) => Navigator.of(context).pop(next),
       ),
       actions: [
         TextButton(
@@ -288,12 +320,10 @@ Future<String?> _showInputDialog(
           child: Text(t.common.cancel),
         ),
         TextButton(
-          onPressed: () => Navigator.of(context).pop(controller.text),
+          onPressed: () => Navigator.of(context).pop(value),
           child: Text(t.common.save),
         ),
       ],
     ),
   );
-  controller.dispose();
-  return value;
 }

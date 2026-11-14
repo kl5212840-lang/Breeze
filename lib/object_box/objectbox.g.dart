@@ -1954,6 +1954,29 @@ final _entities = <obx_int.ModelEntity>[
     relations: <obx_int.ModelRelation>[],
     backlinks: <obx_int.ModelBacklink>[],
   ),
+  obx_int.ModelEntity(
+    id: const obx_int.IdUid(24, 8056410748370734871),
+    name: 'LocalStorageCommit',
+    lastPropertyId: const obx_int.IdUid(2, 823802972751471027),
+    flags: 0,
+    properties: <obx_int.ModelProperty>[
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(1, 7165417984173947226),
+        name: 'id',
+        type: 6,
+        flags: 1,
+      ),
+      obx_int.ModelProperty(
+        id: const obx_int.IdUid(2, 823802972751471027),
+        name: 'operationToken',
+        type: 9,
+        flags: 2080,
+        indexId: const obx_int.IdUid(22, 1609379430984371764),
+      ),
+    ],
+    relations: <obx_int.ModelRelation>[],
+    backlinks: <obx_int.ModelBacklink>[],
+  ),
 ];
 
 /// Shortcut for [obx.Store.new] that passes [getObjectBoxModel] and for Flutter
@@ -1999,8 +2022,8 @@ obx_int.ModelDefinition getObjectBoxModel() {
     // Typically, this is done with `dart run build_runner build`.
     generatorVersion: obx_int.GeneratorVersion.v2025_12_16,
     entities: _entities,
-    lastEntityId: const obx_int.IdUid(23, 8024759089770245234),
-    lastIndexId: const obx_int.IdUid(21, 6523988624980157350),
+    lastEntityId: const obx_int.IdUid(24, 8056410748370734871),
+    lastIndexId: const obx_int.IdUid(22, 1609379430984371764),
     lastRelationId: const obx_int.IdUid(0, 0),
     lastSequenceId: const obx_int.IdUid(0, 0),
     retiredEntityUids: const [
@@ -4519,6 +4542,42 @@ obx_int.ModelDefinition getObjectBoxModel() {
         return object;
       },
     ),
+    LocalStorageCommit: obx_int.EntityDefinition<LocalStorageCommit>(
+      model: _entities[16],
+      toOneRelations: (LocalStorageCommit object) => [],
+      toManyRelations: (LocalStorageCommit object) => {},
+      getId: (LocalStorageCommit object) => object.id,
+      setId: (LocalStorageCommit object, int id) {
+        object.id = id;
+      },
+      objectToFB: (LocalStorageCommit object, fb.Builder fbb) {
+        final operationTokenOffset = fbb.writeString(object.operationToken);
+        fbb.startTable(3);
+        fbb.addInt64(0, object.id);
+        fbb.addOffset(1, operationTokenOffset);
+        fbb.finish(fbb.endTable());
+        return object.id;
+      },
+      objectFromFB: (obx.Store store, ByteData fbData) {
+        final buffer = fb.BufferContext(fbData);
+        final rootOffset = buffer.derefObject(0);
+        final idParam = const fb.Int64Reader().vTableGet(
+          buffer,
+          rootOffset,
+          4,
+          0,
+        );
+        final operationTokenParam = const fb.StringReader(
+          asciiOptimization: true,
+        ).vTableGet(buffer, rootOffset, 6, '');
+        final object = LocalStorageCommit(
+          id: idParam,
+          operationToken: operationTokenParam,
+        );
+
+        return object;
+      },
+    ),
   };
 
   return obx_int.ModelDefinition(model, bindings);
@@ -6035,5 +6094,18 @@ class ComicReadPreference_ {
   /// See [ComicReadPreference.overridesJson].
   static final overridesJson = obx.QueryStringProperty<ComicReadPreference>(
     _entities[15].properties[7],
+  );
+}
+
+/// [LocalStorageCommit] entity fields to define ObjectBox queries.
+class LocalStorageCommit_ {
+  /// See [LocalStorageCommit.id].
+  static final id = obx.QueryIntegerProperty<LocalStorageCommit>(
+    _entities[16].properties[0],
+  );
+
+  /// See [LocalStorageCommit.operationToken].
+  static final operationToken = obx.QueryStringProperty<LocalStorageCommit>(
+    _entities[16].properties[1],
   );
 }

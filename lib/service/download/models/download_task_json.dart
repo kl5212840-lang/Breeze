@@ -10,6 +10,7 @@ part 'download_task_json.freezed.dart';
 part 'download_task_json.g.dart';
 
 const currentDownloadTaskSchemaVersion = 3;
+const downloadTaskDeletionPhase = 'deleting';
 
 /// 整本下载记录（UnifiedComicDownload.uniqueKey）用的 key，依然按漫画粒度。
 String buildDownloadTaskKey(String from, String comicId) {
@@ -83,6 +84,9 @@ abstract class DownloadTaskJson with _$DownloadTaskJson {
     @Default(0) int totalImages,
     @Default(<String>[]) List<String> imagePaths,
     @Default(0) int attempt,
+    @JsonKey(includeIfNull: false) int? queuedAt,
+    @JsonKey(includeIfNull: false) int? nextRetryAt,
+    @Default(0) int retryRounds,
     @Default('') String lastErrorCode,
     @Default('') String lastErrorMessage,
   }) = _DownloadTaskJson;

@@ -20,6 +20,10 @@ String comicSimplifyEntryInfoToJson(ComicSimplifyEntryInfo data) =>
 abstract class ComicSimplifyEntryInfo with _$ComicSimplifyEntryInfo {
   const factory ComicSimplifyEntryInfo({
     @JsonKey(name: "title") required String title,
+    @JsonKey(name: "description") @Default('') String description,
+    @JsonKey(name: "detailMetadata") @Default('') String detailMetadata,
+    @Default(0) int detailViewCount,
+    @Default(0) int detailPopularity,
     @JsonKey(name: "id") required String id,
     @JsonKey(name: "fileServer") required String fileServer,
     @JsonKey(name: "path") required String path,

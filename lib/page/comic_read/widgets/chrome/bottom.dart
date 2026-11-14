@@ -9,6 +9,8 @@ import 'package:zephyr/page/comic_info/comic_info.dart';
 import 'package:zephyr/page/download/adapters/download_chapter_adapter.dart';
 import 'package:zephyr/page/comic_read/cubit/reader_cubit.dart';
 import 'package:zephyr/page/comic_read/method/jump_chapter.dart';
+import 'package:zephyr/page/comic_read/method/get_local_info.dart';
+import 'package:zephyr/page/comic_read/widgets/chrome/reader_tool_glyph.dart';
 import 'package:zephyr/page/comic_read/widgets/settings/reader_settings_sheet.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/context/context_extensions.dart';
@@ -16,17 +18,23 @@ import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/config/router/router.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/video/video_episode_ranges.dart';
+import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/widgets/breeze_control_colors.dart';
+import 'package:zephyr/widgets/touch_hover_intent.dart';
 
 class BottomWidget extends StatefulWidget {
   final ComicEntryType type;
   final dynamic comicInfo;
-  final Widget sliderWidget;
+  final Widget? sliderWidget;
   final int order;
   final int epsNumber;
   final String comicId;
   final String from;
   final JumpChapter jumpChapter;
+  final BuildContext? readerContext;
   final ValueChanged<bool>? onLandscapeChanged;
+  final bool Function()? canChangePage;
 
   const BottomWidget({
     super.key,
@@ -38,7 +46,9 @@ class BottomWidget extends StatefulWidget {
     required this.comicId,
     required this.from,
     required this.jumpChapter,
+    this.readerContext,
     this.onLandscapeChanged,
+    this.canChangePage,
   });
 
   @override
@@ -70,7 +80,11 @@ class _BottomWidgetState extends State<BottomWidget> {
     if (tempType == ComicEntryType.history) {
       tempType = ComicEntryType.normal;
     }
-    chapterRefs = resolveUnifiedComicChapters(widget.comicInfo, widget.from);
+    chapterRefs = resolveReaderChapters(
+      widget.comicInfo,
+      widget.from,
+      offline: tempType == ComicEntryType.download,
+    );
   }
 
   @override
@@ -79,10 +93,11 @@ class _BottomWidgetState extends State<BottomWidget> {
       (ReaderCubit cubit) => cubit.state.isMenuVisible,
     );
     // 墨水屏：控制条滑动的中间帧只会攒成残影，直接出图。
-    final animationDuration =
-        context.select(
-          (GlobalSettingCubit cubit) => cubit.state.eInkSetting.enabled,
-        )
+    final eInkInstant = context.select(
+      (GlobalSettingCubit cubit) => cubit.state.eInkSetting.enabled,
+    );
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final animationDuration = eInkInstant || reduceMotion
         ? Duration.zero
         : _animationDuration;
     final bottomSafeHeight = context.bottomSafeHeight;
@@ -143,19 +158,21 @@ class _BottomWidgetState extends State<BottomWidget> {
             ),
           ),
         ),
-        const SizedBox(height: 12),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: Align(
-            alignment: Alignment.center,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxWidth: isWideLayout ? bottomMaxWidth : double.infinity,
+        if (widget.sliderWidget case final slider?) ...[
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Align(
+              alignment: Alignment.center,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: isWideLayout ? bottomMaxWidth : double.infinity,
+                ),
+                child: Row(children: [slider]),
               ),
-              child: Row(children: [widget.sliderWidget]),
             ),
           ),
-        ),
+        ],
       ],
     );
   }
@@ -173,10 +190,15 @@ class _BottomWidgetState extends State<BottomWidget> {
             maxWidth: isWideLayout ? maxWidth : double.infinity,
           ),
           child: Row(
+            mainAxisAlignment: widget.sliderWidget == null
+                ? MainAxisAlignment.center
+                : MainAxisAlignment.start,
             children: [
               _buildControlButtons(),
-              const SizedBox(width: 12),
-              widget.sliderWidget,
+              if (widget.sliderWidget case final slider?) ...[
+                const SizedBox(width: 12),
+                slider,
+              ],
             ],
           ),
         ),
@@ -197,13 +219,13 @@ class _BottomWidgetState extends State<BottomWidget> {
         ),
         const SizedBox(width: 10),
         FloatingActionIconButton(
-          icon: Icons.home_rounded,
+          icon: Icons.home_outlined,
           tooltip: t.reader.backToHome,
           onPressed: () => popToRoot(context),
         ),
         const SizedBox(width: 10),
         FloatingActionIconButton(
-          icon: Icons.list_alt_rounded,
+          icon: Icons.view_list_outlined,
           tooltip: t.reader.selectChapter,
           isEnabled: chapterRefs.isNotEmpty,
           onPressed: _selectJumpChapter,
@@ -227,9 +249,11 @@ class _BottomWidgetState extends State<BottomWidget> {
 
   void _openSettingsPanel() {
     final readerCubit = context.read<ReaderCubit>();
+    final canChangePage = widget.canChangePage;
     showReaderSettingsSheet(
       context,
       changePageIndex: (int value) {
+        if (readerCubit.isClosed || canChangePage?.call() == false) return;
         readerCubit.updateCurrentSlot(value);
         readerCubit.updateSliderChanged(0.0);
       },
@@ -272,27 +296,30 @@ class _BottomWidgetState extends State<BottomWidget> {
   }
 
   Future<void> _jumpToChapter(bool isPrev) async {
+    final readerContext = widget.readerContext ?? context;
+    final chapterNavigation = jumpChapter;
     final dialogMessage = isPrev
         ? t.reader.previousChapter
         : t.reader.nextChapter;
     final result = await _bottomButtonDialog(
-      context,
+      readerContext,
       t.reader.jumpToChapterTitle,
       t.reader.jumpToChapterMessage(chapter: dialogMessage),
     );
-    if (!result) return;
-    if (!mounted) return;
-    jumpChapter.jumpToChapter(context, isPrev);
+    if (!result || !_isCurrentReader(readerContext)) return;
+    chapterNavigation.jumpToChapter(readerContext, isPrev);
   }
 
   Future<void> _selectJumpChapter() async {
-    final router = AutoRouter.of(context);
+    final config = widget;
+    final readerContext = config.readerContext ?? context;
+    final router = AutoRouter.of(readerContext);
     final initialIndex = jumpChapter.currentChapterIndexIn(chapterRefs);
     final result = await showDialog<UnifiedComicChapterRef?>(
-      context: context,
+      context: readerContext,
       barrierDismissible: false, // 不允许点击外部区域关闭对话框
       builder: (BuildContext context) {
-        return _ChapterPickerDialog(
+        return ChapterPickerDialog(
           refs: chapterRefs,
           initialIndex: initialIndex,
           onSelected: (ep) =>
@@ -300,12 +327,12 @@ class _BottomWidgetState extends State<BottomWidget> {
         );
       },
     );
-    if (result != null && mounted) {
+    if (result != null && _isCurrentReader(readerContext)) {
       final chapter = const DownloadChapterAdapter().fromChapterRef(result);
       router.replace(
         ComicReadRoute(
           key: Key(Uuid().v4()),
-          comicInfo: widget.comicInfo,
+          comicInfo: config.comicInfo,
           comicId: comicId,
           type: tempType,
           order: chapter.order,
@@ -314,31 +341,34 @@ class _BottomWidgetState extends State<BottomWidget> {
           storageChapterId: result.storageChapterId.trim(),
           logicalKey: chapter.id,
           chapterExtern: Map<String, dynamic>.from(chapter.extern),
-          epsNumber: widget.epsNumber,
-          from: widget.from,
-          stringSelectCubit: context.read<StringSelectCubit>(),
+          epsNumber: config.epsNumber,
+          from: config.from,
+          stringSelectCubit: readerContext.read<StringSelectCubit>(),
         ),
       );
     }
   }
+
+  bool _isCurrentReader(BuildContext context) =>
+      context.mounted && ModalRoute.of(context)?.isCurrent == true;
 }
 
-class _ChapterPickerDialog extends StatefulWidget {
+class ChapterPickerDialog extends StatefulWidget {
   final List<UnifiedComicChapterRef> refs;
   final int initialIndex;
   final ValueChanged<UnifiedComicChapterRef> onSelected;
 
-  const _ChapterPickerDialog({
+  const ChapterPickerDialog({
     required this.refs,
     required this.initialIndex,
     required this.onSelected,
   });
 
   @override
-  State<_ChapterPickerDialog> createState() => _ChapterPickerDialogState();
+  State<ChapterPickerDialog> createState() => _ChapterPickerDialogState();
 }
 
-class _ChapterPickerDialogState extends State<_ChapterPickerDialog> {
+class _ChapterPickerDialogState extends State<ChapterPickerDialog> {
   // 行高只是估算（章节名可能换行），用于对话框高度与首屏定位；
   // 精确定位靠 _targetKey + ensureVisible。
   static const double _estimatedRowHeight = 52.0;
@@ -348,10 +378,33 @@ class _ChapterPickerDialogState extends State<_ChapterPickerDialog> {
   GlobalKey? _targetKey;
   late final ScrollController _scrollController;
   int _revealAttempts = 0;
+  late int _range = _hasValidInitial ? widget.initialIndex ~/ 50 : 0;
 
   /// 扁平行：组头（不可点）与章节交错，单组时无组头，与今天一致。
-  late final List<_PickerRow> _rows = _buildRows(widget.refs);
-  late final int _initialRow = _hasValidInitial
+  late final List<_PickerRow> _allRows = _buildRows(widget.refs);
+  int? _cachedRange;
+  List<_PickerRow>? _cachedRows;
+  List<_PickerRow> get _rows {
+    if (widget.refs.length <= 50) return _allRows;
+    if (_cachedRange == _range) return _cachedRows!;
+    final result = <_PickerRow>[];
+    _PickerGroupRow? header;
+    for (final row in _allRows) {
+      if (row is _PickerGroupRow) {
+        header = row;
+      } else if (row is _PickerChapterRow && row.globalIndex ~/ 50 == _range) {
+        if (header != null) {
+          result.add(header);
+          header = null;
+        }
+        result.add(row);
+      }
+    }
+    _cachedRange = _range;
+    return _cachedRows = result;
+  }
+
+  int get _initialRow => _hasValidInitial
       ? _rows.indexWhere(
           (row) =>
               row is _PickerChapterRow &&
@@ -363,10 +416,7 @@ class _ChapterPickerDialogState extends State<_ChapterPickerDialog> {
       widget.initialIndex >= 0 && widget.initialIndex < widget.refs.length;
 
   static List<_PickerRow> _buildRows(List<UnifiedComicChapterRef> refs) {
-    final groups = groupChaptersByTitle<UnifiedComicChapterRef>(
-      refs,
-      (ref) => ref.groupTitle,
-    );
+    final groups = groupIndicesByTitle(refs.length, (i) => refs[i].groupTitle);
     if (groups.length <= 1) {
       return [
         for (var i = 0; i < refs.length; i++)
@@ -374,12 +424,10 @@ class _ChapterPickerDialogState extends State<_ChapterPickerDialog> {
       ];
     }
     final rows = <_PickerRow>[];
-    var globalIndex = 0;
     for (final group in groups) {
       rows.add(_PickerGroupRow(title: group.title));
-      for (final ref in group.items) {
-        rows.add(_PickerChapterRow(ref: ref, globalIndex: globalIndex));
-        globalIndex++;
+      for (final index in group.items) {
+        rows.add(_PickerChapterRow(ref: refs[index], globalIndex: index));
       }
     }
     return rows;
@@ -467,51 +515,66 @@ class _ChapterPickerDialogState extends State<_ChapterPickerDialog> {
       content: SizedBox(
         width: listWidth,
         height: listHeight,
-        child: ListView.builder(
-          controller: _scrollController,
-          itemCount: _rows.length,
-          itemBuilder: (context, i) {
-            final row = _rows[i];
-            if (row is _PickerGroupRow) {
-              return Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
-                child: Text(
-                  chapterGroupDisplayTitle(
-                    row.title,
-                    t.comicInfo.untitledGroup,
-                  ),
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: Theme.of(context).colorScheme.primary,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              );
-            }
-            final chapterRow = row as _PickerChapterRow;
-            final ref = chapterRow.ref;
-            final isCurrent = i == _initialRow;
-            return Padding(
-              key: isCurrent ? _targetKey : null,
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: TextButton(
-                style: isCurrent ? highlightStyle : null,
-                onPressed: () => widget.onSelected(ref),
-                child: Row(
-                  children: [
-                    Expanded(child: Text(ref.name)),
-                    if (isCurrent)
-                      Icon(
-                        Icons.check_circle_rounded,
-                        size: 18,
-                        color: colorScheme.primary,
-                      ),
-                  ],
-                ),
+        child: Column(
+          children: [
+            if (widget.refs.length > 50)
+              VideoEpisodeRanges(
+                count: widget.refs.length,
+                index: _range,
+                onChanged: (value) {
+                  setState(() => _range = value);
+                  if (_scrollController.hasClients) _scrollController.jumpTo(0);
+                },
               ),
-            );
-          },
+            Expanded(
+              child: ListView.builder(
+                controller: _scrollController,
+                itemCount: _rows.length,
+                itemBuilder: (context, i) {
+                  final row = _rows[i];
+                  if (row is _PickerGroupRow) {
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 10, 12, 2),
+                      child: Text(
+                        chapterGroupDisplayTitle(
+                          row.title,
+                          t.comicInfo.untitledGroup,
+                        ),
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    );
+                  }
+                  final chapterRow = row as _PickerChapterRow;
+                  final ref = chapterRow.ref;
+                  final isCurrent = i == _initialRow;
+                  return Padding(
+                    key: isCurrent ? _targetKey : null,
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: TextButton(
+                      style: isCurrent ? highlightStyle : null,
+                      onPressed: () => widget.onSelected(ref),
+                      child: Row(
+                        children: [
+                          Expanded(child: Text(ref.name)),
+                          if (isCurrent)
+                            Icon(
+                              Icons.check_circle_rounded,
+                              size: 18,
+                              color: colorScheme.primary,
+                            ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
         ),
       ),
       actions: [
@@ -629,6 +692,58 @@ class _FrostedCircleIconButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final colorScheme = context.theme.colorScheme;
 
+    if (!AppInterfaceStyleScope.usesSystem(context)) {
+      final highContrast = MediaQuery.highContrastOf(context);
+      return TouchHoverIntent(
+        identity: icon,
+        builder: (context, hover) => IconButton(
+          tooltip: tooltip,
+          onPressed: isEnabled ? onPressed : null,
+          style:
+              IconButton.styleFrom(
+                fixedSize: const Size(44, 44),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                foregroundColor: colorScheme.onSurface,
+                backgroundColor: Color.alphaBlend(
+                  BreezeControlColors.tool(colorScheme),
+                  colorScheme.surface,
+                ),
+                disabledForegroundColor: colorScheme.onSurface.withValues(
+                  alpha: .38,
+                ),
+                disabledBackgroundColor: colorScheme.surface,
+              ).copyWith(
+                overlayColor: hover.overlayColor(
+                  WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.pressed)) {
+                      return colorScheme.primary.withValues(alpha: .16);
+                    }
+                    if (states.contains(WidgetState.focused)) {
+                      return colorScheme.primary.withValues(alpha: .12);
+                    }
+                    if (states.contains(WidgetState.hovered)) {
+                      return colorScheme.primary.withValues(alpha: .08);
+                    }
+                    return null;
+                  }),
+                ),
+                side: WidgetStateProperty.resolveWith((states) {
+                  if (states.contains(WidgetState.focused)) {
+                    return BorderSide(color: colorScheme.primary, width: 2);
+                  }
+                  if (highContrast && !states.contains(WidgetState.disabled)) {
+                    return BorderSide(color: colorScheme.outline, width: 1.5);
+                  }
+                  return BorderSide.none;
+                }),
+              ),
+          icon: ReaderToolGlyph(icon),
+        ),
+      );
+    }
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(999),
       child: BackdropFilter(
@@ -649,7 +764,7 @@ class _FrostedCircleIconButton extends StatelessWidget {
               color: colorScheme.outlineVariant.withValues(alpha: 0.35),
             ),
           ),
-          icon: Icon(icon),
+          icon: ReaderToolGlyph(icon),
         ),
       ),
     );

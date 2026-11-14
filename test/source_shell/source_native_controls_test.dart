@@ -9,12 +9,192 @@ import 'package:zephyr/page/source_shell/models/source_shell_section.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/page/source_shell/source_return_preferences.dart';
+import 'package:zephyr/page/source_shell/source_diagnostic_preferences.dart';
+import 'package:zephyr/page/source_shell/source_diagnostic_tools_tile.dart';
 import 'package:zephyr/page/source_shell/view/source_shell_page.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/page/video/video_native_navigation.dart';
-import 'package:zephyr/widgets/fluent_dropdown.dart';
+import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/page/setting/common/setting_ui.dart';
+
+
+void _openDiagnosticSettings(BuildContext context, String source) {
+  Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => SettingPageShell(
+    title: 'Source diagnostic settings', child: SourceDiagnosticToolsTile(source: source),
+  )));
+}
 
 void main() {
+  testWidgets(
+    'all maintained sources share opt-in analysis and a settings switch',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      NativeVideoMenu menu() => tester.widget(find.byType(NativeVideoMenu));
+      for (final source in [
+        'bika',
+        'jm',
+        'copy',
+        'hanime',
+        'ikun',
+        'oscar',
+        'modu',
+        'omo',
+      ]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              appBar: AppBar(actions: [Builder(builder: (context) => SourceMoreButton(
+                source: source,
+                onOpenSettings: () => _openDiagnosticSettings(context, source),
+              ))]),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(menu().options.containsKey('analysis'), isFalse, reason: source);
+        await SourceDiagnosticPreferences.setEnabled(source, true);
+        await tester.pumpAndSettle();
+        expect(
+          menu().options['analysis'],
+          t.videoPlayback.pageAnalysis,
+          reason: source,
+        );
+        await SourceDiagnosticPreferences.setEnabled(source, false);
+        await tester.pumpAndSettle();
+        expect(menu().options.containsKey('analysis'), isFalse, reason: source);
+      }
+      menu().onSelected('__source_settings');
+      await tester.pumpAndSettle();
+      expect(find.byType(SourceDiagnosticToolsTile), findsOneWidget);
+      await tester.tap(find.byType(SwitchListTile));
+      await tester.pumpAndSettle();
+      expect(await SourceDiagnosticPreferences.enabled('omo'), isTrue);
+      await tester.tap(find.byType(SourceBackButton));
+      await tester.pumpAndSettle();
+      menu().onSelected('analysis');
+      await tester.pumpAndSettle();
+      expect(find.textContaining(t.sourceShell.analysisLimit), findsOneWidget);
+      expect(find.text(t.sourceShell.analysisRead), findsOneWidget);
+    },
+  );
+
+  testWidgets('empty source never exposes an injected analysis callback', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          appBar: AppBar(
+            actions: [
+              SourceMoreButton(
+                actions: [
+                  SourceMenuAction(
+                    id: 'analysis',
+                    label: 'Analysis',
+                    icon: Icons.analytics,
+                    symbol: 'waveform.path.ecg',
+                    onSelected: () => fail('Empty source callback'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final menu = tester.widget<NativeVideoMenu>(find.byType(NativeVideoMenu));
+    expect(menu.options.containsKey('analysis'), isFalse);
+    menu.onSelected('analysis');
+  });
+
+  testWidgets('enabled page analysis stays a temporary main-menu shortcut', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final enabled = ValueNotifier(false);
+    addTearDown(enabled.dispose);
+    var analyses = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ValueListenableBuilder<bool>(
+          valueListenable: enabled,
+          builder: (sourceContext, active, child) => Scaffold(
+            appBar: AppBar(
+              actions: [
+                SourceMoreButton(
+                  source: 'test-diagnostic',
+                  onOpenSettings: () => _openDiagnosticSettings(sourceContext, 'test-diagnostic'),
+                  actions: [
+                    if (active)
+                      SourceMenuAction(
+                        id: 'analysis',
+                        label: t.videoPlayback.pageAnalysis,
+                        icon: Icons.analytics_outlined,
+                        symbol: 'waveform.path.ecg',
+                        onSelected: () => analyses++,
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    NativeVideoMenu menu() => tester.widget(find.byType(NativeVideoMenu));
+    expect(menu().options.containsKey('analysis'), isFalse);
+    await SourceDiagnosticPreferences.setEnabled('test-diagnostic', true);
+    enabled.value = true;
+    await tester.pumpAndSettle();
+    expect(menu().options['analysis'], t.videoPlayback.pageAnalysis);
+    menu().onSelected('analysis');
+    await tester.pumpAndSettle();
+    expect(analyses, 1);
+    menu().onSelected('__source_settings');
+    await tester.pumpAndSettle();
+    expect(find.text(t.videoPlayback.pageAnalysis), findsNothing);
+    await tester.tap(find.byType(SourceBackButton));
+    await tester.pumpAndSettle();
+    await SourceDiagnosticPreferences.setEnabled('test-diagnostic', false);
+    enabled.value = false;
+    await tester.pumpAndSettle();
+    expect(menu().options.containsKey('analysis'), isFalse);
+  });
+
+  testWidgets(
+    'global style changes existing plugin chrome without replacing page content',
+    (tester) async {
+      final native = _NativeChannels()..install();
+      addTearDown(native.dispose);
+      final style = ValueNotifier('system');
+      addTearDown(style.dispose);
+      await tester.pumpWidget(
+        AppInterfaceStyleScope(
+          style: style,
+          child: MaterialApp(
+            home: Scaffold(
+              appBar: AppBar(leading: SourceBackButton(onPressed: () {})),
+              body: const Text('Retained content'),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(UiKitView), findsOneWidget);
+      final content = tester.element(find.text('Retained content'));
+      style.value = 'breeze';
+      await tester.pumpAndSettle();
+      expect(find.byType(UiKitView), findsNothing);
+      expect(tester.element(find.text('Retained content')), same(content));
+      style.value = 'system';
+      await tester.pumpAndSettle();
+      expect(find.byType(UiKitView), findsOneWidget);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
   testWidgets(
     'source buttons have equal UIKit geometry independent of playback style',
     (tester) async {
@@ -56,11 +236,14 @@ void main() {
         expect(arguments['iconSize'], 22);
         expect(arguments['light'], false);
       }
-      final menu = tester.widget<UiKitView>(views.last).creationParams! as Map;
-      final options = menu['options'] as List;
-      expect(options.map((item) => (item as Map)['title']), [
-        'Settings',
+      final menu = tester.widget<NativeVideoMenu>(find.byType(NativeVideoMenu));
+      expect(menu.options.values, [
+        t.discover.settings,
         t.sourceShell.exitPlugin,
+      ]);
+      expect(menu.groups, [
+        ['__source_settings'],
+        ['__source_exit'],
       ]);
     },
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
@@ -121,6 +304,69 @@ void main() {
     expect(contentTaps, 1);
   });
 
+  testWidgets('settings shortcut opens its formal target using source context', (
+    tester,
+  ) async {
+    var calls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (sourceContext) => Scaffold(
+            appBar: AppBar(
+              actions: [
+                SourceMoreButton(
+                  actions: [
+                    SourceMenuAction(
+                      id: 'display',
+                      label: 'Change view',
+                      icon: Icons.grid_view,
+                      symbol: 'square.grid.2x2',
+                      onSelected: () {},
+                    ),
+                    SourceMenuAction(
+                      id: 'play',
+                      label: 'Playback settings',
+                      icon: Icons.play_circle_outline,
+                      symbol: 'play.rectangle',
+                      onSelected: () {
+                        calls++;
+                        Navigator.of(sourceContext).push<void>(
+                          MaterialPageRoute<void>(
+                            builder: (_) => Scaffold(
+                              appBar: AppBar(
+                                title: const Text('Playback page'),
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            body: const Text('Source page'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byTooltip(t.sourceShell.navigationActions));
+    await tester.pumpAndSettle();
+    expect(find.text('Change view'), findsOneWidget);
+    expect(find.text('Playback settings'), findsNothing);
+    expect(find.byType(Divider), findsNWidgets(2));
+    await tester.tap(find.text(t.discover.settings));
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+    expect(find.text('Playback page'), findsOneWidget);
+    expect(find.text(t.sourceShell.appSettings), findsNothing);
+    expect(find.text(t.sourceShell.settingsBackup), findsNothing);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('Source page'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'native More exit disposes nested source routes and keeps Discover',
     (tester) async {
@@ -167,13 +413,9 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Open detail'));
       await tester.pumpAndSettle();
-      final menu = tester.widget<UiKitView>(find.byType(UiKitView));
-      final options = (menu.creationParams! as Map)['options'] as List;
-      await native.send(
-        'breeze.video.control',
-        'select',
-        (options.single as Map)['value'],
-      );
+      // The native glass layer dispatches its chosen command directly; it
+      // does not insert Flutter menu rows into the widget tree.
+      await native.send('breeze.video.control', 'select', '__source_exit');
       await tester.pumpAndSettle();
       expect(find.text('Discover'), findsOneWidget);
       expect(find.text('Detail'), findsNothing);
@@ -207,7 +449,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(UiKitView), findsNothing);
       expect(find.byType(NavigationBar), findsOneWidget);
-      expect(find.byType(FluentPopupMenuButton<String>), findsOneWidget);
+      expect(find.byType(NativeVideoMenu), findsOneWidget);
+      await tester.tap(find.byTooltip(t.sourceShell.navigationActions));
+      await tester.pumpAndSettle();
+      expect(find.text(t.discover.settings), findsOneWidget);
+      expect(find.text(t.sourceShell.exitPlugin), findsOneWidget);
+      await tester.tapAt(const Offset(100, 400));
+      await tester.pumpAndSettle();
       await tester.tap(find.byType(NavigationDestination).last);
       await tester.pumpAndSettle();
       expect(

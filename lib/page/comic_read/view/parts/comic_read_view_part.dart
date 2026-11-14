@@ -3,6 +3,16 @@ part of '../comic_read.dart';
 extension _ComicReadViewPart on _ComicReadPageState {
   void _prefetchImagesAroundSlot(int globalSlot, ReadSettingState readSetting) {
     final seamlessCubit = context.read<ReaderSeamlessCubit>();
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    final active =
+        _readerRegionActive &&
+        _historyController.ownsSession &&
+        (lifecycle == null || lifecycle == AppLifecycleState.resumed);
+    _imagePrefetchController.setActive(active);
+    seamlessCubit.configurePrefetch(
+      count: readSetting.preloadChapterCount,
+      active: active,
+    );
     final entries = seamlessCubit.resolveImageEntriesForPrefetch(
       globalSlot: globalSlot,
       readSetting: readSetting,
@@ -18,21 +28,43 @@ extension _ComicReadViewPart on _ComicReadPageState {
     );
   }
 
-  Widget _comicReadAppBar() {
+  Widget _pendingReader(Widget body, {String? chapterTitle}) {
+    final index = _jumpChapter.currentChapterIndexIn(_jumpChapter.chapters);
+    final routeTitle = index < 0 ? '' : _jumpChapter.chapters[index].name;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: _toggleVisibility,
+          child: SafeArea(child: body),
+        ),
+        _comicReadAppBar(title: chapterTitle ?? routeTitle),
+        _readerBottom(),
+      ],
+    );
+  }
+
+  Widget _comicReadAppBar({String? title}) {
     final cubit = context.read<ReaderCubit>();
     return ComicReadAppBar(
-      title: epInfo.epName,
+      title: title ?? epInfo.epName,
       source: widget.from,
       isDesktopFullscreen: _lifecycleController.isDesktopFullscreen,
       onToggleFullscreen: _isDesktopPlatform
           ? () => unawaited(_lifecycleController.toggleDesktopFullscreen())
           : null,
       changePageIndex: (int value) {
+        if (!_hasReadyReaderPages) return;
         cubit.updateCurrentSlot(value);
         cubit.updateSliderChanged(0.0);
       },
     );
   }
+
+  bool get _hasReadyReaderPages =>
+      context.read<PageBloc>().state.status == PageStatus.success &&
+      _imageSizeContext?.mounted == true;
 
   Widget _pageCountWidget() {
     final readSetting = context.readEffectiveReadSetting();
@@ -87,12 +119,17 @@ extension _ComicReadViewPart on _ComicReadPageState {
                 readSetting,
                 imageSizeCubit,
                 contentWidth,
+                viewportHeight: MediaQuery.sizeOf(context).height,
               );
               return height + getReaderTopOffset(context);
             }
           : null,
     );
 
+    return _readerBottom(slider: slider);
+  }
+
+  Widget _readerBottom({Widget? slider}) {
     return BottomWidget(
       type: _type,
       comicInfo: comicInfo,
@@ -102,7 +139,9 @@ extension _ComicReadViewPart on _ComicReadPageState {
       comicId: comicId,
       from: widget.from,
       jumpChapter: _jumpChapter,
+      readerContext: context,
       onLandscapeChanged: _setReaderLandscape,
+      canChangePage: () => mounted && _hasReadyReaderPages,
     );
   }
 }

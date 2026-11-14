@@ -219,6 +219,7 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       final criteria = SearchCubit(const SearchStates(from: ''));
       final bloc = _FixtureSearchBloc()..show(criteria.state);
+      addTearDown(bloc.close);
       final settings = GlobalSettingCubit();
       await tester.pumpWidget(
         MultiBlocProvider(
@@ -299,9 +300,6 @@ void main() {
       expect(tester.takeException(), isNull);
       await criteria.close();
       await settings.close();
-      final closing = bloc.close();
-      await tester.pump(const Duration(milliseconds: 200));
-      await closing;
     },
   );
 }

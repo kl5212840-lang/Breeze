@@ -83,13 +83,85 @@ bool isTransientNetworkError(Object error) {
       text.contains('connectexception');
 }
 
+final _quickJsErrorScope = RegExp(r'^\[(?:bundle|source):[^\]\r\n]+\]\s*');
+final _quickJsErrorPrefix = RegExp(r'^(?:\[stack-hook\]\s*)?Error:\s*');
+final _quickJsStackStart = RegExp(r'\r?\n(?:\[stack-hook\]|[ \t]+at\s+)');
+
+/// The runtime message, without its call scope or trailing stack frames.
+String? quickJsErrorMessage(Object error) {
+  if (error is! AnyhowException) return null;
+  final text = error.message.trim();
+  final scope = _quickJsErrorScope.firstMatch(text);
+  if (scope?.group(0)?.contains('args:') == true) return null;
+  final message = text
+      .replaceFirst(_quickJsErrorScope, '')
+      .replaceFirst(_quickJsErrorPrefix, '');
+  final stack = _quickJsStackStart.firstMatch(message);
+  return message.substring(0, stack?.start ?? message.length).trim();
+}
+
+final _privateErrorDetail = RegExp(
+  r'(?:\b(?:password|token|authorization|cookie)\s*[=:]|\bbearer\s+)'
+  r'|[\x00-\x1f\x7f]',
+  caseSensitive: false,
+);
+final _httpErrorDetail = RegExp(
+  r'^(?:(?:request failed with )?status(?:\s*code)?|http(?:\s*error)?|[1-5]\d{2})\b',
+  caseSensitive: false,
+);
+final _inlineStackFrame = RegExp(
+  r'\bat\s+\S+\.(?:[cm]?js|dart):\d+|\bat\s+[\w$.]+\s*\([^)]*:\d+',
+  caseSensitive: false,
+);
+
+/// Keep a short actionable message while rejecting a transport/runtime dump.
+String? readableErrorMessage(String message) {
+  final text = message.trim();
+  final lower = text.toLowerCase();
+  if (text.isEmpty ||
+      text.length > 160 ||
+      text.startsWith('{') ||
+      text.startsWith('[') ||
+      text.startsWith('<') ||
+      _privateErrorDetail.hasMatch(text) ||
+      _httpErrorDetail.hasMatch(text) ||
+      _inlineStackFrame.hasMatch(text) ||
+      const {
+        'error',
+        'unauthorized',
+        'forbidden',
+        'not found',
+      }.contains(lower) ||
+      lower.startsWith('instance of ') ||
+      lower.startsWith('uncaught ') ||
+      lower.contains('[bundle:') ||
+      lower.contains('[stack-hook]') ||
+      lower.contains('webpack:') ||
+      lower.contains('http://') ||
+      lower.contains('https://') ||
+      lower.contains('httperror:') ||
+      lower.contains('typeerror:') ||
+      lower.contains('referenceerror:') ||
+      lower.contains('syntaxerror:') ||
+      lower.contains('rangeerror:') ||
+      lower.contains('unexpected token') ||
+      lower.contains('unexpected end of json') ||
+      lower.contains('json parse') ||
+      lower.contains('invalid json') ||
+      lower.contains('platformexception') ||
+      lower.contains('formatexception') ||
+      lower.contains('node_modules') ||
+      lower.contains('args:') ||
+      lower.contains('http 请求失败')) {
+    return null;
+  }
+  return text;
+}
+
 String userFacingErrorMessage(Object error) {
-  if (error is FormatException &&
-      error.message.isNotEmpty &&
-      error.message.length <= 80 &&
-      !error.message.contains('\n') &&
-      !error.message.contains('://')) {
-    return error.message;
+  if (error is FormatException && error.message.length <= 80) {
+    final readable = readableErrorMessage(error.message);
+    if (readable != null) return readable;
   }
   final text = normalizeSearchErrorMessage(error);
   final lower = text.toLowerCase();
@@ -105,24 +177,5 @@ String userFacingErrorMessage(Object error) {
   if (lower.contains('404') || lower.contains('not found')) {
     return '内容暂时无法访问，请稍后重试';
   }
-  // Runtime traces and wrapped request payloads can be enormous and may
-  // contain URLs or other internal details. Never pass them to Text widgets.
-  if (text.length > 160 ||
-      text.contains('\n') ||
-      lower.contains('[bundle:') ||
-      lower.contains('[stack-hook]') ||
-      lower.contains('webpack:') ||
-      lower.contains('http://') ||
-      lower.contains('https://') ||
-      lower.contains('typeerror:') ||
-      lower.contains('referenceerror:') ||
-      lower.contains('platformexception') ||
-      lower.contains('formatexception') ||
-      lower.contains('node_modules') ||
-      lower.contains('args:') ||
-      lower.contains(' at ') ||
-      lower.contains('http 请求失败')) {
-    return '加载失败，请稍后重试';
-  }
-  return text;
+  return readableErrorMessage(text) ?? '加载失败，请稍后重试';
 }

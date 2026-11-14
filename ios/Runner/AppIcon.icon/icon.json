@@ -1,0 +1,81 @@
+{
+  "fill": {
+    "linear-gradient": [
+      "extended-srgb:0.88627,0.21961,0.21961,1.00000",
+      "extended-srgb:0.85490,0.15686,0.17647,1.00000"
+    ]
+  },
+  "fill-specializations": [
+    {
+      "appearance": "dark",
+      "value": {
+        "linear-gradient": [
+          "extended-srgb:0.27451,0.10588,0.14118,1.00000",
+          "extended-srgb:0.14118,0.04314,0.07451,1.00000"
+        ]
+      }
+    }
+  ],
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "02-OriginalMark.png",
+          "name": "Breeze wordmark",
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "linear-gradient": [
+                  "extended-srgb:0.98431,0.84706,0.82745,1.00000",
+                  "extended-srgb:0.95294,0.64706,0.65490,1.00000"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.07
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      }
+    },
+    {
+      "layers": [
+        {
+          "image-name": "01-WhiteDisk.png",
+          "name": "Original roundel",
+          "fill-specializations": [
+            {
+              "appearance": "dark",
+              "value": {
+                "linear-gradient": [
+                  "extended-srgb:0.43137,0.16078,0.21961,1.00000",
+                  "extended-srgb:0.29804,0.09020,0.15686,1.00000"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.24
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.1
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared",
+    "circles": [
+      "watchOS"
+    ]
+  }
+}

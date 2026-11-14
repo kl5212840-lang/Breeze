@@ -1,75 +1,134 @@
+import 'dart:async';
+import 'dart:collection';
+import 'dart:convert';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/network/http/picture/picture.dart';
 import 'package:zephyr/page/comic_read/widgets/modes/read_mode_utils.dart';
 import 'package:zephyr/type/enum.dart';
 
-/// 负责把当前阅读位置之后的图片提前写入图片缓存。
-///
-/// 预加载只负责网络/文件缓存，不直接创建图片 Widget，避免把大量图片加入
-/// 当前页面的布局树；真正显示时仍由阅读模式 Widget 负责加载和布局。
+typedef ReaderPrefetchLoad =
+    Future<String> Function(ReadModeEntry entry, String source, String comicId);
+
+/// One bounded worker follows the latest visible window. Warming disk cache
+/// never decodes/upscales images; display owns those expensive operations.
 class ReaderImagePrefetchController {
-  final Set<String> _requestedKeys = <String>{};
-  bool _disposed = false;
+  ReaderImagePrefetchController({
+    ReaderPrefetchLoad? load,
+    bool useDownloads = true,
+  }) : _load = load,
+       _useDownloads = useDownloads;
+  final ReaderPrefetchLoad? _load;
+  final bool _useDownloads;
+  final _completed = LinkedHashSet<String>();
+  List<ReadModeEntry> _pending = [];
+  String _source = '', _comicId = '';
+  String? _inflight;
+  Set<String> _requested = {};
+  Future<void>? _worker;
+  bool _disposed = false, _active = true;
+
+  Future<String> _loadPicture(
+    ReadModeEntry entry,
+    String source,
+    String comicId, {
+    required bool Function() isCurrent,
+  }) {
+    final doc = entry.doc!;
+    return getCachePicture(
+      from: source,
+      cartoonId: comicId,
+      chapterId: entry.chapterId!,
+      storageChapterId: doc.storageChapterId,
+      path: doc.path,
+      url: doc.fileServer,
+      extern: doc.extern,
+      pictureType: PictureType.page,
+      applyRealSr: false,
+      priority: -1,
+      prefetch: true,
+      useDownloads: _useDownloads,
+      isCurrent: isCurrent,
+    );
+  }
+
+  String _key(ReadModeEntry entry) => jsonEncode([
+    _source,
+    pluginSessionWriteFence.generation(_source),
+    _comicId,
+    entry.chapterId,
+    entry.doc?.storageChapterId,
+    entry.doc?.path,
+    entry.doc?.fileServer,
+    entry.doc?.extern,
+  ]);
+
+  void setActive(bool active) {
+    _active = active;
+    if (!active) {
+      _pending = [];
+      _requested = {};
+    }
+  }
 
   Future<void> prefetch({
     required List<ReadModeEntry> entries,
     required String comicId,
     required String from,
     required int count,
-  }) async {
-    if (_disposed || count <= 0 || entries.isEmpty) return;
+  }) {
+    if (_disposed || !_active) return Future<void>.value();
+    _source = from;
+    _comicId = comicId;
+    final candidates = entries
+        .where(
+          (e) =>
+              e.type == ReadModeEntryType.image &&
+              e.doc != null &&
+              e.chapterId?.isNotEmpty == true,
+        )
+        .take(count.clamp(0, 10))
+        .toList();
+    _requested = candidates.map(_key).toSet();
+    _pending = candidates
+        .where((e) => !_completed.contains(_key(e)) && _key(e) != _inflight)
+        .toList();
+    return _worker ??= _drain().whenComplete(() {
+      _worker = null;
+    });
+  }
 
-    for (final entry in entries.take(count)) {
-      if (_disposed) return;
-      final doc = entry.doc;
-      final chapterId = entry.chapterId;
-      if (entry.type != ReadModeEntryType.image ||
-          doc == null ||
-          chapterId == null ||
-          chapterId.isEmpty) {
-        continue;
-      }
-
-      final storageChapterId = doc.storageChapterId.trim();
-      final resolvedChapterId = storageChapterId.isNotEmpty
-          ? storageChapterId
-          : chapterId;
-      final key = _buildKey(
-        from: from,
-        comicId: comicId,
-        chapterId: resolvedChapterId,
-        path: doc.path,
-      );
-      if (!_requestedKeys.add(key)) continue;
-
+  Future<void> _drain() async {
+    while (!_disposed && _active && _pending.isNotEmpty) {
+      final entry = _pending.removeAt(0);
+      final key = _key(entry);
+      _inflight = key;
       try {
-        final cachedPath = await getCachePicture(
-          from: from,
-          url: doc.fileServer,
-          path: doc.path,
-          cartoonId: comicId,
-          chapterId: chapterId,
-          storageChapterId: storageChapterId,
-          pictureType: PictureType.page,
-          extern: doc.extern,
-        );
-        if (cachedPath == '404') {
-          _requestedKeys.remove(key);
+        final source = _source, comicId = _comicId;
+        final path = await (_load != null
+            ? _load(entry, source, comicId)
+            : _loadPicture(
+                entry,
+                source,
+                comicId,
+                isCurrent: () =>
+                    !_disposed && _active && _requested.contains(key),
+              ));
+        if (!_disposed && path != '404') {
+          _completed.add(key);
+          while (_completed.length > 128) _completed.remove(_completed.first);
         }
       } catch (_) {
-        _requestedKeys.remove(key);
+        /* Visible image retains its explicit retry path. */
+      } finally {
+        _inflight = null;
       }
     }
   }
 
   void dispose() {
     _disposed = true;
-    _requestedKeys.clear();
+    _pending = [];
+    _requested.clear();
+    _completed.clear();
   }
-
-  String _buildKey({
-    required String from,
-    required String comicId,
-    required String chapterId,
-    required String path,
-  }) => '$from|$comicId|$chapterId|$path';
 }

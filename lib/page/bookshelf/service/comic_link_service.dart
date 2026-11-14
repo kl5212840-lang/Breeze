@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:zephyr/main.dart';
-import 'package:zephyr/network/http/picture/picture.dart';
+import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/service/download/download_delete_service.dart';
 import 'package:zephyr/network/sync/sync_device_id.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
@@ -10,6 +11,7 @@ import 'package:zephyr/object_box/objectbox.g.dart';
 import 'package:zephyr/page/bookshelf/service/comic_folder_service.dart';
 
 class ComicLinkService {
+  static final _removingDownloads = <String>{};
   static String get _deviceId => syncDeviceId;
 
   static Map<String, int> _parseVersionVector(String json) {
@@ -79,6 +81,7 @@ class ComicLinkService {
     bool sortAscending = false,
   }) {
     final folderSyncId = _folderSyncIdByPath(folderPath, type);
+    if (folderPath?.isNotEmpty == true && folderSyncId == null) return const [];
     final folderCondition = folderSyncId == null
         ? ComicLink_.folderSyncId.isNull()
         : ComicLink_.folderSyncId.equals(folderSyncId);
@@ -126,13 +129,30 @@ class ComicLinkService {
     String comicUniqueKey,
     String? folderPath,
     ComicFolderType type,
-  ) {
-    final folderSyncId = _folderSyncIdByPath(folderPath, type);
-    final uniqueKey = _uniqueKey(comicUniqueKey, folderSyncId, type);
-    final existing = objectbox.comicLinkBox
+  ) => _addComicBySyncId(
+    comicUniqueKey,
+    _folderSyncIdByPath(folderPath, type),
+    type,
+  );
+
+  static ComicLink? _findLink(String uniqueKey) {
+    final query = objectbox.comicLinkBox
         .query(ComicLink_.uniqueKey.equals(uniqueKey))
-        .build()
-        .findFirst();
+        .build();
+    try {
+      return query.findFirst();
+    } finally {
+      query.close();
+    }
+  }
+
+  static ComicLink _addComicBySyncId(
+    String comicUniqueKey,
+    String? folderSyncId,
+    ComicFolderType type,
+  ) {
+    final uniqueKey = _uniqueKey(comicUniqueKey, folderSyncId, type);
+    final existing = _findLink(uniqueKey);
 
     final now = _now();
     if (existing != null) {
@@ -180,6 +200,7 @@ class ComicLinkService {
       type,
       includeDeleted: true,
     );
+    if (folderPath?.isNotEmpty == true && folderSyncId == null) return;
     _removeComicBySyncId(comicUniqueKey, folderSyncId, type);
   }
 
@@ -189,10 +210,7 @@ class ComicLinkService {
     ComicFolderType type,
   ) {
     final uniqueKey = _uniqueKey(comicUniqueKey, folderSyncId, type);
-    final link = objectbox.comicLinkBox
-        .query(ComicLink_.uniqueKey.equals(uniqueKey))
-        .build()
-        .findFirst();
+    final link = _findLink(uniqueKey);
     if (link == null || link.deletedAt != null) return;
 
     if (type == ComicFolderType.download) {
@@ -267,14 +285,67 @@ class ComicLinkService {
     String? toPath,
     ComicFolderType type,
   ) {
-    if ((fromPath ?? kComicFolderRootPath) ==
-        (toPath ?? kComicFolderRootPath)) {
-      return;
+    final from = fromPath ?? kComicFolderRootPath;
+    final to = toPath ?? kComicFolderRootPath;
+    if (from == to) return;
+    moveComicLinks(comicUniqueKey, {from}, {to}, type);
+  }
+
+  static void moveComicLinks(
+    String comicUniqueKey,
+    Set<String> fromPaths,
+    Set<String> toPaths,
+    ComicFolderType type,
+  ) {
+    if (fromPaths.isEmpty || toPaths.isEmpty) return;
+    objectbox.store.runInTransaction(TxMode.write, () {
+      final destinations = _destinationIds(toPaths, type);
+      final origins = <String?>{};
+      for (final path in fromPaths) {
+        final id = ComicFolderService.folderSyncIdByPath(
+          path,
+          type,
+          includeDeleted: true,
+        );
+        if (path.isEmpty || id != null) origins.add(id);
+      }
+      if (origins.isEmpty) return;
+      // Validate both paths and keep the new memberships before removing old ones.
+      for (final id in destinations) {
+        _addComicBySyncId(comicUniqueKey, id, type);
+      }
+      for (final id in origins.difference(destinations)) {
+        _removeComicBySyncId(comicUniqueKey, id, type);
+      }
+    });
+  }
+
+  static Set<String?> _destinationIds(Set<String> paths, ComicFolderType type) {
+    final ids = <String?>{};
+    for (final path in paths) {
+      final id = _folderSyncIdByPath(path, type);
+      if (path.isNotEmpty && id == null) {
+        throw StateError(t.bookshelf.moveTargetUnavailable);
+      }
+      ids.add(id);
     }
-    // 先添加目标链接，再移除原链接，避免中间态被判定为“最后一个链接”
-    // 而导致对应的收藏记录被误标为删除。
-    addComic(comicUniqueKey, toPath, type);
-    removeComic(comicUniqueKey, fromPath, type);
+    return ids;
+  }
+
+  static void copyComicLinks(
+    Set<String> comicUniqueKeys,
+    Set<String> toPaths,
+    ComicFolderType type,
+  ) {
+    if (comicUniqueKeys.isEmpty || toPaths.isEmpty) return;
+    objectbox.store.runInTransaction(TxMode.write, () {
+      final destinations = _destinationIds(toPaths, type);
+      for (final key in comicUniqueKeys) {
+        for (final id in destinations) {
+          _addComicBySyncId(key, id, type);
+        }
+      }
+    });
   }
 
   // ==================== 批量操作 ====================
@@ -297,12 +368,7 @@ class ComicLinkService {
     Set<String> comicUniqueKeys,
     String targetPath,
     ComicFolderType type,
-  ) {
-    final toPath = targetPath.isEmpty ? null : targetPath;
-    for (final key in comicUniqueKeys) {
-      addComic(key, toPath, type);
-    }
-  }
+  ) => copyComicLinks(comicUniqueKeys, {targetPath}, type);
 
   /// 批量从当前路径移除漫画。
   /// 对收藏类型，如果这是漫画的最后一条链接，会同步取消收藏。
@@ -391,22 +457,20 @@ class ComicLinkService {
         .findFirst();
     if (comic == null) return;
 
-    // 先移除数据库记录，让同步调用方立即看到下载项已删除；磁盘清理
-    // 继续在下面执行，失败也不会让孤立的历史记录阻塞后续重建。
-    objectbox.unifiedDownloadBox.remove(comic.id);
-
+    if (!_removingDownloads.add(comicUniqueKey)) return;
     try {
-      await deleteComicDownloadDirectory(
-        comic.source,
-        comic.comicId,
-        legacyStorageRoot: comic.storageRoot,
+      await deleteWholeComicDownload(
+        from: comic.source,
+        comicId: comic.comicId,
       );
     } catch (e, stackTrace) {
       logger.e(
-        'Failed to delete download files: ${comic.storageRoot}',
+        'Failed to delete download files',
         error: e,
         stackTrace: stackTrace,
       );
+    } finally {
+      _removingDownloads.remove(comicUniqueKey);
     }
   }
 }

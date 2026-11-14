@@ -1,11 +1,13 @@
+import 'package:zephyr/widgets/touch_hover_intent.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
+import 'package:zephyr/widgets/interface_symbol.dart';
 import 'package:zephyr/page/setting/global/widgets.dart';
-import 'package:zephyr/widgets/fluent_dropdown.dart';
+import 'package:zephyr/page/setting/network/routing_rules_page.dart';
 
 @RoutePage()
 class ContentNetworkSettingPage extends StatelessWidget {
@@ -17,8 +19,9 @@ class ContentNetworkSettingPage extends StatelessWidget {
     final state = cubit.state;
 
     return SettingPageShell(
+      grouped: true,
       title: t.settings.contentAndNetwork,
-      child: ListView(
+      child: SettingListView(
         children: [
           settingSectionTitle(
             context,
@@ -35,26 +38,34 @@ class ContentNetworkSettingPage extends StatelessWidget {
             t.settings.network,
             icon: Icons.wifi_outlined,
           ),
+          TouchHoverIntent(
+            identity: 'content_network_setting_page:0',
+            builder: (context, hover) => ListTile(
+              hoverColor: hover.hoverColor(),
+              leading: const InterfaceSymbol(
+                symbol: 'arrow.triangle.branch',
+                fallback: Icons.alt_route_rounded,
+              ),
+              title: Text(t.routingRules.title),
+              subtitle: Text(t.routingRules.entryHint),
+              trailing: const InterfaceSymbol(
+                symbol: 'chevron.right',
+                fallback: Icons.chevron_right,
+              ),
+              onTap: () => Navigator.of(context).push<void>(
+                MaterialPageRoute(builder: (_) => const RoutingRulesPage()),
+              ),
+            ),
+          ),
           proxyToggle(
             context,
             enabled: state.proxySetting.enabled,
             type: state.proxySetting.type,
             currentProxy: state.proxySetting.address,
-          ),
-          SwitchListTile(
-            secondary: const Icon(Icons.download_outlined),
-            title: Text(t.settings.retryDownloadUntilSuccess),
-            subtitle: Text(t.settings.retryDownloadUntilSuccessSubtitle),
-            thumbIcon: kSettingSwitchThumbIcon,
-            value: state.retryDownloadUntilSuccess,
-            onChanged: (value) {
-              cubit.updateState(
-                (current) => current.copyWith(retryDownloadUntilSuccess: value),
-              );
-            },
+            title: t.routingRules.internalProxy,
+            subtitle: t.routingRules.internalHint,
           ),
           // _updateAccelerate(state, cubit),
-          const SizedBox(height: 32),
         ],
       ),
     );
@@ -70,26 +81,26 @@ class ContentNetworkSettingPage extends StatelessWidget {
       ChineseConvertMode.traditional: t.settings.chineseConvertTraditional,
     };
 
-    return ListTile(
-      leading: const Icon(Icons.translate_outlined),
-      title: Text(t.settings.chineseConvert),
-      subtitle: Text(t.settings.chineseConvertSubtitle),
-      trailing: FluentDropdown<ChineseConvertMode>(
-        value: state.chineseConvertMode,
-        displayValue: chineseConvertItems[state.chineseConvertMode]!,
-        items: chineseConvertItems,
-        onChanged: (ChineseConvertMode value) {
-          if (value == state.chineseConvertMode) return;
-          cubit.updateState(
-            (current) => current.copyWith(chineseConvertMode: value),
-          );
-        },
+    return SettingChoiceTile<ChineseConvertMode>(
+      leading: const InterfaceSymbol(
+        symbol: 'character.bubble',
+        fallback: Icons.translate_outlined,
       ),
+      title: t.settings.chineseConvert,
+      description: t.settings.chineseConvertSubtitle,
+      value: state.chineseConvertMode,
+      items: chineseConvertItems,
+      onChanged: (ChineseConvertMode value) {
+        if (value == state.chineseConvertMode) return;
+        cubit.updateState(
+          (current) => current.copyWith(chineseConvertMode: value),
+        );
+      },
     );
   }
 
   // Widget _updateAccelerate(GlobalSettingState state, GlobalSettingCubit cubit) {
-  //   return SwitchListTile(
+  //   return SwitchListTile.adaptive(
   //     secondary: const Icon(Icons.rocket_launch_outlined),
   //     title: Text(t.settings.updateAccelerate),
   //     subtitle: Text(t.settings.updateAccelerateSubtitle),

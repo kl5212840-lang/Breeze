@@ -1,24 +1,35 @@
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/page/source_shell/widgets/bika_connection_notice.dart';
 import 'dart:async';
 import 'dart:io';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/rendering.dart' show RenderViewport;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_sticky_header/flutter_sticky_header.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:open_file/open_file.dart';
 import 'package:path/path.dart' as p;
 import 'package:zephyr/config/global/global_setting.dart';
-import 'package:zephyr/config/router/router.dart';
 import 'package:zephyr/cubit/string_select.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/page/comic_follow/cubit/comic_follow_cubit.dart';
 import 'package:zephyr/page/comic_info/comic_info.dart';
+import 'package:zephyr/page/comic_info/models/comic_detail_presentation.dart';
+import 'package:zephyr/page/comic_info/models/plugin_action_login.dart';
+import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
+import 'package:zephyr/page/comic_info/widgets/comic_detail_partial_notice.dart';
+import 'package:zephyr/page/comic_info/widgets/book_download_panel.dart';
 import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart';
 import 'package:zephyr/page/download/models/download_chapter.dart';
+import 'package:zephyr/page/donwload_task/view/download_task.dart';
+import 'package:zephyr/service/reader/comic_chapter_reading_progress.dart';
+import 'package:zephyr/service/reader/reader_history_service.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/type/pipe.dart';
 import 'package:zephyr/util/context/context_extensions.dart';
@@ -27,8 +38,12 @@ import 'package:zephyr/util/get_path.dart';
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/util/permission.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
+import 'package:zephyr/service/jm_list_like_counts.dart';
+import 'package:zephyr/widgets/comic_simplify_entry/jm_cover_like_badge.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
 import 'package:zephyr/widgets/error_view.dart';
+import 'package:zephyr/widgets/image_recovery_region.dart';
+import 'package:zephyr/widgets/scroll_return_to_top.dart';
 import 'package:zephyr/widgets/toast.dart';
 
 @RoutePage()
@@ -51,7 +66,10 @@ class ComicInfoPage extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      SourceExperienceBoundary(source: from, builder: _buildSourcePage);
+
+  Widget _buildSourcePage(BuildContext context) {
     final resolvedFrom = from.trim();
     return MultiBlocProvider(
       providers: [
@@ -111,19 +129,58 @@ class _ComicInfoState extends State<_ComicInfo>
   dynamic comicInfoDyn;
   late ComicEntryType _type;
   late String _comicId;
-  bool _loadingComplete = false;
   bool _isReversed = false;
+  final _refreshIndicator = GlobalKey<RefreshIndicatorState>();
+  Object _imageRefresh = Object();
+
+  Future<void> _refreshComic() async {
+    final comicId = _comicId;
+    final applied = await context.read<GetComicInfoBloc>().refresh(
+      GetComicInfoEvent(
+        comicId: _comicId,
+        from: widget.from,
+        type: _type,
+        extern: widget.extern,
+      ),
+    );
+    if (mounted && applied && _comicId == comicId) {
+      setState(() => _imageRefresh = Object());
+    }
+  }
+
+  Future<void> _refreshAfterLogin() async {
+    final bloc = context.read<GetComicInfoBloc>();
+    final refreshed = await bloc.refresh(
+      GetComicInfoEvent(
+        comicId: _comicId,
+        from: widget.from,
+        type: _type,
+        extern: widget.extern,
+      ),
+    );
+    if (!mounted || !refreshed) return;
+    setState(() {
+      _cloudFavoriteStateOverridden = false;
+      _isCloudCollected = bloc.state.allInfo?.isFavourite ?? false;
+    });
+  }
+
   String _title = "";
   late final EpisodeDownloadController _dlController =
       EpisodeDownloadController();
+  final _detailScrollController = ScrollController();
+  final _showReturnToTop = ValueNotifier(false);
   final ScrollController _episodeScrollController = ScrollController();
-  // 已折叠的章节组（存组标题 key）。默认全展开；漫画切换时清空。
-  final Set<String> _collapsedGroups = {};
-  String _collapsedForComic = '';
+  // null 可以表示用户主动收起全部；未操作时展开当前排序的首卷。
+  (String, int)? _expandedGroup;
+  bool _hasGroupChoice = false;
+  String _groupChoiceComic = '';
   NormalComicAllInfo? _currentInfo;
   bool _isCloudCollected = false;
   bool _cloudFavoriteStateOverridden = false;
   bool _isLocalCollected = false;
+  bool _localFavoriteBusy = false;
+  bool _cloudFavoriteBusy = false;
   String _localCollectSyncedFor = '';
   // 追更线上总数同步护栏：记住已同步到的章节数。数字变大才再同步一次，
   // 下拉刷新后长出的新话不会被吞；下载入口的 comicInfoDyn 是本地快照
@@ -167,10 +224,43 @@ class _ComicInfoState extends State<_ComicInfo>
     super.initState();
     _type = type;
     _comicId = widget.comicId;
+    _detailScrollController.addListener(_updateReturnToTop);
+    unawaited(
+      ComicChapterReadingProgress.instance.ensureLoaded().catchError(
+        (Object error) =>
+            logger.w('Cannot load comic chapter progress', error: error),
+      ),
+    );
+  }
+
+  void _updateReturnToTop() {
+    final position = _detailScrollController.position;
+    _showReturnToTop.value =
+        position.hasContentDimensions &&
+        position.extentBefore > position.viewportDimension / 5;
+  }
+
+  void _returnToTop() {
+    if (!_detailScrollController.hasClients) return;
+    final position = _detailScrollController.position;
+    if (MediaQuery.disableAnimationsOf(context) ||
+        position.extentBefore >= position.viewportDimension * 2) {
+      position.jumpTo(position.minScrollExtent);
+      return;
+    }
+    unawaited(
+      position.animateTo(
+        position.minScrollExtent,
+        duration: const Duration(milliseconds: 230),
+        curve: Curves.easeOutCubic,
+      ),
+    );
   }
 
   @override
   void dispose() {
+    _detailScrollController.dispose();
+    _showReturnToTop.dispose();
     _episodeScrollController.dispose();
     _dlController.dispose();
     super.dispose();
@@ -179,16 +269,14 @@ class _ComicInfoState extends State<_ComicInfo>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return Scaffold(
+    final detailReady = context.select(
+      (GetComicInfoBloc bloc) =>
+          bloc.state.status == GetComicInfoStatus.success,
+    );
+    final scaffold = Scaffold(
       appBar: AppBar(
         leading: SourceBackButton(onPressed: () => context.pop()),
         actions: [
-          SourceChromeIconButton(
-            tooltip: t.navigation.home,
-            icon: Icons.home_outlined,
-            symbol: 'house',
-            onPressed: () => popToRoot(context),
-          ),
           SourceMoreButton(
             source: widget.from,
             actions: [
@@ -204,77 +292,109 @@ class _ComicInfoState extends State<_ComicInfo>
           ),
         ],
       ),
-      body: Stack(
-        children: [
-          BlocBuilder<GetComicInfoBloc, GetComicInfoState>(
-            builder: (context, state) {
-              switch (state.status) {
-                case GetComicInfoStatus.initial:
-                  _cloudFavoriteStateOverridden = false;
-                  return Center(child: CircularProgressIndicator());
-                case GetComicInfoStatus.failure:
-                  if (state.result.contains("under review") &&
-                      state.result.contains("1014")) {
-                    return Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            t.comicInfo.discontinued,
-                            style: const TextStyle(fontSize: 20),
-                          ),
-                          SizedBox(height: 10),
-                          ElevatedButton(
-                            onPressed: () => context.pop(),
-                            child: Text(t.comicInfo.back),
-                          ),
-                        ],
-                      ),
-                    );
-                  }
-                  return ErrorView(
-                    errorMessage: userFacingErrorMessage(state.result),
-                    onRetry: () {
-                      context.read<GetComicInfoBloc>().add(
-                        GetComicInfoEvent(
-                          comicId: _comicId,
-                          from: widget.from,
-                          type: _type,
-                          extern: widget.extern,
-                        ),
-                      );
-                    },
-                  );
-                case GetComicInfoStatus.success:
-                  comicInfoDyn = state.comicInfo;
-                  _currentInfo = state.allInfo;
-                  _comicId = state.comicId ?? _comicId;
-                  if (!_cloudFavoriteStateOverridden) {
-                    _isCloudCollected = state.allInfo?.isFavourite ?? false;
-                  }
-                  _syncLocalCollectStatus(state.allInfo!);
-                  _syncFollowFromOnlineDetail(state.comicInfo, state.allInfo!);
-                  initHistory(
-                    context,
-                    _comicId,
-                    widget.from,
-                    chapters: state.allInfo!.eps,
-                  );
-                  return _infoView(state.allInfo!);
-              }
-            },
-          ),
-          BlocBuilder<EpisodeDownloadStatusCubit, EpisodeDownloadStatusState>(
-            bloc: _dlController.statusCubit,
-            builder: (context, _) => BlocBuilder<EpisodeSelectionCubit, int>(
-              bloc: _dlController.selectionCubit,
-              builder: (context, _) => _SelectionActionBar(
-                controller: _dlController,
-                isDownloadType: _type == ComicEntryType.download,
+      body: ImageRecoveryRegion(
+        onActiveChanged: context.read<GetComicInfoBloc>().setRecoveryActive,
+        child: Stack(
+          children: [
+            BlocBuilder<GetComicInfoBloc, GetComicInfoState>(
+              builder: (context, state) => BikaConnectionNotice.wrap(
+                source: widget.from,
+                scope: _comicId,
+                failure:
+                    _type != ComicEntryType.download &&
+                        state.status == GetComicInfoStatus.failure &&
+                        !state.recovering
+                    ? context.read<GetComicInfoBloc>().failureDiagnosticMessage
+                    : null,
+                ready: state.status == GetComicInfoStatus.success,
+                retry: () => unawaited(_refreshComic()),
+                child: const SizedBox.shrink(),
               ),
             ),
-          ),
-        ],
+            BlocBuilder<GetComicInfoBloc, GetComicInfoState>(
+              builder: (context, state) {
+                switch (state.status) {
+                  case GetComicInfoStatus.initial:
+                    _cloudFavoriteStateOverridden = false;
+                    return Center(child: CircularProgressIndicator());
+                  case GetComicInfoStatus.failure:
+                    if (state.recovering) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    final diagnostic = context
+                        .read<GetComicInfoBloc>()
+                        .failureDiagnosticMessage;
+                    if (diagnostic != null &&
+                        diagnostic.contains('under review') &&
+                        diagnostic.contains('1014')) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              t.comicInfo.discontinued,
+                              style: const TextStyle(fontSize: 20),
+                            ),
+                            SizedBox(height: 10),
+                            ElevatedButton(
+                              onPressed: () => context.pop(),
+                              child: Text(t.comicInfo.back),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                    return ErrorView(
+                      errorMessage: state.result,
+                      onRetry: () => unawaited(_refreshComic()),
+                    );
+                  case GetComicInfoStatus.success:
+                    comicInfoDyn = state.comicInfo;
+                    _currentInfo = state.allInfo;
+                    _comicId = state.comicId ?? _comicId;
+                    if (!_cloudFavoriteStateOverridden) {
+                      _isCloudCollected = state.allInfo?.isFavourite ?? false;
+                    }
+                    _syncLocalCollectStatus(state.allInfo!);
+                    _syncFollowFromOnlineDetail(
+                      state.comicInfo,
+                      state.allInfo!,
+                    );
+                    initHistory(
+                      context,
+                      _comicId,
+                      widget.from,
+                      chapters: state.allInfo!.eps,
+                    );
+                    return _infoView(state.allInfo!);
+                }
+              },
+            ),
+            if (detailReady)
+              BlocBuilder<EpisodeSelectionCubit, int>(
+                bloc: _dlController.selectionCubit,
+                builder: (context, _) => ValueListenableBuilder<bool>(
+                  valueListenable: _showReturnToTop,
+                  builder: (context, show, _) => ScrollReturnToTop(
+                    actionKey: const ValueKey('comic-detail.return-to-top'),
+                    visible: show && !_dlController.selectionMode,
+                    bottom: 16,
+                    onPressed: _returnToTop,
+                  ),
+                ),
+              ),
+            BlocBuilder<EpisodeDownloadStatusCubit, EpisodeDownloadStatusState>(
+              bloc: _dlController.statusCubit,
+              builder: (context, _) => BlocBuilder<EpisodeSelectionCubit, int>(
+                bloc: _dlController.selectionCubit,
+                builder: (context, _) => _SelectionActionBar(
+                  controller: _dlController,
+                  isDownloadType: _type == ComicEntryType.download,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
       bottomNavigationBar: BlocBuilder<EpisodeSelectionCubit, int>(
         bloc: _dlController.selectionCubit,
@@ -282,7 +402,7 @@ class _ComicInfoState extends State<_ComicInfo>
           if (_dlController.selectionMode) {
             return const SizedBox.shrink();
           }
-          return _loadingComplete
+          return detailReady
               ? BlocBuilder<StringSelectCubit, String>(
                   builder: (context, stringSelectDate) {
                     final leftHanded = context
@@ -344,21 +464,19 @@ class _ComicInfoState extends State<_ComicInfo>
         },
       ),
     );
+    return PrimaryScrollController(
+      controller: _detailScrollController,
+      child: scaffold,
+    );
   }
 
   Widget _infoView(NormalComicAllInfo normalComicAllInfo) {
-    final comicInfo = normalComicAllInfo.comicInfo;
+    final comicInfo = comicInfoForDetailPresentation(normalComicAllInfo);
     _title = comicInfo.title;
     final clickCoverToStartReading = context
         .watch<GlobalSettingCubit>()
         .state
         .clickCoverToStartReading;
-
-    if (!_loadingComplete) {
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => setState(() => _loadingComplete = true),
-      );
-    }
 
     // 带缓存：bloc 同实例 + 倒序开关不变时零计算，直接复用上次结果。
     final displayEps = _resolveDisplayEps(normalComicAllInfo.eps);
@@ -374,39 +492,80 @@ class _ComicInfoState extends State<_ComicInfo>
       allowDownload: showDownloadUi,
     );
     final comicKey = '${widget.from}:$_comicId';
-    if (_collapsedForComic != comicKey) {
-      _collapsedForComic = comicKey;
-      _collapsedGroups.clear();
+    if (_groupChoiceComic != comicKey) {
+      _groupChoiceComic = comicKey;
+      _hasGroupChoice = false;
+      _expandedGroup = null;
     }
     final previewCapability = ComicPreviewCapability.fromInfo(
       normalComicAllInfo,
     );
     final showPreview =
         _type != ComicEntryType.download && previewCapability.enabled;
+    final recommendations = _resolveRecommendItems(
+      normalComicAllInfo.recommend,
+    );
+    final readRecommendationLikes =
+        _type != ComicEntryType.download &&
+        comicInfoDyn is PluginComicDetailSource &&
+        widget.from == JmListLikeCounts.source;
 
+    final viewport = MediaQuery.sizeOf(context);
+    final independentChapters = displayEps.length > 8;
+    final chapterMetrics = EpisodeSliverMetrics.of(
+      viewport.width,
+      gutterOutsideViewport: independentChapters,
+    );
     return BlocSelector<StringSelectCubit, String, bool>(
       selector: (state) => state.isNotEmpty,
       builder: (context, hasHistory) {
-        final refreshable = RefreshIndicator(
-          onRefresh: () async {
-            _type = ComicEntryType.normal;
-            _isReversed = false;
-
-            context.read<GetComicInfoBloc>().add(
-              GetComicInfoEvent(
-                comicId: _comicId,
-                from: widget.from,
-                type: _type,
-                extern: widget.extern,
-              ),
-            );
-            setState(() {
-              _loadingComplete = false;
-            });
-          },
+        final chapterSlivers = _buildEpisodeSlivers(
+          context: context,
+          displayEps: displayEps,
+          showDownloadUi: showDownloadUi,
+          allInfo: comicInfoDyn,
+          epsLength: normalComicAllInfo.eps.length,
+          downloadDisabledReason: normalComicAllInfo.allowDownloadReason,
+          metrics: chapterMetrics,
+        );
+        final scroll = RefreshIndicator(
+          key: _refreshIndicator,
+          onRefresh: _refreshComic,
           child: CustomScrollView(
+            primary: true,
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
+              if (context.read<GetComicInfoBloc>().refreshError != null &&
+                  !context.read<GetComicInfoBloc>().state.recovering)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            context.read<GetComicInfoBloc>().refreshError!,
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () =>
+                              _refreshIndicator.currentState?.show(),
+                          icon: const Icon(Icons.refresh),
+                          label: Text(t.common.retry),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (_type != ComicEntryType.download &&
+                  comicDetailHasMissingFields(normalComicAllInfo) &&
+                  context.read<GetComicInfoBloc>().refreshError == null)
+                SliverToBoxAdapter(
+                  child: ComicDetailPartialNotice(
+                    key: ValueKey('comic-partial.$comicKey'),
+                    onRetry: _refreshComic,
+                  ),
+                ),
               SliverPadding(
                 padding: const EdgeInsets.only(top: 8),
                 sliver: _constrainedSliver(
@@ -446,6 +605,7 @@ class _ComicInfoState extends State<_ComicInfo>
                           collectionTargetName: widget.collectionTargetName,
                           comicInfo: comicInfoDyn,
                           showCollectAction: false,
+                          onLoginRefresh: _refreshAfterLogin,
                         ),
                         if (comicInfo.metadata.isNotEmpty) ...[
                           _buildDivider(context),
@@ -488,57 +648,85 @@ class _ComicInfoState extends State<_ComicInfo>
                       _buildDivider(context),
                       _EpisodeHeader(
                         title: t.comicInfo.chapterList,
-                        trailing: _EpisodeHeaderBadge(
-                          label: _chapterCountLabel(displayEps),
-                          icon: _isReversed ? Icons.south : Icons.north,
-                          onTap: _toggleOrder,
+                        trailing: Wrap(
+                          alignment: WrapAlignment.end,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 4,
+                          children: [
+                            if (_type != ComicEntryType.download)
+                              BlocSelector<
+                                EpisodeDownloadStatusCubit,
+                                EpisodeDownloadStatusState,
+                                bool
+                              >(
+                                bloc: _dlController.statusCubit,
+                                selector: (state) =>
+                                    state.downloadedIds.isNotEmpty,
+                                builder: (context, hasDownloads) => hasDownloads
+                                    ? TextButton(
+                                        onPressed: () {
+                                          if (ModalRoute.isCurrentOf(context) !=
+                                              true)
+                                            return;
+                                          unawaited(
+                                            DownloadTaskPage.openComicDownloads(
+                                              context,
+                                              source: widget.from,
+                                              comicId: _comicId,
+                                              stringSelectCubit: context
+                                                  .read<StringSelectCubit>(),
+                                            ),
+                                          );
+                                        },
+                                        child: Text(t.comicInfo.openDownloads),
+                                      )
+                                    : const SizedBox.shrink(),
+                              ),
+                            if (showDownloadUi)
+                              ChapterBatchDownloadButton(
+                                controller: _dlController,
+                                chapters: () =>
+                                    _dlController.adaptEps(displayEps),
+                                title: comicInfo.title,
+                              ),
+                            _EpisodeHeaderBadge(
+                              label: _chapterCountLabel(displayEps),
+                              icon: _isReversed ? Icons.south : Icons.north,
+                              onTap: _toggleOrder,
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
                 ),
               ),
-              // 章节列表：单组走扁平 Sliver，多组直接展开为多个顶层 sliver
-              // （组头 pinned + 组内容），后组吸顶时自然顶掉前组。
-              if (displayEps.length > 8)
-                SliverToBoxAdapter(
-                  child: SizedBox(
-                    height: (MediaQuery.sizeOf(context).height * 0.48).clamp(
-                      280.0,
-                      460.0,
-                    ),
-                    child: Scrollbar(
-                      controller: _episodeScrollController,
-                      thumbVisibility: true,
-                      thickness: 3,
-                      child: CustomScrollView(
-                        key: PageStorageKey(
-                          'chapters:${widget.from}:$_comicId',
-                        ),
+              if (independentChapters)
+                // 把原有行边距留给详情页，章节视口只接收内容区的手势。
+                SliverPadding(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: _constrainedHorizontalPadding(viewport.width),
+                  ),
+                  sliver: SliverToBoxAdapter(
+                    child: SizedBox(
+                      height: (viewport.height * 0.48).clamp(280.0, 460.0),
+                      child: Scrollbar(
                         controller: _episodeScrollController,
-                        slivers: _buildEpisodeSlivers(
-                          context: context,
-                          displayEps: displayEps,
-                          showDownloadUi: showDownloadUi,
-                          allInfo: comicInfoDyn,
-                          epsLength: normalComicAllInfo.eps.length,
-                          downloadDisabledReason:
-                              normalComicAllInfo.allowDownloadReason,
+                        thumbVisibility: true,
+                        thickness: 3,
+                        child: CustomScrollView(
+                          key: PageStorageKey(
+                            'chapters:${widget.from}:$_comicId',
+                          ),
+                          controller: _episodeScrollController,
+                          slivers: chapterSlivers,
                         ),
                       ),
                     ),
                   ),
                 )
               else
-                ..._buildEpisodeSlivers(
-                  context: context,
-                  displayEps: displayEps,
-                  showDownloadUi: showDownloadUi,
-                  allInfo: comicInfoDyn,
-                  epsLength: normalComicAllInfo.eps.length,
-                  downloadDisabledReason:
-                      normalComicAllInfo.allowDownloadReason,
-                ),
+                ...chapterSlivers,
               if (comicInfo.creator.name.trim().isNotEmpty ||
                   comicInfo.creator.avatar.url.trim().isNotEmpty)
                 _constrainedSliver(
@@ -563,10 +751,7 @@ class _ComicInfoState extends State<_ComicInfo>
                     ),
                   ),
                 ),
-              if (normalComicAllInfo.recommend.isNotEmpty &&
-                  _resolveRecommendItems(
-                    normalComicAllInfo.recommend,
-                  ).isNotEmpty)
+              if (recommendations.isNotEmpty)
                 _constrainedSliver(
                   SliverToBoxAdapter(
                     child: Column(
@@ -574,11 +759,7 @@ class _ComicInfoState extends State<_ComicInfo>
                         _buildDivider(context),
                         _SectionCard(
                           title: t.comicInfo.related,
-                          child: RecommendWidget(
-                            comicList: _resolveRecommendItems(
-                              normalComicAllInfo.recommend,
-                            ),
-                          ),
+                          child: RecommendWidget(comicList: recommendations),
                         ),
                       ],
                     ),
@@ -593,6 +774,15 @@ class _ComicInfoState extends State<_ComicInfo>
               ),
             ],
           ),
+        );
+        final refreshable = PageImageRefreshScope(
+          revision: _imageRefresh,
+          child: readRecommendationLikes
+              ? JmCoverLikeScope(
+                  counts: JmListLikeCounts.instance,
+                  child: scroll,
+                )
+              : scroll,
         );
 
         if (!showPreview) return refreshable;
@@ -650,6 +840,17 @@ class _ComicInfoState extends State<_ComicInfo>
   }
 
   Widget _buildLibraryActions() {
+    final info = _currentInfo;
+    final preferCloud =
+        info != null &&
+        preferCloudComicFavorite(
+          preferred: context
+              .watch<GlobalSettingCubit>()
+              .state
+              .cloudFavoritePreferred,
+          info: info,
+          isCloudCollected: _isCloudCollected,
+        );
     return BlocSelector<ComicFollowCubit, ComicFollowState, bool>(
       selector: (state) => state.isFollowing(widget.from, _comicId),
       builder: (context, isFollowing) {
@@ -658,7 +859,7 @@ class _ComicInfoState extends State<_ComicInfo>
           required IconData icon,
           required String label,
           required bool selected,
-          required VoidCallback onPressed,
+          required VoidCallback? onPressed,
         }) {
           return SizedBox(
             width: double.infinity,
@@ -679,6 +880,20 @@ class _ComicInfoState extends State<_ComicInfo>
           );
         }
 
+        final localAction = action(
+          icon: _isLocalCollected ? Icons.bookmark : Icons.bookmark_outline,
+          label: _isLocalCollected ? '已存本地' : '本地收藏',
+          selected: _isLocalCollected,
+          onPressed: _localFavoriteBusy ? null : _toggleLocalCollectFromMenu,
+        );
+        final cloudAction = action(
+          icon: _isCloudCollected
+              ? Icons.cloud_done_outlined
+              : Icons.cloud_outlined,
+          label: _isCloudCollected ? '已存云端' : '云端收藏',
+          selected: _isCloudCollected,
+          onPressed: _cloudFavoriteBusy ? null : _toggleCloudCollectFromMenu,
+        );
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -691,21 +906,9 @@ class _ComicInfoState extends State<_ComicInfo>
               onPressed: () => _toggleFollow(isFollowing),
             ),
             const SizedBox(height: 8),
-            action(
-              icon: _isLocalCollected ? Icons.bookmark : Icons.bookmark_outline,
-              label: _isLocalCollected ? '已存本地' : '本地收藏',
-              selected: _isLocalCollected,
-              onPressed: _toggleLocalCollectFromMenu,
-            ),
+            preferCloud ? cloudAction : localAction,
             const SizedBox(height: 8),
-            action(
-              icon: _isCloudCollected
-                  ? Icons.cloud_done_outlined
-                  : Icons.cloud_outlined,
-              label: _isCloudCollected ? '已存云端' : '云端收藏',
-              selected: _isCloudCollected,
-              onPressed: _toggleCloudCollectFromMenu,
-            ),
+            preferCloud ? localAction : cloudAction,
           ],
         );
       },
@@ -872,7 +1075,11 @@ class _ComicInfoState extends State<_ComicInfo>
     if (_episodeScrollController.hasClients) {
       _episodeScrollController.jumpTo(0);
     }
-    setState(() => _isReversed = !_isReversed);
+    setState(() {
+      _isReversed = !_isReversed;
+      _hasGroupChoice = false;
+      _expandedGroup = null;
+    });
   }
 
   /// 章节计数文案：只显示总数 `N 话`。各组明细已在组头上（`组名 · N 话`），
@@ -1000,9 +1207,7 @@ class _ComicInfoState extends State<_ComicInfo>
     // 同一数只同步一次；下拉刷新后变大才再同步。
     if ((_followSyncedCounts[comicId] ?? 0) >= eps.length) return;
     _followSyncedCounts[comicId] = eps.length;
-    final latest = eps.reduce(
-      (left, right) => left.order >= right.order ? left : right,
-    );
+    final latest = sortChaptersByOrder(eps, (episode) => episode.order).last;
     context.read<ComicFollowCubit>().syncFollowFromDetailAndPersist(
       source: widget.from,
       comicId: comicId,
@@ -1012,46 +1217,61 @@ class _ComicInfoState extends State<_ComicInfo>
   }
 
   Future<void> _toggleLocalCollectFromMenu() async {
+    if (_localFavoriteBusy) return;
     final info = _currentInfo;
     if (info == null) {
       showErrorToast(t.comicInfo.detailsNotLoaded);
       return;
     }
+    final source = widget.from;
+    final session = pluginSessionWriteFence.generation(source.trim());
+    bool isCurrent() =>
+        mounted &&
+        identical(_currentInfo, info) &&
+        widget.from == source &&
+        pluginSessionWriteFence.generation(source.trim()) == session;
+    final shouldCollect = !_isLocalCollected;
+    setState(() => _localFavoriteBusy = true);
     try {
       // 取消收藏需要确认，因为会删除所有文件夹中的记录
-      if (_isLocalCollected) {
+      if (!shouldCollect) {
         final confirmed = await _showLocalUncollectConfirmDialog();
-        if (!confirmed) {
+        if (!confirmed || !isCurrent()) {
           return;
         }
       }
 
-      final next = await toggleLocalComicFavorite(
+      final result = await setLocalComicFavorite(
         from: widget.from,
         normalInfo: info,
+        collected: shouldCollect,
       );
-      if (!mounted) {
+      if (!isCurrent()) {
         return;
       }
+      final next = result.collected;
       setState(() {
         _isLocalCollected = next;
       });
-      if (next) {
+      if (next && result.changed) {
         await _autoFollowIfEnabled();
       }
+      if (!isCurrent()) return;
       showSuccessToast(
         next
             ? t.comicInfo.addedToCollection
             : t.comicInfo.removedFromCollection,
       );
     } catch (e) {
-      if (!mounted) {
+      if (!isCurrent()) {
         return;
       }
       showErrorToast(
         t.comicInfo.localCollectFailed(error: userFacingErrorMessage(e)),
         duration: const Duration(seconds: 5),
       );
+    } finally {
+      if (mounted) setState(() => _localFavoriteBusy = false);
     }
   }
 
@@ -1079,11 +1299,21 @@ class _ComicInfoState extends State<_ComicInfo>
   }
 
   Future<void> _toggleCloudCollectFromMenu() async {
+    if (_cloudFavoriteBusy) return;
     final info = _currentInfo;
     if (info == null) {
       showErrorToast(t.comicInfo.detailsNotLoaded);
       return;
     }
+    final source = widget.from;
+    final wasCollected = _isCloudCollected;
+    final session = pluginSessionWriteFence.generation(source.trim());
+    bool isCurrent() =>
+        mounted &&
+        identical(_currentInfo, info) &&
+        widget.from == source &&
+        pluginSessionWriteFence.generation(source.trim()) == session;
+    setState(() => _cloudFavoriteBusy = true);
     try {
       showInfoToast(
         _isCloudCollected
@@ -1091,56 +1321,96 @@ class _ComicInfoState extends State<_ComicInfo>
             : t.comicInfo.collectingToCloud,
       );
       final next = await toggleCloudComicFavorite(
+        snapshotInfo: info,
         context: context,
         from: widget.from,
         comicId: info.comicInfo.id,
-        currentStatus: _isCloudCollected,
+        currentStatus: wasCollected,
         legacyAllowCollected: info.allowCollected,
         legacyAllowCollectedReason: info.allowCollectedReason,
         collectionTargetId: widget.collectionTargetId,
         collectionTargetName: widget.collectionTargetName,
       );
-      if (!mounted) {
+      if (!isCurrent()) {
         return;
       }
       setState(() {
         _isCloudCollected = next;
         _cloudFavoriteStateOverridden = true;
       });
-      if (next) {
+      if (!wasCollected && next) {
         await _autoFollowIfEnabled();
       }
+      if (!isCurrent()) return;
       showSuccessToast(
-        next
-            ? t.comicInfo.cloudCollectSuccess
-            : t.comicInfo.cloudUncollectSuccess,
+        wasCollected
+            ? t.comicInfo.cloudUncollectSuccess
+            : t.comicInfo.cloudCollectSuccess,
       );
+    } on PluginLoginRequiredException {
+      if (isCurrent()) {
+        await requestPluginActionLogin(
+          context,
+          source: widget.from,
+          refresh: _refreshAfterLogin,
+        );
+      }
     } on FavoriteWorkflowUnsupportedException catch (error) {
-      if (mounted) {
+      if (isCurrent()) {
         final reason = error.reason.trim();
         showInfoToast(
           reason.isNotEmpty ? reason : t.comicInfo.cloudCollectDisabled,
         );
       }
     } on FavoriteWorkflowIncompleteException catch (error) {
-      if (mounted) {
+      if (isCurrent()) {
         showInfoToast(error.result.message ?? '云端收藏操作未完成');
       }
     } catch (e) {
+      if (!isCurrent()) return;
       showErrorToast(
         userFacingErrorMessage(e),
         duration: const Duration(seconds: 5),
       );
+    } finally {
+      if (mounted) setState(() => _cloudFavoriteBusy = false);
     }
   }
 
-  void _toggleGroup(String groupKey) {
+  void _toggleGroup((String, int)? nextGroup, BuildContext headerContext) {
     setState(() {
-      if (_collapsedGroups.contains(groupKey)) {
-        _collapsedGroups.remove(groupKey);
-      } else {
-        _collapsedGroups.add(groupKey);
+      _hasGroupChoice = true;
+      _expandedGroup = nextGroup;
+    });
+    if (!_episodeScrollController.hasClients) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !_hasGroupChoice ||
+          _expandedGroup != nextGroup ||
+          !_episodeScrollController.hasClients) {
+        return;
       }
+      if (!headerContext.mounted) return;
+      final sliver = headerContext
+          .findAncestorRenderObjectOfType<RenderSliverStickyHeader>();
+      if (sliver == null || !sliver.attached) return;
+      final viewport = sliver.parent;
+      if (viewport is! RenderViewport) return;
+      // 吸顶组头的 ensureVisible 不会回到组首，用前置组的布局高度定位。
+      var offset = 0.0;
+      for (
+        var preceding = viewport.childBefore(sliver);
+        preceding != null;
+        preceding = viewport.childBefore(preceding)
+      ) {
+        offset += preceding.geometry!.scrollExtent;
+      }
+      final position = _episodeScrollController.position;
+      final target = offset.clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      if (target < position.pixels) position.jumpTo(target);
     });
   }
 
@@ -1183,6 +1453,7 @@ class _ComicInfoState extends State<_ComicInfo>
     required int? displayTotal,
     required dynamic allInfo,
     required int epsLength,
+    required ReaderResumePosition? resume,
     required bool downloadAllowed,
     required String downloadDisabledReason,
   }) {
@@ -1193,6 +1464,9 @@ class _ComicInfoState extends State<_ComicInfo>
       controller: _dlController,
       allInfo: allInfo,
       epsLength: epsLength,
+      legacyReadPage: resume?.chapterId == chapter.id
+          ? resume!.pageIndex - 1
+          : null,
       displayTotal: displayTotal,
       type: _type,
       comicId: _comicId,
@@ -1230,9 +1504,14 @@ class _ComicInfoState extends State<_ComicInfo>
     required dynamic allInfo,
     required int epsLength,
     required String downloadDisabledReason,
+    required EpisodeSliverMetrics metrics,
   }) {
     // adapt 带元素级缓存：displayEps 引用不变时直接复用，不重建 DownloadChapter。
     final chapters = _dlController.adaptEps(displayEps);
+    final resume = ReaderHistoryService.instance.currentResumePosition(
+      source: widget.from,
+      comicId: _comicId,
+    );
     if (chapters.isEmpty) {
       return [
         _constrainedSliver(
@@ -1253,10 +1532,6 @@ class _ComicInfoState extends State<_ComicInfo>
     // 多组时按下标切段（displayEps 已全局排序，组顺序=首次出现顺序，
     // 倒序开关翻转的是整条 displayEps，即全局翻转）。
     final indexGroups = _groupDisplayIndices(displayEps);
-    // 宽度快照：只与视口宽有关，build 期算一次。SliverConstraints 含
-    // scrollOffset——继续用 SliverLayoutBuilder 算宽度会滚动每帧重跑，
-    // header 的普通 LayoutBuilder 是 Box 约束不受影响，保留。
-    final metrics = EpisodeSliverMetrics.of(MediaQuery.sizeOf(context).width);
     if (indexGroups.length <= 1) {
       return [
         _FlatEpisodeSliver(
@@ -1271,37 +1546,47 @@ class _ComicInfoState extends State<_ComicInfo>
             displayTotal: null,
             allInfo: allInfo,
             epsLength: epsLength,
+            resume: resume,
             downloadAllowed: showDownloadUi,
             downloadDisabledReason: downloadDisabledReason,
           ),
         ),
       ];
     }
+    final expandedGroup =
+        !_hasGroupChoice ||
+            (_expandedGroup != null &&
+                !indexGroups.any(
+                  (group) => group.collapseKey == _expandedGroup,
+                ))
+        ? indexGroups.first.collapseKey
+        : _expandedGroup;
     final slivers = <Widget>[];
-    for (var g = 0; g < indexGroups.length; g++) {
-      final indices = indexGroups[g].items;
-      final groupKey = indexGroups[g].title;
-      final expanded = !_collapsedGroups.contains(groupKey);
+    for (final group in indexGroups) {
+      final indices = group.items;
+      final groupKey = group.collapseKey;
+      final expanded = expandedGroup == groupKey;
       slivers.add(
         // 用 flutter_sticky_header 的 SliverStickyHeader：header 与内容绑在
         // 同一个 render object 里，顶替由库原生处理。注意库不做组间间距，
         // 由本组内容底部统一留 12（见 _GroupEpisodeSliver），组头自身不再加
         // topPadding——header 内部留白会参与吸顶高度，导致顶替错位。
         SliverStickyHeader(
+          key: ValueKey(groupKey),
           header: _ChapterGroupHeaderBar(
             horizontalPadding: metrics.horizontalPadding,
             title: chapterGroupDisplayTitle(
-              indexGroups[g].title,
+              group.title,
               t.comicInfo.untitledGroup,
             ),
-            countLabel: t.comicInfo.groupEpisodeCount(count: indices.length),
             // 下载列表点击时才按下标收集，不在每次 build 预分配 O(N) List。
             onDownloadGroup: showDownloadUi
                 ? () => _downloadGroup(context, [
                     for (final i in indices) chapters[i],
                   ])
                 : null,
-            onToggle: () => _toggleGroup(groupKey),
+            onToggle: (headerContext) =>
+                _toggleGroup(expanded ? null : groupKey, headerContext),
             expanded: expanded,
           ),
           // 折叠组内容传 null：库只留吸顶头，章节行 widget 都不建。
@@ -1320,6 +1605,7 @@ class _ComicInfoState extends State<_ComicInfo>
                         displayTotal: indices.length,
                         allInfo: allInfo,
                         epsLength: epsLength,
+                        resume: resume,
                         downloadAllowed: showDownloadUi,
                         downloadDisabledReason: downloadDisabledReason,
                       ),
@@ -1346,13 +1632,16 @@ class _ComicInfoState extends State<_ComicInfo>
   /// 倒序切换/刷新会换 displayEps 引用，自然 miss 重算。
   List<ChapterGroup<int>> _groupDisplayIndices(List<dynamic> displayEps) {
     final cachedRef = _groupedEpsRef;
-    if (identical(displayEps, cachedRef)) return _indexGroups;
-    final groups = groupIndicesByTitle(
+    if (identical(displayEps, cachedRef)) {
+      return _indexGroups;
+    }
+    final sourceGroups = groupIndicesByTitle(
       displayEps.length,
       (i) => resolveChapterGroupTitle(
         groupTitle: (displayEps[i] as Ep).groupTitle,
       ),
     );
+    final groups = splitLongChapterGroups(sourceGroups);
     _groupedEpsRef = displayEps;
     _indexGroups = groups;
     return groups;
@@ -1452,11 +1741,14 @@ class EpisodeSliverMetrics {
     required this.gridDelegate,
   });
 
-  factory EpisodeSliverMetrics.of(double viewportWidth) {
+  factory EpisodeSliverMetrics.of(
+    double viewportWidth, {
+    bool gutterOutsideViewport = false,
+  }) {
     final horizontalPadding = _constrainedHorizontalPadding(viewportWidth);
     final contentWidth = viewportWidth - horizontalPadding * 2;
     return EpisodeSliverMetrics(
-      horizontalPadding: horizontalPadding,
+      horizontalPadding: gutterOutsideViewport ? 0 : horizontalPadding,
       singleColumn: contentWidth < 560,
       gridDelegate: contentWidth < 560
           ? null
@@ -1685,25 +1977,26 @@ class _EpisodeHeader extends StatelessWidget {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.only(top: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 10,
+        runSpacing: 4,
         children: [
-          Expanded(
-            child: Text(
-              title,
-              style: context.theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+          Text(
+            title,
+            style: context.theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w800,
             ),
           ),
-          if (trailing != null) ...[const SizedBox(width: 10), trailing!],
+          if (trailing != null) trailing!,
         ],
       ),
     );
   }
 }
 
-/// 分组吸顶头：组名 + 计数 + 下载本组。背景不透明，吸顶时内容从下方滑过。
+/// 分组吸顶头：组名与下载本组。背景不透明，吸顶时内容从下方滑过。
 ///
 /// 普通 widget（高度自适应），交给 flutter_sticky_header 的
 /// [SliverStickyHeader] 处理吸顶与顶替，不再手写 delegate 高度。
@@ -1712,7 +2005,6 @@ class _EpisodeHeader extends StatelessWidget {
 class _ChapterGroupHeaderBar extends StatelessWidget {
   const _ChapterGroupHeaderBar({
     required this.title,
-    required this.countLabel,
     required this.onDownloadGroup,
     required this.onToggle,
     required this.expanded,
@@ -1720,9 +2012,8 @@ class _ChapterGroupHeaderBar extends StatelessWidget {
   });
 
   final String title;
-  final String countLabel;
   final VoidCallback? onDownloadGroup;
-  final VoidCallback onToggle;
+  final ValueChanged<BuildContext> onToggle;
   final bool expanded;
 
   /// 外层 build 期按视口宽算好的水平边距（见 EpisodeSliverMetrics）。
@@ -1748,7 +2039,7 @@ class _ChapterGroupHeaderBar extends StatelessWidget {
           ),
           // 整行可点展开/折叠；下载按钮自己拦截手势，不冒泡。
           child: InkWell(
-            onTap: onToggle,
+            onTap: () => onToggle(context),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -1761,22 +2052,10 @@ class _ChapterGroupHeaderBar extends StatelessWidget {
                 ),
                 const SizedBox(width: 4),
                 Expanded(
-                  child: Text.rich(
-                    TextSpan(
-                      children: [
-                        TextSpan(
-                          text: title,
-                          style: context.theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        TextSpan(
-                          text: ' · $countLabel',
-                          style: context.theme.textTheme.bodyMedium?.copyWith(
-                            color: context.textColor.withValues(alpha: 0.6),
-                          ),
-                        ),
-                      ],
+                  child: Text(
+                    title,
+                    style: context.theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

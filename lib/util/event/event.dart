@@ -19,6 +19,12 @@ class PluginLoginSucceeded {
   final String from;
 }
 
+/// A confirmed local account change that is not a successful login.
+class PluginAccountSignedOut {
+  const PluginAccountSignedOut(this.from);
+  final String from;
+}
+
 class WebViewCookieSnapshot {
   final String name;
   final String value;

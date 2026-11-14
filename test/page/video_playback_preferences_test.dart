@@ -4,6 +4,25 @@ import 'package:zephyr/page/video/video_playback_preferences.dart';
 
 void main() {
   test(
+    'global interface style uses the existing persisted and synced preference',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      await VideoPlaybackPreferences.read();
+      expect(VideoPlaybackPreferences.interfaceStyle.value, 'system');
+      await VideoPlaybackPreferences.save('controlsStyle', 'breeze');
+      expect(VideoPlaybackPreferences.interfaceStyle.value, 'breeze');
+      final revision = await VideoPlaybackPreferences.modifiedAt();
+      await VideoPlaybackPreferences.read();
+      expect(await VideoPlaybackPreferences.modifiedAt(), revision);
+      await VideoPlaybackPreferences.restore({
+        'controlsStyle': 'system',
+      }, updatedAt: revision + 1);
+      expect(VideoPlaybackPreferences.interfaceStyle.value, 'system');
+      expect((await VideoPlaybackPreferences.read()).controlsStyle, 'system');
+    },
+  );
+
+  test(
     'restore is atomic, validates fields and retains the remote revision',
     () async {
       SharedPreferences.setMockInitialValues({

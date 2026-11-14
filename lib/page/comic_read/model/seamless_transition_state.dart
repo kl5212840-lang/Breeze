@@ -1,1 +1,1 @@
-enum SeamlessTransitionStatus { hidden, loading, ready, error }
+enum SeamlessTransitionStatus { hidden, loading, ready, local, error }

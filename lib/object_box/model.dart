@@ -9,6 +9,17 @@ import 'package:zephyr/service/download/models/download_task_json.dart';
 
 part 'model.g.dart';
 
+/// Device-only proof written inside the same transaction as an import/purge.
+/// Deliberately has no JSON serializer and is absent from portable snapshots.
+@Entity()
+class LocalStorageCommit {
+  @Id()
+  int id;
+  @Unique()
+  String operationToken;
+  LocalStorageCommit({this.id = 0, required this.operationToken});
+}
+
 @Entity()
 @JsonSerializable()
 @Deprecated("不再使用，仅作为迁移时作为参考数据结构")

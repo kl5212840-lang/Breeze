@@ -59,14 +59,14 @@ class ReaderLifecycleController {
 
   /// 在 [State.dispose] 中调用，释放本控制器及协调相关资源。
   Future<void> dispose() async {
-    await _menuVisibleSubscription?.cancel();
+    // Snapshot before the first await and before child cubits are disposed.
+    historyController.stop();
     autoReadController.dispose();
-    systemUiController.dispose();
-    await systemUiController.restoreSystemBars();
+    await _menuVisibleSubscription?.cancel();
+    await systemUiController.close();
     if (isDesktopPlatform()) {
       await _restoreDesktopFullscreen();
     }
-    historyController.stop();
   }
 
   /// 标记页面已成功 bootstrap 初始阅读状态。
@@ -101,6 +101,7 @@ class ReaderLifecycleController {
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      historyController.flush();
       onFlushImageSizeCache();
     }
   }
@@ -119,6 +120,7 @@ class ReaderLifecycleController {
       if (!_mounted) return;
       if (isDesktopPlatform()) {
         final isFullscreen = await _desktopFullscreenService.isFullscreen();
+        if (!_mounted) return;
         onRefreshState();
         _isDesktopFullscreen = isFullscreen;
         _desktopFullscreenService.syncFullscreen(isFullscreen);

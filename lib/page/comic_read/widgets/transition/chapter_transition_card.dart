@@ -51,6 +51,7 @@ class ChapterTransitionCard extends StatelessWidget {
     );
 
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: statusMeta.canTap ? onTap : null,
       child: Container(
         width: double.infinity,
@@ -78,23 +79,23 @@ class ChapterTransitionCard extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  if (statusMeta.leading != null) ...[
-                    statusMeta.leading!,
-                    const SizedBox(width: 10),
-                  ],
-                  Flexible(
-                    child: Text(
-                      statusMeta.message,
-                      maxLines: 2,
-                      textAlign: TextAlign.center,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 20,
-                        color: primaryTextColor,
-                        fontWeight: FontWeight.w500,
+                  if (statusMeta.leading case final icon?) icon,
+                  if (statusMeta.message case final message?) ...[
+                    if (statusMeta.leading != null) const SizedBox(width: 10),
+                    Flexible(
+                      child: Text(
+                        message,
+                        maxLines: 2,
+                        textAlign: TextAlign.center,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 20,
+                          color: primaryTextColor,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ),
-                  ),
+                  ],
                 ],
               ),
               SizedBox(height: lineSpacing),
@@ -143,8 +144,13 @@ class ChapterTransitionCard extends StatelessWidget {
       case SeamlessTransitionStatus.ready:
         return _TransitionStatusMeta(
           message: t.reader.transitionLoaded,
-          canTap: false,
+          canTap: true,
           leading: Icon(Icons.check_circle_outline, size: 16),
+        );
+      case SeamlessTransitionStatus.local:
+        return _TransitionStatusMeta(
+          canTap: true,
+          leading: const Icon(Icons.arrow_downward_rounded),
         );
       case SeamlessTransitionStatus.error:
         return _TransitionStatusMeta(
@@ -158,12 +164,12 @@ class ChapterTransitionCard extends StatelessWidget {
 
 class _TransitionStatusMeta {
   const _TransitionStatusMeta({
-    required this.message,
+    this.message,
     required this.canTap,
     required this.leading,
   });
 
-  final String message;
+  final String? message;
   final bool canTap;
   final Widget? leading;
 }

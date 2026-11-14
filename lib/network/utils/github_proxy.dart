@@ -29,15 +29,26 @@ bool isGithubApiUrl(String fullUrl) {
 /// - 其它 URL：不走加速，直接请求（要求返回结构类似 GitHub Release API）
 ///
 /// 示例输入: https://api.github.com/repos/deretame/Breeze/releases/latest
-Future<Map<String, dynamic>> fetchReleaseData(String fullUrl) async {
+Future<Map<String, dynamic>> fetchReleaseData(
+  String fullUrl, {
+  Duration? requestTimeout,
+  bool Function(Map<String, dynamic>)? accepts,
+}) async {
   final resolvedUrl = fullUrl.trim();
-  if (resolvedUrl.isEmpty) {
-    throw ArgumentError('release URL 不能为空');
+  final uri = Uri.tryParse(resolvedUrl);
+  if (uri == null ||
+      uri.scheme != 'https' ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty) {
+    throw ArgumentError('Release URL must be HTTPS');
   }
 
   final List<String> urls;
   if (isGithubApiUrl(resolvedUrl)) {
-    final repoPath = "/${resolvedUrl.split("api.github.com/")[1]}";
+    final repoPath = Uri(
+      path: uri.path,
+      query: uri.hasQuery ? uri.query : null,
+    ).toString();
     final isBreezeLatest =
         resolvedUrl == _breezeLatestReleaseUrl ||
         repoPath == '/repos/deretame/Breeze/releases/latest';
@@ -64,17 +75,20 @@ Future<Map<String, dynamic>> fetchReleaseData(String fullUrl) async {
   dynamic firstNotFound;
   dynamic firstRateLimited;
 
+  final client = WindHttp.distribution(connectTimeout: requestTimeout);
   for (String url in urls) {
     try {
-      final response = await fetch(url, headers: headers);
+      final response = await client.fetch(
+        url,
+        headers: headers,
+        timeout: requestTimeout,
+      );
 
       if (response.ok) {
         final data = response.json;
-        if (data is Map<String, dynamic>) {
-          return data;
-        }
         if (data is Map) {
-          return Map<String, dynamic>.from(data);
+          final payload = Map<String, dynamic>.from(data);
+          if (accepts == null || accepts(payload)) return payload;
         }
         lastError = StateError('release 响应格式错误: $url');
       } else {
@@ -207,9 +221,8 @@ String _formatRateLimitResetHint(String? resetRaw, String? retryAfterRaw) {
 
 /// 自动加速下载函数
 Future<void> smartDownload(String url, String savePath) async {
-  final client = WindHttp(
+  final client = WindHttp.distribution(
     connectTimeout: const Duration(seconds: 15),
-    followRedirects: true,
   );
 
   final githubRegex = RegExp(

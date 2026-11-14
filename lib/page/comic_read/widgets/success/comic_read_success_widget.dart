@@ -1,11 +1,10 @@
-import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'dart:async';
 
-import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/cubit/comic_read_preference_cubit.dart';
+import 'package:zephyr/network/http/picture/picture.dart';
 import 'package:zephyr/page/comic_read/cubit/image_size_cubit.dart';
 import 'package:zephyr/page/comic_read/cubit/reader_seamless_cubit.dart';
 import 'package:zephyr/page/comic_read/cubit/reader_seamless_state.dart';
@@ -14,6 +13,7 @@ import 'package:zephyr/page/comic_read/method/prefetch_image_sizes.dart';
 import 'package:zephyr/page/comic_read/cubit/reader_cubit.dart';
 import 'package:zephyr/page/comic_read/model/normal_comic_ep_info.dart';
 import 'package:zephyr/page/comic_read/widgets/layout/read_layout.dart';
+import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/context/context_extensions.dart';
 
 class ComicReadSuccessWidget extends StatefulWidget {
@@ -21,10 +21,13 @@ class ComicReadSuccessWidget extends StatefulWidget {
   final String from;
   final NormalComicEpInfo epInfo;
   final int chapterOrder;
+  final bool offlineReader;
+  final bool Function() ownsReaderSession;
   final WidgetBuilder buildInteractiveViewer;
   final WidgetBuilder buildPageCount;
   final WidgetBuilder buildAppBar;
   final WidgetBuilder buildBottom;
+  final WidgetBuilder buildPending;
   final WidgetBuilder buildAutoReadControl;
   final WidgetBuilder buildEinkControl;
   final int Function(ReadSettingState readSetting)? resolveTotalSlots;
@@ -41,10 +44,13 @@ class ComicReadSuccessWidget extends StatefulWidget {
     required this.from,
     required this.epInfo,
     required this.chapterOrder,
+    this.offlineReader = false,
+    required this.ownsReaderSession,
     required this.buildInteractiveViewer,
     required this.buildPageCount,
     required this.buildAppBar,
     required this.buildBottom,
+    required this.buildPending,
     required this.buildAutoReadControl,
     required this.buildEinkControl,
     this.resolveTotalSlots,
@@ -58,7 +64,10 @@ class ComicReadSuccessWidget extends StatefulWidget {
 class _ComicReadSuccessWidgetState extends State<ComicReadSuccessWidget> {
   late final List<String> _pageKeys;
   late final Future<Map<int, Size>> _persistedSizeFuture;
-  bool _initialPrefetchStarted = false;
+  // A null cursor means the chapter is running or its scan has finished.
+  final _sizePrefetchCursorByOrder = <int, int?>{};
+  AppLifecycleListener? _sizePrefetchLifecycle;
+  bool _sizePrefetchRouteCurrent = false;
 
   @override
   void initState() {
@@ -71,23 +80,19 @@ class _ComicReadSuccessWidgetState extends State<ComicReadSuccessWidget> {
   }
 
   @override
+  void dispose() {
+    _sizePrefetchLifecycle?.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final width = context.screenWidth;
     return FutureBuilder<Map<int, Size>>(
       future: _persistedSizeFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState != ConnectionState.done) {
-          return SafeArea(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SourceBackButton(onPressed: () => context.pop()),
-                const Expanded(
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-              ],
-            ),
-          );
+          return widget.buildPending(context);
         }
 
         final persistedSize = snapshot.data ?? const <int, Size>{};
@@ -102,7 +107,7 @@ class _ComicReadSuccessWidgetState extends State<ComicReadSuccessWidget> {
           ),
           child: Builder(
             builder: (innerContext) {
-              _scheduleInitialPrefetch(innerContext);
+              _scheduleImageSizePrefetch(innerContext);
               final cubit = innerContext.read<ReaderCubit>();
               final readSetting = innerContext.watchEffectiveReadSetting();
               final readMode = readSetting.readMode;
@@ -135,7 +140,7 @@ class _ComicReadSuccessWidgetState extends State<ComicReadSuccessWidget> {
                 listenWhen: (previous, current) =>
                     previous.loadedChapters.length !=
                     current.loadedChapters.length,
-                listener: _onSeamlessChaptersChanged,
+                listener: _prefetchLoadedChapterSizes,
                 child: Container(
                   color: backgroundColor,
                   child: Stack(
@@ -170,50 +175,79 @@ class _ComicReadSuccessWidgetState extends State<ComicReadSuccessWidget> {
     );
   }
 
-  // 章节就绪后在后台预解析本地图片尺寸，让列表项高度提前就位，
-  // 减少阅读过程中占位高度 → 真实高度的布局跳变。
-  void _scheduleInitialPrefetch(BuildContext innerContext) {
-    if (_initialPrefetchStarted) return;
-    _initialPrefetchStarted = true;
+  void _scheduleImageSizePrefetch(BuildContext innerContext) {
+    final current = ModalRoute.isCurrentOf(innerContext) != false;
+    if (current == _sizePrefetchRouteCurrent) return;
+    _sizePrefetchRouteCurrent = current;
+    if (!current) return;
+
+    void prefetch() {
+      if (!mounted || !innerContext.mounted) return;
+      _prefetchLoadedChapterSizes(
+        innerContext,
+        innerContext.read<ReaderSeamlessCubit>().state,
+      );
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !innerContext.mounted) return;
-      final readSetting = innerContext
-          .read<GlobalSettingCubit>()
-          .state
-          .readSetting;
-      unawaited(
-        prefetchChapterImageSizes(
-          imageSizeCubit: innerContext.read<ImageSizeCubit>(),
-          docs: widget.epInfo.docs,
-          comicId: widget.comicId,
-          from: widget.from,
-          chapterId: widget.epInfo.epId,
-          chapterOrder: widget.chapterOrder,
-          contentWidth: _resolveContentWidth(innerContext, readSetting),
-        ),
-      );
+      _sizePrefetchLifecycle ??= AppLifecycleListener(onResume: prefetch);
+      prefetch();
     });
   }
 
-  // 无缝拼接加载出新章节时，同样预解析其图片尺寸。
-  void _onSeamlessChaptersChanged(
+  void _prefetchLoadedChapterSizes(
     BuildContext context,
     ReaderSeamlessState state,
   ) {
     final imageSizeCubit = context.read<ImageSizeCubit>();
-    final readSetting = context.read<GlobalSettingCubit>().state.readSetting;
-    final contentWidth = _resolveContentWidth(context, readSetting);
+    final route = ModalRoute.of(context);
+    bool ownsSession() =>
+        mounted &&
+        context.mounted &&
+        route?.isCurrent != false &&
+        widget.ownsReaderSession();
+
+    bool canStart() {
+      final lifecycle = WidgetsBinding.instance.lifecycleState;
+      return !imageSizeCubit.isClosed &&
+          ownsSession() &&
+          (lifecycle == null || lifecycle == AppLifecycleState.resumed);
+    }
+
+    if (!canStart()) return;
     for (final chapter in state.loadedChapters) {
+      final cursor = _sizePrefetchCursorByOrder.putIfAbsent(
+        chapter.order,
+        () => 0,
+      );
+      if (cursor == null) continue;
+      _sizePrefetchCursorByOrder[chapter.order] = null;
+      final readSetting = context.readEffectiveReadSetting();
+      final scan = prefetchChapterImageSizes(
+        imageSizeCubit: imageSizeCubit,
+        docs: chapter.epInfo.docs,
+        comicId: widget.comicId,
+        from: widget.from,
+        chapterId: chapter.epInfo.epId,
+        chapterOrder: chapter.order,
+        contentWidth: _resolveContentWidth(context, readSetting),
+        startPage: cursor,
+        offlineReader: widget.offlineReader,
+        ownsReaderSession: ownsSession,
+      );
       unawaited(
-        prefetchChapterImageSizes(
-          imageSizeCubit: imageSizeCubit,
-          docs: chapter.epInfo.docs,
-          comicId: widget.comicId,
-          from: widget.from,
-          chapterId: chapter.epInfo.epId,
-          chapterOrder: chapter.order,
-          contentWidth: contentWidth,
-        ),
+        scan.then((nextPage) {
+          if (!mounted || nextPage >= chapter.epInfo.docs.length) return;
+          _sizePrefetchCursorByOrder[chapter.order] = nextPage;
+          // A foreground or route callback may have seen this scan in flight.
+          if (canStart()) {
+            _prefetchLoadedChapterSizes(
+              context,
+              context.read<ReaderSeamlessCubit>().state,
+            );
+          }
+        }),
       );
     }
   }
@@ -239,7 +273,13 @@ class _ComicReadSuccessWidgetState extends State<ComicReadSuccessWidget> {
       final imageId = doc.id.isNotEmpty
           ? doc.id
           : (doc.originalName.isNotEmpty ? doc.originalName : doc.path);
-      return '${widget.comicId}|${widget.epInfo.epId}|$imageId';
+      final key = '${widget.comicId}|${widget.epInfo.epId}|$imageId';
+      final variant = onlinePictureCacheVariant(
+        from: widget.from,
+        url: doc.fileServer,
+        type: PictureType.page,
+      );
+      return variant.isEmpty ? key : '$key|$variant';
     }, growable: false);
   }
 }

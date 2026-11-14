@@ -5,8 +5,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zephyr/page/video/video_download.dart';
 
+import '../download_fixture.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  final connectivity = DownloadConnectivityFixture();
+  tearDownAll(connectivity.close);
   const channel = MethodChannel('breeze.video.download');
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -38,6 +42,7 @@ void main() {
           choice: choice,
           video: video,
           title: 'Actual title',
+          networkContext: 'source-visit-token',
           onProgress: (_) {},
         ),
         VideoDownloadStatus.saved,
@@ -48,9 +53,17 @@ void main() {
       expect(args['referer'], 'https://hanime1.me/watch?v=42');
       expect(args['title'], 'Actual title');
       expect(args['quality'], '720p');
+      expect(args['networkContext'], 'source-visit-token');
       expect(
         args.keys,
-        unorderedEquals(['id', 'url', 'referer', 'title', 'quality']),
+        unorderedEquals([
+          'id',
+          'url',
+          'referer',
+          'title',
+          'quality',
+          'networkContext',
+        ]),
       );
     },
   );
@@ -89,9 +102,10 @@ void main() {
     'progress only accepts the current transfer and numeric counts',
     () async {
       final pending = Completer<String>();
-      String? job;
+      final started = Completer<String>();
       messenger.setMockMethodCallHandler(channel, (call) {
-        job = call.arguments['id'];
+        expect(call.method, 'start');
+        started.complete(call.arguments['id'] as String);
         return pending.future;
       });
       final progress = <VideoDownloadProgress>[];
@@ -101,7 +115,6 @@ void main() {
         title: 'Title',
         onProgress: progress.add,
       );
-      await Future<void>.delayed(Duration.zero);
       Future<void> send(Map<String, dynamic> values) async {
         await messenger.handlePlatformMessage(
           channel.name,
@@ -112,15 +125,21 @@ void main() {
         );
       }
 
-      await send({'id': 'stale', 'received': 1, 'total': 5});
-      await send({'id': job, 'received': -1, 'total': 5});
-      await send({'id': job, 'received': 20, 'total': -1});
-      await send({'id': job, 'received': 80, 'total': 100, 'saving': true});
-      expect(progress, [
-        (received: 20, total: null, saving: false),
-        (received: 80, total: 100, saving: true),
-      ]);
-      pending.complete('cancelled');
+      late final String job;
+      try {
+        job = await started.future.timeout(const Duration(seconds: 5));
+        await send({'id': 'stale', 'received': 1, 'total': 5});
+        await send({'id': job, 'received': -1, 'total': 5});
+        await send({'id': job, 'received': 20, 'total': -1});
+        await send({'id': job, 'received': 80, 'total': 100, 'saving': true});
+        expect(progress, [
+          (received: 20, total: null, saving: false),
+          (received: 80, total: 100, saving: true),
+        ]);
+      } finally {
+        pending.complete('cancelled');
+        await future;
+      }
       expect(await future, VideoDownloadStatus.cancelled);
       await send({'id': job, 'received': 100, 'total': 100, 'saving': true});
       expect(progress.length, 2);

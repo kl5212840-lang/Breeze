@@ -4,6 +4,8 @@ import 'package:zephyr/util/context/context_extensions.dart';
 import 'package:zephyr/util/debouncer.dart';
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
+import 'package:zephyr/service/jm_list_like_counts.dart';
+import 'package:zephyr/widgets/comic_simplify_entry/jm_cover_like_badge.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_grid.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_mapper.dart';
@@ -11,6 +13,8 @@ import 'package:zephyr/widgets/comic_simplify_entry/cover.dart';
 import 'package:zephyr/widgets/section_header.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/type/enum.dart';
+import 'package:zephyr/page/source_shell/source_experience_preferences.dart';
+import 'package:zephyr/page/source_shell/widgets/bika_category_grid_settings.dart';
 
 class DiscoverSchemeRenderer {
   const DiscoverSchemeRenderer();
@@ -63,7 +67,7 @@ class DiscoverSchemeRenderer {
       );
     }
 
-    return NotificationListener<ScrollNotification>(
+    final page = NotificationListener<ScrollNotification>(
       onNotification: (notification) {
         if (notification.metrics.maxScrollExtent <= 0) {
           return false;
@@ -80,6 +84,9 @@ class DiscoverSchemeRenderer {
         children: children,
       ),
     );
+    return from == JmListLikeCounts.source
+        ? JmCoverLikeScope(counts: JmListLikeCounts.instance, child: page)
+        : page;
   }
 
   Widget _buildNode(
@@ -115,6 +122,8 @@ class DiscoverSchemeRenderer {
           _resolveItems(node, data),
           from,
           onAction,
+          bikaCategoryGrid:
+              from == bikaPlusSourceId && node['bikaCategoryGrid'] == true,
         );
       case 'comic-section-list':
         return _buildComicSectionList(
@@ -265,22 +274,23 @@ class DiscoverSchemeRenderer {
     BuildContext context,
     List<Map<String, dynamic>> items,
     String from,
-    Future<void> Function(Map<String, dynamic> action) onAction,
-  ) {
+    Future<void> Function(Map<String, dynamic> action) onAction, {
+    bool bikaCategoryGrid = false,
+  }) {
     if (items.isEmpty) {
       return const SizedBox.shrink();
     }
 
     const spacing = 12.0;
+    final titleStyle = TextStyle(color: context.textColor, fontSize: 14);
+    final titles = [
+      for (final item in items)
+        convertChineseForDisplay(item['title']?.toString() ?? ''),
+    ];
 
-    return GridView.builder(
+    Widget grid(SliverGridDelegate delegate) => GridView.builder(
       padding: const EdgeInsets.all(spacing),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 150,
-        mainAxisSpacing: spacing,
-        crossAxisSpacing: spacing,
-        childAspectRatio: 0.8,
-      ),
+      gridDelegate: delegate,
       physics: const NeverScrollableScrollPhysics(),
       shrinkWrap: true,
       itemCount: items.length,
@@ -290,6 +300,12 @@ class DiscoverSchemeRenderer {
         final cover = asJsonMap(item['cover']);
         final coverUrl = cover['url']?.toString().trim() ?? '';
         final coverPath = cover['path']?.toString().trim() ?? '';
+        final fallbackIcon = switch (item['icon']) {
+          'ai_story' => Icons.auto_awesome_outlined,
+          'game' => Icons.sports_esports_outlined,
+          'night_chat' => Icons.nights_stay_outlined,
+          _ => Icons.auto_stories_outlined,
+        };
 
         return GestureDetector(
           onTap: () => onAction(asJsonMap(item['action'])),
@@ -300,15 +316,32 @@ class DiscoverSchemeRenderer {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(10),
                   child: LayoutBuilder(
-                    builder: (context, constraints) => CoverWidget(
-                      fileServer: coverUrl,
-                      path: coverPath,
-                      id: title,
-                      pictureType: PictureType.category,
-                      from: from,
-                      width: constraints.maxWidth,
-                      height: constraints.maxHeight,
-                    ),
+                    builder: (context, constraints) =>
+                        coverUrl.isEmpty && coverPath.isEmpty
+                        ? ColoredBox(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.primaryContainer,
+                            child: Center(
+                              child: Icon(
+                                fallbackIcon,
+                                size: 36,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onPrimaryContainer,
+                              ),
+                            ),
+                          )
+                        : CoverWidget(
+                            fileServer: coverUrl,
+                            path: coverPath,
+                            id: title,
+                            pictureType: PictureType.category,
+                            from: from,
+                            width: constraints.maxWidth,
+                            height: constraints.maxHeight,
+                            categoryFallbackIcon: fallbackIcon,
+                          ),
                   ),
                 ),
               ),
@@ -318,9 +351,46 @@ class DiscoverSchemeRenderer {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
-                style: TextStyle(color: context.textColor, fontSize: 14),
+                style: titleStyle,
               ),
             ],
+          ),
+        );
+      },
+    );
+    if (bikaCategoryGrid) {
+      return BikaCategoryGridLayout(
+        source: from,
+        titles: titles,
+        titleStyle: titleStyle,
+        builder: (_, delegate) => grid(delegate),
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Use the same count calculation as the existing max-extent delegate;
+        // only grow cards when their actual two-line title needs more height.
+        final available = (constraints.maxWidth - spacing * 2).clamp(
+          0.0,
+          double.infinity,
+        );
+        final count = (available / (150 + spacing)).ceil();
+        final columns = count < 1 ? 1 : count;
+        final width = (available - spacing * (columns - 1)) / columns;
+        final measured = BikaCategoryGridLayout.cardExtent(
+          context,
+          width: width,
+          titles: titles,
+          titleStyle: titleStyle,
+        );
+        final minimum = width / 0.8;
+        return grid(
+          SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 150,
+            mainAxisSpacing: spacing,
+            crossAxisSpacing: spacing,
+            childAspectRatio: 0.8,
+            mainAxisExtent: measured > minimum ? measured : minimum,
           ),
         );
       },

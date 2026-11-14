@@ -11,7 +11,8 @@ abstract class PictureInfo with _$PictureInfo {
     @Default('') String url, // 网址
     @Default('') String path, // 路径
     @Default('') String cartoonId, // 漫画id
-    @Default('') String chapterId, // 章节id
+    @Default('') String chapterId, // 逻辑章节身份
+    @Default('') String storageChapterId, // 已确认的存储章节身份
     @Default(PictureType.comic) PictureType pictureType, // 图片类型
     @Default(<String, dynamic>{}) Map<String, dynamic> extern, // 插件附加参数
   }) = _PictureInfo;

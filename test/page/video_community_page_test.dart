@@ -9,6 +9,10 @@ import 'package:zephyr/page/video/video_engagement.dart';
 import 'package:zephyr/page/video/video_site_action_models.dart';
 import 'package:zephyr/page/video/video_playlist_editor.dart';
 import 'package:zephyr/page/video/video_site_operations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:zephyr/page/video/video_local_favorite_action.dart';
+import 'package:zephyr/page/video/video_library_store.dart';
+import 'package:zephyr/page/video/native_playback_session.dart';
 
 class _Operations extends VideoSiteOperations {
   _Operations(this.respond, {super.drafts})
@@ -95,6 +99,118 @@ void main() {
     'following': false,
   };
 
+  for (final scale in [1.0, 2.0]) {
+    testWidgets(
+      'paired votes and combined favorites stay usable at 320pt scale $scale',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        tester.view.physicalSize = const Size(320, 900);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final store = VideoLibraryStore(
+          deviceId: 'fixture',
+          storageKey: 'paired-favorites-$scale',
+        );
+        addTearDown(store.dispose);
+        final operations = _Operations((_, __) async => interaction());
+        addTearDown(operations.dispose);
+        var siteOpens = 0;
+        final controller = VideoEngagementController(
+          operations: operations,
+          onLogin: () {},
+        );
+        addTearDown(controller.dispose);
+        await tester.pumpWidget(
+          MaterialApp(
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: TextScaler.linear(scale)),
+              child: child!,
+            ),
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: VideoEngagement(
+                    controller: controller,
+                    onFavorite: () => siteOpens++,
+                    onDownload: () {},
+                    onShare: (_) {},
+                    compact: true,
+                    localFavorite: VideoLocalFavoriteAction(
+                      source: 'hanime',
+                      store: store,
+                      detailAction: true,
+                      session: NativePlaybackSession(
+                        title: 'Work',
+                        watchUrl: operations.page,
+                        sources: const [],
+                        description: '',
+                        tags: const [],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final favorite = find.byKey(const ValueKey('video-favorite'));
+        final site = find.byKey(const ValueKey('video.site-favorite'));
+        final local = find.byKey(const ValueKey('video.local-favorite'));
+        final like = find.byKey(const ValueKey('video-like'));
+        final dislike = find.byKey(const ValueKey('video-dislike'));
+        final vote = find.byKey(const ValueKey('video-vote-actions'));
+        final download = find.byKey(const ValueKey('video-download'));
+        final share = find.byKey(const ValueKey('video-share'));
+        expect(find.descendant(of: vote, matching: like), findsOneWidget);
+        expect(find.descendant(of: vote, matching: dislike), findsOneWidget);
+        for (final action in [like, dislike, favorite, download, share]) {
+          expect(tester.getSize(action).width, greaterThanOrEqualTo(44));
+          expect(tester.getSize(action).height, greaterThanOrEqualTo(44));
+        }
+        expect(tester.getRect(like).top, tester.getRect(dislike).top);
+        if (scale == 1) {
+          for (final action in [favorite, download, share]) {
+            expect(tester.getRect(action).top, tester.getRect(like).top);
+          }
+        }
+        expect(site, findsNothing);
+        expect(local, findsNothing);
+        await tester.tap(favorite);
+        await tester.pumpAndSettle();
+        expect(find.text(t.videoCommunity.siteFavorite), findsOneWidget);
+        expect(find.text(t.videoSource.localFavorites), findsOneWidget);
+        await tester.tap(local);
+        await tester.pumpAndSettle();
+        expect((await store.read()).contains('hanime', '42'), isTrue);
+        expect(siteOpens, 0);
+        await tester.tap(site);
+        await tester.pumpAndSettle();
+        expect(siteOpens, 1);
+        expect(local, findsNothing);
+        expect(
+          find.descendant(
+            of: favorite,
+            matching: find.byIcon(Icons.star_rounded),
+          ),
+          findsOneWidget,
+        );
+        await tester.tap(favorite);
+        await tester.pumpAndSettle();
+        await tester.tap(local);
+        await tester.pumpAndSettle();
+        expect((await store.read()).contains('hanime', '42'), isFalse);
+        expect(siteOpens, 1);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
+
   test(
     'drafts follow the confirmed header account and invalidate old services on a change',
     () {
@@ -155,6 +271,115 @@ void main() {
         tester.widget<TextField>(find.byType(TextField)).controller!.text,
         'Unsent draft',
       );
+    },
+  );
+
+  testWidgets(
+    'leaving during submission keeps the same comment blocked on reentry',
+    (tester) async {
+      final drafts = VideoCommentDraftStore();
+      final reply = Completer<Map<String, dynamic>>();
+      final first = VideoSiteOperations(
+        page: Uri.parse('https://hanime1.me/watch?v=42'),
+        drafts: drafts,
+        evaluate: (script) async {
+          if (script.contains('const operation = "comment"')) {
+            return reply.future;
+          }
+          return {'status': 'ok', 'canPost': true, 'items': []};
+        },
+      );
+      Widget comments(VideoSiteOperations operations) => MaterialApp(
+        home: VideoCommunityPage(operations: operations, onLogin: () {}),
+      );
+      await tester.pumpWidget(comments(first));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'Possibly posted');
+      await tester.tap(find.byType(FilledButton));
+      await tester.pump();
+      expect(first.writeInFlight, isTrue);
+
+      first.dispose();
+      await tester.pumpWidget(const SizedBox.shrink());
+      reply.complete({'status': 'ok', 'canPost': true, 'items': []});
+      await tester.pump();
+
+      final next = _Operations(
+        (_, _) async => {'status': 'ok', 'canPost': true, 'items': []},
+        drafts: drafts,
+      );
+      addTearDown(next.dispose);
+      await tester.pumpWidget(comments(next));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'Possibly posted',
+      );
+      expect(
+        tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+        isNull,
+      );
+      expect(find.text(t.videoCommunity.unconfirmed), findsOneWidget);
+      expect(next.calls, ['comments']);
+      await tester.enterText(find.byType(TextField), ' Possibly posted ');
+      await tester.pump();
+      expect(
+        tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+        isNull,
+      );
+      await tester.enterText(find.byType(TextField), 'A different comment');
+      await tester.pump();
+      expect(
+        tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+        isNotNull,
+      );
+    },
+  );
+
+  test(
+    'comment readback settles only the submitted draft and account',
+    () async {
+      final drafts = VideoCommentDraftStore();
+      drafts.bindOwner(Uri.parse('https://hanime1.me/user/7'));
+      var response = Completer<Map<String, dynamic>>();
+      final operations = _Operations((_, _) => response.future, drafts: drafts);
+      const posted = {'status': 'ok', 'items': []};
+
+      final confirmed = operations.submitComment('  Confirmed  ', replyId: '7');
+      expect(operations.commentDraft('7').unconfirmed, isTrue);
+      expect(operations.commentDraft(null).text, isEmpty);
+      expect(operations.payloads.single['text'], 'Confirmed');
+      response.complete(posted);
+      expect((await confirmed).status, VideoSiteStatus.ok);
+      expect(operations.commentDraft('7').text, isEmpty);
+
+      response = Completer<Map<String, dynamic>>();
+      final rejected = operations.submitComment('  Rejected  ');
+      response.complete({'status': 'rejected'});
+      expect((await rejected).status, VideoSiteStatus.rejected);
+      expect(operations.commentDraft(null).text, '  Rejected  ');
+      expect(operations.commentDraft(null).unconfirmed, isFalse);
+
+      response = Completer<Map<String, dynamic>>();
+      final previous = operations.submitComment('Previous');
+      operations.retainCommentDraft(null, 'New edit');
+      response.complete(posted);
+      await previous;
+      expect(operations.commentDraft(null).text, 'New edit');
+
+      response = Completer<Map<String, dynamic>>();
+      final oldAccount = operations.submitComment('Previous account');
+      drafts.bindOwner(Uri.parse('https://hanime1.me/user/8'));
+      final next = _Operations((_, _) async => posted, drafts: drafts);
+      next.retainCommentDraft(null, 'New account');
+      response.complete(posted);
+      expect((await oldAccount).status, VideoSiteStatus.changed);
+      expect(next.commentDraft(null).text, 'New account');
+      expect(
+        (await operations.submitComment('Old account')).status,
+        VideoSiteStatus.changed,
+      );
+      expect(operations.calls.length, 4);
     },
   );
 
@@ -235,6 +460,37 @@ void main() {
       expect(cancels, greaterThan(0));
       expect((await operations.readInteraction()).status, VideoSiteStatus.ok);
       operations.dispose();
+    },
+  );
+
+  testWidgets(
+    'closing a read waits for local idle even when WebKit never acknowledges',
+    (tester) async {
+      final reply = Completer<Map<String, dynamic>>();
+      final acknowledgement = Completer<Map<String, dynamic>>();
+      final operations = VideoSiteOperations(
+        page: Uri.parse('https://hanime1.me/watch?v=42'),
+        evaluate: (script) async {
+          if (script.contains('if (true)')) return acknowledgement.future;
+          if (script.contains('const operation = "state"')) {
+            return {'status': 'ok', 'signedIn': false};
+          }
+          return reply.future;
+        },
+      );
+      addTearDown(operations.dispose);
+      final pending = operations.readPlaylists();
+      final closed = expectLater(operations.cancelRead(), completes);
+      await tester.pump(const Duration(seconds: 2));
+      expect((await operations.readInteraction()).status, VideoSiteStatus.busy);
+      await tester.pump(const Duration(seconds: 1));
+      await closed;
+      expect((await pending).status, VideoSiteStatus.cancelled);
+
+      reply.complete({'status': 'ok', 'lists': []});
+      acknowledgement.complete({'status': 'cancelled'});
+      await tester.pump();
+      expect((await operations.readInteraction()).status, VideoSiteStatus.ok);
     },
   );
 
@@ -610,7 +866,7 @@ void main() {
   );
 
   testWidgets(
-    'reply threads open native views and can post only when supported',
+    'reply threads expand inline, retain the parent and can post only when supported',
     (tester) async {
       final operations = _Operations(
         (operation, payload) async => {
@@ -636,12 +892,131 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text(t.videoCommunity.viewReplies));
+      final toggle = find.byKey(const ValueKey('video-comment-replies.12'));
+      final collapsedPosition = tester.getTopLeft(toggle);
+      await tester.tap(toggle);
       await tester.pumpAndSettle();
       expect(find.text(t.videoCommunity.replies), findsOneWidget);
       expect(find.text('A reply'), findsOneWidget);
-      expect(find.byType(TextField), findsOneWidget);
+      expect(find.text(t.comments.collapseReplies), findsOneWidget);
+      final replyBounds = tester.getRect(
+        find.byKey(const ValueKey('video-inline-replies.12')),
+      );
+      final collapseBounds = tester.getRect(toggle);
+      expect(collapseBounds.top, greaterThanOrEqualTo(replyBounds.bottom));
+      expect(collapseBounds.right, closeTo(replyBounds.right, 1));
+      final input = find.byType(TextField);
+      expect(input, findsOneWidget);
+      await tester.enterText(input, 'Native reply draft');
+      await tester.pump();
+      expect(find.text('Native reply draft'), findsOneWidget);
+      expect(
+        find.widgetWithText(FilledButton, t.videoCommunity.post),
+        findsOneWidget,
+      );
       expect(operations.calls, ['comments', 'replies']);
+      expect(operations.payloads.last['id'], '12');
+      expect(find.text('A comment'), findsOneWidget);
+      expect(
+        find.byType(Scaffold),
+        findsOneWidget,
+        reason: 'Replies must not push another page',
+      );
+      await tester.tap(find.byKey(const ValueKey('video-comment-replies.12')));
+      await tester.pumpAndSettle();
+      expect(find.text('A reply'), findsNothing);
+      expect(find.text('A comment'), findsOneWidget);
+      expect(tester.getTopLeft(toggle), collapsedPosition);
+    },
+  );
+
+  testWidgets('embedded comments refresh from their own list at large text', (
+    tester,
+  ) async {
+    final operations = _Operations(
+      (operation, payload) async => {
+        'status': 'ok',
+        'canPost': false,
+        'items': [
+          {
+            'id': '12',
+            'author': 'Author',
+            'text': 'First comment',
+            'time': '2026-11-13',
+            'hasReplies': true,
+          },
+          {'id': '13', 'author': 'Second author', 'text': 'Second comment'},
+        ],
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(textScaler: TextScaler.linear(1.8)),
+          child: VideoCommunityPage(
+            operations: operations,
+            onLogin: () {},
+            embedded: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byTooltip(t.common.refresh), findsNothing);
+    final replies = find.byKey(const ValueKey('video-comment-replies.12'));
+    expect(tester.getSize(replies).height, greaterThanOrEqualTo(44));
+    expect(
+      tester.getTopLeft(find.text('First comment')).dy,
+      lessThan(tester.getTopLeft(replies).dy),
+    );
+    await tester.drag(find.byType(ListView), const Offset(0, 350));
+    await tester.pumpAndSettle();
+    expect(operations.calls, ['comments', 'comments']);
+    expect(find.text('First comment'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'closing a page with an inline reply read drops its late result without navigation',
+    (tester) async {
+      final pending = Completer<Map<String, dynamic>>();
+      final operations = _Operations((operation, payload) async {
+        if (operation == 'comments')
+          return {
+            'status': 'ok',
+            'items': [
+              {
+                'id': '12',
+                'author': 'Fixture',
+                'text': 'Parent body',
+                'hasReplies': true,
+              },
+            ],
+          };
+        expect(operation, 'replies');
+        expect(payload['id'], '12');
+        return pending.future;
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: VideoCommunityPage(operations: operations, onLogin: () {}),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('video-comment-replies.12')));
+      await tester.pump();
+      expect(find.text('Parent body'), findsOneWidget);
+      expect(find.byType(Scaffold), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      pending.complete({
+        'status': 'ok',
+        'items': [
+          {'author': 'Reply', 'text': 'Late reply'},
+        ],
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('Late reply'), findsNothing);
+      expect(tester.takeException(), isNull);
     },
   );
 
@@ -839,6 +1214,37 @@ void main() {
   });
 
   test(
+    'pending and rejected votes never alter the last confirmed tally',
+    () async {
+      final pending = Completer<Map<String, dynamic>>();
+      final operations = _Operations(
+        (operation, _) async => operation == 'like'
+            ? pending.future
+            : {...interaction(), 'positiveVotes': 7},
+      );
+      final controller = VideoEngagementController(
+        operations: operations,
+        onLogin: () {},
+      );
+      addTearDown(controller.dispose);
+      addTearDown(operations.dispose);
+      await controller.load();
+      final write = controller.set(VideoSiteAction.like, true);
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.pendingVote, VideoSiteAction.like);
+      expect(controller.state.liked, false);
+      expect(controller.state.positiveVotes, 7);
+      await controller.set(VideoSiteAction.like, true);
+      expect(operations.calls, ['state', 'like']);
+      pending.complete({'status': 'rejected'});
+      await write;
+      expect(controller.pendingVote, isNull);
+      expect(controller.state.liked, false);
+      expect(controller.state.positiveVotes, 7);
+    },
+  );
+
+  test(
     'dislike dispatches a distinct target action and uses the confirmed paired vote result',
     () async {
       final operations = _Operations(
@@ -871,19 +1277,29 @@ void main() {
     (tester) async {
       var logins = 0, websites = 0;
       final operations = _Operations(
-        (_, _) async => {
+        (operation, _) async => {
           'status': 'ok',
           'signedIn': true,
           'canPost': false,
-          'postGate': 'siteVerification',
-          'items': [
-            {
-              'id': '12',
-              'author': 'Public author',
-              'text': 'Readable comment',
-              'hasReplies': true,
-            },
-          ],
+          'postGate': operation == 'replies'
+              ? 'unrecognized'
+              : 'siteVerification',
+          'items': operation == 'replies'
+              ? [
+                  {
+                    'id': '13',
+                    'author': 'Reply author',
+                    'text': 'Readable reply',
+                  },
+                ]
+              : [
+                  {
+                    'id': '12',
+                    'author': 'Public author',
+                    'text': 'Readable comment',
+                    'hasReplies': true,
+                  },
+                ],
         },
       );
       await tester.pumpWidget(
@@ -901,7 +1317,20 @@ void main() {
       expect(find.text(t.videoCommunity.viewReplies), findsOneWidget);
       expect(find.byType(TextField), findsNothing);
       expect([logins, websites], [0, 0]);
-      expect(operations.calls, ['comments']);
+      await tester.tap(find.text(t.videoCommunity.viewReplies));
+      await tester.pumpAndSettle();
+      expect(find.text('Readable reply'), findsOneWidget);
+      expect(find.text(t.videoCommunity.postVerificationOnly), findsOneWidget);
+      expect(find.text(t.videoCommunity.publishingUnavailable), findsNothing);
+      final website = find.widgetWithText(
+        TextButton,
+        t.videoPlayback.backToWeb,
+      );
+      expect(website, findsOneWidget);
+      expect(find.byType(TextField), findsNothing);
+      expect(operations.calls, ['comments', 'replies']);
+      await tester.tap(website);
+      expect([logins, websites], [0, 1]);
     },
   );
 

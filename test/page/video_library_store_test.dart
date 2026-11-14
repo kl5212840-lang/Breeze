@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:zephyr/network/sync/sync_payload_compatibility.dart';
 import 'package:zephyr/page/video/api_video_models.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
 
@@ -47,6 +48,68 @@ void main() {
     a.dispose();
     b.dispose();
   });
+  test(
+    'shared bookshelf folders accept multiple sources and survive cloud merge without changing legacy folders',
+    () async {
+      final shared = await a.createFolder(
+        VideoLibraryStore.sharedFolderSource,
+        '想看',
+      );
+      final legacy = await a.createFolder('omo', '原分类');
+      await a.setFavorite('omo', film('7'), true, folderIds: {legacy});
+      await a.setFavorite('ikun', film('7'), true);
+      final keys = {
+        VideoLibraryStore.itemKey('omo', '7'),
+        VideoLibraryStore.itemKey('ikun', '7'),
+      };
+      await a.addToFolders(keys, {shared});
+      await b.merge(VideoLibrarySnapshot.fromJson((await a.read()).toJson()));
+      final restored = await b.read();
+      for (final key in keys) {
+        expect(restored.foldersOf(key), contains(shared));
+      }
+      expect(
+        restored.foldersOf(VideoLibraryStore.itemKey('omo', '7')),
+        contains(legacy),
+      );
+      expect(restored.foldersFor('ikun').containsKey(legacy), false);
+      await a.deleteFolder(shared);
+      await b.merge(await a.read());
+      expect((await b.read()).contains('omo', '7'), true);
+      expect((await b.read()).contains('ikun', '7'), true);
+      expect(
+        (await b.read()).foldersOf(VideoLibraryStore.itemKey('omo', '7')),
+        {legacy},
+      );
+    },
+  );
+  test(
+    'bulk import preserves saved metadata, date and folders atomically',
+    () async {
+      final oldFolder = await a.createFolder('omo', '已有'),
+          target = await a.createFolder('omo', '导入'),
+          foreign = await a.createFolder('other', '其他来源');
+      await a.setFavorite('omo', film('7'), true, folderIds: {oldFolder});
+      final key = VideoLibraryStore.itemKey('omo', '7');
+      final before = await a.read();
+      await a.importFavorites(
+        'omo',
+        [film('7'), film('8'), film('8')],
+        folderIds: {target},
+      );
+      final after = await a.read();
+      expect(after.itemsFor('omo').length, 2);
+      expect(after.favorites[key]!.toJson(), before.favorites[key]!.toJson());
+      expect(after.foldersOf(key), {oldFolder, target});
+      expect(after.foldersOf(VideoLibraryStore.itemKey('omo', '8')), {target});
+      final serialized = jsonEncode(after.toJson());
+      await expectLater(
+        a.importFavorites('omo', [film('9')], folderIds: {foreign}),
+        throwsStateError,
+      );
+      expect(jsonEncode((await a.read()).toJson()), serialized);
+    },
+  );
   test('favorite survives restart and supports multiple folders', () async {
     final first = await a.createFolder('ikun', '想看'),
         second = await a.createFolder('ikun', '科幻');
@@ -60,6 +123,36 @@ void main() {
     expect((await restarted.read()).contains('ikun', '7'), isTrue);
     restarted.dispose();
   });
+  test(
+    'adding folders preserves memberships and validates the whole batch',
+    () async {
+      final original = await a.createFolder('ikun', '原分类');
+      final added = await a.createFolder('ikun', '新分类');
+      final foreign = await a.createFolder('other', '其他来源');
+      await a.setFavorite('ikun', film('7'), true, folderIds: {original});
+      await a.setFavorite('ikun', film('8'), true);
+      final keys = {
+        '7',
+        '8',
+      }.map((id) => VideoLibraryStore.itemKey('ikun', id)).toSet();
+      final before = await a.read();
+      await a.addToFolders(keys, {added});
+      await a.addToFolders(keys, {added});
+      final after = await a.read();
+      expect(after.foldersOf(VideoLibraryStore.itemKey('ikun', '7')), {
+        original,
+        added,
+      });
+      expect(after.foldersOf(VideoLibraryStore.itemKey('ikun', '8')), {added});
+      expect(
+        after.favorites.map((key, entry) => MapEntry(key, entry.toJson())),
+        before.favorites.map((key, entry) => MapEntry(key, entry.toJson())),
+      );
+      final serialized = jsonEncode(after.toJson());
+      await expectLater(a.addToFolders(keys, {foreign}), throwsStateError);
+      expect(jsonEncode((await a.read()).toJson()), serialized);
+    },
+  );
   test(
     'folder rename is stable, duplicate names fail, deletion preserves films',
     () async {
@@ -129,7 +222,10 @@ void main() {
       expect((await a.read()).itemsFor('hanime'), hasLength(1));
       final raw = (await a.read()).toJson();
       raw['version'] = 99;
-      expect(() => VideoLibrarySnapshot.fromJson(raw), throwsFormatException);
+      expect(
+        () => VideoLibrarySnapshot.fromJson(raw),
+        throwsA(isA<SyncCompatibilityException>()),
+      );
       expect((await a.read()).contains('hanime', '7'), isTrue);
     },
   );

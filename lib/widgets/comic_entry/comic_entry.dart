@@ -1,12 +1,15 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
+import 'package:zephyr/widgets/comic_entry/comic_record_time.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/cover.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/widgets/plugin_installation_guard.dart';
 
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/http/picture/picture.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
+import 'package:zephyr/service/reader/reader_history_service.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/type/enum.dart';
@@ -34,7 +37,12 @@ class ComicEntryWidget extends StatelessWidget {
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () {
+      onTap: () async {
+        if (type != ComicEntryType.download &&
+            !await ensurePluginInstalled(context, comic.from)) {
+          return;
+        }
+        if (!context.mounted) return;
         context.pushRoute(
           ComicInfoRoute(comicId: comic.id, type: type, from: comic.from),
         );
@@ -99,6 +107,11 @@ class ComicEntryWidget extends StatelessWidget {
                               ),
                             ),
                           ],
+                          if (type == ComicEntryType.history &&
+                              comicLastReadTimestamp(comic).isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            ComicLastReadLine(item: comic),
+                          ],
                           if (comic.secondaryText.isNotEmpty) ...[
                             const SizedBox(height: 6),
                             Text(
@@ -110,10 +123,17 @@ class ComicEntryWidget extends StatelessWidget {
                               ),
                             ),
                           ],
-                          if (comic.updatedAtText.isNotEmpty) ...[
+                          if (type != ComicEntryType.history &&
+                              formatComicRecordTimestamp(
+                                comic.updatedAt,
+                              ).isNotEmpty) ...[
                             const SizedBox(height: 6),
                             Text(
-                              t.comicEntry.updatedAt(time: comic.updatedAtText),
+                              t.comicEntry.updatedAt(
+                                time: formatComicRecordTimestamp(
+                                  comic.updatedAt,
+                                ),
+                              ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: theme.textTheme.bodySmall?.copyWith(
@@ -254,10 +274,10 @@ class ComicEntryWidget extends StatelessWidget {
         .findFirst();
 
     if (temp != null) {
-      temp.deleted = true;
-      temp.updatedAt = DateTime.now().toUtc();
-      temp.lastReadAt = temp.updatedAt;
-      objectbox.unifiedHistoryBox.put(temp);
+      await ReaderHistoryService.instance.deleteHistoryRecord(
+        temp,
+        updateLastReadAt: true,
+      );
     }
   }
 

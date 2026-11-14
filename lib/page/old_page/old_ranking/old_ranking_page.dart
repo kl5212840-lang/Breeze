@@ -1,3 +1,4 @@
+import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -119,15 +120,20 @@ class _OldRankingPageState extends State<OldRankingPage> {
           ? FloatingActionButtonLocation.startFloat
           : FloatingActionButtonLocation.endFloat,
       floatingActionButton: panels.length > 1
-          ? FloatingActionButton(
-              heroTag: null,
-              onPressed: () {
-                setState(() {
-                  _panelIndex = effectiveIndex == 0 ? 1 : 0;
-                });
-              },
-              tooltip: t.oldRanking.switchSource,
-              child: const Icon(Icons.swap_horiz),
+          ? Padding(
+              padding: EdgeInsets.only(
+                bottom: NativeNavigationInset.of(context),
+              ),
+              child: FloatingActionButton(
+                heroTag: null,
+                onPressed: () {
+                  setState(() {
+                    _panelIndex = effectiveIndex == 0 ? 1 : 0;
+                  });
+                },
+                tooltip: t.oldRanking.switchSource,
+                child: const Icon(Icons.swap_horiz),
+              ),
             )
           : null,
     );

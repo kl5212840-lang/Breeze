@@ -54,9 +54,21 @@ Future<void> _metadata(String source, Map<String, dynamic> metadata) async {
   _fixtureIds[source] = info.id;
 }
 
-Widget _surface(String source) => MaterialApp(
+Widget _surface(
+  String source, {
+  bool showSettings = true,
+  List<SourceMenuAction> actions = const [],
+}) => MaterialApp(
   home: Scaffold(
-    appBar: AppBar(actions: [SourceMoreButton(source: source)]),
+    appBar: AppBar(
+      actions: [
+        SourceMoreButton(
+          source: source,
+          showSettings: showSettings,
+          actions: actions,
+        ),
+      ],
+    ),
     body: const Text('Current source content'),
   ),
 );
@@ -88,7 +100,7 @@ void main() {
   });
 
   test(
-    'metadata resolves explicit official declarations before legacy home',
+    'metadata accepts explicit website declarations, not ambiguous legacy home',
     () {
       expect(sourceOfficialWebsite(_declaredSource), Uri.parse(_official));
       for (final key in ['websiteUrl', 'officialWebsiteUrl']) {
@@ -110,7 +122,7 @@ void main() {
         officialWebsiteFromPluginInfo({
           'home': 'https://site.example.invalid/',
         }),
-        Uri.parse('https://site.example.invalid/'),
+        isNull,
       );
       expect(
         validatedSourceWebsite(' http://site.example.invalid/ '),
@@ -143,11 +155,31 @@ void main() {
         'codeberg.org',
       ]) {
         expect(
-          officialWebsiteFromPluginInfo({'home': 'https://$host/project'}),
+          officialWebsiteFromPluginInfo({
+            'websiteUrl': 'https://$host/project',
+          }),
           isNull,
           reason: host,
         );
       }
+    },
+  );
+
+  test(
+    'reviewed Bika URL wins over an installed lookalike declaration',
+    () async {
+      const bika = 'e9f18928-3ba8-4d86-a12e-b53a62f47933';
+      await _metadata(bika, {
+        'websiteUrl': 'https://picacomic.example.invalid/',
+      });
+      expect(
+        sourceOfficialWebsite(bika),
+        Uri.parse('https://www.picacomic.com/'),
+      );
+      expect(
+        sourceOfficialWebsite('b6161c72-031e-4383-9ea0-4ca8fa4231b6'),
+        isNull,
+      );
     },
   );
 
@@ -169,6 +201,43 @@ void main() {
       expect(validatedSourceWebsite(value), isNull, reason: '$value');
     }
   });
+
+  for (final showSettings in [false, true]) {
+    testWidgets('personal settings has one entry showSettings=$showSettings', (
+      tester,
+    ) async {
+      var sourceOpened = 0;
+      await tester.pumpWidget(
+        _surface(
+          _declaredSource,
+          showSettings: showSettings,
+          actions: [
+            SourceMenuAction(
+              id: 'settings',
+              label: 'Source settings fixture',
+              icon: Icons.tune,
+              symbol: 'slider.horizontal.3',
+              onSelected: () => sourceOpened++,
+            ),
+          ],
+        ),
+      );
+      await tester.pumpAndSettle();
+      final menu = tester.widget<NativeVideoMenu>(find.byType(NativeVideoMenu));
+      expect(menu.options.containsKey('__source_settings'), showSettings);
+      if (!showSettings) return;
+      menu.onSelected('__source_settings');
+      await tester.pumpAndSettle();
+      expect(
+        sourceOpened,
+        1,
+        reason: 'the menu opens the formal target directly, without a hub',
+      );
+      expect(find.text(t.sourceShell.appSettings), findsNothing);
+      expect(find.text('Current source content'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('More opens the declared website externally and retains source', (
     tester,
@@ -217,10 +286,17 @@ void main() {
       final menu = tester.widget<NativeVideoMenu>(find.byType(NativeVideoMenu));
       expect(menu.options.values, [
         t.sourceShell.openOfficialWebsite,
+        t.discover.settings,
         t.sourceShell.exitPlugin,
       ]);
       expect(menu.optionIcons.keys, containsAll(menu.options.keys));
-      menu.onSelected(menu.options.keys.first);
+      menu.onSelected(
+        menu.options.entries
+            .singleWhere(
+              (entry) => entry.value == t.sourceShell.openOfficialWebsite,
+            )
+            .key,
+      );
       await tester.pumpAndSettle();
       expect(launcher.launches.single.url, _official);
       expect(

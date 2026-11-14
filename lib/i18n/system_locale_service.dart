@@ -43,15 +43,7 @@ class SystemLocaleService {
 
   /// 获取当前系统语言/地区/时区信息。
   static Future<SystemLocaleInfo> getInfo() async {
-    // 优先从 Rust 侧获取系统语言列表。
-    final languages = _getSystemLanguages();
-
-    // 挑选应用支持的第一个语言；如果没有匹配项，则回退到列表第一个。
-    final raw = languages.firstWhere(
-      (tag) => I18nHelper.toAppLocale(I18nHelper.localeFromBcp47(tag)) != null,
-      orElse: () => languages.first,
-    );
-
+    final raw = _preferredLanguage();
     final locale = I18nHelper.localeFromBcp47(raw);
 
     // 时区信息优先从 Rust 侧获取，失败时回退到 Flutter 内置值。
@@ -75,6 +67,17 @@ class SystemLocaleService {
   /// 获取系统偏好 locale 字符串列表（按优先级排序）。
   static Future<List<String>> getPreferredLanguages() async {
     return _getSystemLanguages();
+  }
+
+  static Locale get preferredLocale =>
+      I18nHelper.localeFromBcp47(_preferredLanguage());
+
+  static String _preferredLanguage() {
+    final languages = _getSystemLanguages();
+    return languages.firstWhere(
+      (tag) => I18nHelper.toAppLocale(I18nHelper.localeFromBcp47(tag)) != null,
+      orElse: () => languages.firstOrNull ?? 'en-US',
+    );
   }
 
   static List<String> _getSystemLanguages() {

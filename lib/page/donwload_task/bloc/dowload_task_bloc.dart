@@ -4,6 +4,7 @@ import 'package:bloc/bloc.dart';
 
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:zephyr/main.dart';
+import 'package:zephyr/page/donwload_task/service/download_center_projection.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
 import 'package:zephyr/service/download/download_queue_manager.dart';
@@ -15,6 +16,7 @@ part 'dowload_task_state.dart';
 
 class DowloadTaskBloc extends Bloc<DowloadTaskEvent, DowloadTaskState> {
   StreamSubscription? _watchSubscription;
+  var _previousTasks = <int, DownloadTask>{};
 
   DowloadTaskBloc() : super(_Initial()) {
     on<DowloadTaskEvent>(_onEvent);
@@ -22,7 +24,7 @@ class DowloadTaskBloc extends Bloc<DowloadTaskEvent, DowloadTaskState> {
 
   void _onEvent(DowloadTaskEvent event, Emitter<DowloadTaskState> emit) {
     event.when(
-      started: () => _watchTasks(emit),
+      started: _watchTasks,
       tasksUpdated: (tasks) => _handleTasksUpdated(tasks, emit),
       taskDeleted: (taskId) => _deleteTask(taskId, emit),
       cancelCurrentTask: () => _cancelCurrentTask(emit),
@@ -30,35 +32,30 @@ class DowloadTaskBloc extends Bloc<DowloadTaskEvent, DowloadTaskState> {
     );
   }
 
-  void _watchTasks(Emitter<DowloadTaskState> emit) {
+  void _watchTasks() {
+    if (_watchSubscription != null) return;
     final watchedQuery = objectbox.downloadTaskBox
-        .query(DownloadTask_.isCompleted.equals(false))
+        .query()
         .order(DownloadTask_.id)
-        .watch();
+        .watch(triggerImmediately: true);
 
     _watchSubscription = watchedQuery.listen((query) {
-      final tasks = query.find();
-      add(DowloadTaskEvent.tasksUpdated(tasks));
+      final tasks = reuseDownloadTaskRows(query.find(), _previousTasks);
+      _previousTasks = {for (final task in tasks) task.id: task};
+      if (!isClosed) add(DowloadTaskEvent.tasksUpdated(tasks));
     });
-
-    _refreshTasks(emit);
-  }
-
-  void _refreshTasks(Emitter<DowloadTaskState> emit) {
-    final tasks = objectbox.downloadTaskBox
-        .query(DownloadTask_.isCompleted.equals(false))
-        .order(DownloadTask_.id)
-        .build()
-        .find();
-
-    emit(DowloadTaskState.loaded(tasks: tasks, pendingCount: tasks.length));
   }
 
   void _handleTasksUpdated(
     List<DownloadTask> tasks,
     Emitter<DowloadTaskState> emit,
   ) {
-    _refreshTasks(emit);
+    emit(
+      DowloadTaskState.loaded(
+        tasks: tasks,
+        pendingCount: tasks.where((task) => !task.isCompleted).length,
+      ),
+    );
   }
 
   void _deleteTask(int taskId, Emitter<DowloadTaskState> emit) {

@@ -32,7 +32,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use filetime::{FileTime, set_file_times};
 use reqwest::multipart::{Form as MultipartForm, Part as MultipartPart};
 use reqwest::{Client, Method, Proxy};
-use rquickjs::{Ctx, Function, IntoJs, Promise, Value as QjsValue, function::Func};
+use rquickjs::{
+    Ctx, Function, IntoJs, Promise, Value as QjsValue,
+    function::{Func, Opt},
+};
 use subtle::ConstantTimeEq;
 use tokio::net::lookup_host;
 use tokio::sync::Semaphore;
@@ -61,8 +64,7 @@ pub use self::bridge::{
 pub use self::http::{
     BuildHttpClientOptions, HttpClientConfig, build_http_client, build_http_client_ex,
     configure_http_client, current_http_client_config, http_promise_cancel_senders_len,
-    http_request_cancel, http_request_promise, is_http_requests_blocked, set_http_requests_blocked,
-    set_worker_http_config, wrap_http_client,
+    http_request_cancel, is_http_requests_blocked, set_http_requests_blocked, wrap_http_client,
 };
 pub use self::native_buffer::{
     native_buffer_clone_raw, native_buffer_clone_typed, native_buffer_free, native_buffer_put,
@@ -82,8 +84,10 @@ use self::fs_ops::{
     fs_read_file, fs_readdir, fs_readlink, fs_realpath, fs_rename, fs_rm, fs_stat, fs_symlink,
     fs_task_dispatch, fs_truncate, fs_unlink, fs_utimes, fs_write_file, fs_write_file_native,
 };
+pub(crate) use self::http::RuntimeHttpClient;
 use self::http::{
     HttpClientState, cleanup_stale_pending, cleanup_stale_pending_abort, http_io_sem,
+    http_request_promise,
 };
 use self::native_buffer::{
     NATIVE_BUF_ID, native_buffer_put_bytes, native_pool, start_native_buffer_gc_loop,
@@ -189,6 +193,18 @@ pub fn install_host_bindings(
     runtime_name: &str,
     options: WebRuntimeOptions,
 ) -> Result<(), rquickjs::Error> {
+    let http = RuntimeHttpClient::new(current_http_client_config()).map_err(|error| {
+        rquickjs::Error::new_from_js_message("rust", "runtime", error.to_string())
+    })?;
+    install_host_bindings_with_http(ctx, runtime_name, options, Arc::new(http))
+}
+
+pub(crate) fn install_host_bindings_with_http<'js>(
+    ctx: &Ctx<'js>,
+    runtime_name: &str,
+    options: WebRuntimeOptions,
+    http: Arc<RuntimeHttpClient>,
+) -> Result<(), rquickjs::Error> {
     if options.fs && !cfg!(feature = "host-fs") {
         return Err(rquickjs::Error::new_from_js_message(
             "rust",
@@ -200,7 +216,27 @@ pub fn install_host_bindings(
     let globals = ctx.globals();
     globals.set(
         "__http_request_promise",
-        Function::new(ctx.clone(), http_request_promise)?,
+        Function::new(
+            ctx.clone(),
+            move |ctx: Ctx<'js>,
+                  method: String,
+                  url: String,
+                  headers: String,
+                  body: Option<String>,
+                  body_buffer: Option<u64>,
+                  redirect: Opt<String>| {
+                http_request_promise(
+                    ctx,
+                    method,
+                    url,
+                    headers,
+                    body,
+                    body_buffer,
+                    redirect.0,
+                    Arc::clone(&http),
+                )
+            },
+        )?,
     )?;
     globals.set("__http_request_cancel", Func::from(http_request_cancel))?;
     globals.set("__urlsp_rewrite", Func::from(urlsp_rewrite))?;

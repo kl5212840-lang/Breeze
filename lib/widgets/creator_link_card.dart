@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:zephyr/widgets/picture_bloc/picture_recovery_region.dart';
 import 'dart:io';
 
 import 'package:auto_route/auto_route.dart';
@@ -101,7 +103,7 @@ class _CreatorAvatarImage extends StatelessWidget {
     final hasRemoteOrLocalSource =
         pictureInfo.url.trim().isNotEmpty || pictureInfo.path.trim().isNotEmpty;
 
-    if (!hasRemoteOrLocalSource) {
+    if (!hasRemoteOrLocalSource || pictureInfo.url.contains('nopic-Male.gif')) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(25),
         child: SizedBox(
@@ -118,55 +120,81 @@ class _CreatorAvatarImage extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(10),
         child: BlocProvider(
-          create: (context) => PictureBloc()..add(GetPicture(pictureInfo)),
+          key: ValueKey(pictureInfo),
+          create: (context) =>
+              PictureBloc(initiallyActive: false)..add(GetPicture(pictureInfo)),
           child: BlocBuilder<PictureBloc, PictureLoadState>(
             builder: (context, state) {
-              switch (state.status) {
-                case PictureLoadStatus.initial:
-                  return Center(
-                    child: LoadingAnimationWidget.waveDots(
-                      color: context.textColor,
-                      size: 25,
-                    ),
-                  );
-                case PictureLoadStatus.success:
-                  return InkWell(
-                    onTap: () {
-                      context.pushRoute(
-                        FullRouteImageRoute(imagePath: state.imagePath!),
-                      );
-                    },
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(50),
-                      child: SizedBox(
-                        width: 50,
-                        height: 50,
-                        child: Image.file(
-                          File(state.imagePath!),
-                          fit: BoxFit.cover,
-                        ),
-                      ),
-                    ),
-                  );
-                case PictureLoadStatus.failure:
-                  if (state.result.toString().contains('404')) {
-                    return ClipRRect(
-                      borderRadius: BorderRadius.circular(25),
-                      child: SizedBox(
-                        width: 50,
-                        height: 50,
-                        child: Image.asset(errorAssetPath, fit: BoxFit.cover),
-                      ),
-                    );
-                  }
+              return PictureRecoveryRegion(
+                bloc: context.read<PictureBloc>(),
+                child: Builder(
+                  builder: (context) {
+                    switch (state.status) {
+                      case PictureLoadStatus.initial:
+                        return Center(
+                          child: LoadingAnimationWidget.waveDots(
+                            color: context.textColor,
+                            size: 25,
+                          ),
+                        );
+                      case PictureLoadStatus.success:
+                        return InkWell(
+                          onTap: () {
+                            context.pushRoute(
+                              FullRouteImageRoute(imagePath: state.imagePath!),
+                            );
+                          },
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(50),
+                            child: SizedBox(
+                              width: 50,
+                              height: 50,
+                              child: Image.file(
+                                File(state.imagePath!),
+                                fit: BoxFit.cover,
 
-                  return InkWell(
-                    onTap: () {
-                      context.read<PictureBloc>().add(GetPicture(pictureInfo));
-                    },
-                    child: const Icon(Icons.refresh),
-                  );
-              }
+                                errorBuilder: (_, error, _) {
+                                  unawaited(
+                                    context
+                                        .read<PictureBloc>()
+                                        .reportDecodeFailure(
+                                          error,
+                                          imagePath: state.imagePath,
+                                        ),
+                                  );
+                                  return const SizedBox.shrink();
+                                },
+                              ),
+                            ),
+                          ),
+                        );
+                      case PictureLoadStatus.failure:
+                        if (state.result.toString().contains('404')) {
+                          return ClipRRect(
+                            borderRadius: BorderRadius.circular(25),
+                            child: SizedBox(
+                              width: 50,
+                              height: 50,
+                              child: Image.asset(
+                                errorAssetPath,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          );
+                        }
+
+                        return InkWell(
+                          onTap: () {
+                            context.read<PictureBloc>().add(
+                              GetPicture(pictureInfo),
+                            );
+                          },
+                          child: const Icon(Icons.refresh),
+                        );
+                    }
+                  },
+                ),
+              );
             },
           ),
         ),

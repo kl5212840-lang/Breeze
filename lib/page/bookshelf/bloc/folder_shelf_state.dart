@@ -3,11 +3,14 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/bookshelf/cubit/search_status.dart';
 import 'package:zephyr/page/bookshelf/models/shelf_page_mode.dart';
+import 'package:zephyr/page/bookshelf/models/shelf_facets.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_info.dart';
 
 part 'folder_shelf_state.freezed.dart';
 
 const String kFolderShelfRootPath = '';
+
+typedef ComicShelfFolderCount = ({int works, int subfolders});
 
 @freezed
 abstract class FolderShelfState with _$FolderShelfState {
@@ -15,11 +18,17 @@ abstract class FolderShelfState with _$FolderShelfState {
     required ShelfPageMode mode,
     @Default(kFolderShelfRootPath) String currentPath,
     @Default(<ComicFolder>[]) List<ComicFolder> folders,
+    @Default(<String, ComicShelfFolderCount>{})
+    Map<String, ComicShelfFolderCount> folderCounts,
     @Default(<ComicSimplifyEntryInfo>[]) List<ComicSimplifyEntryInfo> comics,
     @Default(<String, String>{}) Map<String, String> comicSearchTexts,
+    @Default(ShelfFacetSelection()) ShelfFacetSelection facets,
+    @Default(<String, String>{}) Map<String, String> comicFolderLabels,
     SearchStatusState? search,
     @Default(false) bool isLoading,
     String? error,
+    String? actionMessage,
+    @Default(0) int actionRevision,
     @Default(false) bool sortAscending,
     @Default(false) bool selectionMode,
     @Default(<String>{}) Set<String> selectedFolderPaths,

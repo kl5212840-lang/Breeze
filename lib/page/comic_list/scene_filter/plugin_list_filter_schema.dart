@@ -1,14 +1,20 @@
 import 'package:zephyr/util/json/json_value.dart';
 
 class PluginListFilterSchema {
-  const PluginListFilterSchema({required this.title, required this.fields});
+  const PluginListFilterSchema({
+    required this.title,
+    required this.fields,
+    this.wrapOptions = false,
+  });
 
   final String title;
   final List<PluginChoiceField> fields;
+  final bool wrapOptions;
 
   factory PluginListFilterSchema.fromMap(Map<String, dynamic> map) {
     return PluginListFilterSchema(
       title: map['title']?.toString() ?? '',
+      wrapOptions: map['optionLayout'] == 'wrap',
       fields: asJsonList(map['fields'])
           .map((item) => PluginChoiceField.fromMap(asJsonMap(item)))
           .where((field) => field.isChoiceField)
@@ -55,18 +61,35 @@ class PluginChoiceField {
     required this.label,
     required this.kind,
     required this.options,
+    this.semantic,
   });
 
   final String key;
   final String label;
   final String kind;
   final List<PluginChoiceOption> options;
+  final String? semantic;
+
+  /// Favorites serve reusable discovery terms, not fixed controls. Older schemas
+  /// retain their stable field identity; no saved favorites are deleted.
+  bool get supportsFavorites => const {
+    'tag',
+    'tags',
+    'author',
+    'authors',
+    'artist',
+    'artists',
+    'theme',
+    'genre',
+    'genres',
+  }.contains((semantic ?? key).trim().toLowerCase());
 
   factory PluginChoiceField.fromMap(Map<String, dynamic> map) {
     return PluginChoiceField(
       key: map['key']?.toString() ?? '',
       label: map['label']?.toString() ?? '',
       kind: map['kind']?.toString() ?? '',
+      semantic: map['semantic']?.toString(),
       options: asJsonList(
         map['options'],
       ).map((item) => PluginChoiceOption.fromMap(asJsonMap(item))).toList(),

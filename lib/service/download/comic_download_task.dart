@@ -1,3 +1,8 @@
+import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:zephyr/service/download/download_commit_guard.dart';
+import 'package:zephyr/service/download/comic_download_preview.dart';
+import 'package:zephyr/service/download/comic_download_route.dart';
+import 'package:zephyr/service/download/comic_background_download.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -17,6 +22,7 @@ import 'package:zephyr/page/download/models/download_chapter.dart';
 import 'package:zephyr/page/download/models/unified_comic_download.dart';
 import 'package:zephyr/service/download/download_cancel_signal.dart';
 import 'package:zephyr/service/download/download_asset_store.dart';
+import 'package:zephyr/service/download/download_chapter_cancellation.dart';
 import 'package:zephyr/service/download/download_progress_reporter.dart';
 import 'package:zephyr/service/download/download_retry.dart';
 import 'package:zephyr/service/download/download_task_repository.dart';
@@ -30,12 +36,23 @@ import 'package:zephyr/util/get_path.dart';
 /// 单章节下载任务。
 ///
 /// 每个任务只下载一个章节：先确认本地有无本漫画记录（没有则取详情 + 下封面，
-/// 成功后连章节一起入库），再取章节、逐图下载、提交。已落盘的图片直接复用，
-/// 因此中断恢复不需要章节内 checkpoint。
+/// 成功后连章节一起入库），再取章节、逐图下载、提交。自动线路按同一页计划
+/// 恢复，候选变化时用独立路径提交完整章节。
 Future<void> unifiedDownloadTask(
   DownloadProgressReporter reporter,
-  DownloadTaskJson task,
-) async {
+  DownloadTaskJson task, {
+  int? taskId,
+}) => runWithQjsTaskGroupNetwork(
+  pluginId: task.from,
+  taskGroupKey: task.taskKey,
+  action: () => _unifiedDownloadTask(reporter, task, taskId: taskId),
+);
+
+Future<void> _unifiedDownloadTask(
+  DownloadProgressReporter reporter,
+  DownloadTaskJson task, {
+  int? taskId,
+}) async {
   await ensureSyncDeviceId();
   logger.d('unifiedDownloadTask received taskKey=${task.taskKey}');
   final pluginId = (task.from).trim();
@@ -52,50 +69,70 @@ Future<void> unifiedDownloadTask(
         false;
   }
 
+  DownloadTask? boundTask() {
+    final current = taskId == null
+        ? taskRepository.findByTaskKey(taskKey)
+        : objectbox.downloadTaskBox.get(taskId);
+    return current != null &&
+            taskRepository.readPayload(current)?.taskKey == taskKey &&
+            taskRepository.readPayload(current)?.attempt == task.attempt
+        ? current
+        : null;
+  }
+
   Timer? progressTimer;
   bool running = true;
+  final initialTask = boundTask();
+  var checkpoint = initialTask == null
+      ? task
+      : taskRepository.readPayload(initialTask) ?? task;
 
   DownloadTask? findCurrentTask() {
-    final current = taskRepository.findByTaskKey(taskKey);
+    final current = boundTask();
     if (current == null || !current.isDownloading) return null;
     return current;
+  }
+
+  void queueTaskWrite(int id, {String? status, String? payloadJson}) {
+    unawaited(
+      taskRepository
+          .putTaskWriteBackground(
+            taskKey: taskKey,
+            taskId: id,
+            expectedAttempt: task.attempt,
+            requireRunning: true,
+            status: status,
+            payloadJson: payloadJson,
+          )
+          .catchError((Object error, StackTrace stackTrace) {
+            logger.w(
+              '后台写入下载任务失败: $taskKey',
+              error: error,
+              stackTrace: stackTrace,
+            );
+          }),
+    );
   }
 
   void updateTaskStatus(String status) {
     final dbTask = findCurrentTask();
     if (dbTask == null) return;
-    // 高频状态同步走后台写，主线程不碰 put。
-    unawaited(
-      taskRepository.putTaskWriteBackground(
-        taskKey: taskKey,
-        taskId: dbTask.id,
-        status: status,
-      ),
-    );
+    queueTaskWrite(dbTask.id, status: status);
   }
 
   void updateCheckpoint(
     DownloadTaskJson Function(DownloadTaskJson payload) update, {
     String? status,
   }) {
-    final dbTask = taskRepository.findByTaskKey(taskKey);
+    final dbTask = boundTask();
     if (dbTask == null) return;
-    // payload 在主线程拼好，后台只做 put；串行排队保证有序。
-    final payload = taskRepository.readPayload(dbTask) ?? task;
-    final next = update(payload);
-    unawaited(
-      taskRepository.putTaskWriteBackground(
-        taskKey: taskKey,
-        taskId: dbTask.id,
-        status: status,
-        payloadJson: downloadTaskJsonToJson(next),
-      ),
+    // Compose from the latest scheduled checkpoint, which may still be in flight.
+    checkpoint = update(checkpoint);
+    queueTaskWrite(
+      dbTask.id,
+      status: status,
+      payloadJson: downloadTaskJsonToJson(checkpoint),
     );
-  }
-
-  DownloadTaskJson currentPayload() {
-    final current = taskRepository.findByTaskKey(taskKey);
-    return taskRepository.readPayload(current ?? DownloadTask()) ?? task;
   }
 
   Future<void> ensureTaskRunning() async {
@@ -112,19 +149,12 @@ Future<void> unifiedDownloadTask(
 
   const adapter = DownloadChapterAdapter();
   final chapter = adapter.fromTaskRef(task.chapterRef);
-  // 上次尝试已落盘的图片路径：恢复时会快速复用，取消时需要一并清理。
-  final completedPaths = <String>{...currentPayload().imagePaths};
-  // 真 404 而跳过的图片路径：落库时打标记，不计失败。
-  final skippedPaths = <String>{};
-
-  Future<void> deleteChapterFiles() async {
-    await DownloadAssetStore.deleteDownloadedFiles(
-      from: from,
-      cartoonId: comicId,
-      effectiveStorageChapterId: chapter.effectiveStorageId,
-      docPaths: completedPaths,
-    );
-  }
+  // Paths owned by this chapter's transfer, including a reserved page plan.
+  final completedPaths = <String>{...checkpoint.imagePaths};
+  // A file may finish its atomic rename while a pause is being committed.
+  // Keep ownership of every started page even before the next progress write.
+  final startedPaths = <String>{};
+  void Function()? releaseChapterPages;
 
   try {
     await ensureQjsRuntimeReady(pluginId: pluginId);
@@ -141,9 +171,9 @@ Future<void> unifiedDownloadTask(
     );
 
     // 本地已有本漫画记录时跳过详情和封面，直下本章。
-    var existing = taskRepository.findDownloadRecord(from, comicId);
+    final existing = taskRepository.findDownloadRecord(from, comicId);
     late normal.NormalComicAllInfo normalInfo;
-    List<Map<String, dynamic>>? onlineCatalog;
+    List<Map<String, dynamic>> onlineCatalog;
     if (existing == null) {
       updateCheckpoint(
         (payload) => payload.copyWith(
@@ -155,12 +185,32 @@ Future<void> unifiedDownloadTask(
       );
       updateTaskStatus(t.download.statusFetchingComicInfo);
       reporter.updateMessage(t.download.statusFetchingComicInfo);
-      final detail = await getComicDetailByPlugin(
-        comicId,
-        from,
-        pluginId: pluginId,
-      );
+      final PluginComicDetail detail;
+      try {
+        detail = await getComicDetailByPlugin(
+          comicId,
+          from,
+          pluginId: pluginId,
+          extern: {
+            'comicDownload': true,
+            'chapterId': chapter.effectiveRequestId,
+          },
+          taskGroupKey: taskKey,
+        );
+      } catch (error) {
+        final failure = ComicDownloadRouteUnavailable.fromPluginError(error);
+        if (failure != null) throw failure;
+        rethrow;
+      }
       comicId = detail.comicId;
+      await ensureTaskRunning();
+      ComicDownloadPreview.publish(from, comicId, {
+        ...detail.normalInfo.comicInfo.cover.toJson(),
+        'path': detail.normalInfo.comicInfo.cover.path.trim().isNotEmpty
+            ? detail.normalInfo.comicInfo.cover.path
+            : detail.normalInfo.comicInfo.cover.extern['path']?.toString() ??
+                  '',
+      });
 
       updateTaskStatus(t.download.statusDownloadingCover);
       updateCheckpoint(
@@ -183,7 +233,7 @@ Future<void> unifiedDownloadTask(
           cartoonId: comicId,
           qjsName: runtimeName,
           qjsTaskGroupKey: taskKey,
-          shouldRetryUntilSuccess: shouldRetryUntilSuccess,
+          retry: false,
         );
       }
 
@@ -221,22 +271,14 @@ Future<void> unifiedDownloadTask(
             comicId,
             from,
             pluginId: pluginId,
+            taskGroupKey: taskKey,
           );
           onlineCatalog = buildChapterCatalog(fresh.normalInfo.eps);
-          final decoded = jsonDecode(existing.detailJson);
-          if (decoded is Map) {
-            final detailMap = Map<String, dynamic>.from(decoded);
-            final extern = Map<String, dynamic>.from(
-              detailMap['extern'] as Map? ?? const {},
-            );
-            extern['chapterCatalog'] = onlineCatalog;
-            detailMap['extern'] = extern;
-            existing
-              ..detailJson = jsonEncode(detailMap)
-              ..updatedAt = DateTime.now().toUtc();
-            objectbox.unifiedDownloadBox.put(existing);
-          }
+          // The commit publishes the refreshed catalog with the downloaded
+          // chapter. A late response must not write a detached record.
           logger.i('下载目录快照已刷新: $from:$comicId');
+        } on DownloadTaskCancelledException {
+          rethrow;
         } catch (e) {
           logger.w('下载目录快照刷新失败，继续下载: $from:$comicId', error: e);
         }
@@ -249,178 +291,396 @@ Future<void> unifiedDownloadTask(
       }
     });
 
-    await ensureTaskRunning();
-    updateTaskStatus(t.download.statusFetchingChapterInfo);
-    reporter.updateMessage(t.download.statusFetchingChapterInfo);
-    updateCheckpoint(
-      (payload) => payload.copyWith(
-        stateCode: 'running',
-        phaseCode: 'fetchingChapterInfo',
-        completedImages: 0,
-        reusedImages: 0,
-        totalImages: 0,
-      ),
-    );
-
     final requestChapterId = chapter.effectiveRequestId;
     final chapterExtern = Map<String, dynamic>.from(chapter.extern);
-    logger.d(
-      'download getChapter plugin=$pluginId comicId=$comicId chapter.id=${chapter.id} order=${chapter.order} requestChapterId=$requestChapterId storageChapterId=${chapter.effectiveStorageId} extern=$chapterExtern',
-    );
-    final response = await retryDownloadOperation<UnifiedPluginChapterResponse>(
-      operation: '获取章节 ${chapter.displayName}',
-      ensureTaskRunning: ensureTaskRunning,
-      shouldRetryUntilSuccess: shouldRetryUntilSuccess,
-      action: () => _getChapterByPlugin(
-        from: from,
-        pluginId: pluginId,
-        comicId: comicId,
-        chapterId: requestChapterId,
-        runtimeName: runtimeName,
-        extern: {...chapterExtern, 'chapterId': requestChapterId},
-      ),
-    );
-    final jobs = <DownloadImageJob>[];
-    for (final doc in response.chapter.docs) {
-      jobs.add(
-        DownloadImageJob(
-          url: doc.url,
-          path: doc.path,
-          cartoonId: comicId,
-          chapterId: response.chapter.epId,
-          storageChapterId: chapter.effectiveStorageId,
-          extern: doc.extern,
-        ),
-      );
+    final excluded = <String>[];
+    ComicDownloadRetryReason? previousRouteFailure;
+    Future<UnifiedPluginChapterResponse> readChapter() async {
+      try {
+        return await getComicChapterByPlugin(
+          comicId,
+          requestChapterId,
+          from,
+          pluginId: pluginId,
+          runtimeName: runtimeName,
+          extern: {...chapterExtern, 'chapterId': requestChapterId},
+          taskGroupKey: taskKey,
+          excludedDownloadRoutes: List.of(excluded),
+        );
+      } catch (error) {
+        final failure = ComicDownloadRouteUnavailable.fromPluginError(error);
+        if (failure != null) throw failure;
+        rethrow;
+      }
     }
 
-    updateCheckpoint(
-      (payload) => payload.copyWith(
+    late UnifiedPluginChapterResponse response;
+    late List<UnifiedPluginChapterDoc> docs;
+    late DownloadImageJobsResult progress;
+    ComicDownloadRoute? route;
+    int? concurrency;
+    while (true) {
+      await ensureTaskRunning();
+      final switching = excluded.isNotEmpty;
+      final status = !switching
+          ? t.download.statusFetchingChapterInfo
+          : LocaleSettings.currentLocale == AppLocale.zhCn
+          ? '正在尝试备用线路…'
+          : 'Trying another download route…';
+      reporter.updateMessage(status);
+      updateCheckpoint(
+        (payload) => payload.copyWith(
+          phaseCode: switching ? 'switchingRoute' : 'fetchingChapterInfo',
+          completedImages: 0,
+          reusedImages: 0,
+          totalImages: 0,
+          imagePaths: {...completedPaths, ...startedPaths}.toList(),
+        ),
+        status: status,
+      );
+      try {
+        response = switching
+            ? await readChapter()
+            : await retryDownloadOperation(
+                operation: '获取章节 ${chapter.displayName}',
+                ensureTaskRunning: ensureTaskRunning,
+                shouldRetry: (error) => error is! ComicDownloadRouteUnavailable,
+                action: readChapter,
+              );
+      } on ComicDownloadRouteUnavailable catch (error) {
+        final reason = error.noCandidate ? previousRouteFailure : null;
+        if (reason != null) throw ComicDownloadRouteUnavailable(null, reason);
+        rethrow;
+      }
+      await ensureTaskRunning();
+      route = ComicDownloadRoute.fromChapter(response);
+      if (switching && (route == null || excluded.contains(route.key))) {
+        throw const ComicDownloadRouteUnavailable();
+      }
+      _validateDownloadChapterIdentity(
+        response,
+        task.chapterRef,
+        requestChapterId,
+        onlineCatalog,
+        expectedComicId: route == null ? null : comicId,
+      );
+      if (response.chapter.docs.isEmpty) {
+        throw const FormatException('当前章节没有可用图片');
+      }
+      docs = route == null
+          ? response.chapter.docs
+          : isolateComicDownloadPages(
+              taskKey: taskKey,
+              response: response,
+              route: route,
+              retainedPaths: {...completedPaths, ...startedPaths},
+            );
+      if (docs.any(
+        (doc) => doc.path.trim().isEmpty || doc.url.trim().isEmpty,
+      )) {
+        throw const FormatException('章节缺少有效的图片地址或文件名');
+      }
+      final jobs = [
+        for (final doc in docs)
+          DownloadImageJob(
+            url: doc.url,
+            path: doc.path,
+            cartoonId: comicId,
+            chapterId: response.chapter.epId,
+            storageChapterId: chapter.effectiveStorageId,
+            extern: doc.extern,
+          ),
+      ];
+      final startingMessage = t.download.statusDownloadProgress(percent: 0);
+      reporter.updateMessage(startingMessage);
+      final downloading = checkpoint.copyWith(
         phaseCode: 'downloadingChapter',
         totalImages: jobs.length,
-      ),
-    );
-    reporter.updateMessage(t.download.statusDownloadProgress(percent: 0));
-
-    var lastPersistedImages = 0;
-    var lastPersistedAt = DateTime.now();
-    var lastReportedPercent = -1;
-    try {
-      await downloadImageJobs(
+      );
+      if (route == null) {
+        updateCheckpoint((_) => downloading, status: startingMessage);
+      } else {
+        // Persist the whole generation before any file can be written. A
+        // process exit before the next progress tick still leaves ownership.
+        completedPaths.addAll(jobs.map((job) => job.path));
+        checkpoint = downloading.copyWith(imagePaths: completedPaths.toList());
+        final current = boundTask();
+        if (current == null) throw const DownloadTaskCancelledException();
+        await taskRepository.putTaskWriteBackground(
+          taskKey: taskKey,
+          taskId: current.id,
+          expectedAttempt: task.attempt,
+          requireRunning: true,
+          status: startingMessage,
+          payloadJson: downloadTaskJsonToJson(checkpoint),
+        );
+        await ensureTaskRunning();
+      }
+      releaseChapterPages?.call();
+      releaseChapterPages = await claimDownloadChapterPages(
+        task: task,
+        comicId: comicId,
+        docPaths: jobs.map((job) => job.path),
+        startedPaths: startedPaths,
+      );
+      concurrency ??= await resolveDownloadConcurrency(
         from: from,
-        jobs: jobs,
-        qjsRuntimeName: runtimeName,
-        qjsTaskGroupKey: taskKey,
-        ensureTaskRunning: ensureTaskRunning,
-        shouldRetryUntilSuccess: shouldRetryUntilSuccess,
-        reporter: reporter,
-        concurrency: await resolveDownloadConcurrency(
+        pluginId: pluginId,
+        taskGroupKey: taskKey,
+      );
+      var lastPersistedImages = 0;
+      var lastPersistedAt = DateTime.now();
+      var lastReportedPercent = -1;
+      ComicBackgroundDownload? background;
+      try {
+        if (route != null) {
+          background = await ComicBackgroundDownload.prepare(
+            task: task,
+            jobs: jobs,
+            concurrency: concurrency,
+            ensureTaskRunning: ensureTaskRunning,
+          );
+        }
+        progress = await downloadImageJobs(
           from: from,
-          pluginId: pluginId,
-        ),
-        onProgress:
-            (completed, downloaded, reused, completedJob, jobSkipped) async {
-              if (completedJob.path.trim().isNotEmpty) {
-                completedPaths.add(completedJob.path);
-                // 真 404 的图记下来，落库时打跳过标记（不再按失败处理）。
-                if (jobSkipped) skippedPaths.add(completedJob.path);
-              }
-              final currentPercent = jobs.isEmpty
-                  ? 100
-                  : (completed / jobs.length * 100).floor();
-              if (currentPercent > lastReportedPercent ||
-                  completed == jobs.length) {
-                lastReportedPercent = currentPercent;
-                final message = t.download.statusDownloadProgress(
-                  percent: currentPercent,
-                );
-                // 进度只走内存 + 通知流，不写库（1s Timer 负责同步 status）。
-                // 之前这里每张图写库，主线程约 13ms，是卡顿主因。
-                reporter.updateMessage(message);
-              }
-
-              final now = DateTime.now();
-              final shouldPersist =
-                  completed == jobs.length ||
-                  completed - lastPersistedImages >= 5 ||
-                  now.difference(lastPersistedAt) >= const Duration(seconds: 1);
-              if (!shouldPersist) return;
+          jobs: jobs,
+          qjsRuntimeName: runtimeName,
+          qjsTaskGroupKey: taskKey,
+          ensureTaskRunning: ensureTaskRunning,
+          stopOnMissingPage: true,
+          isolatedPages: route != null,
+          preparedImage: background?.read,
+          reporter: reporter,
+          concurrency: concurrency,
+          onJobStarted: (job) {
+            if (job.path.trim().isEmpty) return;
+            startedPaths.add(job.path);
+          },
+          onProgress: (completed, _, reused, job, _) async {
+            if (job.path.trim().isNotEmpty) {
+              completedPaths.add(job.path);
+            }
+            final percent = (completed / jobs.length * 100).floor();
+            if (percent > lastReportedPercent) {
+              lastReportedPercent = percent;
+              reporter.updateMessage(
+                t.download.statusDownloadProgress(percent: percent),
+              );
+            }
+            final now = DateTime.now();
+            if (completed == jobs.length ||
+                completed - lastPersistedImages >= 5 ||
+                now.difference(lastPersistedAt) >= const Duration(seconds: 1)) {
               lastPersistedImages = completed;
               lastPersistedAt = now;
               updateCheckpoint(
                 (payload) => payload.copyWith(
                   completedImages: completed,
                   reusedImages: reused,
-                  totalImages: jobs.length,
                   imagePaths: completedPaths.toList(),
                 ),
               );
-            },
-      );
-    } on DownloadTaskCancelledException {
-      // 取消本章：删掉已下的散图后继续向上抛，队列会删任务记录并继续下一章。
-      await deleteChapterFiles();
-      rethrow;
+            }
+          },
+        );
+        break;
+      } on DownloadImageJobException catch (error) {
+        final failedRoute = route;
+        if (failedRoute == null) rethrow;
+        await ensureTaskRunning();
+        final reason = error.retryReason;
+        if (reason == null) {
+          if (error.httpStatus == 401 || error.httpStatus == 403) {
+            final chinese = LocaleSettings.currentLocale == AppLocale.zhCn;
+            throw ComicDownloadRouteUnavailable(
+              chinese
+                  ? '来源拒绝了图片下载，请检查访问权限'
+                  : 'The source rejected the page download. Check access permissions.',
+            );
+          }
+          throw const ComicDownloadRouteUnavailable();
+        }
+        if (!failedRoute.canSwitch ||
+            reason == ComicDownloadRetryReason.rateLimited ||
+            excluded.length >= 2) {
+          throw ComicDownloadRouteUnavailable(null, reason);
+        }
+        previousRouteFailure = reason;
+        excluded.add(failedRoute.key);
+      } finally {
+        await background?.close();
+      }
     }
 
+    await ensureTaskRunning();
+    if (progress.downloaded == 0 && progress.reused == 0) {
+      throw const FormatException('当前章节没有可用图片');
+    }
+    if (route != null && progress.downloaded + progress.reused != docs.length) {
+      throw const ComicDownloadRouteUnavailable();
+    }
     updateCheckpoint(
       (payload) => payload.copyWith(phaseCode: 'committingChapter'),
     );
+    final commitTask = boundTask();
+    if (commitTask == null) throw const DownloadTaskCancelledException();
+    // Existing readers can still have the previous committed page paths.
+    final published = route != null && existing != null
+        ? resolveDownloadChapters(existing)
+              .where(
+                (saved) =>
+                    saved.effectiveStorageId == chapter.effectiveStorageId,
+              )
+              .toList()
+        : const <DownloadChapter>[];
+    final currentPaths = {for (final doc in docs) doc.path};
+    final retainedPaths = {
+      ...completedPaths,
+      ...startedPaths,
+      for (final saved in published)
+        if (saved.id == chapter.id)
+          for (final page in saved.images) page.path,
+    };
     await _saveUnifiedDownloadChapter(
+      taskId: commitTask.id,
+      taskKey: taskKey,
+      attempt: task.attempt,
       from: from,
       comicId: comicId,
       normalInfo: normalInfo,
       selectedChapter: chapter,
       chapterResponse: response,
+      docs: docs,
+      route: route,
+      progress: progress,
+      imagePaths: (route == null ? completedPaths : retainedPaths).toList(),
       onlineCatalog: onlineCatalog,
-      skippedPaths: skippedPaths,
     );
+    if (route != null && retainedPaths.length > currentPaths.length) {
+      releaseChapterPages();
+      releaseChapterPages = null;
+      await deleteCancelledChapterPages(
+        task: task,
+        taskId: commitTask.id,
+        comicId: comicId,
+        docPaths: retainedPaths.difference(currentPaths).difference({
+          for (final saved in published)
+            for (final page in saved.images) page.path,
+        }),
+      );
+    }
 
-    updateCheckpoint(
-      (payload) => payload.copyWith(
-        stateCode: 'completed',
-        phaseCode: 'completed',
-        completedImages: jobs.length,
-        totalImages: jobs.length,
-        imagePaths: completedPaths.toList(),
-      ),
-    );
     reporter.updateMessage(t.download.statusDownloadProgressComplete);
-    await _markTaskCompleted(taskKey);
   } on DownloadTaskCancelledException {
-    // 检查点之间的取消同样要清理散图。
-    await deleteChapterFiles();
+    releaseChapterPages?.call();
+    releaseChapterPages = null;
+    if (!preserveCancelledDownloadFiles(taskKey)) {
+      await deleteCancelledChapterPages(
+        task: task,
+        taskId: taskId,
+        comicId: comicId,
+        docPaths: {...completedPaths, ...startedPaths},
+      );
+    }
+    rethrow;
+  } catch (error) {
+    if (startedPaths.isNotEmpty) {
+      updateCheckpoint(
+        (payload) => payload.copyWith(
+          imagePaths: {...payload.imagePaths, ...startedPaths}.toList(),
+        ),
+      );
+    }
+    if (shouldRetryUntilSuccess()) {
+      final reason = switch (error) {
+        ComicDownloadRouteUnavailable(:final retryReason) => retryReason,
+        DownloadImageJobException(:final retryReason) => retryReason,
+        _ => comicDownloadRetryReason(error),
+      };
+      if (reason != null) {
+        await ensureTaskRunning();
+        throw ComicDownloadRetryDeferred(reason);
+      }
+    }
     rethrow;
   } finally {
+    releaseChapterPages?.call();
     running = false;
     progressTimer?.cancel();
   }
 }
 
-Future<UnifiedPluginChapterResponse> _getChapterByPlugin({
-  required String from,
-  required String pluginId,
-  required String comicId,
-  required String chapterId,
-  required String runtimeName,
-  required Map<String, dynamic> extern,
-}) async {
-  return getComicChapterByPlugin(
-    comicId,
-    chapterId,
-    from,
-    pluginId: pluginId,
-    runtimeName: runtimeName,
-    extern: extern,
-  );
+void _validateDownloadChapterIdentity(
+  UnifiedPluginChapterResponse response,
+  DownloadChapterTaskRef selected,
+  String requestChapterId,
+  List<Map<String, dynamic>> catalog, {
+  String? expectedComicId,
+}) {
+  if (expectedComicId != null && response.comicId.trim() != expectedComicId) {
+    throw const FormatException('插件返回的图片与当前作品不匹配');
+  }
+  final expectedIds = {
+    selected.logicalKey.trim(),
+    selected.chapterId.trim(),
+    requestChapterId,
+  }..remove('');
+  final returnedIds = {
+    response.chapter.epId.trim(),
+    response.chapter.logicalKey.trim(),
+  }..remove('');
+  if (expectedComicId != null && returnedIds.isEmpty) {
+    throw const FormatException('插件未确认下载章节的标识');
+  }
+  // The request fields can echo what was sent even when the chapter itself
+  // names different content. Use them only for responses without a content ID.
+  if (returnedIds.isEmpty) {
+    final chapterRequest = response.chapter.requestId.trim();
+    final request = chapterRequest.isNotEmpty
+        ? chapterRequest
+        : response.chapterId.trim();
+    if (request.isNotEmpty) returnedIds.add(request);
+  }
+  final matchesRequested = expectedComicId == null
+      ? returnedIds.any(expectedIds.contains)
+      : returnedIds.every(expectedIds.contains);
+  if (returnedIds.isEmpty || matchesRequested) return;
+
+  // Older numeric-only tasks lack the content ID. A unique catalog entry can
+  // prove the alias through its explicit requestId, as used by Bika's API.
+  if (expectedIds.length == 1 &&
+      selected.order > 0 &&
+      requestChapterId == selected.order.toString()) {
+    final matches = catalog
+        .where(
+          (entry) => entry['requestId']?.toString().trim() == requestChapterId,
+        )
+        .take(2)
+        .toList();
+    if (matches.length == 1) {
+      final entry = matches.single;
+      if (returnedIds.contains(entry['id']?.toString().trim()) ||
+          returnedIds.contains(entry['logicalKey']?.toString().trim())) {
+        return;
+      }
+    }
+  }
+  throw const FormatException('插件返回的图片与当前章节不匹配');
 }
 
 Future<void> _saveUnifiedDownloadChapter({
+  required int taskId,
+  required String taskKey,
+  required int attempt,
   required String from,
   required String comicId,
   required normal.NormalComicAllInfo normalInfo,
   required DownloadChapter selectedChapter,
   required UnifiedPluginChapterResponse chapterResponse,
+  required List<UnifiedPluginChapterDoc> docs,
+  ComicDownloadRoute? route,
+  required DownloadImageJobsResult progress,
+  required List<String> imagePaths,
   List<Map<String, dynamic>>? onlineCatalog,
   Set<String> skippedPaths = const {},
 }) async {
@@ -450,13 +710,22 @@ Future<void> _saveUnifiedDownloadChapter({
       'groupTitle': selectedChapter.groupTitle,
       'extern': Map<String, dynamic>.from(selectedChapter.extern),
     },
-    'docs': chapterResponse.chapter.docs.map((d) => d.toMap()).toList(),
+    'docs': [
+      for (final doc in docs)
+        if (route == null)
+          doc.toMap()
+        else
+          {'id': doc.id, 'name': doc.name, 'path': doc.path},
+    ],
+    'downloadApiHost': route?.apiHost ?? '',
+    'downloadImageHost': route?.imageHost ?? '',
     'epId': chapterResponse.chapter.epId,
     'epName': chapterResponse.chapter.epName,
     'from': from,
     'comicId': comicId,
     'mainVersion': mainVersion,
     'onlineCatalog': onlineCatalog,
+    'completedAtMs': now.millisecondsSinceEpoch,
     'skippedPaths': skippedPaths.toList(),
   };
   final built = await workerManager.execute<Map<String, dynamic>>(
@@ -466,6 +735,13 @@ Future<void> _saveUnifiedDownloadChapter({
   // 记录落库 + 根目录下载链接，同一个后台事务里提交，主线程零写库。
   // 失败时回退主线程直写，保证记录不丢。
   final saveArgs = <String, dynamic>{
+    'taskId': taskId,
+    'taskKey': taskKey,
+    'attempt': attempt,
+    'completedStatus': t.download.notificationCompleteTitle,
+    'completedImages': progress.completed,
+    'reusedImages': progress.reused,
+    'imagePaths': imagePaths,
     'entity': {
       'id': existing?.id ?? 0,
       'uniqueKey': key,
@@ -501,15 +777,23 @@ Future<void> _saveUnifiedDownloadChapter({
     'deviceId': syncDeviceId,
   };
   try {
-    await objectbox.store.runInTransactionAsync<int, Map<String, dynamic>>(
-      TxMode.write,
-      _saveDownloadRecordOnWorker,
-      saveArgs,
-    );
+    final committed = await objectbox.store
+        .runInTransactionAsync<int, Map<String, dynamic>>(
+          TxMode.write,
+          commitDownloadChapterOnWorker,
+          saveArgs,
+        );
+    if (committed < 0) throw const DownloadTaskCancelledException();
+  } on DownloadTaskCancelledException {
+    rethrow;
   } catch (e) {
     // 后台提交失败时回退主线程直写（同一函数，主 store）。
     logger.w('后台落库失败，回退主线程: $key', error: e);
-    _saveDownloadRecordOnWorker(objectbox.store, saveArgs);
+    final committed = objectbox.store.runInTransaction(
+      TxMode.write,
+      () => commitDownloadChapterOnWorker(objectbox.store, saveArgs),
+    );
+    if (committed < 0) throw const DownloadTaskCancelledException();
   }
 }
 
@@ -566,11 +850,19 @@ Map<String, dynamic> _buildDownloadRecordJson(Map<String, dynamic> args) {
   final storedChapter = _buildStoredChapter(
     selected,
     response,
+    completedAt: DateTime.fromMillisecondsSinceEpoch(
+      args['completedAtMs'] as int,
+      isUtc: true,
+    ),
     skippedPaths: skippedPaths,
+    downloadApiHost: args['downloadApiHost'] as String,
+    downloadImageHost: args['downloadImageHost'] as String,
   );
-  final existingIndex = storedChapters.indexWhere(
-    (item) => _storedChapterMatches(item, selected),
-  );
+  final existingIndex = storedChapter.downloadApiHost.isEmpty
+      ? storedChapters.indexWhere(
+          (item) => _storedChapterMatches(item, selected),
+        )
+      : _automaticReplacementIndex(storedChapters, selected);
   if (existingIndex >= 0) {
     storedChapters[existingIndex] = storedChapter;
   } else {
@@ -645,7 +937,15 @@ Map<String, dynamic> _buildDownloadRecordJson(Map<String, dynamic> args) {
 /// 后台 isolate 里落下载记录 + 根目录下载链接（同一事务，顶层函数）。
 ///
 /// 失败时调用方会用主 store 直接调本函数重试，因此函数体不能依赖 worker 特有状态。
-int _saveDownloadRecordOnWorker(Store store, Map<String, dynamic> args) {
+@visibleForTesting
+int commitDownloadChapterOnWorker(Store store, Map<String, dynamic> args) {
+  final task = store.box<DownloadTask>().get(args['taskId'] as int);
+  if (!downloadTaskMayCommit(
+    task,
+    taskKey: args['taskKey'] as String,
+    attempt: args['attempt'] as int,
+  ))
+    return -1;
   final e = Map<String, dynamic>.from(args['entity'] as Map);
   final entity = UnifiedComicDownload(
     uniqueKey: e['uniqueKey'] as String,
@@ -719,6 +1019,24 @@ int _saveDownloadRecordOnWorker(Store store, Map<String, dynamic> args) {
       ),
     );
   }
+  // Publish the committed resource and its terminal task atomically. A later
+  // cancel sees completed and cannot delete files belonging to this resource.
+  // The periodic checkpoint may still be in flight at this point.
+  final completedImages = args['completedImages'] as int;
+  final committedTask = task!;
+  committedTask
+    ..status = args['completedStatus'] as String? ?? committedTask.status
+    ..isCompleted = true
+    ..isDownloading = false
+    ..taskInfo = committedTask.taskInfo!.copyWith(
+      stateCode: 'completed',
+      phaseCode: 'completed',
+      completedImages: completedImages,
+      reusedImages: args['reusedImages'] as int,
+      totalImages: completedImages,
+      imagePaths: List<String>.from(args['imagePaths'] as List),
+    );
+  store.box<DownloadTask>().put(committedTask);
   return 0;
 }
 
@@ -735,7 +1053,10 @@ String _bumpLinkVersionVector(String raw, String deviceId) {
 UnifiedComicDownloadStoredChapter _buildStoredChapter(
   DownloadChapter selectedChapter,
   UnifiedPluginChapterResponse response, {
+  required DateTime completedAt,
   Set<String> skippedPaths = const {},
+  String downloadApiHost = '',
+  String downloadImageHost = '',
 }) {
   // 注意：此函数会在后台 isolate 里运行，不要在这里打 logger/碰 IO。
   return UnifiedComicDownloadStoredChapter(
@@ -751,11 +1072,14 @@ UnifiedComicDownloadStoredChapter _buildStoredChapter(
     // 显式保存 storageChapterId，确保显式指定了 storage key 的插件能正确还原。
     storageChapterId: selectedChapter.effectiveStorageId,
     groupTitle: selectedChapter.groupTitle,
+    downloadApiHost: downloadApiHost,
+    downloadImageHost: downloadImageHost,
+    completedAt: completedAt,
     images: response.chapter.docs.map((doc) {
       final imageName = _resolveImageDisplayName(doc);
-      final imagePath = normalizeStoredAssetPath(doc.path);
+      final imagePath = normalizeStoredAssetPath(doc.path, allowEmpty: true);
       // 真 404 而跳过的图打标记：阅读器显示缺图占位，导出不再补下。
-      final skipped = skippedPaths.contains(imagePath);
+      final skipped = imagePath.isEmpty || skippedPaths.contains(imagePath);
       return UnifiedComicDownloadImage(
         id: doc.id.isNotEmpty
             ? doc.id
@@ -767,6 +1091,27 @@ UnifiedComicDownloadStoredChapter _buildStoredChapter(
       );
     }).toList(),
   );
+}
+
+int _automaticReplacementIndex(
+  List<UnifiedComicDownloadStoredChapter> stored,
+  DownloadChapter selected,
+) {
+  final exact = [
+    for (final (index, chapter) in stored.indexed)
+      if (chapter.logicalKey.trim() == selected.id) index,
+  ];
+  if (exact.length == 1) return exact.single;
+  final legacy = [
+    for (final (index, chapter) in stored.indexed)
+      if (chapter.logicalKey.trim().isEmpty &&
+          _storedChapterMatches(chapter, selected))
+        index,
+  ];
+  if (exact.length > 1 || legacy.length > 1) {
+    throw const FormatException('本地下载章节标识重复');
+  }
+  return legacy.isEmpty ? -1 : legacy.single;
 }
 
 /// 章节身份只认 logical / request 系 key，storage 系 key
@@ -885,24 +1230,4 @@ Map<String, dynamic> _normalizeStoredCreatorMap(Map<String, dynamic> creator) {
     map['avatar'] = _normalizeStoredImageMap(avatar);
   }
   return map;
-}
-
-Future<void> _markTaskCompleted(String taskKey) async {
-  const repository = DownloadTaskRepository();
-  // 先排空在途的 checkpoint 写，再落完成态，防止旧写覆盖。
-  await repository.flushTaskWrites(taskKey);
-  final task = repository.findByTaskKey(taskKey);
-  if (task == null) return;
-  final payload = repository.readPayload(task);
-  task
-    ..isCompleted = true
-    ..isDownloading = false
-    ..status = t.download.notificationCompleteTitle;
-  if (payload != null) {
-    task.taskInfo = payload.copyWith(
-      stateCode: 'completed',
-      phaseCode: 'completed',
-    );
-  }
-  objectbox.downloadTaskBox.put(task);
 }

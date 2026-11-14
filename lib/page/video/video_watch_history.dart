@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 import 'package:zephyr/page/video/video_playback_identity.dart';
+import 'package:zephyr/page/video/api_video_models.dart';
 
 /// Local viewing metadata only. Never stores cookies, credentials or media
 /// source URLs, and never shares the comic reader's page/episode model.
@@ -16,6 +17,8 @@ class VideoWatchRecord {
     required this.updatedAt,
     required this.completed,
     this.coverUrl,
+    this.localResourceId,
+    this.metadata = const {},
   });
 
   final Uri watchUrl;
@@ -24,6 +27,32 @@ class VideoWatchRecord {
   final Duration position, duration;
   final DateTime updatedAt;
   final bool completed;
+  final String? localResourceId;
+  final Map<String, String> metadata;
+
+  static Map<String, String> _metadata(Object? raw) => raw is Map
+      ? {
+          for (final key in [
+            'typeName',
+            'genres',
+            'year',
+            'area',
+            'language',
+            'writers',
+          ])
+            if (raw[key] is String && (raw[key] as String).trim().isNotEmpty)
+              key: apiVideoText(raw[key], key == 'year' ? 100 : 500),
+        }
+      : {};
+
+  static Map<String, String> metadataFromItem(ApiVideoItem item) => _metadata({
+    'typeName': item.typeName,
+    'genres': item.genres,
+    'year': item.year,
+    'area': item.area,
+    'language': item.language,
+    'writers': item.writers,
+  });
 
   static Uri? canonicalUrl(Uri url) {
     return videoPlaybackIdentity(url);
@@ -39,6 +68,8 @@ class VideoWatchRecord {
     'duration': duration.inMilliseconds,
     'updatedAt': updatedAt.millisecondsSinceEpoch,
     'completed': completed,
+    if (localResourceId != null) 'localResourceId': localResourceId,
+    if (metadata.isNotEmpty) 'metadata': _metadata(metadata),
   };
 
   static VideoWatchRecord? fromJson(Object? raw) {
@@ -63,6 +94,7 @@ class VideoWatchRecord {
       return null;
     }
     final cover = Uri.tryParse('${raw['coverUrl'] ?? ''}');
+    final resource = raw['localResourceId'];
     return VideoWatchRecord(
       watchUrl: watch,
       title: title.trim().substring(0, title.trim().length.clamp(0, 300)),
@@ -70,6 +102,11 @@ class VideoWatchRecord {
       duration: Duration(milliseconds: duration),
       updatedAt: DateTime.fromMillisecondsSinceEpoch(timestamp, isUtc: true),
       completed: raw['completed'] == true,
+      localResourceId:
+          resource is String && RegExp(r'^[a-f0-9]{64}$').hasMatch(resource)
+          ? resource
+          : null,
+      metadata: Map.unmodifiable(_metadata(raw['metadata'])),
       coverUrl:
           cover?.scheme == 'https' &&
               cover?.host.isNotEmpty == true &&
@@ -85,6 +122,26 @@ class VideoWatchHistory {
   static const limit = 200;
   static const _prefix = 'breeze.video.history.v1.';
   static Future<void>? _writes;
+
+  static Future<void> flush() async {
+    await _writes;
+  }
+
+  /// Keep whole-history import and recovery in the queue with normal writes.
+  static Future<T> serializePortableWrite<T>(Future<T> Function() write) =>
+      _serialize(write);
+
+  static Future<T> _serialize<T>(Future<T> Function() action) {
+    final job = (_writes ?? Future<void>.value()).then((_) => action());
+    final tail = job.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    _writes = tail;
+    unawaited(
+      tail.then((_) {
+        if (identical(_writes, tail)) _writes = null;
+      }),
+    );
+    return job;
+  }
 
   static String _key(String source) {
     if (source.trim().isEmpty || source.length > 200) {
@@ -113,8 +170,7 @@ class VideoWatchHistory {
   }
 
   static Future<List<VideoWatchRecord>> read(String source) async {
-    final pending = _writes;
-    if (pending != null) await pending.catchError((_) {});
+    await flush();
     final store = await SharedPreferences.getInstance();
     return List.unmodifiable(_decode(store.getString(_key(source))));
   }
@@ -128,9 +184,7 @@ class VideoWatchHistory {
     change,
   ) {
     final key = _key(source);
-    final job = (_writes ?? Future<void>.value()).catchError((_) {}).then((
-      _,
-    ) async {
+    return _serialize(() async {
       final store = await SharedPreferences.getInstance();
       final records = _decode(store.getString(key));
       await change(store, records);
@@ -143,26 +197,26 @@ class VideoWatchHistory {
       if (!saved) throw StateError('Video history was not saved');
       changes.value++;
     });
-    _writes = job;
-    void release() {
-      if (identical(_writes, job)) _writes = null;
-    }
-
-    unawaited(
-      job.then<void>(
-        (_) => release(),
-        onError: (Object _, StackTrace _) => release(),
-      ),
-    );
-    return job;
   }
 
   static Future<void> record(String source, VideoWatchRecord record) {
     final valid = VideoWatchRecord.fromJson(record.toJson());
     if (valid == null) return Future<void>.value();
     return _change(source, (_, records) async {
+      final page = videoPublicPage(valid.watchUrl);
+      final previous = records
+          .where(
+            (item) =>
+                item.metadata.isNotEmpty &&
+                videoPublicPage(item.watchUrl) == page,
+          )
+          .firstOrNull;
+      final merged = VideoWatchRecord.fromJson({
+        ...valid.toJson(),
+        'metadata': {...?previous?.metadata, ...valid.metadata},
+      })!;
       records.removeWhere((item) => item.watchUrl == valid.watchUrl);
-      records.insert(0, valid);
+      records.insert(0, merged);
     });
   }
 

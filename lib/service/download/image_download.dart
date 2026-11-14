@@ -1,3 +1,6 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:pool/pool.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/network/http/picture/picture.dart';
@@ -29,6 +32,34 @@ class DownloadImageJobException implements Exception {
 
   final DownloadImageJob job;
   final DownloadPictureResult result;
+
+  int? get httpStatus => switch (result.error) {
+    DownloadPictureHttpException(:final statusCode) => statusCode,
+    DownloadPictureNotFoundException(
+      cause: DownloadPictureHttpException(:final statusCode),
+    ) =>
+      statusCode,
+    _ => null,
+  };
+
+  ComicDownloadRetryReason? get retryReason {
+    final cause = result.error;
+    if (cause == null ||
+        result.status == DownloadPictureResultStatus.notFound ||
+        isNonRetryableDownloadFailure(cause)) {
+      return null;
+    }
+    if (httpStatus case final status? when status >= 400) {
+      return comicDownloadHttpRetryReason(status);
+    }
+    if (cause is DownloadPictureInvalidPayload && cause.incomplete) {
+      return ComicDownloadRetryReason.network;
+    }
+    if (cause is DownloadPictureHttpException) {
+      return comicDownloadRetryReason(cause.message);
+    }
+    return comicDownloadRetryReason(cause);
+  }
 
   @override
   String toString() {
@@ -70,7 +101,7 @@ class DownloadImageJobsResult {
   final int downloaded;
   final int reused;
 
-  /// 真 404 / 空数据而跳过的图片数（不计入失败，不阻塞完成）。
+  /// 被标记为缺页的图片数（不计入失败，不阻塞完成）。
   final int skipped;
 }
 
@@ -82,18 +113,32 @@ Future<String> downloadCoverAsset({
   required String qjsName,
   required String qjsTaskGroupKey,
   bool Function()? shouldRetryUntilSuccess,
-}) {
-  return downloadPicture(
+  bool retry = true,
+}) async {
+  final result = await downloadPictureResult(
     from: from,
     url: url,
     path: path,
     cartoonId: cartoonId,
     pictureType: PictureType.cover,
-    retry: true,
+    retry: retry,
+    requestTimeoutMs: retry ? 30000 : 8000,
     shouldRetryUntilSuccess: shouldRetryUntilSuccess,
     qjsName: qjsName,
     qjsTaskGroupKey: qjsTaskGroupKey,
   );
+  _throwLocalFileFailure(result);
+  return result.isSuccess ? result.path : '404';
+}
+
+void _throwLocalFileFailure(DownloadPictureResult result) {
+  final error = result.error;
+  if (error is FileSystemException) {
+    Error.throwWithStackTrace(
+      error,
+      result.errorStackTrace ?? StackTrace.current,
+    );
+  }
 }
 
 /// 图片下载并发数：优先调用插件 `getDownloadConcurrency` 获取
@@ -101,6 +146,7 @@ Future<String> downloadCoverAsset({
 Future<int> resolveDownloadConcurrency({
   required String from,
   String? pluginId,
+  String? taskGroupKey,
 }) async {
   const fallback = 5;
   try {
@@ -109,6 +155,7 @@ Future<int> resolveDownloadConcurrency({
       pluginId: pluginId,
       fnPath: 'getDownloadConcurrency',
       core: const <String, dynamic>{},
+      taskGroupKey: taskGroupKey,
     );
     Object? raw = data['concurrency'] ?? data['value'];
     if (raw == null && data['data'] is Map) {
@@ -131,8 +178,12 @@ Future<DownloadImageJobsResult> downloadImageJobs({
   required String qjsTaskGroupKey,
   required Future<void> Function() ensureTaskRunning,
   bool Function()? shouldRetryUntilSuccess,
+  bool isolatedPages = false,
+  bool stopOnMissingPage = false,
+  Future<Uint8List> Function(DownloadImageJob job)? preparedImage,
   required DownloadProgressReporter reporter,
   Future<void> Function(Object error, DownloadImageJob job)? onError,
+  void Function(DownloadImageJob job)? onJobStarted,
   Future<void> Function(
     int completed,
     int downloaded,
@@ -169,6 +220,15 @@ Future<DownloadImageJobsResult> downloadImageJobs({
   Object? firstError;
   StackTrace? firstErrorStackTrace;
 
+  Future<void> ensureWorkerRunning() async {
+    // A sibling may already be inside continuous retry when the first job
+    // fails. Stop starting new attempts before waiting for all workers.
+    if (firstError case final error?) {
+      Error.throwWithStackTrace(error, firstErrorStackTrace!);
+    }
+    await ensureTaskRunning();
+  }
+
   Future<void> runWorker() async {
     try {
       while (firstError == null) {
@@ -185,6 +245,7 @@ Future<DownloadImageJobsResult> downloadImageJobs({
         if (currentJob == null) {
           return;
         }
+        onJobStarted?.call(currentJob);
         var jobSkipped = false;
         try {
           final result = await _downloadSingleJob(
@@ -192,8 +253,10 @@ Future<DownloadImageJobsResult> downloadImageJobs({
             job: currentJob,
             qjsRuntimeName: qjsRuntimeName,
             qjsTaskGroupKey: qjsTaskGroupKey,
-            ensureTaskRunning: ensureTaskRunning,
+            ensureTaskRunning: ensureWorkerRunning,
             shouldRetryUntilSuccess: shouldRetryUntilSuccess,
+            isolatedPage: isolatedPages,
+            preparedImage: preparedImage,
             onError: onError,
             pictureType: PictureType.page,
           );
@@ -204,15 +267,14 @@ Future<DownloadImageJobsResult> downloadImageJobs({
             downloaded++;
           }
         } on DownloadImageJobException catch (e) {
-          // 真 404 / 空数据：记跳过，不失败整章。
-          if (e.result.status == DownloadPictureResultStatus.notFound ||
-              e.result.status == DownloadPictureResultStatus.emptyData) {
-            progress++;
-            skipped++;
-            jobSkipped = true;
-          } else {
+          if (isolatedPages ||
+              stopOnMissingPage ||
+              e.result.status != DownloadPictureResultStatus.notFound) {
             rethrow;
           }
+          progress++;
+          skipped++;
+          jobSkipped = true;
         }
         if (onProgress != null) {
           await onProgress(
@@ -233,8 +295,17 @@ Future<DownloadImageJobsResult> downloadImageJobs({
         await ensureTaskRunning();
       }
     } catch (error, stackTrace) {
-      firstError ??= error;
-      firstErrorStackTrace ??= stackTrace;
+      final previous = firstError;
+      // A sibling already in flight can prove a terminal failure after the
+      // first transient failure. Stop the chapter instead of changing route.
+      if (previous == null ||
+          (previous is DownloadImageJobException &&
+              previous.retryReason != null &&
+              !(error is DownloadImageJobException &&
+                  error.retryReason != null))) {
+        firstError = error;
+        firstErrorStackTrace = stackTrace;
+      }
     }
   }
 
@@ -259,18 +330,29 @@ Future<DownloadPictureResult> _downloadSingleJob({
   required String qjsTaskGroupKey,
   required Future<void> Function() ensureTaskRunning,
   bool Function()? shouldRetryUntilSuccess,
+  bool isolatedPage = false,
+  Future<Uint8List> Function(DownloadImageJob job)? preparedImage,
   Future<void> Function(Object error, DownloadImageJob job)? onError,
   PictureType pictureType = PictureType.comic,
 }) async {
+  var emptyResponses = 0;
   try {
     final result = await retryDownloadOperation<DownloadPictureResult>(
       operation: '下载图片 ${job.path}',
       ensureTaskRunning: ensureTaskRunning,
       shouldRetryUntilSuccess: shouldRetryUntilSuccess,
       shouldRetry: (error) {
+        if (isolatedPage) return false;
         if (error is! DownloadImageJobException) return true;
-        return error.result.status != DownloadPictureResultStatus.notFound &&
-            error.result.status != DownloadPictureResultStatus.emptyData;
+        if (error.result.status == DownloadPictureResultStatus.emptyData) {
+          // A successful HTTP response without bytes cannot establish that
+          // the page is missing. Bound repeated empty responses for this page.
+          emptyResponses++;
+          return emptyResponses <= downloadSilentRetryCount;
+        }
+        final cause = error.result.error;
+        return (cause == null || !isNonRetryableDownloadFailure(cause)) &&
+            error.result.status != DownloadPictureResultStatus.notFound;
       },
       action: () async {
         final result = await downloadPictureResult(
@@ -287,8 +369,14 @@ Future<DownloadPictureResult> _downloadSingleJob({
           qjsName: qjsRuntimeName,
           qjsTaskGroupKey: qjsTaskGroupKey,
           extern: job.extern,
+          isolatedPage: isolatedPage,
+          preparedImage: preparedImage == null
+              ? null
+              : () => preparedImage(job),
+          requestTimeoutMs: isolatedPage ? 12000 : 30000,
         );
         if (!result.isSuccess) {
+          _throwLocalFileFailure(result);
           throw DownloadImageJobException(job: job, result: result);
         }
         return result;

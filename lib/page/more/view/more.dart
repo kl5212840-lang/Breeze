@@ -1,3 +1,5 @@
+import 'package:zephyr/widgets/current_app_icon.dart';
+import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/more/more.dart';
@@ -10,11 +12,15 @@ class MorePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
+        bottom: NativeNavigationInset.of(context) == 0,
         child: Align(
           alignment: Alignment.topCenter,
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 768),
             child: ListView(
+              padding: NativeNavigationInset.of(context) == 0
+                  ? null
+                  : EdgeInsets.only(bottom: NativeNavigationInset.of(context)),
               children: [
                 const SizedBox(height: 24),
                 _buildHeader(context),
@@ -30,10 +36,7 @@ class MorePage extends StatelessWidget {
   Widget _buildHeader(BuildContext context) {
     return Column(
       children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(24),
-          child: Image.asset('asset/image/app-icon.png', width: 88, height: 88),
-        ),
+        const CurrentAppIcon(key: ValueKey('more.current-app-icon')),
         const SizedBox(height: 12),
         Text(
           'Breeze',

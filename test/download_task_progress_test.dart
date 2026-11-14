@@ -61,4 +61,14 @@ void main() {
       0.75,
     );
   });
+  test('work progress counts selected and stored chapters rather than the active chapter alone', () {
+    final running = _payload(completed: 2, total: 4).copyWith(stateCode: 'running');
+    final queued = _payload().copyWith(chapterRef: const DownloadChapterTaskRef(logicalKey: 'second'), stateCode: 'queued');
+    expect(downloadWorkProgressFraction([running, queued]), .25);
+    expect(downloadWorkProgressFraction([running, queued], storedChapterKeys: ['already-saved']), .5);
+    expect(downloadWorkProgressFraction([running.copyWith(stateCode: 'completed'), queued]), .5);
+    expect(downloadWorkProgressFraction([running, queued.copyWith(stateCode: 'running')]), isNull);
+    expect(downloadWorkProgressFraction([running], storedChapterKeys: ['chapter-1']), .5, reason: 'A stored/request alias must not count the same chapter twice');
+  });
+
 }

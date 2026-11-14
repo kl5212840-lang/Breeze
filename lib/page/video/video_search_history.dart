@@ -2,11 +2,15 @@ import 'dart:async';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Local, per-source search words. Never part of official settings sync,
-/// browser diagnostics or site requests other than an explicit search.
+/// Per-source search words, included in portable application data.
+/// They are never sent to a site except by an explicit search.
 abstract final class VideoSearchHistory {
   static const limit = 12;
   static Future<void>? _pending;
+
+  static Future<void> flush() async {
+    await _pending?.catchError((Object _) {});
+  }
 
   static String _key(String source) {
     if (source.isEmpty || source.length > 200) throw ArgumentError('source');
@@ -70,5 +74,10 @@ abstract final class VideoSearchHistory {
 
   static Future<void> remove(String source, String word) =>
       _change(source, (words) => words.where((old) => old != word).toList());
+  static Future<void> removeMany(String source, Set<String> selected) =>
+      _change(
+        source,
+        (words) => words.where((old) => !selected.contains(old)).toList(),
+      );
   static Future<void> clear(String source) => _change(source, (_) => []);
 }

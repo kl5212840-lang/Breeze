@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/touch_hover_intent.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -6,8 +7,8 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/platform/eink/eink_device.dart';
 import 'package:zephyr/platform/eink/eink_refresh.dart';
-import 'package:zephyr/widgets/fluent_dropdown.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/widgets/breeze_switch.dart';
 
 @RoutePage()
 class EInkSettingPage extends StatefulWidget {
@@ -33,8 +34,9 @@ class _EInkSettingPageState extends State<EInkSettingPage> {
     final readSetting = cubit.state.readSetting;
 
     return SettingPageShell(
+      grouped: true,
       title: t.settings.einkPageTitle,
-      child: ListView(
+      child: SettingListView(
         children: [
           settingSectionTitle(
             context,
@@ -57,26 +59,32 @@ class _EInkSettingPageState extends State<EInkSettingPage> {
               );
             },
           ),
-          SwitchListTile(
-            secondary: const Icon(Icons.power_settings_new_outlined),
-            title: Text(t.settings.einkEnabled),
-            subtitle: Text(t.settings.einkEnabledSubtitle),
-            thumbIcon: kSettingSwitchThumbIcon,
-            value: eink.enabled,
-            onChanged: (value) => cubit.updateState(
-              (current) => current.copyWith(
-                eInkSetting: current.eInkSetting.copyWith(
-                  enabled: value,
-                  detectionHandled: true,
+          TouchHoverIntent(
+            identity: 'eink_setting_page.switch:0',
+            builder: (context, hover) => BreezeSwitchListTile(
+              SwitchListTile.adaptive(
+                hoverColor: hover.hoverColor(),
+                secondary: const Icon(Icons.power_settings_new_outlined),
+                title: Text(t.settings.einkEnabled),
+                subtitle: Text(t.settings.einkEnabledSubtitle),
+                thumbIcon: settingSwitchThumbIcon(context),
+                value: eink.enabled,
+                onChanged: (value) => cubit.updateState(
+                  (current) => current.copyWith(
+                    eInkSetting: current.eInkSetting.copyWith(
+                      enabled: value,
+                      detectionHandled: true,
+                    ),
+                    // 开启时把阅读侧已有的「无动画」「墨水屏优化」一并打开；
+                    // 这两项只在阅读设置里单独调整，本页不重复列出。
+                    readSetting: value
+                        ? current.readSetting.copyWith(
+                            noAnimation: true,
+                            einkOptimization: true,
+                          )
+                        : current.readSetting,
+                  ),
                 ),
-                // 开启时把阅读侧已有的「无动画」「墨水屏优化」一并打开；
-                // 这两项只在阅读设置里单独调整，本页不重复列出。
-                readSetting: value
-                    ? current.readSetting.copyWith(
-                        noAnimation: true,
-                        einkOptimization: true,
-                      )
-                    : current.readSetting,
               ),
             ),
           ),
@@ -86,24 +94,35 @@ class _EInkSettingPageState extends State<EInkSettingPage> {
               t.settings.einkSectionAnimation,
               icon: Icons.animation_outlined,
             ),
-            SwitchListTile(
-              secondary: const Icon(Icons.arrow_back_outlined),
-              title: Text(t.settings.einkNoRouteTransition),
-              subtitle: Text(t.settings.einkNoRouteTransitionSubtitle),
-              thumbIcon: kSettingSwitchThumbIcon,
-              value: eink.noRouteTransition,
-              onChanged: (value) => cubit.updateEInkSetting(
-                (current) => current.copyWith(noRouteTransition: value),
+            TouchHoverIntent(
+              identity: 'eink_setting_page.switch:1',
+              builder: (context, hover) => BreezeSwitchListTile(
+                SwitchListTile.adaptive(
+                  hoverColor: hover.hoverColor(),
+                  secondary: const Icon(Icons.arrow_back_outlined),
+                  title: Text(t.settings.einkNoRouteTransition),
+                  thumbIcon: settingSwitchThumbIcon(context),
+                  value: eink.noRouteTransition,
+                  onChanged: (value) => cubit.updateEInkSetting(
+                    (current) => current.copyWith(noRouteTransition: value),
+                  ),
+                ),
               ),
             ),
-            SwitchListTile(
-              secondary: const Icon(Icons.vertical_align_bottom_outlined),
-              title: Text(t.settings.einkNoScrollBounce),
-              subtitle: Text(t.settings.einkNoScrollBounceSubtitle),
-              thumbIcon: kSettingSwitchThumbIcon,
-              value: eink.noScrollBounce,
-              onChanged: (value) => cubit.updateEInkSetting(
-                (current) => current.copyWith(noScrollBounce: value),
+            TouchHoverIntent(
+              identity: 'eink_setting_page.switch:2',
+              builder: (context, hover) => BreezeSwitchListTile(
+                SwitchListTile.adaptive(
+                  hoverColor: hover.hoverColor(),
+                  secondary: const Icon(Icons.vertical_align_bottom_outlined),
+                  title: Text(t.settings.einkNoScrollBounce),
+                  subtitle: Text(t.settings.einkNoScrollBounceSubtitle),
+                  thumbIcon: settingSwitchThumbIcon(context),
+                  value: eink.noScrollBounce,
+                  onChanged: (value) => cubit.updateEInkSetting(
+                    (current) => current.copyWith(noScrollBounce: value),
+                  ),
+                ),
               ),
             ),
             settingSectionTitle(
@@ -111,14 +130,20 @@ class _EInkSettingPageState extends State<EInkSettingPage> {
               t.settings.einkSectionLoading,
               icon: Icons.download_outlined,
             ),
-            SwitchListTile(
-              secondary: const Icon(Icons.hourglass_empty_outlined),
-              title: Text(t.settings.einkNoSpinner),
-              subtitle: Text(t.settings.einkNoSpinnerSubtitle),
-              thumbIcon: kSettingSwitchThumbIcon,
-              value: eink.noLoadingSpinner,
-              onChanged: (value) => cubit.updateEInkSetting(
-                (current) => current.copyWith(noLoadingSpinner: value),
+            TouchHoverIntent(
+              identity: 'eink_setting_page.switch:3',
+              builder: (context, hover) => BreezeSwitchListTile(
+                SwitchListTile.adaptive(
+                  hoverColor: hover.hoverColor(),
+                  secondary: const Icon(Icons.hourglass_empty_outlined),
+                  title: Text(t.settings.einkNoSpinner),
+                  subtitle: Text(t.settings.einkNoSpinnerSubtitle),
+                  thumbIcon: settingSwitchThumbIcon(context),
+                  value: eink.noLoadingSpinner,
+                  onChanged: (value) => cubit.updateEInkSetting(
+                    (current) => current.copyWith(noLoadingSpinner: value),
+                  ),
+                ),
               ),
             ),
             settingSectionTitle(
@@ -148,31 +173,40 @@ class _EInkSettingPageState extends State<EInkSettingPage> {
                 (current) => current.copyWith(autoRefreshEveryNTurns: value),
               ),
             ),
-            SwitchListTile(
-              secondary: const Icon(Icons.control_camera_outlined),
-              title: Text(t.settings.einkShowRefreshButton),
-              subtitle: Text(t.settings.einkShowRefreshButtonSubtitle),
-              thumbIcon: kSettingSwitchThumbIcon,
-              value: eink.showRefreshButton,
-              onChanged: (value) => cubit.updateEInkSetting(
-                (current) => current.copyWith(showRefreshButton: value),
+            TouchHoverIntent(
+              identity: 'eink_setting_page.switch:4',
+              builder: (context, hover) => BreezeSwitchListTile(
+                SwitchListTile.adaptive(
+                  hoverColor: hover.hoverColor(),
+                  secondary: const Icon(Icons.control_camera_outlined),
+                  title: Text(t.settings.einkShowRefreshButton),
+                  subtitle: Text(t.settings.einkShowRefreshButtonSubtitle),
+                  thumbIcon: settingSwitchThumbIcon(context),
+                  value: eink.showRefreshButton,
+                  onChanged: (value) => cubit.updateEInkSetting(
+                    (current) => current.copyWith(showRefreshButton: value),
+                  ),
+                ),
               ),
             ),
             if (eink.canFullRefresh)
-              ListTile(
-                leading: const Icon(Icons.flash_on_outlined),
-                title: Text(t.settings.einkRefreshNow),
-                trailing: const Icon(Icons.play_arrow),
-                onTap: () async {
-                  await EinkRefresh.run(
-                    eink.refreshMode,
-                    holdMs: readSetting.einkDelayMs.clamp(50, 500),
-                  );
-                  showSuccessToast(t.settings.einkRefreshDone);
-                },
+              TouchHoverIntent(
+                identity: 'eink_setting_page:1',
+                builder: (context, hover) => ListTile(
+                  hoverColor: hover.hoverColor(),
+                  leading: const Icon(Icons.flash_on_outlined),
+                  title: Text(t.settings.einkRefreshNow),
+                  trailing: const Icon(Icons.play_arrow),
+                  onTap: () async {
+                    await EinkRefresh.run(
+                      eink.refreshMode,
+                      holdMs: readSetting.einkDelayMs.clamp(50, 500),
+                    );
+                    showSuccessToast(t.settings.einkRefreshDone);
+                  },
+                ),
               ),
           ],
-          const SizedBox(height: 32),
         ],
       ),
     );
@@ -190,16 +224,14 @@ class _EInkSettingPageState extends State<EInkSettingPage> {
     required ValueChanged<T> onChanged,
   }) {
     final safeValue = values.contains(value) ? value : values.first;
-    return ListTile(
+    return SettingChoiceTile<T>(
       leading: Icon(icon),
-      title: Text(title),
-      subtitle: subtitle == null ? null : Text(subtitle),
-      trailing: FluentDropdown<T>(
-        value: safeValue,
-        displayValue: label(safeValue),
-        items: {for (final item in values) item: label(item)},
-        onChanged: onChanged,
-      ),
+      title: title,
+      description: subtitle,
+      value: safeValue,
+      valueIsFallback: safeValue != value,
+      items: {for (final item in values) item: label(item)},
+      onChanged: onChanged,
     );
   }
 }

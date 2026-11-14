@@ -8,6 +8,7 @@ import 'package:video_player_platform_interface/video_player_platform_interface.
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
 import 'package:zephyr/page/video/native_video_page.dart';
+import 'package:zephyr/page/video/video_site_operations.dart';
 import 'package:zephyr/page/video/video_thumbnail.dart';
 
 /// Only replaces platform playback. This test does not contact or attest to
@@ -190,6 +191,139 @@ void main() {
       expect(creatorOpens, 1);
       expect(worksOpens, 1);
       expect(uploaderOpens, 1);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'online Hanime keeps author actions above compact direct playback tools',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      const title =
+          'Online video with a long source title that takes several lines';
+      final detail =
+          NativePlaybackSession.fromDetailResponse({
+            'data': {
+              'title': title,
+              'creator': {
+                'name': 'Author profile',
+                'profileUrl': '/user/11',
+                'artistId': '11',
+              },
+              'sequenceKind': 'sitePlaylist',
+              'playlist': [
+                {
+                  'title': 'Other video',
+                  'watchUrl': 'https://hanime1.me/watch?v=43',
+                },
+              ],
+            },
+          }, watchUrl: watch).withSources([
+            for (final label in ['1080p', '720p'])
+              NativePlaybackSource(
+                url: Uri.parse('https://fixture.test/$label.mp4'),
+                label: label,
+                headers: const {},
+              ),
+          ]);
+      final operations = VideoSiteOperations(
+        page: watch,
+        evaluate: (_) async => {
+          'status': 'ok',
+          'actor': 'signedIn',
+          'canFollow': true,
+          'canLike': true,
+          'following': false,
+          'liked': false,
+        },
+      );
+      addTearDown(operations.dispose);
+      var profiles = 0, works = 0;
+      Future<void> mount(double scale) => tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(scale)),
+            child: child!,
+          ),
+          home: NativeVideoPage(
+            session: detail,
+            siteOperations: operations,
+            onOpenVideo: (_) {},
+            onOpenCreator: () async {
+              profiles++;
+            },
+            onOpenCreatorWorks: () async {
+              works++;
+            },
+          ),
+        ),
+      );
+      await mount(1);
+      await tester.pump(const Duration(milliseconds: 100));
+      final author = find.byKey(const ValueKey('video.hanime.author'));
+      final follow = find.byKey(const ValueKey('video-follow'));
+      final worksButton = find.byKey(
+        const ValueKey('video.hanime.author-works'),
+      );
+      final sources = find.byKey(const ValueKey('video-inline.sources'));
+      final playlist = find.byKey(const ValueKey('video-inline.episodes'));
+      expect(
+        tester.getCenter(author).dy,
+        closeTo(tester.getCenter(follow).dy, 1),
+      );
+      expect(
+        tester.getCenter(author).dy,
+        closeTo(tester.getCenter(worksButton).dy, 1),
+      );
+      expect(
+        tester.getTopLeft(author).dy,
+        lessThan(tester.getTopLeft(find.text(title).last).dy),
+      );
+      expect(
+        tester.getTopLeft(sources).dy,
+        greaterThan(tester.getTopLeft(author).dy),
+      );
+      expect(
+        tester.getTopLeft(sources).dy,
+        closeTo(tester.getTopLeft(playlist).dy, 1),
+      );
+      expect(tester.getSize(sources).height, inInclusiveRange(44, 48));
+      await tester.tap(author);
+      await tester.pump();
+      await tester.tap(worksButton);
+      await tester.pump();
+      expect(profiles, 1);
+      expect(works, 1);
+      await tester.tap(find.text(t.videoCommunity.comments).first);
+      await tester.pumpAndSettle();
+      expect(sources.hitTestable(), findsOneWidget);
+      expect(playlist.hitTestable(), findsOneWidget);
+      expect(author.hitTestable(), findsNothing);
+      await tester.tap(find.text(t.videoCommunity.overview).first);
+      await tester.pumpAndSettle();
+      tester.view.physicalSize = const Size(320, 760);
+      await mount(1.7);
+      await tester.pumpAndSettle();
+      expect(tester.getSize(worksButton).height, greaterThanOrEqualTo(44));
+      expect(tester.getSize(follow).height, greaterThanOrEqualTo(44));
+      await tester.scrollUntilVisible(
+        sources,
+        64,
+        scrollable: find
+            .descendant(
+              of: find.byKey(PageStorageKey('video-detail.$watch')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      expect(tester.getSize(sources).height, greaterThanOrEqualTo(44));
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();

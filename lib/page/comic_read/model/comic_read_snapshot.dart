@@ -1,3 +1,4 @@
+import 'package:zephyr/network/http/plugin/unified_plugin_envelope.dart';
 import 'package:zephyr/page/comic_read/json/common_ep_info_json/common_ep_info_json.dart';
 import 'package:zephyr/page/comic_read/model/normal_comic_ep_info.dart';
 
@@ -17,8 +18,10 @@ class ComicReadSnapshot {
   final Map<String, dynamic> extern;
 
   factory ComicReadSnapshot.fromMap(Map<String, dynamic> map) {
+    requireSuccessfulPluginEnvelope(map);
     final data = _asMap(map['data']);
     final snapshot = data.isNotEmpty ? data : map;
+    requireSuccessfulPluginEnvelope(snapshot);
 
     return ComicReadSnapshot(
       source: map['source']?.toString() ?? '',
@@ -89,11 +92,15 @@ class ComicReadSnapshotChapter {
     required this.name,
     required this.order,
     required this.pages,
+    this.requestId = '',
+    this.logicalKey = '',
     this.extern = const {},
   });
 
   final String id;
   final String name;
+  final String requestId;
+  final String logicalKey;
   final int order;
   final List<ComicReadSnapshotPage> pages;
   final Map<String, dynamic> extern;
@@ -101,11 +108,22 @@ class ComicReadSnapshotChapter {
   factory ComicReadSnapshotChapter.fromMap(Map<String, dynamic> map) {
     return ComicReadSnapshotChapter(
       id: map['id']?.toString() ?? map['epId']?.toString() ?? '',
+      requestId: map['requestId']?.toString() ?? '',
+      logicalKey: map['logicalKey']?.toString() ?? '',
       name: map['name']?.toString() ?? map['epName']?.toString() ?? '',
       order: _toInt(map['order'], 0),
-      pages: _resolvePages(
-        map,
-      ).map((item) => ComicReadSnapshotPage.fromMap(_asMap(item))).toList(),
+      pages: _resolvePages(map).map((item) {
+        if (item is! Map) {
+          throw const FormatException('插件返回了无效的漫画图片');
+        }
+        final page = ComicReadSnapshotPage.fromMap(_asMap(item));
+        if (page.path.trim().isEmpty &&
+            page.url.trim().isEmpty &&
+            page.extern.isEmpty) {
+          throw const FormatException('插件返回了无效的漫画图片');
+        }
+        return page;
+      }).toList(),
       extern: _asMap(map['extern']),
     );
   }

@@ -1,3 +1,4 @@
+import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart' hide SearchBar;
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -20,7 +21,12 @@ class SearchPage extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => SourceExperienceBoundary(
+    source: searchState.from,
+    builder: _buildSourcePage,
+  );
+
+  Widget _buildSourcePage(BuildContext context) {
     return MultiBlocProvider(
       providers: [BlocProvider(create: (_) => SearchCubit(searchState))],
       child: _SearchPageContent(

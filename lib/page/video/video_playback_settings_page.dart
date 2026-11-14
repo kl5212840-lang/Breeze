@@ -1,12 +1,27 @@
-import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/widgets/touch_hover_intent.dart';
+import 'package:zephyr/page/search/widget/search_field_decoration.dart';
+import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/page/video/video_browse_theme.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/util/json/json_value.dart';
-import 'package:zephyr/page/video/video_interaction.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_playback_preferences.dart';
+import 'package:zephyr/widgets/breeze_switch.dart';
+
+const videoPlaybackSettingsRouteName = 'breeze.video.playback-settings';
+
+class VideoSettingsEntry {
+  const VideoSettingsEntry({
+    required this.key,
+    required this.title,
+    required this.group,
+    required this.child,
+  });
+  final String key, title, group;
+  final Widget child;
+}
 
 class VideoPlaybackSettingsPage extends StatefulWidget {
   const VideoPlaybackSettingsPage({
@@ -14,14 +29,18 @@ class VideoPlaybackSettingsPage extends StatefulWidget {
     this.readPreferences,
     this.source,
     this.sourceName,
-    this.onAccountSync,
+    this.title,
+    this.includeSourcePreferences = false,
+    this.additionalEntries = const [],
     this.readSourceBundle,
     this.saveSourcePreference,
     this.savePreference,
   });
 
   final String? source, sourceName;
-  final Future<void> Function()? onAccountSync;
+  final String? title;
+  final bool includeSourcePreferences;
+  final List<VideoSettingsEntry> additionalEntries;
   final Future<Map<String, dynamic>> Function()? readSourceBundle;
   final Future<void> Function(String, Object)? saveSourcePreference;
   final Future<VideoPlaybackPreferences> Function()? readPreferences;
@@ -48,6 +67,7 @@ class _VideoPlaybackSettingsPageState extends State<VideoPlaybackSettingsPage> {
   }
 
   Future<void> _readSource() async {
+    if (!widget.includeSourcePreferences) return;
     if (widget.source == null && widget.readSourceBundle == null) return;
     try {
       final bundle =
@@ -148,122 +168,14 @@ class _VideoPlaybackSettingsPageState extends State<VideoPlaybackSettingsPage> {
     String key,
     Object value,
     Map<Object, String> choices,
-  ) {
-    final theme = Theme.of(context), colors = theme.colorScheme;
-    Future<void> choose() async {
-      final next = await showVideoTaskSheet<Object>(
-        context: context,
-        builder: (sheet) => SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 8, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(title, style: theme.textTheme.titleMedium),
-                    ),
-                    IconButton(
-                      tooltip: t.common.close,
-                      onPressed: () => Navigator.of(sheet).pop(),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ],
-                ),
-              ),
-              if (key == 'controlsStyle')
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                  child: Text(
-                    t.videoPlayback.controlsStyleNote,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: colors.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-              Flexible(
-                child: ListView(
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.only(bottom: 8),
-                  children: [
-                    for (final entry in choices.entries)
-                      ListTile(
-                        title: Text(entry.value),
-                        selected: entry.key == value,
-                        trailing: entry.key == value
-                            ? const Icon(Icons.check_rounded)
-                            : null,
-                        onTap: () => Navigator.of(sheet).pop(entry.key),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-      if (next != null && mounted && next != value) await _save(key, next);
-    }
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final label = choices[value] ?? '';
-        double measure(String text, TextStyle? style) {
-          final painter = TextPainter(
-            text: TextSpan(text: text, style: style),
-            textDirection: Directionality.of(context),
-            textScaler: MediaQuery.textScalerOf(context),
-          )..layout();
-          final width = painter.width;
-          painter.dispose();
-          return width;
-        }
-
-        final inline =
-            measure(title, theme.textTheme.bodyLarge) +
-                measure(label, theme.textTheme.bodyMedium) +
-                88 <=
-            constraints.maxWidth;
-        final current = Text(
-          label,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: colors.onSurfaceVariant,
-          ),
-        );
-        return ListTile(
-          minTileHeight: 44,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 4,
-          ),
-          title: Text(title),
-          subtitle: inline ? null : current,
-          trailing: inline
-              ? Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    current,
-                    const SizedBox(width: 8),
-                    const Icon(Icons.chevron_right_rounded, size: 20),
-                  ],
-                )
-              : const Icon(Icons.chevron_right_rounded, size: 20),
-          onTap: choose,
-        );
-      },
-    );
-  }
-
-  Widget _section(String title, {bool first = false}) => Padding(
-    padding: EdgeInsets.fromLTRB(16, first ? 16 : 20, 16, 4),
-    child: Text(
-      title,
-      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-        color: Theme.of(context).colorScheme.primary,
-      ),
-    ),
+  ) => SettingChoiceTile<Object>(
+    title: title,
+    value: value,
+    items: choices,
+    enabled: !_saving,
+    onChanged: (next) async {
+      if (next != value) await _save(key, next);
+    },
   );
 
   @override
@@ -305,13 +217,22 @@ class _VideoPlaybackSettingsPageState extends State<VideoPlaybackSettingsPage> {
       title,
       group,
       aliases,
-      SwitchListTile.adaptive(
-        key: ValueKey('video-setting.$key'),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        title: Text(title),
-        subtitle: note == null ? null : Text(note),
-        value: value,
-        onChanged: enabled ? (v) => _save(key, v) : null,
+      TouchHoverIntent(
+        identity: (widget.source, key),
+        builder: (context, hover) => BreezeSwitchListTile(
+          SwitchListTile.adaptive(
+            hoverColor: hover.hoverColor(),
+            key: ValueKey('video-setting.$key'),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 4,
+            ),
+            title: Text(title),
+            subtitle: note == null ? null : Text(note),
+            value: value,
+            onChanged: enabled ? (v) => _save(key, v) : null,
+          ),
+        ),
       ),
     );
     void choice(
@@ -324,7 +245,6 @@ class _VideoPlaybackSettingsPageState extends State<VideoPlaybackSettingsPage> {
     }) => item(key, title, group, aliases, _choice(title, key, value, options));
     if (p != null) {
       final play = t.videoPlayback.playbackGroup,
-          controls = t.videoPlayback.controlsGroup,
           gestures = t.videoPlayback.gestureSettings,
           history = t.videoPlayback.historyGroup;
       toggle(
@@ -364,41 +284,14 @@ class _VideoPlaybackSettingsPageState extends State<VideoPlaybackSettingsPage> {
         aliases: '画面 裁剪 fit',
       );
       choice(
-        'controlsStyle',
-        t.videoPlayback.controlsStyle,
-        controls,
-        p.controlsStyle,
-        {
-          'system': t.videoPlayback.systemControls,
-          'breeze': t.videoPlayback.breezeControls,
-        },
-        aliases: '液态玻璃 iOS Breeze UI 样式 style glass',
-      );
-      choice(
         'hideSeconds',
         t.videoPlayback.controlsTimeout,
-        controls,
+        play,
         p.hideSeconds,
         {
           for (final v in [3, 5, 8]) v: t.videoPlayback.seconds(value: v),
         },
         aliases: '隐藏 时间 hide',
-      );
-      item(
-        'motion',
-        t.videoPlayback.settingsMotion,
-        controls,
-        '动画 动效 强度 过渡 motion animation',
-        ListTile(
-          title: Text(t.videoPlayback.settingsMotion),
-          subtitle: Text(t.videoPlayback.settingsMotionNote),
-          trailing: Text(
-            t.videoPlayback.settingsMotionValue,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ),
       );
       choice(
         'doubleTap',
@@ -463,19 +356,9 @@ class _VideoPlaybackSettingsPageState extends State<VideoPlaybackSettingsPage> {
           }, aliases: '图源 site source 解析 等待 清晰度 线路');
         }
       }
-      if (widget.onAccountSync != null) {
-        item(
-          'accountSync',
-          t.videoPlayback.accountBackup,
-          t.videoPlayback.settingsScopeSource,
-          '账号 云同步 会话 登录 account sync',
-          ListTile(
-            title: Text(t.videoPlayback.accountBackup),
-            trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: widget.onAccountSync,
-          ),
-        );
-      }
+    }
+    for (final entry in widget.additionalEntries) {
+      item(entry.key, entry.title, entry.group, '', entry.child);
     }
     final query = _query.trim().toLowerCase();
     final results = entries
@@ -488,24 +371,36 @@ class _VideoPlaybackSettingsPageState extends State<VideoPlaybackSettingsPage> {
         )
         .toList();
     String? previous;
+    var controls = <Widget>[];
     final rows = <Widget>[];
+    void addGroup() {
+      if (controls.isEmpty) return;
+      rows.add(
+        SettingSection(
+          title: previous ?? '',
+          hasLeading: false,
+          children: controls,
+        ),
+      );
+      controls = <Widget>[];
+    }
+
     for (final e in results) {
       if (previous != e.group) {
-        rows.add(_section(e.group, first: previous == null));
+        addGroup();
         previous = e.group;
       }
-      rows.add(e.control);
+      controls.add(e.control);
     }
+    addGroup();
     return Theme(
       data: videoBrowseTheme(Theme.of(context)),
       child: PopScope(
         canPop: !_saving,
-        child: Scaffold(
-          appBar: AppBar(
-            leading: widget.source == null ? null : const SourceBackButton(),
-            title: Text(t.videoPlayback.playbackSettings),
-          ),
-          body: Column(
+        child: SettingPageShell(
+          title: widget.title ?? t.videoPlayback.playbackSettings,
+          grouped: true,
+          child: Column(
             children: [
               Align(
                 alignment: Alignment.topCenter,
@@ -513,22 +408,24 @@ class _VideoPlaybackSettingsPageState extends State<VideoPlaybackSettingsPage> {
                   constraints: const BoxConstraints(maxWidth: 720),
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                    child: TextField(
-                      controller: _search,
-                      onChanged: (v) => setState(() => _query = v),
-                      decoration: InputDecoration(
-                        hintText: t.videoPlayback.settingsSearch,
-                        prefixIcon: const Icon(Icons.search_rounded),
-                        suffixIcon: query.isEmpty
-                            ? null
-                            : IconButton(
-                                tooltip: t.common.close,
-                                onPressed: () {
-                                  _search.clear();
-                                  setState(() => _query = '');
-                                },
-                                icon: const Icon(Icons.close_rounded),
-                              ),
+                    child: SearchFieldSurface(
+                      child: TextField(
+                        controller: _search,
+                        onChanged: (v) => setState(() => _query = v),
+                        decoration: searchFieldDecoration(
+                          context,
+                          hintText: t.videoPlayback.settingsSearch,
+                          suffixIcon: query.isEmpty
+                              ? null
+                              : IconButton(
+                                  tooltip: t.common.close,
+                                  onPressed: () {
+                                    _search.clear();
+                                    setState(() => _query = '');
+                                  },
+                                  icon: const Icon(Icons.close_rounded),
+                                ),
+                        ),
                       ),
                     ),
                   ),
@@ -591,9 +488,20 @@ class _VideoPlaybackSettingsPageState extends State<VideoPlaybackSettingsPage> {
                                     title: Text(
                                       t.videoPlayback.settingsLoadFailed,
                                     ),
-                                    trailing: TextButton(
-                                      onPressed: _readSource,
-                                      child: Text(t.common.retry),
+                                    trailing: TouchHoverIntent(
+                                      identity: (widget.source, 'retry'),
+                                      builder: (context, hover) {
+                                        const style = ButtonStyle();
+                                        return TextButton(
+                                          style: style.copyWith(
+                                            overlayColor: hover.overlayColor(
+                                              style.overlayColor,
+                                            ),
+                                          ),
+                                          onPressed: _readSource,
+                                          child: Text(t.common.retry),
+                                        );
+                                      },
                                     ),
                                   ),
                                 const SizedBox(height: 24),

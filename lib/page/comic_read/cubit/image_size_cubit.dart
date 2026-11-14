@@ -37,7 +37,8 @@ class ImageSizeCubit extends Cubit<ImageSizeState> {
 
   Timer? _saveTimer;
   bool _hasPendingSave = false;
-  bool _isFlushing = false;
+  Future<void>? _flushTask;
+  bool _closing = false;
   bool _isDisposed = false;
 
   ImageSizeCubit({
@@ -50,10 +51,10 @@ class ImageSizeCubit extends Cubit<ImageSizeState> {
     required bool hydrateOnInit,
     required Map<int, Size> initialCache,
     required Set<int> initialResolved,
-  }) : _cacheStore = ImageSizeCacheStore(
-         sourceTag: sourceTag,
-         pageKeys: pageKeys,
-       ),
+    ImageSizeCacheStore? cacheStore,
+  }) : _cacheStore =
+           cacheStore ??
+           ImageSizeCacheStore(sourceTag: sourceTag, pageKeys: pageKeys),
        super(
          ImageSizeState(
            sizeCache: initialCache,
@@ -74,6 +75,7 @@ class ImageSizeCubit extends Cubit<ImageSizeState> {
     required List<String> pageKeys,
     required int chapterOrder,
     Map<int, Size>? persistedCache,
+    ImageSizeCacheStore? cacheStore,
   }) {
     final double defaultHeight = defaultWidth * 1.2;
 
@@ -94,7 +96,11 @@ class ImageSizeCubit extends Cubit<ImageSizeState> {
           chapterOrder: chapterOrder,
           localPageIndex: entry.key,
         );
-        initialCache[cacheIndex] = entry.value;
+        final raw = entry.value;
+        initialCache[cacheIndex] = Size(
+          defaultWidth,
+          defaultWidth * raw.height / raw.width,
+        );
         initialResolved.add(cacheIndex);
       }
     }
@@ -109,6 +115,7 @@ class ImageSizeCubit extends Cubit<ImageSizeState> {
       hydrateOnInit: persistedCache == null,
       initialCache: initialCache,
       initialResolved: initialResolved,
+      cacheStore: cacheStore,
     );
   }
 
@@ -119,6 +126,13 @@ class ImageSizeCubit extends Cubit<ImageSizeState> {
   }
 
   void updateSize(int index, Size newSize) {
+    if (_closing ||
+        isClosed ||
+        !newSize.width.isFinite ||
+        !newSize.height.isFinite ||
+        newSize.width <= 0 ||
+        newSize.height <= 0)
+      return;
     final isAlreadyResolved = state.resolvedIndices.contains(index);
     final isSizeChanged = state.sizeCache[index] != newSize;
 
@@ -158,7 +172,13 @@ class ImageSizeCubit extends Cubit<ImageSizeState> {
           chapterOrder: _chapterOrder,
           localPageIndex: entry.key,
         );
-        newCache[cacheIndex] = entry.value;
+        // A display measurement made while disk I/O was pending is newer.
+        if (newResolved.contains(cacheIndex)) continue;
+        final raw = entry.value;
+        newCache[cacheIndex] = Size(
+          defaultWidth,
+          defaultWidth * raw.height / raw.width,
+        );
         newResolved.add(cacheIndex);
         changed = true;
       }
@@ -184,38 +204,41 @@ class ImageSizeCubit extends Cubit<ImageSizeState> {
     });
   }
 
-  Future<void> flushNow() async {
-    if (_isDisposed || !_hasPendingSave) return;
-    if (_isFlushing) return;
+  Future<void> flushNow() {
+    _saveTimer?.cancel();
+    if (_isDisposed) return Future<void>.value();
+    return _flushTask ??= _drainSaves().whenComplete(() => _flushTask = null);
+  }
 
-    _isFlushing = true;
-    _hasPendingSave = false;
-    try {
-      // 运行时索引（章节哈希）→ 本地页索引，持久化层只认本地页索引。
-      final localSizes = <int, Size>{};
-      final localResolved = <int>{};
-      final max = count < pageKeys.length ? count : pageKeys.length;
-      for (var i = 0; i < max; i++) {
-        final runtimeIndex = resolveStableSizeCacheIndex(
-          chapterOrder: _chapterOrder,
-          localPageIndex: i,
+  Future<void> _drainSaves() async {
+    while (_hasPendingSave) {
+      _hasPendingSave = false;
+      try {
+        // 运行时索引（章节哈希）→ 本地页索引，持久化层只认本地页索引。
+        final localSizes = <int, Size>{};
+        final localResolved = <int>{};
+        final max = count < pageKeys.length ? count : pageKeys.length;
+        for (var i = 0; i < max; i++) {
+          final runtimeIndex = resolveStableSizeCacheIndex(
+            chapterOrder: _chapterOrder,
+            localPageIndex: i,
+          );
+          if (!state.resolvedIndices.contains(runtimeIndex)) continue;
+          final size = state.sizeCache[runtimeIndex];
+          if (size == null) continue;
+          localSizes[i] = size;
+          localResolved.add(i);
+        }
+        await _cacheStore.write(
+          pageKeys: pageKeys,
+          sizeCache: localSizes,
+          resolvedIndices: localResolved,
+          count: count,
         );
-        if (!state.resolvedIndices.contains(runtimeIndex)) continue;
-        final size = state.sizeCache[runtimeIndex];
-        if (size == null) continue;
-        localSizes[i] = size;
-        localResolved.add(i);
+      } catch (_) {
+        _hasPendingSave = true;
+        break;
       }
-      await _cacheStore.write(
-        pageKeys: pageKeys,
-        sizeCache: localSizes,
-        resolvedIndices: localResolved,
-        count: count,
-      );
-    } catch (_) {
-      _hasPendingSave = true;
-    } finally {
-      _isFlushing = false;
     }
   }
 
@@ -233,6 +256,7 @@ class ImageSizeCubit extends Cubit<ImageSizeState> {
 
   @override
   Future<void> close() async {
+    _closing = true;
     _saveTimer?.cancel();
     await flushNow();
     _isDisposed = true;

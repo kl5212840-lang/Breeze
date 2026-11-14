@@ -1,4 +1,11 @@
 import 'dart:convert';
+import 'package:zephyr/main.dart' show eventBus;
+import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart'
+    show normalizePluginId;
+import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
+import 'package:zephyr/service/comic_public_metadata.dart';
+import 'package:zephyr/service/jm_list_like_counts.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/object_box/model.dart';
@@ -7,6 +14,7 @@ import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart'
 import 'package:zephyr/page/comic_info/models/unified_plugin_detail.dart';
 import 'package:zephyr/page/comic_info/models/unified_plugin_preview.dart';
 import 'package:zephyr/page/comic_read/model/unified_plugin_chapter.dart';
+import 'package:zephyr/util/event/event.dart' show NeedLogin;
 import 'package:zephyr/util/json/json_value.dart';
 
 class PluginComicDetail {
@@ -68,27 +76,81 @@ Future<PluginComicDetail> getComicDetailByPlugin(
   String from, {
   String? pluginId,
   Map<String, dynamic>? extern,
+  bool notifyUnauthorized = true,
+  bool Function()? canPublish,
+  String? taskGroupKey,
 }) async {
-  final resolvedPluginId =
-      (pluginId?.trim().isNotEmpty == true ? pluginId!.trim() : from.trim())
-          .trim();
-  final resolvedFrom = (resolvedPluginId).trim();
-  final payload = {'comicId': comicId};
-
-  final map = await callUnifiedComicPlugin(
-    from: resolvedPluginId,
-    fnPath: 'getComicDetail',
-    core: payload,
-    extern: extern,
+  final resolvedPluginId = normalizePluginId(
+    pluginId?.trim().isNotEmpty == true ? pluginId! : from,
   );
+  final payload = {'comicId': comicId};
+  final generation = pluginSessionWriteFence.generation(resolvedPluginId);
+  bool ownsSideEffects() =>
+      generation == pluginSessionWriteFence.generation(resolvedPluginId) &&
+      !pluginSessionWriteFence.isChanging(resolvedPluginId) &&
+      canPublish?.call() != false;
+
+  final Map<String, dynamic> map;
+  try {
+    map = await callUnifiedComicPlugin(
+      from: resolvedPluginId,
+      fnPath: 'getComicDetail',
+      core: payload,
+      extern: extern,
+      notifyUnauthorized: false,
+      taskGroupKey: taskGroupKey,
+    );
+  } on PluginLoginRequiredException catch (error) {
+    if (notifyUnauthorized && ownsSideEffects()) {
+      final login = error.payload;
+      eventBus.fire(NeedLogin(from: login.pluginId, message: login.message));
+    }
+    rethrow;
+  }
   final detail = UnifiedPluginDetailResponse.fromMap(map);
   final normalInfo = normal.NormalComicAllInfo.fromJson(detail.normal);
   final source = PluginComicDetailSource(
-    from: resolvedFrom.isEmpty ? from : resolvedFrom,
+    from: resolvedPluginId.isEmpty ? from : resolvedPluginId,
     normalInfo: normalInfo,
     raw: detail.raw,
   );
 
+  if (normalInfo.comicInfo.id == comicId && ownsSideEffects()) {
+    if (resolvedPluginId == JmListLikeCounts.source) {
+      if (detail.confirmedLikes(source: resolvedPluginId, comicId: comicId)
+          case final count?) {
+        JmListLikeCounts.instance.remember({
+          comicId: count,
+        }, generation: generation);
+      }
+    }
+    try {
+      final missing = normalInfo.extern['fieldsMissing'];
+      final metadata = normalInfo.comicInfo.metadata
+          .map(
+            (m) => <String, dynamic>{
+              'type': m.type,
+              'name': m.name,
+              'value': m.value.map((v) => v.name).toList(),
+            },
+          )
+          .toList();
+      if (missing is List &&
+          !missing.contains('tags') &&
+          !metadata.any((m) => m['type'] == 'tags' || m['type'] == 'tag')) {
+        metadata.add({'type': 'tags', 'name': '', 'value': <Object>[]});
+      }
+      ComicPublicMetadata.apply(
+        resolvedPluginId,
+        {comicId: metadata},
+        fieldsMissing: missing is List
+            ? missing.whereType<String>().toSet()
+            : const {},
+      );
+    } catch (_) {
+      /* Optional public fields cannot prevent opening the real detail. */
+    }
+  }
   return PluginComicDetail(normalInfo: normalInfo, source: source);
 }
 
@@ -108,11 +170,18 @@ Future<UnifiedPluginChapterResponse> getComicChapterByPlugin(
   String? pluginId,
   String? runtimeName,
   Map<String, dynamic> extern = const <String, dynamic>{},
+  String? taskGroupKey,
+  List<String>? excludedDownloadRoutes,
 }) async {
   final resolvedPluginId =
       (pluginId?.trim().isNotEmpty == true ? pluginId!.trim() : from.trim())
           .trim();
-  final payload = {'comicId': comicId, 'chapterId': chapterId};
+  final payload = <String, dynamic>{
+    'comicId': comicId,
+    'chapterId': chapterId,
+    if (excludedDownloadRoutes != null)
+      'downloadRoute': {'version': 1, 'excluded': excludedDownloadRoutes},
+  };
 
   final map = await callUnifiedComicPlugin(
     from: resolvedPluginId,
@@ -120,6 +189,7 @@ Future<UnifiedPluginChapterResponse> getComicChapterByPlugin(
     core: payload,
     extern: extern,
     runtimeName: runtimeName,
+    taskGroupKey: taskGroupKey,
   );
   return UnifiedPluginChapterResponse.fromMap(map);
 }

@@ -10,6 +10,8 @@ import 'package:zephyr/main.dart';
 import 'package:zephyr/network/utils/github_proxy.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/plugin/utils/plugin_catalog_merge.dart';
+import 'package:zephyr/plugin/utils/published_plugin_artifact.dart';
+import 'package:zephyr/service/local_plugin_installation_state.dart';
 import 'package:zephyr/src/rust/api/qjs.dart';
 import 'package:zephyr/src/rust/api/simple.dart';
 import 'package:zephyr/util/json/json_value.dart';
@@ -17,7 +19,9 @@ import 'package:zephyr/util/json/json_value.dart';
 const _cloudPluginListDirectUrl =
     'https://raw.githubusercontent.com/deretame/Breeze-plugin-list/main/plugins_data.json';
 const _personalPluginListUrl =
-    'https://raw.githubusercontent.com/kl5212840-lang/Breeze-plugins/main/catalog/v1/plugins_data.json';
+    'https://raw.githubusercontent.com/$personalPluginCatalogRepository/main/catalog/v1/plugins_data.json';
+const _legacyPersonalPluginListUrl =
+    'https://raw.githubusercontent.com/$personalPluginCatalogRepository/main/plugins_data.json';
 
 const cloudPluginListApi = 'https://api.windy-78.site/plugin-list';
 
@@ -30,46 +34,60 @@ const _cdnMirrors = [
   'https://cdn.jsdelivr.net/',
 ];
 
-const _catalogCacheKey = 'plugin_store.catalog.v2';
+const _catalogCacheKey = 'plugin_store.catalog.sources.v1';
+const _legacyCatalogCacheKey = 'plugin_store.catalog.v2';
 const _bundledCatalog = 'asset/plugins/personal_catalog.json';
 
-Future<String> readCloudPluginCatalogFallback() async {
-  final bundled = await rootBundle.loadString(_bundledCatalog);
+Future<CloudPluginCatalogSnapshot> _readCloudPluginCatalogSnapshot() async {
+  String? legacy;
   try {
     final prefs = await SharedPreferences.getInstance();
-    final cached = prefs.getString(_catalogCacheKey);
-    return mergeCloudPluginCatalogPayloads(cached ?? '[]', bundled);
-  } catch (_) {
-    return bundled;
-  }
+    final snapshot = CloudPluginCatalogSnapshot.fromCacheJson(
+      prefs.getString(_catalogCacheKey),
+    );
+    if (snapshot != null) return snapshot;
+    legacy = prefs.getString(_legacyCatalogCacheKey);
+  } catch (_) {}
+  return CloudPluginCatalogSnapshot.fromLegacyCache(
+    combined: legacy,
+    bundled: await rootBundle.loadString(_bundledCatalog),
+  );
 }
 
-Future<String> fetchCloudPluginListWithCdnFallback({String? fallback}) async {
-  final payload = await loadCloudPluginCatalog(
+Future<String> readCloudPluginCatalogFallback() async =>
+    (await _readCloudPluginCatalogSnapshot()).payload;
+
+Future<CloudPluginCatalogSnapshot>? _catalogRefresh;
+
+Future<CloudPluginCatalogSnapshot> fetchCloudPluginListWithCdnFallback() =>
+    _catalogRefresh ??= _refreshCloudPluginCatalog().whenComplete(() {
+      _catalogRefresh = null;
+    });
+
+Future<CloudPluginCatalogSnapshot> _refreshCloudPluginCatalog() async {
+  final snapshot = await loadCloudPluginCatalog(
     official: _fetchOfficialCloudPluginList,
-    personal: _fetchPersonalPluginList,
-    fallback: fallback ?? await readCloudPluginCatalogFallback(),
+    personal: () => _fetchPersonalPluginList(_personalPluginListUrl),
+    legacyPersonal: () =>
+        _fetchPersonalPluginList(_legacyPersonalPluginListUrl),
+    fallback: await _readCloudPluginCatalogSnapshot(),
   );
   try {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_catalogCacheKey, payload);
+    await prefs.setString(_catalogCacheKey, snapshot.toCacheJson());
   } catch (error) {
     logger.w('插件目录缓存写入失败', error: error);
   }
-  return payload;
+  return snapshot;
 }
 
-Future<String?> _fetchPersonalPluginList() async {
-  final client = WindHttp(
-    connectTimeout: const Duration(seconds: 5),
-    receiveTimeout: const Duration(seconds: 8),
-  );
+Future<String?> _fetchPersonalPluginList(String sourceUrl) async {
   try {
-    final response = await client.fetch(
-      _personalPluginListUrl,
-      headers: {'Accept': 'application/json'},
-    );
-    if (response.ok && response.text.trim().isNotEmpty) {
+    final response = await _fetchFirstPartyPluginMetadata(sourceUrl);
+    if (response.ok &&
+        response.url == sourceUrl &&
+        !response.redirected &&
+        response.text.trim().isNotEmpty) {
       return response.text.trim();
     }
     logger.w('个人插件目录不可用: HTTP ${response.status}');
@@ -79,8 +97,15 @@ Future<String?> _fetchPersonalPluginList() async {
   return null;
 }
 
+Future<FetchResponse> _fetchFirstPartyPluginMetadata(String url) => WindHttp(
+  connectTimeout: const Duration(seconds: 5),
+  receiveTimeout: const Duration(seconds: 8),
+  dangerAcceptInvalidCerts: false,
+  followRedirects: false,
+).fetch(url, headers: {'Accept': 'application/json'});
+
 Future<String> _fetchOfficialCloudPluginList() async {
-  final client = WindHttp(
+  final client = WindHttp.distribution(
     connectTimeout: const Duration(seconds: 5),
     receiveTimeout: const Duration(seconds: 8),
   );
@@ -116,7 +141,7 @@ Future<String> _fetchOfficialCloudPluginList() async {
 
 Future<String> fetchCloudPluginListPayload(String sourceUrl) async {
   final requestUrls = buildCloudRequestCandidates(sourceUrl);
-  final client = WindHttp(
+  final client = WindHttp.distribution(
     connectTimeout: const Duration(seconds: 12),
     receiveTimeout: const Duration(seconds: 20),
   );
@@ -167,7 +192,7 @@ List<String> buildCloudRequestCandidates(String sourceUrl) {
         uri.host == 'www.github.com';
     if (isGithubHost) {
       for (final baseUrl in mirrorBaseUrls) {
-        result.add('$baseUrl/$sourceUrl');
+        result.add('$baseUrl$sourceUrl');
       }
     }
   }
@@ -204,6 +229,13 @@ Future<String> downloadFromJsdelivrOrGitHub({
   }
 
   final release = await fetchReleaseData(updateUrl);
+  final releaseDigest = release['scriptSha256']?.toString().trim() ?? '';
+  if (releaseDigest.isNotEmpty) {
+    verifyPublishedPluginVersion(
+      release['tag_name']?.toString() ?? '',
+      cloudVersion,
+    );
+  }
   final asset = pickPreferredPluginAsset(asJsonList(release['assets']));
   if (asset == null) {
     throw StateError('未找到可安装资源（仅支持 .cjs.br 或 .cjs）');
@@ -223,15 +255,61 @@ Future<String> downloadFromJsdelivrOrGitHub({
   if (trimmed.isEmpty) {
     throw StateError('下载到的插件脚本为空');
   }
+  verifyPublishedPluginScript(trimmed, releaseDigest);
   return trimmed;
+}
+
+Future<String> downloadFormalPluginMigration(
+  PluginReleaseMigration migration,
+) => downloadFormalPluginRelease(migration.release, migration: migration);
+
+Future<String> downloadFormalPluginRelease(
+  FormalPluginRelease release, {
+  PluginReleaseMigration? migration,
+}) async {
+  final indexUrl = release.updateUrl;
+  final response = await _fetchFirstPartyPluginMetadata(indexUrl);
+  if (!response.ok || response.redirected || response.url != indexUrl) {
+    throw StateError('插件更新索引暂不可用，请稍后重试');
+  }
+  final index = asJsonMap(response.json);
+  if (!(migration?.isConfirmedBy(index) ?? release.isConfirmedBy(index))) {
+    throw StateError('插件更新索引与商店清单不一致，请刷新插件商店后重试');
+  }
+  final asset = pickPreferredPluginAsset(asJsonList(index['assets']));
+  final name = asset?['name']?.toString() ?? '';
+  final url = asset?['browser_download_url']?.toString() ?? '';
+  final uri = Uri.tryParse(url);
+  final path = uri?.pathSegments ?? const <String>[];
+  if (uri == null ||
+      uri.scheme != 'https' ||
+      uri.host != 'github.com' ||
+      uri.hasPort ||
+      uri.userInfo.isNotEmpty ||
+      uri.hasQuery ||
+      uri.hasFragment ||
+      path.length != 6 ||
+      path.take(4).join('/') !=
+          '$personalPluginCatalogRepository/releases/download' ||
+      path[4].isEmpty ||
+      path.last != name ||
+      !url.endsWith('/$name')) {
+    throw StateError('插件发布附件与更新索引不一致，请刷新插件商店后重试');
+  }
+  final downloaded = await downloadPluginAssetWithFallback(url);
+  final script = await decodeDownloadedPluginScript(
+    response: downloaded,
+    resolvedUrl: url,
+  );
+  verifyPublishedPluginScript(script, release.scriptSha256);
+  return script;
 }
 
 Future<FetchResponse> downloadPluginAssetWithFallback(String sourceUrl) async {
   final requestUrls = buildCloudRequestCandidates(sourceUrl);
-  final client = WindHttp(
+  final client = WindHttp.distribution(
     connectTimeout: const Duration(seconds: 12),
     receiveTimeout: const Duration(seconds: 30),
-    followRedirects: true,
   );
 
   Object? lastError;
@@ -530,6 +608,7 @@ String _truncateErrorDetail(String text) {
 /// 仅在 UI 展示层调用；重试判定仍应使用原始异常（见
 /// [isNetworkRetryableError]），避免把 404 等不可重试错误误判为网络抖动。
 String normalizePluginInstallErrorMessage(Object error) {
+  if (error is PluginLifecycleChanged) return t.pluginLifecycle.changed;
   final raw = _rawPluginErrorText(error);
   if (raw.isEmpty) {
     return t.error.operationFailed;

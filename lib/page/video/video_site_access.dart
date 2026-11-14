@@ -73,17 +73,25 @@ class VideoSiteVerificationRequired implements Exception {
   const VideoSiteVerificationRequired();
 }
 
+class VideoSiteAccessBlocked implements Exception {
+  const VideoSiteAccessBlocked();
+  @override
+  String toString() => 'site-access-blocked-http-403';
+}
+
 class VideoSiteState {
   const VideoSiteState({
     required this.url,
     required this.challenge,
     required this.nativeReady,
     required this.websiteReady,
+    this.accessBlocked = false,
     this.browser = const {},
   });
 
   final Uri? url;
   final bool challenge, nativeReady, websiteReady;
+  final bool accessBlocked;
   final Map<String, Object> browser;
 
   factory VideoSiteState.fromRaw(dynamic raw) {
@@ -99,11 +107,15 @@ class VideoSiteState {
             (decoded['clearanceConfig'] == true &&
                 (decoded['challengeTitle'] == true ||
                     decoded['challengeFrame'] == true)));
+    final blocked =
+        !nativeReady && !challenge && decoded['accessBlocked'] == true;
     return VideoSiteState(
       url: Uri.tryParse(decoded['url']?.toString() ?? ''),
       challenge: challenge,
+      accessBlocked: blocked,
       nativeReady: nativeReady,
-      websiteReady: !challenge && (nativeReady || decoded['siteUi'] == true),
+      websiteReady:
+          !challenge && !blocked && (nativeReady || decoded['siteUi'] == true),
       browser: {
         'challengeErrorCodes': [
           for (final code
@@ -261,9 +273,19 @@ String videoSiteStateScript(
           ((location.pathname === '/subscriptions' || location.pathname === '/login' || location.pathname === '/register' || location.pathname === '/playlist' ||
             new RegExp('^/user/[0-9]+(?:/(?:histories|saves|likes|playlists|uploaded|uploading|edit))?/?\$').test(location.pathname)) &&
            document.readyState !== 'loading' && query('#user-modal-trigger, form[action*="/login"], form[action*="/register"], .content-padding-new, .content-padding, .playlist-video-list')));
+    const interstitial = Boolean(query('form#challenge-form, form[action*="__cf_chl_"], #challenge-running, #challenge-stage, #cf-challenge-running, #challenge-error-title, .cf-challenge')) ||
+      (typeof window._cf_chl_opt === 'object' && Boolean(query('iframe[src^="https://challenges.cloudflare.com/"]')));
+    // A provider's terminal error document is not an interactive challenge.
+    // Require its error structure and exact heading; never classify an empty
+    // catalog, an arbitrary 403, or a discussion mentioning blocked access.
+    const blockHeading = String(query('#cf-error-details h1, #cf-wrapper h1, .cf-error-overview h1')?.textContent || '').trim();
+    const accessBlocked = !nativeContent && !interstitial &&
+      Boolean(query('#cf-error-details, #cf-wrapper, .cf-error-overview')) &&
+      /^Sorry,? you have been blocked[.!]?\$/i.test(blockHeading);
     return JSON.stringify({
       url: location.href,
       nativeContent,
+      accessBlocked,
       searchState,
       siteUi: Boolean(query('#user-modal-trigger, a[href*="/subscriptions"], form[action*="/login"], form[action*="/register"]')),
       challengeForm: Boolean(query('form#challenge-form, form[action*="__cf_chl_"]')),
@@ -305,6 +327,8 @@ class VideoBrowserDiagnostics {
   void observed(VideoSiteState state, {required bool matchesRequested}) {
     final phase = !matchesRequested
         ? 'different-document'
+        : state.accessBlocked
+        ? 'access-blocked'
         : state.challenge
         ? 'challenge'
         : state.nativeReady

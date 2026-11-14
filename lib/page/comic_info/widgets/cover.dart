@@ -1,4 +1,5 @@
-import 'dart:io';
+import 'dart:async';
+import 'package:zephyr/widgets/picture_bloc/picture_recovery_region.dart';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
@@ -9,6 +10,8 @@ import 'package:zephyr/widgets/picture_bloc/models/picture_info.dart';
 
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/widgets/picture_bloc/bloc/picture_bloc.dart';
+import 'package:zephyr/widgets/comic_simplify_entry/cover.dart'
+    show createCoverImageProvider;
 
 class Cover extends StatelessWidget {
   final PictureInfo pictureInfo;
@@ -28,76 +31,105 @@ class Cover extends StatelessWidget {
   Widget build(BuildContext context) {
     final width = height / 4 * 3;
     final radius = BorderRadius.circular(borderRadius);
+    final decodeScale = MediaQuery.devicePixelRatioOf(context) * 1.2;
 
     return SizedBox(
       height: height,
       width: width,
       child: BlocProvider(
-        create: (context) => PictureBloc()..add(GetPicture(pictureInfo)),
+        key: ValueKey(pictureInfo),
+        create: (context) =>
+            PictureBloc(initiallyActive: false)..add(GetPicture(pictureInfo)),
         child: BlocBuilder<PictureBloc, PictureLoadState>(
           builder: (context, state) {
-            switch (state.status) {
-              case PictureLoadStatus.initial:
-                return DecoratedBox(
-                  decoration: BoxDecoration(
-                    borderRadius: radius,
-                    color: context.theme.colorScheme.surfaceContainerHigh,
-                    border: Border.all(
-                      color: context.theme.colorScheme.outlineVariant
-                          .withValues(alpha: 0.35),
-                    ),
-                  ),
-                  child: Center(
-                    child: LoadingAnimationWidget.waveDots(
-                      color: context.theme.colorScheme.primary,
-                      size: 40,
-                    ),
-                  ),
-                );
-              case PictureLoadStatus.success:
-                return InkWell(
-                  onTap:
-                      onTap ??
-                      () {
-                        context.pushRoute(
-                          FullRouteImageRoute(imagePath: state.imagePath!),
+            return PictureRecoveryRegion(
+              bloc: context.read<PictureBloc>(),
+              child: Builder(
+                builder: (context) {
+                  switch (state.status) {
+                    case PictureLoadStatus.initial:
+                      return DecoratedBox(
+                        decoration: BoxDecoration(
+                          borderRadius: radius,
+                          color: context.theme.colorScheme.surfaceContainerHigh,
+                          border: Border.all(
+                            color: context.theme.colorScheme.outlineVariant
+                                .withValues(alpha: 0.35),
+                          ),
+                        ),
+                        child: Center(
+                          child: LoadingAnimationWidget.waveDots(
+                            color: context.theme.colorScheme.primary,
+                            size: 40,
+                          ),
+                        ),
+                      );
+                    case PictureLoadStatus.success:
+                      return InkWell(
+                        onTap:
+                            onTap ??
+                            () {
+                              context.pushRoute(
+                                FullRouteImageRoute(
+                                  imagePath: state.imagePath!,
+                                ),
+                              );
+                            },
+                        child: ClipRRect(
+                          borderRadius: radius,
+                          child: Image(
+                            image: createCoverImageProvider(
+                              state.imagePath!,
+                              width: (width * decodeScale).ceil(),
+                              height: (height * decodeScale).ceil(),
+                            ),
+                            fit: BoxFit.cover,
+                            width: width,
+                            height: height,
+                            errorBuilder: (_, error, _) {
+                              unawaited(
+                                context.read<PictureBloc>().reportDecodeFailure(
+                                  error,
+                                  imagePath: state.imagePath,
+                                ),
+                              );
+                              return const SizedBox.shrink();
+                            },
+                          ),
+                        ),
+                      );
+                    case PictureLoadStatus.failure:
+                      if (context.read<PictureBloc>().pictureNotFound) {
+                        return ClipRRect(
+                          borderRadius: radius,
+                          child: Image.asset(
+                            'asset/image/error_image/404.png',
+                            fit: BoxFit.cover,
+                          ),
                         );
-                      },
-                  child: ClipRRect(
-                    borderRadius: radius,
-                    child: Image.file(
-                      File(state.imagePath!),
-                      fit: BoxFit.cover,
-                      width: width,
-                      height: height,
-                    ),
-                  ),
-                );
-              case PictureLoadStatus.failure:
-                if (state.result.toString().contains('404')) {
-                  return ClipRRect(
-                    borderRadius: radius,
-                    child: Image.asset(
-                      'asset/image/error_image/404.png',
-                      fit: BoxFit.cover,
-                    ),
-                  );
-                } else {
-                  return InkWell(
-                    onTap: () {
-                      context.read<PictureBloc>().add(GetPicture(pictureInfo));
-                    },
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        borderRadius: radius,
-                        color:
-                            context.theme.colorScheme.surfaceContainerHighest,
-                      ),
-                      child: const Center(child: Icon(Icons.refresh)),
-                    ),
-                  );
-                }
-            }
+                      } else {
+                        return InkWell(
+                          onTap: () {
+                            context.read<PictureBloc>().add(
+                              GetPicture(pictureInfo),
+                            );
+                          },
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: radius,
+                              color: context
+                                  .theme
+                                  .colorScheme
+                                  .surfaceContainerHighest,
+                            ),
+                            child: const Center(child: Icon(Icons.refresh)),
+                          ),
+                        );
+                      }
+                  }
+                },
+              ),
+            );
           },
         ),
       ),

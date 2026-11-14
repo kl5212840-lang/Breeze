@@ -15,6 +15,8 @@ import 'package:zephyr/service/download/download_queue_manager.dart';
 import 'package:zephyr/service/download/download_task_repository.dart';
 import 'package:zephyr/service/download/models/download_task_json.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/service/local_plugin_installation_state.dart';
+import 'package:zephyr/service/download/download_resource_lifecycle.dart';
 
 /// 漫画详情页章节下载状态 + 长按多选控制器。
 ///
@@ -40,6 +42,14 @@ class EpisodeDownloadController {
   String _comicId = '';
   String _comicTitle = '';
   bool _allowDownload = true;
+  Object _selectionOwner = Object();
+  bool _disposed = false;
+  Object get selectionOwner => _selectionOwner;
+  bool ownsSelection(Object owner) =>
+      !_disposed &&
+      identical(_selectionOwner, owner) &&
+      _allowDownload &&
+      downloadUiEnabled;
 
   StreamSubscription? _recordSubscription;
   StreamSubscription? _taskSubscription;
@@ -67,6 +77,9 @@ class EpisodeDownloadController {
         _allowDownload == allowDownload) {
       return;
     }
+    _selectionOwner = Object();
+    selectionMode = false;
+    selectedIds.clear();
     _from = from.trim();
     _comicId = comicId.trim();
     _comicTitle = comicTitle;
@@ -86,9 +99,11 @@ class EpisodeDownloadController {
   }
 
   static Set<String> _resolveDownloadedIds(UnifiedComicDownload? record) {
-    return record == null
+    return record == null || record.deleted
         ? <String>{}
-        : resolveDownloadChapters(record).map((c) => c.id).toSet();
+        : resolveDownloadChapters(
+            record,
+          ).where((c) => c.images.isNotEmpty).map((c) => c.id).toSet();
   }
 
   void _resubscribe() {
@@ -97,11 +112,13 @@ class EpisodeDownloadController {
     _recordSubscription = null;
     _taskSubscription = null;
     if (!downloadUiEnabled) return;
+    final owner = _selectionOwner;
 
     final recordQuery = objectbox.unifiedDownloadBox
         .query(UnifiedComicDownload_.uniqueKey.equals(_recordKey))
         .watch();
     _recordSubscription = recordQuery.listen((query) {
+      if (_disposed || !identical(_selectionOwner, owner)) return;
       _updateStatus(downloadedIds: _resolveDownloadedIds(query.findFirst()));
     });
 
@@ -109,24 +126,29 @@ class EpisodeDownloadController {
         .query(DownloadTask_.comicId.equals(_comicId))
         .watch();
     _taskSubscription = taskQuery.listen((query) {
+      if (_disposed || !identical(_selectionOwner, owner)) return;
       _updateStatus(taskSnaps: _buildTaskSnaps(query.find()));
     });
   }
 
   void _loadInitial() {
     final record = _repository.findDownloadRecord(_from, _comicId);
-    final tasks = objectbox.downloadTaskBox
+    final taskQuery = objectbox.downloadTaskBox
         .query(DownloadTask_.comicId.equals(_comicId))
-        .build()
-        .find();
-    _updateStatus(
-      downloadedIds: _resolveDownloadedIds(record),
-      taskSnaps: _buildTaskSnaps(tasks),
-    );
+        .build();
+    try {
+      _updateStatus(
+        downloadedIds: _resolveDownloadedIds(record),
+        taskSnaps: _buildTaskSnaps(taskQuery.find()),
+      );
+    } finally {
+      taskQuery.close();
+    }
   }
 
   Map<String, ChapterTaskSnap> _buildTaskSnaps(List<DownloadTask> tasks) {
     final snaps = <String, ChapterTaskSnap>{};
+    final latestTaskIds = <String, int>{};
     for (final task in tasks) {
       if (task.isCompleted) continue;
       DownloadTaskJson? payload;
@@ -135,9 +157,17 @@ class EpisodeDownloadController {
       } catch (_) {
         continue;
       }
-      if (payload == null || payload.from.trim() != _from) continue;
+      if (payload == null ||
+          payload.from.trim() != _from ||
+          payload.comicId != _comicId ||
+          payload.stateCode == 'cancelled' ||
+          payload.phaseCode == 'fileRemoved')
+        continue;
       final key = payload.chapterKey;
-      if (key.isEmpty || snaps.containsKey(key)) continue;
+      // Retry keeps old task evidence. An old failure must not hide the
+      // current retry; match the repository's newest-task rule.
+      if (key.isEmpty || (latestTaskIds[key] ?? -1) > task.id) continue;
+      latestTaskIds[key] = task.id;
       double? progress;
       if (payload.totalImages > 0) {
         progress =
@@ -248,6 +278,34 @@ class EpisodeDownloadController {
         .toList();
   }
 
+  Future<bool> submitSelection(
+    BuildContext context,
+    List<DownloadChapter> chapters, {
+    required Object owner,
+  }) async {
+    if (!context.mounted || !ownsSelection(owner)) return false;
+    final installation = LocalPluginInstallationState.instance;
+    if (installation.isRemoved(_from) ||
+        installation.isInstalling(_from) ||
+        DownloadResourceLifecycle.removing(
+              DownloadResourceLifecycle.comic(_recordKey),
+            ) !=
+            null)
+      return false;
+    _loadInitial();
+    final ids = <String>{};
+    final targets = downloadableOf(
+      chapters,
+    ).where((chapter) => ids.add(chapter.id)).toList();
+    if (targets.isEmpty) return false;
+    if (!ownsSelection(owner)) return false;
+    // Task references are built before the first await. A later detail refresh
+    // cannot replace source/work identity or chapter request/storage aliases.
+    final tasks = targets.map(_buildTask).toList(growable: false);
+    await startDownloadTasks(tasks);
+    return true;
+  }
+
   Future<void> downloadSingle(
     BuildContext context,
     DownloadChapter chapter,
@@ -289,15 +347,27 @@ class EpisodeDownloadController {
     BuildContext context,
     DownloadChapter chapter,
   ) async {
+    final owner = selectionOwner;
+    final (from, comicId) = (_from, _comicId);
+    final taskKey = buildDownloadChapterTaskKey(from, comicId, chapter.id);
+    final task = _repository.findByTaskKey(taskKey, incompleteOnly: true);
+    final payload = task == null ? null : _repository.readPayload(task);
+    if (task == null || payload == null) return;
     final confirmed = await _confirm(
       context,
       t.download.cancelTask,
       t.download.cancelTaskConfirm(comicName: _chapterLabel(chapter)),
     );
-    if (!confirmed) return;
+    if (!confirmed || !context.mounted || !ownsSelection(owner)) return;
+    final current = _repository.findByTaskKey(taskKey, incompleteOnly: true);
+    if (current == null ||
+        current.id != task.id ||
+        _repository.readPayload(current)?.attempt != payload.attempt) {
+      return;
+    }
     await DownloadQueueManager.instance.cancelChapterTask(
-      from: _from,
-      comicId: _comicId,
+      from: from,
+      comicId: comicId,
       chapterKey: chapter.id,
     );
   }
@@ -309,27 +379,46 @@ class EpisodeDownloadController {
     BuildContext context,
     DownloadChapter chapter,
   ) async {
-    final confirmed = await _confirm(
-      context,
-      t.comicEntry.deleteDownload,
-      t.comicEntry.deleteDownloadConfirm(title: _chapterLabel(chapter)),
-    );
-    if (!confirmed) return false;
-    if (!context.mounted) return false;
-    if (isDownloaded(chapter) && downloadedIds.length <= 1) {
-      final confirmedWhole = await _confirm(
+    final owner = selectionOwner;
+    final (from, comicId) = (_from, _comicId);
+    try {
+      _loadInitial();
+      final isLast = isDownloaded(chapter) && downloadedIds.length <= 1;
+      final expected = bindComicDownloadRemoval(from: from, comicId: comicId);
+      final confirmed = await _confirm(
         context,
         t.comicEntry.deleteDownload,
-        t.download.deleteLastChapterContent,
+        t.comicEntry.deleteDownloadConfirm(title: _chapterLabel(chapter)),
       );
-      if (!confirmedWhole) return false;
+      if (!confirmed || !context.mounted || !ownsSelection(owner)) return false;
+      if (isLast) {
+        final confirmedWhole = await _confirm(
+          context,
+          t.comicEntry.deleteDownload,
+          t.download.deleteLastChapterContent,
+        );
+        if (!confirmedWhole || !context.mounted || !ownsSelection(owner)) {
+          return false;
+        }
+      }
+      requireExpectedComicDownloadRemoval(
+        bindComicDownloadRemoval(from: from, comicId: comicId),
+        expected,
+      );
+      final result = await deleteDownloadedChapter(
+        from: from,
+        comicId: comicId,
+        chapterKey: chapter.id,
+      );
+      return ownsSelection(owner) &&
+          result == DeleteDownloadedChapterResult.wholeComicDeleted;
+    } on ActiveChapterDownloadRemoval {
+      showInfoToast(t.download.cancelBeforeDelete);
+    } catch (error, stackTrace) {
+      logger.w('删除下载章节失败: ${chapter.id}', error: error, stackTrace: stackTrace);
+      showErrorToast(t.download.removeFileFailed);
     }
-    final result = await deleteDownloadedChapter(
-      from: _from,
-      comicId: _comicId,
-      chapterKey: chapter.id,
-    );
-    return result == DeleteDownloadedChapterResult.wholeComicDeleted;
+    return false;
   }
 
   /// 删除多个已下载章节。返回 true 表示整本记录被删（调用方需 pop 页面）。
@@ -337,36 +426,49 @@ class EpisodeDownloadController {
     BuildContext context,
     List<DownloadChapter> chapters,
   ) async {
-    final targets = downloadedOf(chapters);
-    if (targets.isEmpty) return false;
-    final isWhole =
-        targets.length >= downloadedIds.length && downloadedIds.isNotEmpty;
-    final confirmed = await _confirm(
-      context,
-      t.comicEntry.deleteDownload,
-      isWhole
-          ? t.comicEntry.deleteDownloadConfirm(title: _comicTitle)
-          : t.comicEntry.deleteDownloadConfirm(
-              title: targets.length == 1
-                  ? _chapterLabel(targets.first)
-                  : t.download.pending(count: targets.length),
-            ),
-    );
-    if (!confirmed) return false;
-    if (isWhole) {
-      await deleteWholeComicDownload(from: _from, comicId: _comicId);
-      return true;
-    }
-    for (final chapter in targets) {
-      try {
+    final owner = selectionOwner;
+    final (from, comicId) = (_from, _comicId);
+    try {
+      _loadInitial();
+      final targets = downloadedOf(chapters);
+      if (targets.isEmpty) return false;
+      final targetIds = targets.map((chapter) => chapter.id).toSet();
+      final isWhole =
+          downloadedIds.isNotEmpty && downloadedIds.every(targetIds.contains);
+      final expected = bindComicDownloadRemoval(from: from, comicId: comicId);
+      final confirmed = await _confirm(
+        context,
+        t.comicEntry.deleteDownload,
+        isWhole
+            ? t.comicEntry.deleteDownloadConfirm(title: _comicTitle)
+            : t.comicEntry.deleteDownloadConfirm(
+                title: targets.length == 1
+                    ? _chapterLabel(targets.first)
+                    : t.download.pending(count: targets.length),
+              ),
+      );
+      if (!confirmed || !context.mounted || !ownsSelection(owner)) return false;
+      requireExpectedComicDownloadRemoval(
+        bindComicDownloadRemoval(from: from, comicId: comicId),
+        expected,
+      );
+      if (isWhole) {
+        await deleteWholeComicDownload(from: from, comicId: comicId);
+        return ownsSelection(owner);
+      }
+      for (final chapter in targets) {
+        if (!context.mounted || !ownsSelection(owner)) return false;
         await deleteDownloadedChapter(
-          from: _from,
-          comicId: _comicId,
+          from: from,
+          comicId: comicId,
           chapterKey: chapter.id,
         );
-      } catch (e) {
-        logger.w('删除下载章节失败: ${chapter.id}', error: e);
       }
+    } on ActiveChapterDownloadRemoval {
+      showInfoToast(t.download.cancelBeforeDelete);
+    } catch (error, stackTrace) {
+      logger.w('批量删除下载章节失败', error: error, stackTrace: stackTrace);
+      showErrorToast(t.download.removeFileFailed);
     }
     return false;
   }
@@ -428,6 +530,8 @@ class EpisodeDownloadController {
   }
 
   void dispose() {
+    _disposed = true;
+    _selectionOwner = Object();
     unawaited(_recordSubscription?.cancel());
     unawaited(_taskSubscription?.cancel());
     unawaited(selectionCubit.close());

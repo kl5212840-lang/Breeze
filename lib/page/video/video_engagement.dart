@@ -6,6 +6,8 @@ import 'package:zephyr/page/video/video_community_page.dart';
 import 'package:zephyr/page/video/video_site_action_models.dart';
 import 'package:zephyr/page/video/video_site_operations.dart';
 import 'package:zephyr/page/video/video_public_metadata.dart';
+import 'package:zephyr/page/video/video_detail_action.dart';
+import 'package:zephyr/page/video/video_local_favorite_action.dart';
 
 /// One interaction state for the detail, fullscreen controls and quick panel.
 /// Unknown values remain unknown; only a confirmed result changes selection.
@@ -19,6 +21,7 @@ class VideoEngagementController extends ChangeNotifier {
   String? error;
   bool? favorite;
   bool busy = false, held = false;
+  VideoSiteAction? pendingVote;
   bool _disposed = false;
   Object? _intent;
   bool get working => busy || held || _intent != null;
@@ -53,12 +56,16 @@ class VideoEngagementController extends ChangeNotifier {
     return null;
   }
 
-  Future<void> load({bool refresh = false}) async {
+  Future<void> load({
+    bool refresh = false,
+    VideoSiteResult<VideoInteractionState>? initial,
+  }) async {
     if (busy || held || _disposed) return;
     busy = true;
     error = null;
     _changed();
-    final result = await operations.readInteraction(refresh: refresh);
+    final result =
+        initial ?? await operations.readInteraction(refresh: refresh);
     if (_disposed) return;
     status = result.status;
     if (result.value case final value?) {
@@ -121,6 +128,9 @@ class VideoEngagementController extends ChangeNotifier {
     try {
       if (!await _ensureReady(action) || _disposed) return;
       busy = true;
+      if (action == VideoSiteAction.like || action == VideoSiteAction.dislike) {
+        pendingVote = action;
+      }
       error = null;
       _changed();
       final result = switch (action) {
@@ -148,6 +158,7 @@ class VideoEngagementController extends ChangeNotifier {
       if (!_disposed && identical(_intent, token)) {
         _intent = null;
         busy = false;
+        pendingVote = null;
         _changed();
       }
     }
@@ -233,132 +244,206 @@ class VideoEngagement extends StatelessWidget {
     required this.onShare,
     this.onDownload,
     this.publicMetadata = const VideoPublicMetadata(),
+    this.localFavorite,
+    this.compact = false,
   });
   final VideoPublicMetadata publicMetadata;
   final VideoEngagementController controller;
   final VoidCallback onFavorite;
   final ValueChanged<Rect> onShare;
   final VoidCallback? onDownload;
+  final VideoLocalFavoriteAction? localFavorite;
+  final bool compact;
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: controller,
-    builder: (context, _) => Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            _action(
+    builder: (context, _) {
+      final liked = controller.state.liked == true;
+      final disliked = controller.state.disliked == true;
+      final favorited = controller.favorite == true;
+      final voteBlocked =
+          controller.working || controller.unconfirmedAction != null;
+      final labels = [
+        t.videoCommunity.favorite,
+        if (onDownload != null) t.videoDownload.title,
+        t.videoCommunity.share,
+      ];
+      final positive =
+          (controller.state.positiveVotes ?? publicMetadata.positiveVotes)
+              ?.toString();
+      final negative =
+          (controller.state.negativeVotes ?? publicMetadata.negativeVotes)
+              ?.toString();
+      final likeLabel = liked ? t.videoCommunity.liked : t.videoCommunity.like;
+      final dislikeLabel = disliked
+          ? t.videoCommunity.disliked
+          : t.videoCommunity.dislike;
+      final actions = <Widget>[
+        DecoratedBox(
+          key: const ValueKey('video-vote-actions'),
+          decoration: BoxDecoration(
+            color: Theme.of(
               context,
-              key: 'video-like',
-              caption:
-                  (controller.state.positiveVotes ??
-                          publicMetadata.positiveVotes)
-                      ?.toString(),
-              selected: controller.state.liked == true,
-              icon: controller.state.liked == true
-                  ? Icons.thumb_up
-                  : Icons.thumb_up_outlined,
-              text: controller.state.liked == true
-                  ? t.videoCommunity.liked
-                  : t.videoCommunity.like,
-              onTap: controller.working || controller.unconfirmedAction != null
-                  ? null
-                  : () => controller.set(
-                      VideoSiteAction.like,
-                      controller.state.liked != true,
-                    ),
-            ),
-            _action(
-              context,
-              key: 'video-dislike',
-              caption:
-                  (controller.state.negativeVotes ??
-                          publicMetadata.negativeVotes)
-                      ?.toString(),
-              selected: controller.state.disliked == true,
-              icon: controller.state.disliked == true
-                  ? Icons.thumb_down
-                  : Icons.thumb_down_outlined,
-              text: controller.state.disliked == true
-                  ? t.videoCommunity.disliked
-                  : t.videoCommunity.dislike,
-              onTap: controller.working || controller.unconfirmedAction != null
-                  ? null
-                  : () => controller.set(
-                      VideoSiteAction.dislike,
-                      controller.state.disliked != true,
-                    ),
-            ),
-            _action(
-              context,
-              key: 'video-favorite',
-              selected: controller.favorite == true,
-              icon: controller.favorite == true
-                  ? Icons.star_rounded
-                  : Icons.star_outline_rounded,
-              text: controller.favorite == true
-                  ? t.videoCommunity.favorited
-                  : t.videoCommunity.favorite,
-              onTap: controller.working ? null : onFavorite,
-            ),
-            if (onDownload != null)
-              _action(
-                context,
-                key: 'video-download',
-                selected: false,
-                icon: Icons.download_rounded,
-                text: t.videoDownload.title,
-                onTap: controller.held ? null : onDownload,
-              ),
-            Expanded(
-              child: Builder(
-                builder: (anchor) => _button(
+            ).colorScheme.onSurface.withValues(alpha: .055),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _button(
                   context,
-                  key: 'video-share',
-                  icon: Icons.reply_rounded,
-                  mirrored: true,
-                  text: t.videoCommunity.share,
-                  selected: false,
-                  onTap: controller.held
+                  key: 'video-like',
+                  caption: positive,
+                  selected: liked,
+                  icon: liked ? Icons.thumb_up : Icons.thumb_up_outlined,
+                  text: likeLabel,
+                  busy: controller.pendingVote == VideoSiteAction.like,
+                  onTap: voteBlocked
                       ? null
-                      : () {
-                          final box = anchor.findRenderObject() as RenderBox?;
-                          if (box != null && box.hasSize) {
-                            onShare(box.localToGlobal(Offset.zero) & box.size);
-                          }
-                        },
+                      : () => controller.set(VideoSiteAction.like, !liked),
                 ),
               ),
-            ),
-          ],
+              Expanded(
+                child: _button(
+                  context,
+                  key: 'video-dislike',
+                  caption: negative,
+                  selected: disliked,
+                  icon: disliked ? Icons.thumb_down : Icons.thumb_down_outlined,
+                  text: dislikeLabel,
+                  busy: controller.pendingVote == VideoSiteAction.dislike,
+                  onTap: voteBlocked
+                      ? null
+                      : () =>
+                            controller.set(VideoSiteAction.dislike, !disliked),
+                ),
+              ),
+            ],
+          ),
         ),
-        VideoVoteSummary(
-          metadata: publicMetadata,
-          state: controller.state,
-          showSplit: false,
+        if (localFavorite case final local?)
+          VideoLocalFavoriteAction(
+            source: local.source,
+            session: local.session,
+            store: local.store,
+            compact: compact,
+            siteFavorited: controller.favorite,
+            onSiteFavorite: onFavorite,
+            onOpenDestinations: controller.working ? null : controller.hold,
+          )
+        else
+          _button(
+            context,
+            key: 'video-favorite',
+            selected: favorited,
+            icon: favorited ? Icons.star_rounded : Icons.star_outline_rounded,
+            text: favorited
+                ? t.videoCommunity.favorited
+                : t.videoCommunity.favorite,
+            onTap: controller.working ? null : onFavorite,
+          ),
+        if (onDownload != null)
+          _button(
+            context,
+            key: 'video-download',
+            selected: false,
+            icon: Icons.download_rounded,
+            text: t.videoDownload.title,
+            onTap: controller.held ? null : onDownload,
+          ),
+        Builder(
+          builder: (anchor) => _button(
+            context,
+            key: 'video-share',
+            icon: Icons.reply_rounded,
+            mirrored: true,
+            text: t.videoCommunity.share,
+            selected: false,
+            onTap: controller.held
+                ? null
+                : () {
+                    final box = anchor.findRenderObject() as RenderBox?;
+                    if (box != null && box.hasSize) {
+                      onShare(box.localToGlobal(Offset.zero) & box.size);
+                    }
+                  },
+          ),
         ),
-      ],
-    ),
+      ];
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          LayoutBuilder(
+            key: const ValueKey('video.favorite-actions'),
+            builder: (context, bounds) {
+              final captionStyle = Theme.of(context).textTheme.labelLarge;
+              double lane(String label) {
+                final text = TextPainter(
+                  text: TextSpan(text: label, style: captionStyle),
+                  textDirection: Directionality.of(context),
+                  textScaler: MediaQuery.textScalerOf(context),
+                )..layout();
+                final width = (text.width + 8).clamp(
+                  44.0,
+                  bounds.maxWidth < 44 ? 44.0 : bounds.maxWidth,
+                );
+                text.dispose();
+                return width;
+              }
+
+              final likeWidth = lane(positive ?? t.videoCommunity.like);
+              final dislikeWidth = lane(negative ?? t.videoCommunity.dislike);
+              final widths = [
+                2 * (likeWidth > dislikeWidth ? likeWidth : dislikeWidth),
+                ...labels.map(lane),
+              ];
+              final rows = <List<int>>[];
+              double taken = 0;
+              for (var i = 0; i < actions.length; i++) {
+                if (rows.isEmpty || taken + widths[i] > bounds.maxWidth) {
+                  rows.add([]);
+                  taken = 0;
+                }
+                rows.last.add(i);
+                taken += widths[i];
+              }
+              return Column(
+                children: [
+                  for (final row in rows)
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (final index in row)
+                          SizedBox(
+                            width:
+                                (widths[index] +
+                                        (bounds.maxWidth -
+                                                row.fold<double>(
+                                                  0,
+                                                  (total, i) =>
+                                                      total + widths[i],
+                                                )) /
+                                            row.length)
+                                    .clamp(0, bounds.maxWidth),
+                            child: actions[index],
+                          ),
+                      ],
+                    ),
+                ],
+              );
+            },
+          ),
+          VideoVoteSummary(
+            metadata: publicMetadata,
+            state: controller.state,
+            showSplit: false,
+          ),
+        ],
+      );
+    },
   );
-  Widget _action(
-    BuildContext context, {
-    required String key,
-    required IconData icon,
-    required String text,
-    required bool selected,
-    String? caption,
-    VoidCallback? onTap,
-  }) => Expanded(
-    child: _button(
-      context,
-      key: key,
-      icon: icon,
-      text: text,
-      selected: selected,
-      caption: caption,
-      onTap: onTap,
-    ),
-  );
+
   Widget _button(
     BuildContext context, {
     required String key,
@@ -367,30 +452,18 @@ class VideoEngagement extends StatelessWidget {
     required bool selected,
     String? caption,
     bool mirrored = false,
+    bool busy = false,
     VoidCallback? onTap,
-  }) => Semantics(
+  }) => VideoDetailAction(
+    buttonKey: ValueKey(key),
+    compact: compact,
     label: text,
-    value: caption,
+    caption: caption,
     selected: selected,
-    child: TextButton(
-      key: ValueKey(key),
-      onPressed: onTap,
-      style: TextButton.styleFrom(
-        foregroundColor: selected
-            ? Theme.of(context).colorScheme.primary
-            : Theme.of(context).colorScheme.onSurfaceVariant,
-        minimumSize: const Size(44, 64),
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Transform.flip(flipX: mirrored, child: Icon(icon, size: 26)),
-          const SizedBox(height: 6),
-          Text(caption ?? text, textAlign: TextAlign.center),
-        ],
-      ),
-    ),
+    icon: icon,
+    mirrored: mirrored,
+    busy: busy,
+    onPressed: onTap,
   );
 }
 
@@ -424,7 +497,8 @@ class VideoVoteSummary extends StatelessWidget {
                 metadata.negativeVotes != null &&
                 state!.negativeVotes != metadata.negativeVotes);
     final items = <String>[
-      if (metadata.ratingLabel case final rating? when !changed)
+      if (state?.ratingPercentRaw ?? (changed ? null : metadata.ratingLabel)
+          case final rating?)
         t.videoMetadata.rating(value: rating),
       if (total != null) t.videoMetadata.totalVotes(count: total),
       if (showSplit && positive != null)

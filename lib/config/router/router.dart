@@ -37,6 +37,7 @@ class AppRouter extends RootStackRouter {
     AutoRoute(page: LoginRoute.page),
     AutoRoute(page: ComicListRoute.page),
     AutoRoute(page: SourceShellRoute.page),
+    AutoRoute(page: SourceSettingsHubRoute.page),
     AutoRoute(page: DiscoverRoute.page),
     AutoRoute(page: SearchResultRoute.page),
     AutoRoute(page: SearchAggregateResultRoute.page),
@@ -47,6 +48,7 @@ class AppRouter extends RootStackRouter {
     AutoRoute(page: WebViewRoute.page),
     AutoRoute(page: GlobalSettingRoute.page),
     AutoRoute(page: AppearanceSettingRoute.page),
+    AutoRoute(page: SwitchStyleSettingRoute.page),
     AutoRoute(page: ContentNetworkSettingRoute.page),
     AutoRoute(page: SyncSettingRoute.page),
     AutoRoute(page: AppBehaviorSettingRoute.page),
@@ -60,7 +62,6 @@ class AppRouter extends RootStackRouter {
     AutoRoute(page: FullRouteImageRoute.page),
     AutoRoute(page: ChangelogRoute.page),
     AutoRoute(page: SearchRoute.page),
-    AutoRoute(page: DownloadTaskRoute.page),
     AutoRoute(page: PluginStoreRoute.page),
     AutoRoute(page: PluginSettingsRoute.page),
     AutoRoute(page: PluginDetailRoute.page),
@@ -74,6 +75,7 @@ class AppRouter extends RootStackRouter {
     AutoRoute(page: BookshelfSettingRoute.page),
     AutoRoute(page: DataBackupRoute.page),
     AutoRoute(page: ComicFollowRoute.page),
+    AutoRoute(page: DownloadCenterRoute.page),
   ];
 
   @override

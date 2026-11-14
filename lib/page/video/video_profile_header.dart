@@ -1,3 +1,5 @@
+import 'package:zephyr/widgets/collection_cover_privacy.dart';
+import 'package:zephyr/page/account/plugin_account_avatar_button.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_thumbnail.dart';
@@ -63,17 +65,20 @@ class VideoProfileHeader extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ClipOval(
-                child: SizedBox(
-                  width: compact ? 52 : 64,
-                  height: compact ? 52 : 64,
-                  child: hasIdentity && avatar.isNotEmpty
-                      ? VideoThumbnail(url: avatar, referrer: page)
-                      : Icon(
-                          Icons.account_circle_outlined,
-                          size: compact ? 48 : 56,
-                        ),
-                ),
+              PluginAccountAvatarButton(
+                key: const ValueKey('video-profile.account-avatar'),
+                size: compact ? 52 : 64,
+                label: t.videoSiteAccount.title,
+                onPressed: signedIn ? onAccountSettings : null,
+                child: hasIdentity && avatar.isNotEmpty
+                    ? CollectionCoverPrivacyScope(
+                        enabled: false,
+                        child: VideoThumbnail(url: avatar, referrer: page),
+                      )
+                    : Icon(
+                        Icons.account_circle_outlined,
+                        size: compact ? 48 : 56,
+                      ),
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -179,65 +184,22 @@ class VideoProfileHeader extends StatelessWidget {
   }
 }
 
-/// Secondary tools do not compete with identity and the site's media library.
-/// Reuse the same settings pages and sync contract as the toolbar entries.
+/// Legacy personal/empty hosts share one ordinary settings entrance. Records
+/// remain in their existing library task, independent of account/settings.
 class VideoAccountTools extends StatelessWidget {
-  const VideoAccountTools({
-    super.key,
-    required this.onHistory,
-    required this.onPlaybackSettings,
-    required this.onSourceSettings,
-    this.onAccountSync,
-    this.onClose,
-  });
-  final VoidCallback onHistory, onPlaybackSettings, onSourceSettings;
-  final VoidCallback? onAccountSync, onClose;
+  const VideoAccountTools({super.key, required this.onSourceSettings});
+  final VoidCallback onSourceSettings;
 
   @override
   Widget build(BuildContext context) => Column(
     mainAxisSize: MainAxisSize.min,
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                t.videoCommunity.preferences,
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-            if (onClose != null)
-              IconButton(
-                tooltip: t.common.close,
-                onPressed: onClose,
-                icon: const Icon(Icons.close_rounded),
-              ),
-          ],
-        ),
-      ),
-      ListTile(
-        leading: const Icon(Icons.history_rounded),
-        title: Text(t.videoPlayback.localWatchHistory),
-        onTap: onHistory,
-      ),
-      ListTile(
-        leading: const Icon(Icons.settings_outlined),
-        title: Text(t.videoPlayback.playbackSettings),
-        onTap: onPlaybackSettings,
-      ),
       ListTile(
         leading: const Icon(Icons.tune_rounded),
-        title: Text(t.videoPlayback.sourceSettings),
+        title: Text(t.discover.settings),
         onTap: onSourceSettings,
       ),
-      if (onAccountSync != null)
-        ListTile(
-          leading: const Icon(Icons.cloud_sync_outlined),
-          title: Text(t.videoPlayback.accountBackup),
-          onTap: onAccountSync,
-        ),
     ],
   );
 }

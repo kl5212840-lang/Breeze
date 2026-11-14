@@ -1,3 +1,9 @@
+import 'package:zephyr/page/video/api_video_collection.dart';
+import 'package:zephyr/page/video/video_personal_snapshot_store.dart';
+import 'package:zephyr/service/collection_view_preferences.dart';
+import 'package:zephyr/page/video/video_native_navigation.dart';
+import 'package:zephyr/page/video/source_profile_video_preview.dart';
+import 'package:zephyr/widgets/collection_cover_privacy.dart';
 import 'package:zephyr/page/source_shell/source_return_preferences.dart';
 import 'package:zephyr/page/source_shell/source_diagnostic_preferences.dart';
 import 'package:zephyr/page/video/video_verification_gate.dart';
@@ -15,6 +21,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/login/login_error_message.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/video/native_video_catalog_page.dart';
 import 'package:zephyr/page/video/native_video_page.dart';
 import 'package:zephyr/page/video/video_watch_history.dart';
@@ -28,7 +36,10 @@ import 'package:zephyr/page/video/video_search_filters.dart';
 import 'package:zephyr/page/video/video_search_page.dart';
 import 'package:zephyr/page/video/video_search_filter_panel.dart';
 import 'package:zephyr/page/video/video_card_metadata.dart';
+import 'package:zephyr/page/video/video_account_backup.dart';
+import 'package:zephyr/service/plugin_account_sync_coordinator.dart';
 import 'package:zephyr/page/video/video_playback_quick_panel.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 
 class _OfficialWebsiteLauncher extends UrlLauncherPlatform {
   @override
@@ -122,9 +133,12 @@ class _WebPlatform extends InAppWebViewPlatform {
   Map<String, dynamic>? creatorDirectory;
   Map<String, dynamic>? resolvedCreator;
   Future<dynamic>? nextCreatorRead;
+  Future<dynamic>? siteInteraction;
+  int siteInteractionReads = 0;
   int directoryReads = 0, creatorResolutions = 0;
 
   bool challenge = false;
+  bool accessBlocked = false;
   bool siteReady = true;
   bool authUiReady = false;
   Future<dynamic>? nextSiteState;
@@ -136,6 +150,7 @@ class _WebPlatform extends InAppWebViewPlatform {
   bool failInspection = false;
   final verificationWindows = <Uri>[];
   Completer<bool>? verificationWindowResult;
+  Future<void>? nextStop;
   String profileHref = '';
   bool signedOutEntry = true;
   int accountReads = 0;
@@ -151,6 +166,7 @@ class _WebPlatform extends InAppWebViewPlatform {
     'email': 'private@example.test',
   };
   int stops = 0;
+  int reloads = 0;
   int presentationChanges = 0;
   int stateReads = 0;
   int authSubmissions = 0;
@@ -276,6 +292,18 @@ class _WebController extends PlatformInAppWebViewController
   @override
   Future<void> stopLoading() async {
     host.stops++;
+    final pending = host.nextStop;
+    host.nextStop = null;
+    if (pending != null) await pending;
+  }
+
+  @override
+  Future<void> reload() async {
+    host.reloads++;
+    final target = host.currentUrl;
+    if (target == null) return;
+    host.loads.add(target);
+    host.params.onLoadStart?.call(host.wrapped, WebUri(target.toString()));
   }
 
   @override
@@ -300,6 +328,10 @@ class _WebController extends PlatformInAppWebViewController
     required String source,
     ContentWorld? contentWorld,
   }) async {
+    if (source.contains('const operation = "state", payload =')) {
+      host.siteInteractionReads++;
+      return host.siteInteraction;
+    }
     if (source == 'performance.timeOrigin' && host.nextTimeOrigin != null) {
       final pending = host.nextTimeOrigin;
       host.nextTimeOrigin = null;
@@ -339,8 +371,13 @@ class _WebController extends PlatformInAppWebViewController
       if (pending != null) return pending;
       return jsonEncode({
         'url': host.currentUrl?.toString() ?? 'about:blank',
-        'nativeContent': host.siteReady && !host.challenge,
-        'siteUi': (host.siteReady || host.authUiReady) && !host.challenge,
+        'nativeContent':
+            host.siteReady && !host.challenge && !host.accessBlocked,
+        'siteUi':
+            (host.siteReady || host.authUiReady) &&
+            !host.challenge &&
+            !host.accessBlocked,
+        'accessBlocked': host.accessBlocked,
         'challengeShell': host.challenge,
       });
     }
@@ -378,8 +415,10 @@ class _Plugin {
   Map<String, dynamic>? creator;
   Map<String, String> tagTargets = {};
   Map<String, dynamic> sourceValues = {};
+  Map<String, dynamic>? accountSync;
 
   bool playable = false;
+  Future<Map<String, dynamic>>? pendingMedia;
 
   Future<Map<String, dynamic>> call(
     String fnPath,
@@ -388,7 +427,10 @@ class _Plugin {
     calls.add((fnPath, core));
     if (fnPath == 'getSettingsBundle') {
       return {
-        'data': {'values': sourceValues},
+        'data': {
+          'values': sourceValues,
+          if (accountSync != null) 'accountSync': accountSync,
+        },
       };
     }
     if (fnPath == 'catalog') {
@@ -415,6 +457,7 @@ class _Plugin {
         },
       };
     }
+    if (fnPath == 'playback' && pendingMedia != null) return pendingMedia!;
     if (fnPath == 'playback' && playable) {
       return {
         'data': {
@@ -435,18 +478,42 @@ Future<void> _pump(WidgetTester tester, [int frames = 8]) async {
   }
 }
 
+class _VideoRouteObserver extends NavigatorObserver {
+  final popped = <String?>[];
+  final removed = <String?>[];
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    popped.add(route.settings.name);
+    super.didPop(route, previousRoute);
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    removed.add(route.settings.name);
+    super.didRemove(route, previousRoute);
+  }
+}
+
 Future<void> _mount(
   WidgetTester tester,
   _Plugin plugin, {
+  String source = 'hanime-test',
   double textScale = 1,
   List<NativeCatalogCategory> categories = const [],
   bool nativePersonal = false,
   bool nativeAuth = false,
+  bool nativeSiteActions = false,
   List<Uri> externalAuthenticationEntries = const [],
   VideoFilterSchema? filters,
   Brightness brightness = Brightness.light,
   bool nestedRoot = false,
+  bool returnToCallerAfterPlayback = false,
   Uri? initialUrl,
+  KeywordSearchScope? initialKeywordScope,
+  PluginAccountSyncCoordinator? accountSyncCoordinator,
+  VideoAccountCookies? accountCookies,
+  List<NavigatorObserver> observers = const [],
 }) async {
   Widget withDiscoverRoot(Widget catalog) => !nestedRoot
       ? catalog
@@ -466,6 +533,7 @@ Future<void> _mount(
         );
   await tester.pumpWidget(
     MaterialApp(
+      navigatorObservers: observers,
       theme: ThemeData(brightness: brightness),
       builder: (context, child) => MediaQuery(
         data: MediaQuery.of(
@@ -475,10 +543,15 @@ Future<void> _mount(
       ),
       home: withDiscoverRoot(
         NativeVideoCatalogPage(
-          source: 'hanime-test',
+          source: source,
+          readLocalDownloads: () async => const <Map<String, dynamic>>[],
           title: 'Hanime1',
           homeUrl: Uri.parse('https://hanime1.me/'),
           initialUrl: initialUrl,
+          initialKeywordScope: initialKeywordScope,
+          returnToCallerAfterPlayback: returnToCallerAfterPlayback,
+          accountSyncCoordinator: accountSyncCoordinator,
+          accountCookies: accountCookies,
           catalogFnPath: 'catalog',
           detailFnPath: 'detail',
           playbackFnPath: 'playback',
@@ -486,6 +559,7 @@ Future<void> _mount(
           nativeAccount: nativePersonal,
           nativeSubscriptions: nativePersonal,
           nativeAuth: nativeAuth,
+          nativeSiteActions: nativeSiteActions,
           externalAuthenticationEntries: externalAuthenticationEntries,
           searchFilters: filters,
           categories: categories,
@@ -542,17 +616,30 @@ Future<void> _chooseMode(WidgetTester tester, String title) async {
 }
 
 Future<void> _openPersonalLibrary(WidgetTester tester, String suffix) async {
+  if (find.byType(VideoPersonalOverview).evaluate().isEmpty) {
+    await tester.tap(find.byTooltip(t.common.back).hitTestable().last);
+    await _pump(tester);
+  }
   final entry = find.byKey(ValueKey('video-personal.$suffix'));
-  final label = switch (suffix) {
-    'histories' => t.videoPersonal.histories,
-    'saves' => t.videoPersonal.watchLater,
-    'likes' => t.videoPersonal.likes,
-    _ => t.videoPersonal.playlists,
-  };
-  final target = entry.evaluate().isNotEmpty
-      ? entry
-      : find.widgetWithText(Tab, label);
-  await tester.ensureVisible(target);
+  final scrollable = find
+      .descendant(
+        of: find.byType(VideoPersonalOverview),
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is Scrollable &&
+              widget.axisDirection == AxisDirection.down,
+        ),
+      )
+      .first;
+  await tester.scrollUntilVisible(entry, 240, scrollable: scrollable);
+  final target = find.byKey(
+    ValueKey<(String, Key)>((
+      'profile-view-all',
+      ValueKey('site-personal.$suffix'),
+    )),
+  );
+  await Scrollable.ensureVisible(tester.element(target), alignment: .15);
+  await _pump(tester, 2);
   await tester.tap(target);
 }
 
@@ -597,6 +684,10 @@ Future<void> _openNativeLogin(
 }
 
 Future<void> _verificationAction(WidgetTester tester, String value) async {
+  if (value == 'inspection') {
+    await _catalogToolAction(tester, value);
+    return;
+  }
   final menu = tester.widget<NativeVideoMenu>(
     find.byWidgetPredicate(
       (widget) =>
@@ -605,6 +696,22 @@ Future<void> _verificationAction(WidgetTester tester, String value) async {
     ),
   );
   menu.onSelected(value);
+  await _pump(tester, 3);
+}
+
+Future<void> _catalogToolAction(WidgetTester tester, String value) async {
+  final menu = tester.widget<NativeVideoMenu>(
+    find.byWidgetPredicate(
+      (widget) =>
+          widget is NativeVideoMenu && widget.options.containsKey('tools'),
+    ),
+  );
+  // Settings is the canonical root; browser inspection is a source-owned More
+  // action, not a row on the retired intermediate tools page.
+  final key = value == 'inspection' ? 'browserInspection' : value;
+  expect(menu.options, contains(key));
+  expect(menu.optionIcons, contains(key));
+  menu.onSelected(key);
   await _pump(tester, 3);
 }
 
@@ -651,7 +758,7 @@ void main() {
   });
 
   testWidgets(
-    'official website opens declared home externally without changing the current page',
+    'official website opens reviewed home externally without changing the current page',
     (tester) async {
       final launcher = _OfficialWebsiteLauncher();
       final originalLauncher = UrlLauncherPlatform.instance;
@@ -660,6 +767,7 @@ void main() {
       await _mount(
         tester,
         plugin,
+        source: '1e600cff-8ebe-4517-8aa4-6678aec46424',
         initialUrl: Uri.parse('https://hanime1.me/search?query=public-fixture'),
       );
       web.finishLastLoad();
@@ -691,7 +799,7 @@ void main() {
       expect(web.stops, stops);
       expect(menu().selected, selected);
       expect(menu().options.keys, isNot(contains('diagnostics')));
-      expect(menu().options.keys, isNot(contains('inspection')));
+      expect(menu().options.keys, isNot(contains('browserInspection')));
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
@@ -757,9 +865,38 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       expect(find.text('Filtered page 3'), findsOneWidget);
+      final loadsBeforeBack = web.loads.length;
+      final readsBeforeBack = plugin.calls
+          .where((call) => call.$1 == 'catalog')
+          .length;
       await tester.tap(find.byTooltip(t.common.back));
       await _pump(tester);
+      expect(web.loads.length, loadsBeforeBack);
+      expect(
+        plugin.calls.where((call) => call.$1 == 'catalog').length,
+        readsBeforeBack,
+      );
+      await tester.scrollUntilVisible(
+        find.text('Filtered page 2'),
+        -200,
+        scrollable: find
+            .descendant(
+              of: find.byType(NativeVideoCatalogPage),
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is Scrollable &&
+                    widget.axisDirection == AxisDirection.down,
+              ),
+            )
+            .first,
+      );
+      await tester.pumpAndSettle();
       expect(find.text('Filtered page 2'), findsOneWidget);
+      expect(web.loads.length, loadsBeforeBack);
+      expect(
+        plugin.calls.where((call) => call.$1 == 'catalog').length,
+        readsBeforeBack,
+      );
       active = tester
           .widget<VideoActiveFilters>(find.byType(VideoActiveFilters))
           .filters;
@@ -815,15 +952,19 @@ void main() {
       await tester.pump();
       await tester.tap(find.widgetWithText(Tab, t.videoFilters.genre));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(ChoiceChip, '3DCG'));
+      await tester.tap(find.byKey(const ValueKey('video-filter.genre.3DCG')));
       await tester.pump();
       await tester.tap(find.widgetWithText(Tab, t.videoFilters.date));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(ChoiceChip, 'Past day'));
-      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('video-filter.date.trigger')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('video-filter.date.past')));
+      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(Tab, t.videoFilters.duration));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(ChoiceChip, 'Short'));
+      await tester.tap(
+        find.byKey(const ValueKey('video-filter.duration.short')),
+      );
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('video-filter.apply')));
       await _pump(tester);
@@ -873,6 +1014,117 @@ void main() {
   );
 
   testWidgets(
+    'Hanime all search offers the exact site tag and preserves keyword results on back',
+    (tester) async {
+      final keyword = Uri.https('hanime1.me', '/search', {
+        'query': 'Tag A',
+        'genre': '3DCG',
+        'sort': 'views',
+      });
+      plugin.catalog = (core) async {
+        final page = Uri.parse(core['pageUrl'] as String);
+        return {
+          'data': {
+            ..._catalog(
+                  page.queryParameters.containsKey('query')
+                      ? 'Keyword card'
+                      : 'Official tag card',
+                )['data']
+                as Map<String, dynamic>,
+            'searchFilters': {
+              'tagGroups': {
+                'Attributes': [
+                  {'value': 'wire-a', 'label': 'Tag A'},
+                  {'value': 'wire-b', 'label': 'Tag AB'},
+                ],
+              },
+            },
+          },
+        };
+      };
+      await _mount(
+        tester,
+        plugin,
+        filters: _filters,
+        initialUrl: keyword,
+        initialKeywordScope: KeywordSearchScope.all,
+      );
+      web.finishLastLoad();
+      await _pump(tester);
+      final exactTag = find.byKey(const ValueKey('video-search.exact-tag'));
+      expect(exactTag, findsOneWidget);
+      expect(find.text('Keyword card'), findsOneWidget);
+      expect(web.loads, [keyword]);
+      await tester.tap(exactTag);
+      await _pump(tester);
+      expect(web.loads.last.queryParametersAll, {
+        'genre': ['3DCG'],
+        'sort': ['views'],
+        'tags[]': ['wire-a'],
+      });
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.text('Official tag card'), findsOneWidget);
+      expect(exactTag, findsNothing);
+      final loads = web.loads.length;
+      await tester.tap(find.byTooltip(t.common.back));
+      await _pump(tester);
+      expect(web.loads.length, loads);
+      expect(web.creations, 1);
+      expect(find.text('Keyword card'), findsOneWidget);
+      expect(exactTag, findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  for (final (scope, query) in [
+    (KeywordSearchScope.title, 'Tag A'),
+    (KeywordSearchScope.all, 'Tag'),
+    (KeywordSearchScope.all, 'Ambiguous'),
+    (KeywordSearchScope.all, 'Local-only tag'),
+  ]) {
+    testWidgets('Hanime does not offer a tag for $scope / $query', (
+      tester,
+    ) async {
+      plugin.catalog = (_) async => {
+        'data': {
+          ..._catalog('Fixture card')['data'] as Map<String, dynamic>,
+          if (query != 'Local-only tag')
+            'searchFilters': {
+              'tagGroups': {
+                'Attributes': [
+                  {'value': 'wire-a', 'label': 'Tag A'},
+                  {'value': 'first', 'label': 'Ambiguous'},
+                  {'value': 'second', 'label': 'Ambiguous'},
+                ],
+              },
+            },
+        },
+      };
+      await _mount(
+        tester,
+        plugin,
+        filters: const VideoFilterSchema(
+          tagGroups: {
+            'Default': [
+              VideoFilterChoice(value: 'fallback', label: 'Local-only tag'),
+            ],
+          },
+        ),
+        initialUrl: Uri.https('hanime1.me', '/search', {'query': query}),
+        initialKeywordScope: scope,
+      );
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(
+        find.byKey(const ValueKey('video-search.exact-tag')),
+        findsNothing,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
+  testWidgets(
     'a detail tag uses its actual filter target and retains the source sort',
     (tester) async {
       plugin.tagTargets = {
@@ -896,6 +1148,243 @@ void main() {
       ]);
       expect(web.documents.last.loads.last.queryParameters['sort'], 'views');
       expect(web.documents.last.loads.last.queryParameters['query'], isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'committed HTTP403 hard block stops DOM waiting without pretending a challenge can complete',
+    (tester) async {
+      web.accessBlocked = true;
+      await _mount(tester, plugin);
+      web.currentUrl = web.loads.last;
+      final url = WebUri(web.currentUrl.toString());
+      web.params.onLoadStart?.call(web.wrapped, url);
+      web.params.onReceivedHttpError?.call(
+        web.wrapped,
+        WebResourceRequest(url: url, isForMainFrame: true),
+        WebResourceResponse(statusCode: 403, headers: const {}),
+      );
+      web.params.onPageCommitVisible?.call(web.wrapped, url);
+      await _pump(tester);
+      final blocked = find.textContaining('HTTP 403');
+      expect(blocked, findsOneWidget);
+      expect(find.text(t.videoPlayback.verificationTitle), findsNothing);
+      expect(find.text(t.videoPlayback.catalogFallback), findsNothing);
+      expect(plugin.calls.where((call) => call.$1 == 'catalog'), isEmpty);
+      await tester.pump(const Duration(seconds: 46));
+      await _pump(tester);
+      expect(blocked, findsOneWidget);
+      expect(web.loads, hasLength(1));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'web presentation reveals the original HTTP403 document and native presentation retains its own diagnosis',
+    (tester) async {
+      plugin.sourceValues['video.defaultMode'] = 'website';
+      web.accessBlocked = true;
+      await _mount(tester, plugin);
+      web.currentUrl = web.loads.last;
+      final url = WebUri(web.currentUrl.toString());
+      web.params.onLoadStart?.call(web.wrapped, url);
+      web.params.onReceivedHttpError?.call(
+        web.wrapped,
+        WebResourceRequest(url: url, isForMainFrame: true),
+        WebResourceResponse(statusCode: 403, headers: const {}),
+      );
+      web.params.onPageCommitVisible?.call(web.wrapped, url);
+      await _pump(tester);
+      expect(find.textContaining('HTTP 403'), findsNothing);
+      expect(find.byKey(const ValueKey('website-document')), findsOneWidget);
+      final ignoredBrowser = tester.widget<IgnorePointer>(
+        find
+            .ancestor(
+              of: find.byType(VideoSiteBrowser),
+              matching: find.byType(IgnorePointer),
+            )
+            .first,
+      );
+      expect(
+        ignoredBrowser.ignoring,
+        isFalse,
+        reason:
+            'The real terminal document remains interactive and unobscured.',
+      );
+      final loads = web.loads.length;
+      await _chooseMode(tester, t.videoPlayback.nativeCatalog);
+      expect(find.textContaining('HTTP 403'), findsOneWidget);
+      expect(web.loads, hasLength(loads));
+      await _chooseMode(tester, t.videoPlayback.website);
+      expect(find.textContaining('HTTP 403'), findsNothing);
+      expect(
+        web.loads,
+        hasLength(loads),
+        reason: 'Changing presentation reuses the committed document.',
+      );
+      await tester.pump(const Duration(seconds: 46));
+      await _pump(tester);
+      expect(find.textContaining('HTTP 403'), findsNothing);
+      expect(web.loads, hasLength(loads));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'web refresh replaces a blocked document and keeps the chosen web presentation after challenge',
+    (tester) async {
+      plugin.sourceValues['video.defaultMode'] = 'website';
+      web.accessBlocked = true;
+      await _mount(tester, plugin);
+      web.currentUrl = web.loads.last;
+      final url = WebUri(web.currentUrl.toString());
+      web.params.onLoadStart?.call(web.wrapped, url);
+      web.params.onReceivedHttpError?.call(
+        web.wrapped,
+        WebResourceRequest(url: url, isForMainFrame: true),
+        WebResourceResponse(statusCode: 403, headers: const {}),
+      );
+      web.params.onPageCommitVisible?.call(web.wrapped, url);
+      await _pump(tester);
+      expect(find.textContaining('HTTP 403'), findsNothing);
+
+      await tester.tap(find.byTooltip(t.videoPlayback.websiteToggle));
+      await _pump(tester, 3);
+      await tester.tap(
+        find.descendant(
+          of: find.byKey(const ValueKey('video-host-menu')),
+          matching: find.text(t.common.refresh),
+        ),
+      );
+      await _pump(tester);
+      expect(
+        web.reloads,
+        1,
+        reason: 'Refresh must issue a real browser reload.',
+      );
+      expect(web.loads, hasLength(2));
+      expect(web.stops, greaterThan(0));
+
+      web.accessBlocked = false;
+      web.challenge = true;
+      web.params.onReceivedHttpError?.call(
+        web.wrapped,
+        WebResourceRequest(url: url, isForMainFrame: true),
+        WebResourceResponse(
+          statusCode: 403,
+          headers: const {'cf-mitigated': 'challenge'},
+        ),
+      );
+      web.params.onPageCommitVisible?.call(web.wrapped, url);
+      await _pump(tester);
+      expect(find.text(t.videoPlayback.verificationTitle), findsOneWidget);
+      expect(find.textContaining('HTTP 403'), findsNothing);
+      final browser = tester.widget<IgnorePointer>(
+        find
+            .ancestor(
+              of: find.byType(VideoSiteBrowser),
+              matching: find.byType(IgnorePointer),
+            )
+            .first,
+      );
+      expect(browser.ignoring, isFalse);
+
+      // The user completes the provider's challenge; the app only observes the
+      // resulting genuine site content, without changing its renderer choice.
+      web.challenge = false;
+      web.params.onReceivedHttpError?.call(
+        web.wrapped,
+        WebResourceRequest(url: url, isForMainFrame: true),
+        WebResourceResponse(statusCode: 200, headers: const {}),
+      );
+      web.params.onLoadStop?.call(web.wrapped, url);
+      await _pump(tester);
+      expect(find.text(t.videoPlayback.verificationTitle), findsNothing);
+      expect(find.textContaining('HTTP 403'), findsNothing);
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is NativeVideoMenu && w.selected == 'website',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Home card'), findsNothing);
+      expect(web.loads, hasLength(2));
+      await _chooseMode(tester, t.videoPlayback.nativeCatalog);
+      expect(find.text('Home card'), findsOneWidget);
+      expect(web.loads, hasLength(2));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'native hard-block retry clears the old response before a new challenge',
+    (tester) async {
+      web.accessBlocked = true;
+      await _mount(tester, plugin);
+      web.currentUrl = web.loads.last;
+      final url = WebUri(web.currentUrl.toString());
+      web.params.onLoadStart?.call(web.wrapped, url);
+      web.params.onReceivedHttpError?.call(
+        web.wrapped,
+        WebResourceRequest(url: url, isForMainFrame: true),
+        WebResourceResponse(statusCode: 403, headers: const {}),
+      );
+      web.params.onPageCommitVisible?.call(web.wrapped, url);
+      await _pump(tester);
+      expect(find.textContaining('HTTP 403'), findsOneWidget);
+      await tester.tap(find.text(t.common.retry));
+      await _pump(tester);
+      expect(web.loads, hasLength(2));
+      expect(find.textContaining('HTTP 403'), findsNothing);
+      web.accessBlocked = false;
+      web.challenge = true;
+      web.params.onLoadStart?.call(web.wrapped, url);
+      web.params.onReceivedHttpError?.call(
+        web.wrapped,
+        WebResourceRequest(url: url, isForMainFrame: true),
+        WebResourceResponse(
+          statusCode: 403,
+          headers: const {'cf-mitigated': 'challenge'},
+        ),
+      );
+      web.params.onPageCommitVisible?.call(web.wrapped, url);
+      await _pump(tester);
+      expect(find.text(t.videoPlayback.verificationTitle), findsOneWidget);
+      expect(find.textContaining('HTTP 403'), findsNothing);
+      web.challenge = false;
+      web.params.onReceivedHttpError?.call(
+        web.wrapped,
+        WebResourceRequest(url: url, isForMainFrame: true),
+        WebResourceResponse(statusCode: 200, headers: const {}),
+      );
+      web.params.onLoadStop?.call(web.wrapped, url);
+      await _pump(tester);
+      expect(find.text('Home card'), findsOneWidget);
+      expect(web.loads, hasLength(2));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'HTTP403 without a hard-block document still accepts real native content',
+    (tester) async {
+      await _mount(tester, plugin);
+      web.currentUrl = web.loads.last;
+      final url = WebUri(web.currentUrl.toString());
+      web.params.onReceivedHttpError?.call(
+        web.wrapped,
+        WebResourceRequest(url: url, isForMainFrame: true),
+        WebResourceResponse(statusCode: 403, headers: const {}),
+      );
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.text('Home card'), findsOneWidget);
+      expect(find.textContaining('HTTP 403'), findsNothing);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
@@ -1048,6 +1537,40 @@ void main() {
       expect(find.text('Home card'), findsOneWidget);
       expect(find.text(t.videoPlayback.catalogRefreshFailed), findsOneWidget);
       expect(find.text(t.videoPlayback.catalogFallback), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'transient native catalog failure recovers without a user retry',
+    (tester) async {
+      await _mount(tester, plugin);
+      final count = web.loads.length;
+      web.params.onReceivedError?.call(
+        web.wrapped,
+        WebResourceRequest(
+          url: WebUri(web.loads.last.toString()),
+          isForMainFrame: true,
+        ),
+        WebResourceError(
+          type: WebResourceErrorType.TIMEOUT,
+          description: 'WKNavigation url -1009 provisional',
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 900));
+      await tester.pump();
+      expect(web.loads.length, count + 1);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.text('Home card'), findsOneWidget);
+      final recovered = web.loads.length;
+      await tester.pump(const Duration(seconds: 50));
+      expect(
+        web.loads.length,
+        recovered,
+        reason: 'Healthy native content has no refresh poll',
+      );
+      expect(web.verificationWindows, isEmpty);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
@@ -1306,18 +1829,18 @@ void main() {
       );
       final initialLoads = web.loads.length;
       expect(menu().options.keys, isNot(contains('diagnostics')));
-      expect(menu().options.keys, isNot(contains('inspection')));
+      expect(menu().options.keys, isNot(contains('browserInspection')));
       // Even a stale native callback must not expose a disabled tool.
-      menu().onSelected('inspection');
+      menu().onSelected('browserInspection');
       menu().onSelected('diagnostics');
       await _pump(tester);
       expect(find.text(t.videoPlayback.browserInspectionPrompt), findsNothing);
       expect(web.inspectionChanges, isEmpty);
       await SourceDiagnosticPreferences.setEnabled('hanime-test', true);
       await _pump(tester);
-      expect(menu().options.keys, containsAll(['diagnostics', 'inspection']));
-      menu().onSelected('inspection');
-      await _pump(tester);
+      expect(menu().options['diagnostics'], t.videoPlayback.pageAnalysis);
+      expect(menu().groups.last, ['exit']);
+      await _catalogToolAction(tester, 'inspection');
       await tester.tap(
         find.widgetWithText(
           TextButton,
@@ -1330,7 +1853,7 @@ void main() {
       await _pump(tester);
       expect(web.inspectionChanges, [true, false]);
       expect(menu().options.keys, isNot(contains('diagnostics')));
-      expect(menu().options.keys, isNot(contains('inspection')));
+      expect(menu().options.keys, isNot(contains('browserInspection')));
       expect(menu().options.keys, containsAll(['tools', 'exit']));
       expect(web.loads.length, initialLoads);
       await tester.pumpWidget(const SizedBox.shrink());
@@ -1351,12 +1874,10 @@ void main() {
             widget.tooltip == t.videoPlayback.websiteToggle,
       ),
     );
-    expect(menu.options.keys, containsAll(['diagnostics', 'inspection']));
     expect(menu.options['diagnostics'], t.videoPlayback.pageAnalysis);
-    expect(menu.options['tools'], t.videoCommunity.preferences);
+    expect(menu.options['tools'], t.discover.settings);
     expect(menu.options.keys.every(menu.optionIcons.containsKey), isTrue);
-    menu.onSelected('inspection');
-    await _pump(tester);
+    await _catalogToolAction(tester, 'inspection');
     await tester.tap(
       find.widgetWithText(TextButton, t.videoPlayback.enableBrowserInspection),
     );
@@ -1369,11 +1890,10 @@ void main() {
       ),
     );
     expect(
-      menu.options['inspection'],
+      menu.options['browserInspection'],
       t.videoPlayback.disableBrowserInspection,
     );
-    menu.onSelected('inspection');
-    await _pump(tester);
+    await _catalogToolAction(tester, 'inspection');
     expect(web.inspectionChanges, [true, false]);
     expect(web.loads, hasLength(1));
     await tester.pumpWidget(const SizedBox.shrink());
@@ -1527,7 +2047,7 @@ void main() {
       await _pump(tester);
       final loads = web.loads.length;
       final viewport = tester.getSize(
-        find.byKey(const ValueKey('website-document')),
+        find.byKey(const ValueKey('website-document'), skipOffstage: false),
       );
       web.challenge =
           true; // DOM changes after load-stop, with no new callback.
@@ -1968,7 +2488,13 @@ void main() {
       await tester.pump(const Duration(milliseconds: 180));
       await tester.tapAt(outside);
       await tester.pump();
-      // Reopen while the old route is still reversing.
+      // The still-visible exit consumes the tap; after it finishes the next
+      // explicit press opens a fresh menu without reaching the catalog below.
+      await tester.tap(find.byTooltip(t.videoPlayback.websiteToggle));
+      await tester.pump();
+      await _pump(tester);
+      expect(menu, findsNothing);
+      expect(web.loads.length, loads);
       await tester.tap(find.byTooltip(t.videoPlayback.websiteToggle));
       await tester.pump();
       await _pump(tester);
@@ -2582,7 +3108,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       expect(find.text('Artist · 2天前'), findsOneWidget);
-      expect(find.text('01:24'), findsOneWidget);
+      expect(find.text('1:24'), findsOneWidget);
       expect(
         find.text(
           '${t.videoMetadata.views(value: '1.2万次')} · ${t.videoMetadata.rating(value: '99%')}',
@@ -2643,7 +3169,7 @@ void main() {
       await _openPersonalLibrary(tester, 'histories');
       await _pump(tester);
       expect(find.text('Stable identity'), findsOneWidget);
-      expect(find.byType(TabBar), findsOneWidget);
+      expect(find.byType(TabBar), findsNothing);
       web.finishLastLoad();
       await _pump(tester);
       await _openPersonalLibrary(tester, 'saves');
@@ -2652,7 +3178,7 @@ void main() {
       await _pump(tester);
       expect(find.text('Stable identity'), findsOneWidget);
       expect(find.text(t.videoCommunity.network), findsOneWidget);
-      expect(find.byType(TabBar), findsOneWidget);
+      expect(find.byType(TabBar), findsNothing);
       delayed.complete({
         'data': {
           ..._catalog('Stale history')['data'] as Map<String, dynamic>,
@@ -2675,6 +3201,28 @@ void main() {
         reason: 'return to the fresh overview does not reload the website',
       );
       expect(find.byType(VideoPersonalOverview), findsOneWidget);
+      final overviewScroll = find
+          .descendant(
+            of: find.byType(VideoPersonalOverview),
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is Scrollable &&
+                  widget.axisDirection == AxisDirection.down,
+            ),
+          )
+          .first;
+      await tester.scrollUntilVisible(
+        find.byType(SourceProfileLocalVideoPreviews),
+        240,
+        scrollable: overviewScroll,
+      );
+      await _pump(tester, 2);
+      final localPreview = tester.widget<SourceProfileLocalVideoPreviews>(
+        find.byType(SourceProfileLocalVideoPreviews),
+      );
+      expect(localPreview.source, 'hanime-test');
+      expect(localPreview.groupDownloads, isTrue);
+      expect(localPreview.responsivePreview, isTrue);
       await tester.tap(find.byTooltip(t.common.back));
       await _pump(tester);
       expect(web.loads.last.path, '/');
@@ -2879,6 +3427,7 @@ void main() {
       );
       expect(find.text('Scroll account'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
     },
   );
 
@@ -2996,6 +3545,458 @@ void main() {
   );
 
   testWidgets(
+    'personal reentry preserves confirmed-owner caches and collection view scopes',
+    (tester) async {
+      final owner = Uri.parse('https://hanime1.me/user/42');
+      final likes = owner.replace(path: '${owner.path}/likes');
+      final scope = VideoPersonalSnapshotStore.scope(
+        'hanime-test',
+        owner,
+        likes.replace(queryParameters: const <String, String>{}, fragment: ''),
+      );
+      plugin.catalog = (core) async => {
+        'data': {
+          ..._catalog('Scoped card')['data'] as Map<String, dynamic>,
+          'videos': [
+            {
+              'title': 'Even tagged',
+              'watchUrl': 'https://hanime1.me/watch?v=2',
+              'coverUrl': '',
+              'tags': ['Even'],
+            },
+            {
+              'title': 'Odd tagged',
+              'watchUrl': 'https://hanime1.me/watch?v=3',
+              'coverUrl': '',
+              'tags': ['Odd'],
+            },
+          ],
+          'account': {
+            'status': 'signedIn',
+            'isOwnProfile': true,
+            'profileUrl': '$owner',
+            'name': 'Cached owner',
+            'links': [
+              for (final kind in ['histories', 'saves', 'likes', 'playlists'])
+                {'title': kind, 'url': '${owner.toString()}/$kind'},
+            ],
+          },
+        },
+      };
+      await _mount(tester, plugin, nativePersonal: true);
+      web.finishLastLoad();
+      await _pump(tester);
+      web.profileHref = '/user/42';
+      await tester.tap(find.text('我的'));
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      await _openPersonalLibrary(tester, 'likes');
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(
+        tester.widget<ApiVideoCollection>(find.byType(ApiVideoCollection)).mode,
+        ApiVideoView.grid,
+      );
+      await tester.tap(find.byKey(const ValueKey('personal-records.view')));
+      await _pump(tester);
+      expect(await CollectionViewPreferences.read(scope), 'list');
+      expect(
+        tester.widget<ApiVideoCollection>(find.byType(ApiVideoCollection)).mode,
+        ApiVideoView.list,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('personal-records.search-toggle')),
+      );
+      await _pump(tester, 2);
+      await tester.enterText(find.byType(TextField).last, 'Even');
+      await _pump(tester);
+      expect(
+        tester
+            .widget<ApiVideoCollection>(find.byType(ApiVideoCollection))
+            .items
+            .map((v) => v.title),
+        ['Even tagged'],
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('personal-records.search-toggle')),
+      );
+      await _pump(tester, 2);
+      final afterLikes = web.loads.length;
+      await _openPersonalLibrary(tester, 'saves');
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(
+        tester.widget<ApiVideoCollection>(find.byType(ApiVideoCollection)).mode,
+        ApiVideoView.grid,
+      );
+      await _openPersonalLibrary(tester, 'likes');
+      await _pump(tester);
+      expect(
+        web.loads.length,
+        afterLikes + 1,
+        reason: 'fresh likes reentry does not load the site',
+      );
+      expect(
+        tester.widget<ApiVideoCollection>(find.byType(ApiVideoCollection)).mode,
+        ApiVideoView.list,
+      );
+      expect(
+        tester
+            .widget<ApiVideoCollection>(find.byType(ApiVideoCollection))
+            .items
+            .map((v) => v.title),
+        ['Even tagged'],
+      );
+      await tester.tap(find.byTooltip(t.common.back).hitTestable().last);
+      await _pump(tester);
+      await tester.tap(find.text('推荐'));
+      await _pump(tester);
+      final beforeMy = web.loads.length;
+      await tester.tap(find.text('我的'));
+      await _pump(tester);
+      expect(
+        web.loads.length,
+        beforeMy,
+        reason: 'same confirmed account entry keeps its fresh root snapshot',
+      );
+      expect(find.byType(VideoPersonalOverview), findsOneWidget);
+      await _openPersonalLibrary(tester, 'likes');
+      await _pump(tester);
+      expect(
+        web.loads.length,
+        beforeMy,
+        reason: 'opening My did not invalidate fresh child collections',
+      );
+      expect(
+        tester.widget<ApiVideoCollection>(find.byType(ApiVideoCollection)).mode,
+        ApiVideoView.list,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'personal collection scroll appends real pages and retries without losing loaded cards',
+    (tester) async {
+      final owner = Uri.parse('https://hanime1.me/user/42');
+      var failSecond = true;
+      plugin.catalog = (core) async {
+        final uri = Uri.parse(core['pageUrl'] as String);
+        final page = int.tryParse(uri.queryParameters['page'] ?? '1') ?? 1;
+        if (uri.path.endsWith('/likes') && page == 2 && failSecond) {
+          throw const FormatException('next page offline');
+        }
+        return {
+          'data': {
+            'sections': [],
+            'videos': [
+              for (var i = 1; i <= 30; i++)
+                {
+                  'title': 'Page $page card $i',
+                  'watchUrl':
+                      'https://hanime1.me/watch?v=${i == 1 ? 1 : page * 100 + i}',
+                  'coverUrl': '',
+                  'tags': [i.isEven ? 'Even' : 'Odd'],
+                },
+            ],
+            'paging': {
+              'page': page,
+              'totalPages': 2,
+              if (uri.path.endsWith('/likes') && page == 1)
+                'nextUrl': '${owner.toString()}/likes?page=2',
+            },
+            'account': {
+              'status': 'signedIn',
+              'isOwnProfile': true,
+              'profileUrl': '$owner',
+              'name': 'Paging owner',
+              'links': [
+                {'title': 'Likes', 'url': '${owner.toString()}/likes'},
+              ],
+            },
+          },
+        };
+      };
+      await _mount(tester, plugin, nativePersonal: true);
+      web.finishLastLoad();
+      await _pump(tester);
+      web.profileHref = '/user/42';
+      await tester.tap(find.text('我的'));
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      await _openPersonalLibrary(tester, 'likes');
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      ApiVideoCollection collection() =>
+          tester.widget<ApiVideoCollection>(find.byType(ApiVideoCollection));
+      expect(collection().items.length, 30);
+      expect(
+        find.text(
+          t.videoLibrary.localCatalogUnknownTotal(loaded: 30, shown: 30),
+        ),
+        findsOneWidget,
+      );
+      await tester.drag(
+        find.byType(ApiVideoCollection),
+        const Offset(0, -4000),
+      );
+      await _pump(tester);
+      expect(web.loads.last.queryParameters['page'], '2');
+      expect(
+        collection().items.length,
+        30,
+        reason: 'in-flight continuation leaves successful cards visible',
+      );
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(collection().items.length, 30);
+      final failedLoads = web.loads.length;
+      collection().onNearEnd?.call();
+      await _pump(tester);
+      expect(
+        web.loads.length,
+        failedLoads,
+        reason: 'failed continuation does not loop automatically',
+      );
+      failSecond = false;
+      final retry = find.byKey(const ValueKey('personal-records.load-more'));
+      await tester.ensureVisible(retry);
+      await _pump(tester, 2);
+      await tester.tap(retry);
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(
+        collection().items.length,
+        59,
+        reason: 'same watch URL across pages is deduplicated',
+      );
+      expect(collection().items.last.title, 'Page 2 card 30');
+      final completedLoads = web.loads.length;
+      await _openPersonalLibrary(tester, 'likes');
+      await _pump(tester);
+      expect(collection().items.length, 59);
+      expect(
+        web.loads.length,
+        completedLoads,
+        reason: 'return reuses the loaded page window',
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'late personal page results cannot join a newly confirmed account',
+    (tester) async {
+      var user = 42;
+      final delayed = Completer<Map<String, dynamic>>();
+      Map<String, dynamic> result(int owner, int page) => {
+        'data': {
+          'sections': [],
+          'videos': [
+            {
+              'title': 'Owner $owner page $page',
+              'watchUrl': 'https://hanime1.me/watch?v=${owner * 10 + page}',
+              'coverUrl': '',
+            },
+          ],
+          'paging': {
+            'page': page,
+            if (page == 1)
+              'nextUrl': 'https://hanime1.me/user/$owner/likes?page=2',
+          },
+          'account': {
+            'status': 'signedIn',
+            'isOwnProfile': true,
+            'profileUrl': 'https://hanime1.me/user/$owner',
+            'name': 'Owner $owner',
+            'links': [
+              {'title': 'Likes', 'url': 'https://hanime1.me/user/$owner/likes'},
+            ],
+          },
+        },
+      };
+      plugin.catalog = (core) async {
+        final uri = Uri.parse(core['pageUrl'] as String);
+        final page = int.tryParse(uri.queryParameters['page'] ?? '1') ?? 1;
+        if (uri.path == '/user/42/likes' && page == 2) return delayed.future;
+        return result(user, page);
+      };
+      await _mount(tester, plugin, nativePersonal: true);
+      web.finishLastLoad();
+      await _pump(tester);
+      web.profileHref = '/user/42';
+      await tester.tap(find.text('我的'));
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      await _openPersonalLibrary(tester, 'likes');
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      tester
+          .widget<ApiVideoCollection>(find.byType(ApiVideoCollection))
+          .onNearEnd
+          ?.call();
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      await tester.tap(find.byTooltip(t.common.back).hitTestable().last);
+      await _pump(tester);
+      await tester.tap(find.text('推荐'));
+      await _pump(tester);
+      user = 99;
+      web.profileHref = '/user/99';
+      await tester.tap(find.text('我的'));
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      await _openPersonalLibrary(tester, 'likes');
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      delayed.complete(result(42, 2));
+      await _pump(tester);
+      expect(
+        tester
+            .widget<ApiVideoCollection>(find.byType(ApiVideoCollection))
+            .items
+            .map((v) => v.title),
+        ['Owner 99 page 1'],
+      );
+      final scope = VideoPersonalSnapshotStore.scope(
+        'hanime-test',
+        Uri.parse('https://hanime1.me/user/42'),
+        Uri.parse('https://hanime1.me/user/42/likes?page=2'),
+      );
+      expect(
+        await VideoPersonalSnapshotStore(
+          cacheSource: 'hanime-test',
+        ).read(scope),
+        null,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'external account boundary drops the old collection and its pending page',
+    (tester) async {
+      const source = 'hanime-test';
+      const kinds = ['histories', 'saves', 'likes', 'playlists'];
+      final home = Uri.parse('https://hanime1.me/');
+      final oldOwner = home.resolve('/user/42');
+      final newOwner = home.resolve('/user/99');
+      final oldNext = home.resolve('/user/42/likes?page=2');
+      final readStarted = Completer<void>();
+      final delayed = Completer<Map<String, dynamic>>();
+      var owner = oldOwner;
+      Map<String, dynamic> result(Uri account, Uri page) => {
+        'data': {
+          'sections': [],
+          'videos': [
+            if (kinds.contains(page.pathSegments.lastOrNull))
+              {
+                'title':
+                    '${account.path} ${page.pathSegments.last} '
+                    '${page.queryParameters['page'] ?? '1'}',
+                'watchUrl':
+                    '${home.resolve('/watch')}?v=${account.pathSegments.last}',
+                'coverUrl': '',
+              },
+          ],
+          'paging': {
+            if (page.path.endsWith('/likes') && !page.hasQuery)
+              'nextUrl': '${account.resolve('${account.path}/likes?page=2')}',
+          },
+          'account': {
+            'status': 'signedIn',
+            'isOwnProfile': page.path.startsWith(account.path),
+            'profileUrl': '$account',
+            'name': 'Account ${account.pathSegments.last}',
+            'links': [
+              for (final kind in kinds)
+                {'title': kind, 'url': '$account/$kind'},
+            ],
+          },
+        },
+      };
+      plugin.catalog = (core) async {
+        final page = Uri.parse(core['pageUrl'] as String);
+        if (page == oldNext) {
+          if (!readStarted.isCompleted) readStarted.complete();
+          return delayed.future;
+        }
+        return result(owner, page);
+      };
+
+      await _mount(tester, plugin, nativePersonal: true);
+      web.finishLastLoad();
+      await _pump(tester);
+      web.profileHref = oldOwner.path;
+      await tester.tap(find.text('我的'));
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      await _openPersonalLibrary(tester, 'likes');
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      tester
+          .widget<ApiVideoCollection>(find.byType(ApiVideoCollection))
+          .onNearEnd
+          ?.call();
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(readStarted.isCompleted, true);
+      expect(find.text('/user/42 likes 1'), findsOneWidget);
+
+      final loads = web.loads.length;
+      final change = pluginSessionWriteFence.beginSessionChange(source);
+      try {
+        await _pump(tester);
+        expect(find.text('/user/42 likes 1'), findsNothing);
+        delayed.complete(result(oldOwner, oldNext));
+        await _pump(tester);
+        expect(find.text('/user/42 likes 2'), findsNothing);
+        expect(web.loads.length, loads);
+        expect(
+          await VideoPersonalSnapshotStore(
+            cacheSource: source,
+          ).read(VideoPersonalSnapshotStore.scope(source, oldOwner, oldNext)),
+          null,
+        );
+        owner = newOwner;
+        web.profileHref = newOwner.path;
+      } finally {
+        pluginSessionWriteFence.seal(source, change);
+      }
+
+      await _pump(tester);
+      expect(web.loads.last.toString(), '$home');
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(web.loads.last.toString(), '$newOwner');
+      web.finishLastLoad();
+      await _pump(tester);
+      await _openPersonalLibrary(tester, 'likes');
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.text('/user/99 likes 1'), findsOneWidget);
+      expect(find.text('/user/42 likes 1'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
     'native personal lists open videos and restore the same collection',
     (tester) async {
       plugin.catalog = (core) async {
@@ -3007,6 +4008,7 @@ void main() {
               'status': 'signedIn',
               'isOwnProfile': true,
               'name': 'Example account',
+              'profileUrl': 'https://hanime1.me/user/42',
               'links': [
                 for (final name in ['histories', 'saves', 'likes', 'playlists'])
                   {
@@ -3035,6 +4037,13 @@ void main() {
       );
       expect(find.text(t.videoPlayback.localWatchHistory), findsNothing);
       expect(find.byType(VideoPersonalOverview), findsOneWidget);
+      expect(
+        tester
+            .widget<NativeVideoMenu>(find.byType(NativeVideoMenu))
+            .options
+            .containsKey('personal'),
+        isFalse,
+      );
       for (final name in ['histories', 'saves', 'likes', 'playlists']) {
         await _openPersonalLibrary(tester, name);
         await _pump(tester);
@@ -3042,10 +4051,38 @@ void main() {
         web.finishLastLoad();
         await _pump(tester);
         expect(
-          find.byWidgetPredicate(
-            (w) => w is NativeVideoMenu && w.selected == 'native',
-          ),
+          find.byKey(const ValueKey('personal-records.cover-privacy')),
           findsOneWidget,
+        );
+        for (final element in find.byType(VideoThumbnail).evaluate()) {
+          expect(CollectionCoverPrivacyScope.contains(element), isTrue);
+        }
+        expect(
+          find.byKey(const ValueKey('personal-records.more')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('personal-records.sort')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('personal-records.view')),
+          findsOneWidget,
+        );
+        expect(
+          tester
+              .getTopLeft(find.byKey(const ValueKey('personal-records.count')))
+              .dx,
+          16,
+        );
+        expect(find.byType(CollectionCoverPrivacyButton), findsOneWidget);
+        expect(find.byType(VideoNativeNavigation), findsNothing);
+        expect(find.byType(TabBar), findsNothing);
+        expect(
+          tester
+              .widget<ApiVideoCollection>(find.byType(ApiVideoCollection))
+              .posterAspectRatio,
+          2 / 3,
         );
       }
       await tester.ensureVisible(find.text('Site video'));
@@ -3066,7 +4103,12 @@ void main() {
         findsOneWidget,
         reason: 'the same identity remains above every personal tab',
       );
-      expect(tester.widget<TabBar>(find.byType(TabBar)).controller!.index, 3);
+      expect(find.byType(TabBar), findsNothing);
+      expect(find.byType(VideoNativeNavigation), findsNothing);
+      expect(
+        find.byKey(const ValueKey('personal-records.more')),
+        findsOneWidget,
+      );
       expect(find.text('Site video'), findsOneWidget);
       expect(
         web.loads.last.path,
@@ -4025,9 +5067,9 @@ void main() {
         } else if (entry == 'detail') {
           await tester.tap(find.text('Home card'));
         } else {
-          await tester.tap(find.byTooltip(t.videoPlayback.search));
+          await tester.tap(find.byType(VideoSearchEntry));
           await _pump(tester);
-          await tester.enterText(find.byType(TextField), 'test');
+          await tester.enterText(find.byType(TextField), 'Home');
           await tester.testTextInput.receiveAction(TextInputAction.search);
         }
         await _pump(tester);
@@ -4285,6 +5327,10 @@ void main() {
       await _pump(tester, 15);
       final result = await pending;
       expect(result.session.watchUrl, next);
+      expect(result.session.title, 'Detail 2');
+      expect(result.session.description, 'Summary');
+      expect(result.session.tags, ['Sample tag']);
+      expect(result.session.sources, isNotEmpty);
       expect(
         completedBeforeResources,
         true,
@@ -4450,6 +5496,37 @@ void main() {
       await _pump(tester);
       expect(web.loads, hasLength(1));
       expect(web.stops, stops);
+      expect(find.text('Home card'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'returning to verified content cancels a pending verification reload',
+    (tester) async {
+      web.challenge = true;
+      await _mount(tester, plugin);
+      web.finishLastLoad();
+      await _pump(tester);
+      final stops = web.stops;
+      final stop = Completer<void>();
+      web.nextStop = stop.future;
+      await _verificationAction(tester, 'reload');
+      await tester.tap(find.widgetWithText(TextButton, t.common.retry));
+      await _pump(tester);
+      expect(web.stops, stops + 1);
+      expect(web.loads, hasLength(1));
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      web.challenge = false;
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await _pump(tester);
+      expect(find.text('Home card'), findsOneWidget);
+      expect(find.text(t.videoPlayback.verificationTitle), findsNothing);
+
+      stop.complete();
+      await _pump(tester);
+      expect(web.loads, hasLength(1));
       expect(find.text('Home card'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
     },
@@ -4873,15 +5950,21 @@ void main() {
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
-      expect(find.byTooltip(t.videoFilters.removeFilter), findsNWidgets(2));
+      expect(find.byTooltip(t.videoFilters.removeFilter), findsOneWidget);
+      expect(find.widgetWithText(InputChip, 'Series'), findsNothing);
       await tester.tap(find.byTooltip(t.videoFilters.removeFilter).first);
       await _pump(tester);
       expect(web.loads.last.queryParameters['query'], 'Series');
       expect(web.loads.last.queryParameters['sort'], isNull);
       web.finishLastLoad();
       await _pump(tester);
-      expect(find.byTooltip(t.videoFilters.removeFilter), findsOneWidget);
-      await tester.tap(find.byTooltip(t.videoFilters.removeFilter));
+      expect(find.byTooltip(t.videoFilters.removeFilter), findsNothing);
+      await tester.tap(
+        find.descendant(
+          of: find.byType(VideoSearchEntry),
+          matching: find.byTooltip(t.common.clear),
+        ),
+      );
       await _pump(tester);
       expect(web.loads.last.queryParameters['query'], isNull);
       await tester.pumpWidget(const SizedBox.shrink());
@@ -4919,66 +6002,263 @@ void main() {
   );
 
   testWidgets(
-    'local history stays separate from the site profile and restores after playback',
+    'Hanime shows public details while media resolves and ignores a late result',
     (tester) async {
-      final record = VideoWatchRecord(
-        watchUrl: Uri.parse('https://hanime1.me/watch?v=1'),
-        title: 'Recent watch',
-        position: const Duration(seconds: 20),
-        duration: const Duration(minutes: 2),
-        updatedAt: DateTime.utc(2026, 10, 22),
-        completed: false,
-      );
-      SharedPreferences.setMockInitialValues({
-        'breeze.video.history.v1.hanime-test': jsonEncode([record.toJson()]),
-      });
+      final media = Completer<Map<String, dynamic>>();
+      plugin.pendingMedia = media.future;
       await _mount(tester, plugin);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('我的'));
+      await tester.tap(find.text('Home card'));
+      await _pump(tester);
       web.finishLastLoad();
-      await _pump(tester);
-      expect(find.byTooltip(t.settings.title), findsNothing);
-      await tester.tap(find.byType(NativeVideoMenu));
-      await _pump(tester, 3);
-      await tester.tap(find.text(t.videoCommunity.preferences).last);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text(t.videoPlayback.localWatchHistory).last);
-      await _pump(tester);
-      expect(find.text(t.videoPlayback.watchHistory), findsOneWidget);
-      await tester.scrollUntilVisible(
-        find.text('Recent watch'),
-        200,
-        scrollable: find.byType(Scrollable).last,
-      );
-      await tester.tap(find.text('Recent watch'));
-      await _pump(tester);
-      expect(web.loads.last.queryParameters['v'], '1');
-      web.finishLastLoad();
-      await _pump(tester, 20);
+      await _pump(tester, 10);
       expect(find.byType(NativeVideoPage), findsOneWidget);
-      if (find.byType(NativeVideoPage).evaluate().isNotEmpty) {
-        await tester.tap(find.byTooltip(t.common.back).hitTestable().last);
-      } else {
-        await tester.pageBack();
-      }
-      await _pump(tester);
-      expect(find.text(t.videoPlayback.watchHistory), findsOneWidget);
-      expect(find.text('Recent watch'), findsOneWidget);
-      await tester.tap(find.byTooltip(t.videoPlayback.clearWatchHistory));
-      await _pump(tester);
-      await tester.tap(find.widgetWithText(TextButton, t.common.cancel));
-      await _pump(tester);
-      expect(await VideoWatchHistory.read('hanime-test'), hasLength(1));
-      await tester.tap(find.byTooltip(t.videoPlayback.clearWatchHistory));
-      await _pump(tester);
-      await tester.tap(find.widgetWithText(TextButton, t.common.delete));
-      await _pump(tester);
-      expect(await VideoWatchHistory.read('hanime-test'), isEmpty);
-      expect(find.text(t.videoPlayback.historyEmpty), findsOneWidget);
-      await tester.pumpWidget(const SizedBox.shrink());
+      expect(find.text('Detail 1'), findsWidgets);
+      expect(find.text('Summary'), findsWidgets);
+      expect(media.isCompleted, isFalse);
+      await tester.tap(find.byTooltip(t.common.back).hitTestable().last);
+      await _pump(tester, 20);
+      expect(find.text('Home card'), findsOneWidget);
+      media.complete({
+        'data': {
+          'title': 'Late media',
+          'sources': [
+            {'url': 'https://fixture.test/late.mp4'},
+          ],
+        },
+      });
+      await _pump(tester, 10);
+      expect(find.text('Home card'), findsOneWidget);
+      expect(find.byType(NativeVideoPage), findsNothing);
+      expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('Hanime late media only updates the player transport', (
+    tester,
+  ) async {
+    final originalVideo = VideoPlayerPlatform.instance;
+    final video = _ReturnVideoPlatform();
+    VideoPlayerPlatform.instance = video;
+    addTearDown(() => VideoPlayerPlatform.instance = originalVideo);
+    final media = Completer<Map<String, dynamic>>();
+    plugin.pendingMedia = media.future;
+    await _mount(tester, plugin);
+    web.finishLastLoad();
+    await _pump(tester);
+    await tester.tap(find.text('Home card'));
+    await _pump(tester);
+    web.finishLastLoad();
+    await _pump(tester, 10);
+    final detail = find.byType(NativeVideoPage);
+    final localFavorite = find.byKey(const ValueKey('video.local-favorite'));
+    final sourceAction = find.byKey(const ValueKey('video-inline.sources'));
+    final download = find.byKey(const ValueKey('video-inline.download'));
+    expect(find.text('Detail 1'), findsWidgets);
+    expect(find.text('Summary'), findsOneWidget);
+    expect(find.text('Sample tag'), findsOneWidget);
+    expect(localFavorite, findsOneWidget);
+    final favoritePosition = tester.getTopLeft(localFavorite);
+    expect(tester.widget<TextButton>(sourceAction).onPressed, isNull);
+    expect(tester.widget<TextButton>(download).onPressed, isNull);
+    expect(video.activePlayers, 0);
+
+    media.complete({
+      'data': {
+        'title': 'Transport title',
+        'description': 'Transport description',
+        'tags': ['Transport tag'],
+        'sources': [
+          {
+            'url': 'https://fixture.test/late.mp4',
+            'quality': '720p alternate quality from the site with a long label',
+          },
+          {'url': 'https://fixture.test/second.mp4', 'quality': '1080p'},
+        ],
+      },
+    });
+    await _pump(tester, 10);
+
+    expect(detail, findsOneWidget);
+    expect(video.activePlayers, 1);
+    expect(find.text('Detail 1'), findsWidgets);
+    expect(find.text('Summary'), findsOneWidget);
+    expect(find.text('Sample tag'), findsOneWidget);
+    expect(find.text('Transport title'), findsNothing);
+    expect(find.text('Transport description'), findsNothing);
+    expect(find.text('Transport tag'), findsNothing);
+    expect(tester.getTopLeft(localFavorite), favoritePosition);
+    expect(tester.widget<TextButton>(sourceAction).onPressed, isNotNull);
+    expect(tester.widget<TextButton>(download).onPressed, isNotNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('Hanime reveals the detail with the read site actions', (
+    tester,
+  ) async {
+    final site = Completer<dynamic>();
+    final media = Completer<Map<String, dynamic>>();
+    web.siteInteraction = site.future;
+    plugin.pendingMedia = media.future;
+    await _mount(tester, plugin, nativeSiteActions: true);
+    web.finishLastLoad();
+    await _pump(tester);
+    await tester.tap(find.text('Home card'));
+    await _pump(tester);
+    web.finishLastLoad();
+    await _pump(tester, 5);
+
+    expect(web.siteInteractionReads, 1);
+    expect(find.byType(NativeVideoPage), findsNothing);
+
+    site.complete({
+      'status': 'ok',
+      'actor': 'signedIn',
+      'canFollow': true,
+      'canLike': true,
+      'canDislike': true,
+      'following': true,
+      'liked': true,
+    });
+    await _pump(tester, 6);
+
+    expect(find.byType(NativeVideoPage), findsOneWidget);
+    expect(find.text('Detail 1'), findsWidgets);
+    expect(find.text(t.videoCommunity.following), findsOneWidget);
+    expect(find.text(t.videoCommunity.liked), findsOneWidget);
+    expect(find.byKey(const ValueKey('video-favorite')), findsOneWidget);
+    expect(find.byKey(const ValueKey('video-download')), findsOneWidget);
+    expect(find.byKey(const ValueKey('video-share')), findsOneWidget);
+    expect(web.siteInteractionReads, 1);
+    expect(media.isCompleted, isFalse);
+    await tester.pumpWidget(const SizedBox.shrink());
+    media.completeError(const FormatException('No media'));
+    await _pump(tester, 10);
+  });
+
+  for (final systemBack in [false, true]) {
+    testWidgets(
+      'download details return to the caller without opening the Hanime feed (systemBack=$systemBack)',
+      (tester) async {
+        final watch = Uri.parse('https://hanime1.me/watch?v=1');
+        await _mount(
+          tester,
+          plugin,
+          nestedRoot: true,
+          initialUrl: watch,
+          returnToCallerAfterPlayback: true,
+        );
+        expect(web.loads.last, watch);
+        web.finishLastLoad();
+        await _pump(tester, 20);
+        expect(find.byType(NativeVideoPage), findsOneWidget);
+        final loads = web.loads.length;
+        if (systemBack) {
+          await tester.binding.handlePopRoute();
+        } else {
+          await tester.tap(find.byTooltip(t.common.back).hitTestable().last);
+        }
+        await _pump(tester, 30);
+        expect(find.text('Open fixture source').hitTestable(), findsOneWidget);
+        expect(find.byType(NativeVideoCatalogPage), findsNothing);
+        expect(find.byType(NativeVideoPage), findsNothing);
+        expect(web.loads.length, loads);
+      },
+    );
+  }
+
+  testWidgets('local history opens independently and restores after playback', (
+    tester,
+  ) async {
+    final record = VideoWatchRecord(
+      watchUrl: Uri.parse('https://hanime1.me/watch?v=1'),
+      title: 'Recent watch',
+      position: const Duration(seconds: 20),
+      duration: const Duration(minutes: 2),
+      updatedAt: DateTime.utc(2026, 10, 22),
+      completed: false,
+    );
+    SharedPreferences.setMockInitialValues({
+      'breeze.video.history.v1.hanime-test': jsonEncode([record.toJson()]),
+    });
+    final routes = _VideoRouteObserver();
+    await _mount(tester, plugin, observers: [routes]);
+    web.finishLastLoad();
+    await _pump(tester);
+    await tester.tap(find.byType(NativeVideoMenu));
+    await _pump(tester, 3);
+    final localRecords = find.descendant(
+      of: find.byKey(const ValueKey('video-host-menu')),
+      matching: find.text(t.videoPlayback.localWatchHistory),
+    );
+    expect(localRecords, findsOneWidget);
+    await tester.tap(localRecords);
+    await _pump(tester);
+    expect(find.text(t.videoSource.localHistory), findsOneWidget);
+    expect(find.byType(BottomNavigationBar), findsNothing);
+    expect(find.byTooltip(t.settings.title), findsNothing);
+    expect(find.byType(VideoPersonalOverview), findsNothing);
+
+    await tester.scrollUntilVisible(
+      find.text('Recent watch'),
+      200,
+      scrollable: find.byType(Scrollable).last,
+    );
+    await Scrollable.ensureVisible(
+      tester.element(find.text('Recent watch')),
+      alignment: .2,
+    );
+    await _pump(tester, 2);
+    await tester.tap(find.text('Recent watch'));
+    await _pump(tester);
+    final recordWeb = web.documents.last;
+    expect(recordWeb.loads.last.queryParameters['v'], '1');
+    recordWeb.finishLastLoad();
+    await _pump(tester, 20);
+    expect(find.byType(NativeVideoPage), findsOneWidget);
+    if (find.byType(NativeVideoPage).evaluate().isNotEmpty) {
+      await tester.tap(find.byTooltip(t.common.back).hitTestable().last);
+    } else {
+      await tester.pageBack();
+    }
+    await tester.pump();
+    expect(
+      routes.popped,
+      isNot(contains('breeze.video.catalog-content')),
+      reason: 'Returning from playback must not start a second route pop',
+    );
+    expect(routes.removed, contains('breeze.video.catalog-content'));
+    await _pump(tester);
+    expect(find.text(t.videoSource.localHistory), findsOneWidget);
+    expect(find.text('Recent watch'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('api-history.manage')));
+    await _pump(tester, 3);
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('video-host-menu')),
+        matching: find.text(t.videoLibrary.clearHistory),
+      ),
+    );
+    await _pump(tester);
+    await tester.tap(find.widgetWithText(TextButton, t.common.cancel));
+    await _pump(tester);
+    expect(await VideoWatchHistory.read('hanime-test'), hasLength(1));
+    await tester.tap(find.byKey(const ValueKey('api-history.manage')));
+    await _pump(tester, 3);
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(const ValueKey('video-host-menu')),
+        matching: find.text(t.videoLibrary.clearHistory),
+      ),
+    );
+    await _pump(tester);
+    await tester.tap(find.widgetWithText(TextButton, t.common.delete));
+    await _pump(tester);
+    expect(await VideoWatchHistory.read('hanime-test'), isEmpty);
+    expect(find.text(t.videoLibrary.historyEmpty), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets(
     'switching to native during website navigation never parses the old page',
@@ -5149,6 +6429,89 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+  testWidgets(
+    'Android challenge stays in the visible original browser and never opens the iOS verification window',
+    (tester) async {
+      web.challenge = true;
+      await _mount(tester, plugin);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.byType(VideoVerificationGate), findsNothing);
+      expect(find.byKey(const ValueKey('website-document')), findsOneWidget);
+      expect(web.verificationWindows, isEmpty);
+      expect(web.creations, 1);
+      final loads = web.loads.length;
+      web.challenge = false;
+      web.finishLastLoad();
+      await _pump(tester, 12);
+      expect(find.text('Home card'), findsOneWidget);
+      expect(web.verificationWindows, isEmpty);
+      expect(web.creations, 1);
+      expect(
+        web.loads.length,
+        loads,
+        reason:
+            'Challenge completion must not recreate or reload the original document',
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  testWidgets(
+    'native verification presentation failure preserves retry and is not a webpage load failure',
+    (tester) async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        SystemChannels.platform_views,
+        (_) async => null,
+      );
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(
+          SystemChannels.platform_views,
+          null,
+        ),
+      );
+      web.challenge = true;
+      web.verificationWindowResult = Completer<bool>();
+      await _mount(tester, plugin);
+      web.finishLastLoad();
+      await _pump(tester);
+      final loads = web.loads.length;
+      await tester.tap(
+        find.widgetWithText(FilledButton, t.videoPlayback.verificationWindow),
+      );
+      await _pump(tester);
+      web.verificationWindowResult!.completeError(
+        PlatformException(code: 'UNAVAILABLE'),
+      );
+      await _pump(tester);
+      expect(
+        find.text(
+          '${t.videoPlayback.verificationWindow} · ${t.error.operationFailed}',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text(t.webview.loadFailed), findsNothing);
+      expect(
+        tester
+            .widget<FilledButton>(
+              find.widgetWithText(
+                FilledButton,
+                t.videoPlayback.verificationWindow,
+              ),
+            )
+            .onPressed,
+        isNotNull,
+      );
+      expect(web.loads.length, loads);
+      expect(web.creations, 1);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
   for (final retry in [false, true]) {
     testWidgets(
       'separate verification window pauses host observation and return retry=$retry is explicit',
@@ -5213,44 +6576,49 @@ void main() {
     );
   }
   testWidgets(
-    'verification observation keeps an opened UIKit actions menu usable',
+    'verification observation keeps an opened grouped actions menu usable',
     (tester) async {
       final messenger =
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-      const channel = MethodChannel('breeze.video.control.99001');
-      var dismissals = 0;
-      messenger.setMockMethodCallHandler(
-        SystemChannels.platform_views,
-        (_) async => null,
-      );
-      messenger.setMockMethodCallHandler(channel, (call) async {
-        if (call.method == 'dismissMenu') dismissals++;
+      var dismisses = 0;
+      final channels = <MethodChannel>[];
+      messenger.setMockMethodCallHandler(SystemChannels.platform_views, (
+        call,
+      ) async {
+        if (call.method == 'create') {
+          final channel = MethodChannel(
+            'breeze.video.control.${(call.arguments as Map)['id']}',
+          );
+          channels.add(channel);
+          messenger.setMockMethodCallHandler(channel, (event) async {
+            if (event.method == 'dismissMenu') dismisses++;
+            return null;
+          });
+        }
         return null;
       });
       addTearDown(() {
         messenger.setMockMethodCallHandler(SystemChannels.platform_views, null);
-        messenger.setMockMethodCallHandler(channel, null);
+        for (final channel in channels) {
+          messenger.setMockMethodCallHandler(channel, null);
+        }
       });
       web.challenge = true;
       await _mount(tester, plugin);
       web.finishLastLoad();
       await _pump(tester);
       expect(find.text(t.videoPlayback.verificationTitle), findsOneWidget);
-      final menuFinder = find.byWidgetPredicate(
-        (widget) =>
-            widget is NativeVideoMenu &&
-            widget.tooltip == t.videoPlayback.verificationActions,
+      final trigger = tester.widget<NativeVideoMenu>(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is NativeVideoMenu &&
+              widget.tooltip == t.videoPlayback.verificationActions,
+        ),
       );
-      final menu = tester.widget<NativeVideoMenu>(menuFinder);
-      final platformView = tester.widget<UiKitView>(
-        find.descendant(of: menuFinder, matching: find.byType(UiKitView)),
-      );
-      // Wire the real control's channel at the platform boundary. This tests
-      // the host's actual dismiss command, not just the menu widget's presence.
-      platformView.onPlatformViewCreated!(99001);
-      await tester.pump();
-      menu.onOpened!();
-      await tester.pump();
+      trigger.onOpened!();
+      await tester.pumpAndSettle();
+      expect(find.byType(UiKitView), findsWidgets);
+      final dismissesBefore = dismisses;
       final reads = web.stateReads;
       final loads = web.loads.length;
       for (var tick = 0; tick < 4; tick++) {
@@ -5260,19 +6628,17 @@ void main() {
       expect(web.stateReads, greaterThan(reads));
       expect(web.loads.length, loads);
       expect(
-        dismissals,
-        0,
-        reason: 'Read-only verification polling must not dismiss the user menu',
+        dismisses,
+        dismissesBefore,
+        reason: 'Read-only polling retains the native menu',
       );
       web.params.onLoadStart!(web.wrapped, WebUri('https://hanime1.me/'));
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(
-        dismissals,
-        1,
-        reason: 'A real main-document reload still dismisses the open menu',
+        dismisses,
+        greaterThan(dismissesBefore),
+        reason: 'A real reload dismisses the native menu',
       );
-      menu.onClosed!();
-      await tester.pump();
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
     },
@@ -5313,5 +6679,216 @@ void main() {
       await tester.pump();
     },
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+  for (final kind in [
+    'credentials',
+    'verification',
+    'rateLimited',
+    'clientRestricted',
+    'accountRestricted',
+    'unknown',
+  ]) {
+    testWidgets(
+      'native login host preserves bounded site rejection kind $kind through the catalog adapter',
+      (tester) async {
+        web.authMetadata = {
+          'supported': true,
+          'mode': 'login',
+          'failed': true,
+          'errorKind': kind,
+        };
+        plugin.catalog = (core) async => {
+          'data': {
+            'videos': [],
+            'sections': [],
+            'account': {'status': 'signedOut'},
+            if (Uri.parse(core['pageUrl'] as String).path == '/login')
+              'auth': web.authMetadata,
+          },
+        };
+        await _mount(tester, plugin, nativePersonal: true, nativeAuth: true);
+        web.finishLastLoad();
+        await _pump(tester);
+        await tester.tap(find.text('我的'));
+        await _pump(tester);
+        web.finishLastLoad();
+        await _pump(tester);
+        final form = tester.widget<NativeVideoAuthForm>(
+          find.byType(NativeVideoAuthForm),
+        );
+        expect(form.siteErrorKind, kind);
+        expect(form.siteRejected, isTrue);
+        final expected = kind == 'unknown'
+            ? t.videoCommunity.authFailed
+            : userFacingLoginFailureMessage(loginFailureKindFromCode(kind));
+        expect(find.text(expected), findsOneWidget);
+        expect(web.authSubmissions, 0);
+        await tester.enterText(
+          find.byType(TextFormField).at(0),
+          'fixture@example.test',
+        );
+        await tester.enterText(
+          find.byType(TextFormField).at(1),
+          'synthetic-password',
+        );
+        expect(
+          tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
+          kind == 'credentials' ? isNotNull : isNull,
+        );
+        expect(
+          tester
+              .widget<TextFormField>(find.byType(TextFormField).at(1))
+              .controller!
+              .text,
+          'synthetic-password',
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
+  testWidgets(
+    'eviction during native detail waits for its Navigator return then restores only the source document',
+    (tester) async {
+      await _mount(tester, plugin);
+      web.finishLastLoad();
+      await _pump(tester);
+      await tester.tap(find.text('Home card'));
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester, 20);
+      expect(find.byType(NativeVideoPage), findsOneWidget);
+      final loads = web.loads.length;
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      web.params.onWebContentProcessDidTerminate?.call(web.wrapped);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await _pump(tester, 60);
+      expect(web.loads.length, loads);
+      expect(find.byType(NativeVideoPage), findsOneWidget);
+      await tester.tap(find.byTooltip(t.common.back).hitTestable().last);
+      await _pump(tester, 20);
+      expect(find.byType(NativeVideoPage), findsNothing);
+      expect(find.text('Home card'), findsOneWidget);
+      expect(web.loads.length, loads + 1);
+      expect(web.loads.last, Uri.parse('https://hanime1.me/'));
+      web.finishLastLoad();
+      await _pump(tester, 60);
+      expect(find.byType(NativeVideoPage), findsNothing);
+      expect(find.text('Home card'), findsOneWidget);
+      expect(web.loads.length, loads + 1);
+      expect(web.creations, 1);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'same-document WebKit restart preserves native content during background and return',
+    (tester) async {
+      await _mount(tester, plugin);
+      web.finishLastLoad();
+      await _pump(tester);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      final url = WebUri(web.currentUrl.toString());
+      web.params.onLoadStart?.call(web.wrapped, url);
+      await _pump(tester);
+      expect(find.text('Home card'), findsOneWidget);
+      expect(find.byKey(const ValueKey('website-document')), findsNothing);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await _pump(tester);
+      web.finishWebsiteNavigation(web.currentUrl!);
+      await _pump(tester);
+      expect(find.text('Home card'), findsOneWidget);
+      expect(find.byType(BottomNavigationBar), findsOneWidget);
+      expect(web.creations, 1);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'background WebKit eviction ignores a late navigation start and restores native intent once',
+    (tester) async {
+      await _mount(tester, plugin);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.text('Home card'), findsOneWidget);
+      expect(find.byKey(const ValueKey('website-document')), findsNothing);
+      final original = tester.state(find.byType(VideoSiteBrowser));
+      final loads = web.loads.length;
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      web.params.onWebContentProcessDidTerminate?.call(web.wrapped);
+      web.params.onLoadStart?.call(
+        web.wrapped,
+        WebUri('https://hanime1.me/search?query=old'),
+      );
+      web.params.onReceivedError?.call(
+        web.wrapped,
+        WebResourceRequest(
+          url: WebUri('https://hanime1.me/'),
+          isForMainFrame: true,
+        ),
+        WebResourceError(
+          type: WebResourceErrorType.TIMEOUT,
+          description: 'evicted document timeout',
+        ),
+      );
+      await _pump(tester);
+      expect(web.loads.length, loads);
+      expect(find.text('Home card'), findsOneWidget);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await _pump(tester);
+      expect(web.loads.length, loads + 1);
+      expect(find.text('Home card'), findsOneWidget);
+      expect(find.byKey(const ValueKey('website-document')), findsNothing);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await _pump(tester);
+      expect(web.loads.length, loads + 1);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.text('Home card'), findsOneWidget);
+      expect(find.byKey(const ValueKey('website-document')), findsNothing);
+      expect(tester.state(find.byType(VideoSiteBrowser)), same(original));
+      expect(web.creations, 1);
+      expect(find.byType(BottomNavigationBar), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'eviction retains explicit website intent and a real challenge remains visible',
+    (tester) async {
+      await _mount(tester, plugin);
+      web.finishLastLoad();
+      await _pump(tester);
+      await _chooseMode(tester, t.videoPlayback.website);
+      await _pump(tester);
+      final loads = web.loads.length;
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      web.params.onWebContentProcessDidTerminate?.call(web.wrapped);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await _pump(tester);
+      expect(web.loads.length, loads + 1);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.byKey(const ValueKey('website-document')), findsOneWidget);
+      expect(find.byType(BottomNavigationBar), findsNothing);
+      await _chooseMode(tester, t.videoPlayback.nativeCatalog);
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.byKey(const ValueKey('website-document')), findsNothing);
+      web.challenge = true;
+      web.params.onWebContentProcessDidTerminate?.call(web.wrapped);
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.text(t.videoPlayback.verificationTitle), findsOneWidget);
+      expect(find.byKey(const ValueKey('website-document')), findsOneWidget);
+      web.challenge = false;
+      await _pump(tester, 30);
+      expect(find.text('Home card'), findsOneWidget);
+      expect(find.byKey(const ValueKey('website-document')), findsNothing);
+      expect(web.creations, 1);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
   );
 }

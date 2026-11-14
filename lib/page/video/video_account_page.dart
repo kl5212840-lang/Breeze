@@ -1,7 +1,8 @@
-import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_account_backup.dart';
+import 'package:zephyr/widgets/toast.dart';
 
 class VideoAccountPage extends StatefulWidget {
   const VideoAccountPage({
@@ -10,18 +11,23 @@ class VideoAccountPage extends StatefulWidget {
     required this.backupCurrent,
     required this.onLogin,
     required this.onCloudSettings,
+    this.hasSavedCredentials,
   });
   final VideoAccountService service;
   final Future<void> Function() backupCurrent;
   final VoidCallback onLogin;
   final Future<void> Function() onCloudSettings;
+
+  /// Reads only presence; account names and passwords never enter this page.
+  final bool Function()? hasSavedCredentials;
   @override
   State<VideoAccountPage> createState() => _VideoAccountPageState();
 }
 
 class _VideoAccountPageState extends State<VideoAccountPage> {
-  bool _loading = true, _busy = false, _failed = false;
+  bool _loading = true, _busy = false, _failed = false, _reading = false;
   VideoAccountBackup? _backup;
+  bool _hasSavedCredentials = false;
   String? _notice;
 
   @override
@@ -31,7 +37,13 @@ class _VideoAccountPageState extends State<VideoAccountPage> {
   }
 
   Future<void> _read() async {
+    if (_reading) return;
+    setState(() => _reading = true);
     try {
+      final hasSavedCredentials = widget.hasSavedCredentials?.call() ?? false;
+      if (mounted) {
+        setState(() => _hasSavedCredentials = hasSavedCredentials);
+      }
       final backup = await widget.service.read();
       if (mounted) {
         setState(() {
@@ -47,6 +59,8 @@ class _VideoAccountPageState extends State<VideoAccountPage> {
           _failed = true;
         });
       }
+    } finally {
+      if (mounted) setState(() => _reading = false);
     }
   }
 
@@ -55,7 +69,7 @@ class _VideoAccountPageState extends State<VideoAccountPage> {
     Future<void> Function() action,
     String done,
   ) async {
-    if (_busy) return;
+    if (_busy || _reading) return;
     setState(() => _busy = true);
     try {
       final confirmed = await showAdaptiveDialog<bool>(
@@ -80,14 +94,15 @@ class _VideoAccountPageState extends State<VideoAccountPage> {
       await action();
       if (!mounted) return;
       setState(() => _notice = done);
+      showSuccessToast(done);
       await _read();
     } catch (error) {
       if (mounted) {
-        setState(
-          () => _notice = error is FormatException
-              ? t.videoAccount.loginRequired
-              : t.videoAccount.failed,
-        );
+        final message = error is FormatException
+            ? t.videoAccount.loginRequired
+            : t.videoAccount.failed;
+        setState(() => _notice = message);
+        showErrorToast(message);
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -95,13 +110,16 @@ class _VideoAccountPageState extends State<VideoAccountPage> {
   }
 
   Future<void> _openCloud() async {
-    if (_busy) return;
+    if (_busy || _reading) return;
     setState(() => _busy = true);
     try {
       await widget.onCloudSettings();
       if (mounted) await _read();
     } catch (_) {
-      if (mounted) setState(() => _notice = t.videoAccount.failed);
+      if (mounted) {
+        setState(() => _notice = t.videoAccount.failed);
+        showErrorToast(t.videoAccount.failed);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -110,94 +128,117 @@ class _VideoAccountPageState extends State<VideoAccountPage> {
   @override
   Widget build(BuildContext context) => PopScope(
     canPop: !_busy,
-    child: Scaffold(
-      appBar: AppBar(
-        leading: const SourceBackButton(),
-        title: Text(t.videoAccount.title),
-      ),
-      body: _loading
+    child: SettingPageShell(
+      title: t.videoAccount.title,
+      grouped: true,
+      child: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               padding: const EdgeInsets.only(bottom: 24),
               children: [
                 SizedBox(
                   height: 2,
-                  child: _busy ? const LinearProgressIndicator() : null,
-                ),
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(t.videoAccount.scope),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: Text(t.videoAccount.privacy),
-                ),
-                if (_failed)
-                  ListTile(
-                    title: Text(t.videoAccount.failed),
-                    trailing: TextButton(
-                      onPressed: _busy ? null : _read,
-                      child: Text(t.common.retry),
-                    ),
-                  ),
-                ListTile(
-                  leading: const Icon(Icons.account_circle_outlined),
-                  title: Text(
-                    _backup?.name.isNotEmpty == true
-                        ? _backup!.name
-                        : _backup != null
-                        ? t.videoAccount.saved
-                        : t.videoAccount.empty,
-                  ),
+                  child: _busy || _reading
+                      ? const LinearProgressIndicator()
+                      : null,
                 ),
                 if (_notice != null)
                   Padding(
                     padding: const EdgeInsets.all(16),
-                    child: Text(_notice!, semanticsLabel: _notice),
+                    child: Semantics(liveRegion: true, child: Text(_notice!)),
                   ),
-                ListTile(
-                  title: Text(t.videoAccount.login),
-                  leading: const Icon(Icons.open_in_new),
-                  onTap: _busy ? null : widget.onLogin,
+                SettingSection(
+                  title: t.videoAccount.recoveryDetailsSection,
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.account_circle_outlined),
+                      title: Text(
+                        _hasSavedCredentials
+                            ? t.videoAccount.recoveryDetailsSaved
+                            : t.videoAccount.recoveryDetailsEmpty,
+                      ),
+                      subtitle: Text(t.videoAccount.recoveryDetailsHint),
+                    ),
+                    ListTile(
+                      title: Text(t.videoAccount.login),
+                      subtitle: Text(t.videoAccount.recoveryLoginHint),
+                      leading: const Icon(Icons.open_in_new),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: _busy ? null : widget.onLogin,
+                    ),
+                  ],
                 ),
-                ListTile(
-                  title: Text(t.videoAccount.backup),
-                  leading: const Icon(Icons.save_outlined),
-                  onTap: _busy
-                      ? null
-                      : () => _run(
-                          t.videoAccount.backupPrompt,
-                          widget.backupCurrent,
-                          t.videoAccount.backupDone,
-                        ),
+                SettingSection(
+                  title: t.videoAccount.recoverySessionSection,
+                  footer: t.videoAccount.privacy,
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.restore),
+                      title: Text(
+                        _failed
+                            ? t.videoAccount.recoveryReadFailed
+                            : _backup != null
+                            ? _backup!.name.trim().isNotEmpty
+                                  ? _backup!.name
+                                  : t.videoAccount.saved
+                            : t.videoAccount.empty,
+                      ),
+                      subtitle: _failed
+                          ? null
+                          : Text(t.videoAccount.recoverySessionHint),
+                      trailing: _failed
+                          ? TextButton(
+                              onPressed: _busy || _reading ? null : _read,
+                              child: Text(t.common.retry),
+                            )
+                          : null,
+                    ),
+                    ListTile(
+                      title: Text(t.videoAccount.restore),
+                      leading: const Icon(Icons.restore),
+                      onTap: _busy || _reading || _failed || _backup == null
+                          ? null
+                          : () => _run(
+                              t.videoAccount.restorePrompt,
+                              () => widget.service.restore(_backup!),
+                              t.videoAccount.restored,
+                            ),
+                    ),
+                    ListTile(
+                      title: Text(t.videoAccount.backup),
+                      leading: const Icon(Icons.save_outlined),
+                      onTap: _busy || _reading
+                          ? null
+                          : () => _run(
+                              t.videoAccount.backupPrompt,
+                              widget.backupCurrent,
+                              t.videoAccount.backupDone,
+                            ),
+                    ),
+                    ListTile(
+                      title: Text(t.videoAccount.forget),
+                      leading: const Icon(Icons.delete_outline),
+                      onTap: _busy || _reading
+                          ? null
+                          : () => _run(
+                              t.videoAccount.forgetPrompt,
+                              widget.service.forget,
+                              t.videoAccount.forgotten,
+                            ),
+                    ),
+                  ],
                 ),
-                ListTile(
-                  title: Text(t.videoAccount.restore),
-                  leading: const Icon(Icons.restore),
-                  onTap: _busy || _backup == null
-                      ? null
-                      : () => _run(
-                          t.videoAccount.restorePrompt,
-                          () => widget.service.restore(_backup!),
-                          t.videoAccount.restored,
-                        ),
-                ),
-                ListTile(
-                  title: Text(t.videoAccount.forget),
-                  leading: const Icon(Icons.delete_outline),
-                  onTap: _busy
-                      ? null
-                      : () => _run(
-                          t.videoAccount.forgetPrompt,
-                          widget.service.forget,
-                          t.videoAccount.forgotten,
-                        ),
-                ),
-                const Divider(),
-                ListTile(
-                  title: Text(t.videoAccount.cloud),
-                  leading: const Icon(Icons.cloud_sync_outlined),
-                  onTap: _busy ? null : _openCloud,
+                SettingSection(
+                  title: t.videoAccount.recoveryCloudSection,
+                  footer: t.videoAccount.scope,
+                  children: [
+                    ListTile(
+                      title: Text(t.videoAccount.cloud),
+                      leading: const Icon(Icons.cloud_sync_outlined),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: _busy || _reading ? null : _openCloud,
+                    ),
+                  ],
                 ),
               ],
             ),

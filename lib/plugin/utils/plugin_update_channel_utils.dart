@@ -67,7 +67,7 @@ Future<String> fetchNpmLatestVersion(String npmName) async {
     ),
   ];
 
-  final client = WindHttp(
+  final client = WindHttp.distribution(
     connectTimeout: const Duration(seconds: 10),
     receiveTimeout: const Duration(seconds: 15),
   );
@@ -126,28 +126,13 @@ Future<String> fetchSelfChannelLatestVersion({
   required String npmName,
   required String updateUrl,
 }) async {
-  final info = await fetchSelfChannelLatestInfo(
-    npmName: npmName,
-    updateUrl: updateUrl,
-  );
-  return info['version'].toString();
-}
-
-Future<Map<String, dynamic>> fetchSelfChannelLatestInfo({
-  required String npmName,
-  required String updateUrl,
-}) async {
   final resolvedNpm = npmName.trim();
   if (resolvedNpm.isNotEmpty) {
-    return {'version': await fetchNpmLatestVersion(resolvedNpm)};
+    return fetchNpmLatestVersion(resolvedNpm);
   }
   final resolvedUrl = updateUrl.trim();
   if (resolvedUrl.isNotEmpty) {
-    final release = await fetchReleaseData(resolvedUrl);
-    final version =
-        (release['tag_name'] ?? release['name'])?.toString().trim() ?? '';
-    if (version.isEmpty) throw StateError('更新信息缺少版本号');
-    return {...release, 'version': version};
+    return fetchUpdateUrlLatestVersion(resolvedUrl);
   }
   throw StateError('插件未提供 npmName 或 updateUrl，无法检查更新');
 }

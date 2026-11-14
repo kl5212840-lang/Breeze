@@ -16,34 +16,64 @@ class ReaderSystemUiService {
 
   Timer? _syncTimer;
   bool? _lastMenuVisible;
+  int _owner = 0;
+  Future<void> _pending = Future<void>.value();
 
   bool get _isAndroid => !kIsWeb && Platform.isAndroid;
 
-  /// 延迟同步系统栏显隐。
+  int acquire() {
+    _syncTimer?.cancel();
+    _lastMenuVisible = null;
+    return ++_owner;
+  }
+
+  /// Delayed callbacks belong to the reader that requested them.
   void scheduleSync(
+    int owner,
     void Function() syncFn, {
     Duration delay = const Duration(milliseconds: 24),
   }) {
+    if (owner != _owner) return;
     _syncTimer?.cancel();
-    _syncTimer = Timer(delay, syncFn);
+    _syncTimer = Timer(delay, () {
+      if (owner == _owner) syncFn();
+    });
   }
 
-  /// 应用与菜单状态对应的系统栏显隐。
-  Future<void> applyVisibility(bool isMenuVisible, {bool force = false}) async {
-    if (!force && _lastMenuVisible == isMenuVisible) return;
+  Future<void> applyVisibility(
+    int owner,
+    bool isMenuVisible, {
+    bool force = false,
+  }) async {
+    if (owner != _owner || (!force && _lastMenuVisible == isMenuVisible))
+      return;
     _lastMenuVisible = isMenuVisible;
-
-    if (isMenuVisible) {
-      await _showSystemBars();
-    } else {
-      await _hideSystemBars();
+    try {
+      await _enqueue(owner, visible: isMenuVisible);
+    } catch (_) {
+      if (owner == _owner && _lastMenuVisible == isMenuVisible) {
+        _lastMenuVisible = null;
+      }
+      rethrow;
     }
   }
 
-  /// 退出阅读页时恢复系统栏，避免影响其他页面。
-  Future<void> restoreSystemBars() async => _showSystemBars();
+  /// Release the bars only if this is still the most recent reader.
+  Future<void> release(int owner) {
+    if (owner != _owner) return Future<void>.value();
+    _syncTimer?.cancel();
+    _lastMenuVisible = null;
+    return _enqueue(++_owner, visible: true);
+  }
 
-  void dispose() => _syncTimer?.cancel();
+  Future<void> _enqueue(int owner, {required bool visible}) {
+    final request = _pending.then((_) async {
+      if (owner != _owner) return;
+      await (visible ? _showSystemBars() : _hideSystemBars());
+    });
+    _pending = request.then<void>((_) {}, onError: (Object _) {});
+    return request;
+  }
 
   Future<void> _showSystemBars() async {
     if (_isAndroid) {

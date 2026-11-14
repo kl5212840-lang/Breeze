@@ -11,6 +11,7 @@ import 'package:zephyr/service/download/download_progress_reporter.dart';
 /// - Android：通过 [FlutterForegroundTask.updateService] 更新前台服务通知
 /// - 桌面端 / iOS：通过 [DownloadQueueManager.progressStream] 传播给 UI
 class DownloadNotificationReporter extends DownloadProgressReporter {
+  static int _lastNotificationId = 0;
   final FlutterLocalNotificationsPlugin? _notificationsPlugin;
 
   DownloadNotificationReporter({this._notificationsPlugin});
@@ -20,8 +21,15 @@ class DownloadNotificationReporter extends DownloadProgressReporter {
 
   @override
   Future<void> sendNotification(String title, String body) async {
+    final second = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final id = second > _lastNotificationId ? second : _lastNotificationId + 1;
+    _lastNotificationId = id;
+    await sendWithId(id, title, body);
+  }
+
+  Future<void> sendWithId(int id, String title, String body) async {
     await _plugin.show(
-      id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      id: id,
       title: title,
       body: body,
       payload: 'download_complete',

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:zephyr/page/comic_info/models/comic_metric_availability.dart';
 
 part 'normal_comic_all_info.freezed.dart';
 part 'normal_comic_all_info.g.dart';
@@ -41,7 +42,7 @@ abstract class NormalComicAllInfo with _$NormalComicAllInfo {
   }) = _NormalComicAllInfo;
 
   factory NormalComicAllInfo.fromJson(Map<String, dynamic> json) =>
-      _$NormalComicAllInfoFromJson(json);
+      _$NormalComicAllInfoFromJson(normalizeComicMetricAvailability(json));
 }
 
 @freezed

@@ -1,10 +1,15 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/plugin_store/models/cloud_plugin_item.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
+import 'package:zephyr/plugin/utils/plugin_catalog_merge.dart';
 import 'package:zephyr/plugin/utils/plugin_version_utils.dart';
-import 'package:zephyr/plugin/utils/plugin_release_policy.dart';
+import 'package:zephyr/plugin/utils/published_plugin_artifact.dart';
 import 'package:zephyr/widgets/plugin_icon.dart';
+
+final _installedScriptHashes = Expando<String>();
 
 class CloudPluginCard extends StatelessWidget {
   const CloudPluginCard({
@@ -13,12 +18,14 @@ class CloudPluginCard extends StatelessWidget {
     required this.installing,
     required this.onOpenHome,
     required this.onInstall,
+    this.onReinstall,
   });
 
   final CloudPluginItem item;
   final bool installing;
   final ValueChanged<String> onOpenHome;
   final VoidCallback onInstall;
+  final ValueChanged<String>? onReinstall;
 
   @override
   Widget build(BuildContext context) {
@@ -29,37 +36,40 @@ class CloudPluginCard extends StatelessWidget {
         : null;
     final isInstalled = localState != null && !localState.isDeleted;
     final localVersion = localState?.version.trim() ?? '';
-    final localInfo =
-        PluginRegistryService.I.getCachedPluginInfo(manifest.uuid) ??
-        const <String, dynamic>{};
-    final canUpgrade =
-        isInstalled &&
-        !localState.debug &&
-        PluginReleasePolicy.canUpgrade(
-          uuid: manifest.uuid,
-          localVersion: localVersion,
-          localScript: localState.originScript,
-          localInfo: localInfo,
-          remoteInfo: manifest.releaseInfo,
-        );
-    final versionDifference = !isInstalled || canUpgrade
-        ? 1
-        : PluginReleasePolicy.series(localInfo) >
-              PluginReleasePolicy.series(manifest.releaseInfo)
-        ? -1
-        : compareVersion(manifest.version, localVersion).clamp(-1, 0);
-    final canDownload = !isInstalled || versionDifference > 0;
+    final versionDifference = isInstalled
+        ? compareVersion(manifest.version, localVersion)
+        : 1;
+    final migration = isInstalled
+        ? item.formalRelease?.migrationFor(
+            installedUuid: localState.uuid,
+            installedVersion: localVersion,
+            scriptFingerprint: () => _installedScriptHashes[localState] ??=
+                publishedPluginScriptSha256(localState.originScript),
+          )
+        : null;
+    final canDownload =
+        !isInstalled ||
+        migration != null ||
+        (versionDifference > 0 &&
+            preservesFormalPluginChannel(
+              installedInfo: PluginRegistryService.I.getCachedPluginInfo(
+                manifest.uuid,
+              ),
+              updateUrl: manifest.updateUrl,
+              npmName: manifest.npmName,
+            ));
     final downloadLabel = !isInstalled
         ? t.plugin.download
-        : versionDifference > 0
+        : canDownload
         ? t.plugin.downloadUpdate
         : versionDifference < 0
         ? t.plugin.localVersionNewer
         : t.plugin.alreadyLatest;
-    final creatorText = manifest.authorOf(item.repo);
     final title = manifest.name.trim().isNotEmpty
         ? manifest.name.trim()
-        : item.repo;
+        : item.repo.split('/').last.trim();
+    final canReinstall =
+        isInstalled && item.formalRelease != null && onReinstall != null;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -124,16 +134,6 @@ class CloudPluginCard extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              _CloudMetaTag(label: t.plugin.repo, value: item.repo),
-              if (creatorText.isNotEmpty)
-                _CloudMetaTag(label: t.plugin.author, value: creatorText),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Wrap(
             spacing: 8,
             runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
@@ -156,6 +156,35 @@ class CloudPluginCard extends StatelessWidget {
                 label: downloadLabel,
                 onTap: installing || !canDownload ? null : onInstall,
               ),
+              if (canReinstall)
+                if (installing)
+                  IconButton(
+                    onPressed: null,
+                    tooltip: t.common.more,
+                    icon: const Icon(Icons.more_horiz),
+                  )
+                else
+                  VideoControlAppearance(
+                    systemControls: usesNativeSourceChrome(context),
+                    child: NativeVideoMenu(
+                      label: '',
+                      tooltip: t.common.more,
+                      selected: '',
+                      width: 44,
+                      icon: Icons.more_horiz,
+                      symbol: 'ellipsis',
+                      hostPresentation: true,
+                      options: {'reinstall': t.pluginLifecycle.reinstall},
+                      selectAfterDismissal: const {'reinstall'},
+                      optionIcons: const {
+                        'reinstall': (
+                          icon: Icons.refresh,
+                          symbol: 'arrow.clockwise',
+                        ),
+                      },
+                      onSelected: (_) => onReinstall!(localVersion),
+                    ),
+                  ),
             ],
           ),
         ],
@@ -164,59 +193,27 @@ class CloudPluginCard extends StatelessWidget {
   }
 }
 
-/// 无图标的纯文本小按钮：保留边框、无阴影，对齐 `_ClickableChip` 手感。
-/// `onTap` 为空时置灰且不响应，与禁用态按钮语义一致。
-class _CloudTextAction extends StatefulWidget {
+/// Body actions use standard press, hover, focus and disabled feedback.
+class _CloudTextAction extends StatelessWidget {
   const _CloudTextAction({required this.label, required this.onTap});
 
   final String label;
   final VoidCallback? onTap;
 
   @override
-  State<_CloudTextAction> createState() => _CloudTextActionState();
-}
-
-class _CloudTextActionState extends State<_CloudTextAction> {
-  bool _hovering = false;
-
-  @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final primary = colorScheme.primary;
-    final enabled = widget.onTap != null;
-    final foreground = enabled
-        ? primary
-        : colorScheme.onSurfaceVariant.withValues(alpha: 0.5);
-    final activeHover = enabled && _hovering;
-
-    return MouseRegion(
-      cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
-      onEnter: (_) => setState(() => _hovering = true),
-      onExit: (_) => setState(() => _hovering = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 140),
-          curve: Curves.easeOut,
-          constraints: const BoxConstraints(minHeight: 44),
-          decoration: BoxDecoration(
-            color: activeHover
-                ? primary.withValues(alpha: 0.08)
-                : colorScheme.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: enabled
-                  ? primary.withValues(alpha: activeHover ? 0.9 : 0.55)
-                  : colorScheme.outlineVariant,
-            ),
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Text(
-            widget.label,
-            style: TextStyle(fontSize: 12, color: foreground),
-          ),
-        ),
+    final theme = Theme.of(context);
+    return OutlinedButton(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(44, 44),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        backgroundColor: theme.colorScheme.surfaceContainerLow,
+        textStyle: theme.textTheme.labelMedium,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
+      child: Text(label, textAlign: TextAlign.center),
     );
   }
 }
@@ -279,31 +276,6 @@ class _CloudPluginIcon extends StatelessWidget {
             color: colorScheme.onSurfaceVariant,
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _CloudMetaTag extends StatelessWidget {
-  const _CloudMetaTag({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        '$label: $value',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: Theme.of(context).textTheme.labelSmall,
       ),
     );
   }

@@ -1,21 +1,28 @@
-import 'package:zephyr/page/search_result/view/source_search_scope_control.dart';
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/cubit/plugin_registry_cubit.dart';
+import 'package:zephyr/main.dart' show eventBus;
+import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart'
+    show normalizePluginId;
+import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search/method/on_search.dart';
-import 'package:zephyr/page/search/widget/history.dart';
 import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 import 'package:zephyr/page/search/widget/source_select_dialog.dart';
 import 'package:zephyr/page/search_result/view/source_search_capabilities.dart';
+import 'package:zephyr/page/search_result/view/source_search_scope_control.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/i18n/strings.g.dart';
-import 'package:zephyr/util/debouncer.dart';
-import 'package:zephyr/widgets/multi_choice_list_dialog.dart';
+import 'package:zephyr/util/event/event.dart' show NeedLogin;
+import 'dart:convert';
+import 'package:zephyr/page/search/widget/advanced_search_dialog.dart';
 import 'package:zephyr/widgets/toast.dart';
 
 class SearchBar extends StatefulWidget {
@@ -28,15 +35,28 @@ class SearchBar extends StatefulWidget {
 }
 
 class _SearchBarState extends State<SearchBar> {
-  Map<String, bool> _aggregateSources = const {};
-  // 输入时只同步 TextField 自身状态，cubit 的 keyword 用防抖延迟同步，
-  // 避免每敲一个字母就触发上层 BlocBuilder 全量 rebuild。
-  final _keywordDebouncer = Debouncer(milliseconds: 100);
+  String? _schemeKey;
+  Future<PluginAdvancedSearchScheme?>? _schemeFuture;
+
+  Future<PluginAdvancedSearchScheme?> _schemeFor(SearchStates state) {
+    final key = jsonEncode([
+      state.from,
+      state.pluginExtern,
+      pluginSessionWriteFence.generation(normalizePluginId(state.from)),
+    ]);
+    if (_schemeKey != key) {
+      _schemeKey = key;
+      _schemeFuture = _loadAdvancedSearchScheme(state.from, state.pluginExtern);
+    }
+    return _schemeFuture!;
+  }
+
+  bool _openingAdvancedSearch = false;
 
   List<({String pluginId, String title})> _sourceOptions(BuildContext context) {
     final pluginStates = context.read<PluginRegistryCubit>().state;
     final states = PluginRegistryService.I.sortPlugins(
-      pluginStates.values.where((state) => !state.isDeleted),
+      pluginStates.values.where((state) => state.isEnabled && !state.isDeleted),
     );
     return states.map((state) {
       final info = PluginRegistryService.I.getCachedPluginInfo(state.uuid);
@@ -48,153 +68,170 @@ class _SearchBarState extends State<SearchBar> {
   }
 
   @override
-  void initState() {
-    super.initState();
-    final initialState = context.read<SearchCubit>().state;
-    _aggregateSources = Map<String, bool>.from(initialState.aggregateSources);
-    HistoryWidget.registerPendingKeywordSyncCanceller(_keywordDebouncer.cancel);
-  }
-
-  @override
-  void dispose() {
-    HistoryWidget.registerPendingKeywordSyncCanceller(null);
-    _keywordDebouncer.cancel();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
+    final searchCubit = context.read<SearchCubit>();
     return BlocBuilder<SearchCubit, SearchStates>(
       builder: (context, state) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Padding(
             padding: const EdgeInsets.all(8.0),
-            child: Row(
-              children: [
-                SourceBackButton(onPressed: () => context.maybePop()),
-                Expanded(
-                  child: SearchQueryField(
-                    query: state.searchKeyword,
-                    autoExpand: true,
-                    hintText: t.search.searchHint,
-                    semanticLabel: t.search.title,
-                    onChanged: (keyword) {
-                      // 调度时记基线：开火时 cubit 若已被提交/dialog 回写改过，
-                      // 说明这次输入已过期，直接丢弃，否则旧词盖掉新提交。
-                      final scheduledBase = context
-                          .read<SearchCubit>()
-                          .state
-                          .searchKeyword;
-                      _keywordDebouncer.run(() {
-                        if (!mounted) {
-                          return;
-                        }
-                        final searchCubit = context.read<SearchCubit>();
-                        if (searchCubit.state.searchKeyword != scheduledBase) {
-                          return;
-                        }
-                        if (searchCubit.state.searchKeyword == keyword) {
-                          return;
-                        }
-                        searchCubit.update(
-                          searchCubit.state.copyWith(searchKeyword: keyword),
-                        );
-                      });
-                    },
-                    onSubmitted: (keyword) {
-                      _keywordDebouncer.cancel();
-                      onSearch(
-                        context,
-                        keyword,
-                        aggregateMode: widget.aggregateMode,
-                        aggregateSources: _aggregateSources,
-                      );
-                    },
-                  ),
-                ),
-                if (widget.aggregateMode)
-                  IconButton(
-                    icon: const Icon(Icons.tune),
-                    onPressed: () async {
-                      _keywordDebouncer.cancel();
-                      final searchCubit = context.read<SearchCubit>();
-                      final options = _sourceOptions(context);
-                      if (_aggregateSources.isEmpty) {
-                        _aggregateSources = {
-                          for (final source in options) source.pluginId: true,
-                        };
-                      }
-                      final selected = await showSourceSelectDialog(
-                        context,
-                        initial: _aggregateSources,
-                        sourceOptions: options,
-                      );
-                      if (selected != null && mounted) {
-                        searchCubit.update(
-                          searchCubit.state.copyWith(
-                            aggregateSources: Map<String, bool>.from(selected),
+            child: LayoutBuilder(
+              builder: (context, bounds) {
+                final compactScope =
+                    bounds.maxWidth < 352 ||
+                    MediaQuery.textScalerOf(context).scale(14) > 20;
+                final extent = SearchToolbarScope.breezeExtent(context);
+                return SearchToolbarScope(
+                  extent: extent,
+                  child: Row(
+                    children: [
+                      SourceBackButton(onPressed: () => context.maybePop()),
+                      if (extent != null) const SizedBox(width: 6),
+                      Expanded(
+                        child: ValueListenableBuilder<int>(
+                          valueListenable: searchCubit.queryRevision,
+                          builder: (context, revision, _) => SearchQueryField(
+                            query: searchCubit.state.searchKeyword,
+                            queryRevision: revision,
+                            autoExpand: true,
+                            inline: true,
+                            hintText: t.search.searchHint,
+                            semanticLabel: t.search.title,
+                            onSubmitted: (keyword) => onSearch(
+                              context,
+                              keyword,
+                              aggregateMode: widget.aggregateMode,
+                            ),
                           ),
-                        );
-                        setState(() => _aggregateSources = selected);
-                      }
-                    },
-                  )
-                else
-                  FutureBuilder<bool>(
-                    future: hasUniqueAdvancedFields(state.from),
-                    builder: (context, snapshot) => snapshot.data == true
-                        ? SourceChromeIconButton(
-                            tooltip: t.search.advancedSearchOptions,
-                            icon: Icons.tune,
-                            symbol: 'slider.horizontal.3',
-                            onPressed: () async {
-                              _keywordDebouncer.cancel();
-                              await _showSingleSourceAdvancedSearch(context);
-                            },
-                          )
-                        : const SizedBox.shrink(),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      SourceSearchScopeControl(
+                        compact: compactScope,
+                        aggregate: widget.aggregateMode,
+                      ),
+                      if (widget.aggregateMode && extent != null)
+                        const SizedBox(width: 4),
+                      if (widget.aggregateMode)
+                        SourceChromeIconButton(
+                          tooltip: t.search.sourceFilter,
+                          icon: Icons.layers_outlined,
+                          symbol: 'square.stack.3d.up',
+                          onPressed: () async {
+                            final selected = await showSourceSelectDialog(
+                              context,
+                              initial: searchCubit.state.aggregateSources,
+                              sourceOptions: _sourceOptions(context),
+                            );
+                            if (selected != null && mounted) {
+                              searchCubit.update(
+                                searchCubit.state.copyWith(
+                                  aggregateSources: Map<String, bool>.from(
+                                    selected,
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                        )
+                      else if (state.from.trim().isNotEmpty)
+                        FutureBuilder<PluginAdvancedSearchScheme?>(
+                          key: ValueKey(
+                            jsonEncode([state.from, state.pluginExtern]),
+                          ),
+                          future: _schemeFor(state),
+                          builder: (context, snapshot) =>
+                              snapshot.connectionState ==
+                                      ConnectionState.done &&
+                                  snapshot.data != null
+                              ? SourceChromeIconButton(
+                                  tooltip: t.search.advancedSearchOptions,
+                                  icon: Icons.tune_rounded,
+                                  symbol: 'slider.horizontal.3',
+                                  onPressed: () =>
+                                      _showSingleSourceAdvancedSearch(context),
+                                )
+                              : snapshot.connectionState ==
+                                    ConnectionState.waiting
+                              ? SizedBox(width: SearchToolbarScope.actionExtent)
+                              : const SizedBox.shrink(),
+                        ),
+                      if (!widget.aggregateMode)
+                        SourceMoreButton(source: state.from),
+                    ],
                   ),
-                if (!widget.aggregateMode) SourceMoreButton(source: state.from),
-              ],
+                );
+              },
             ),
           ),
-          if (!widget.aggregateMode) const SourceSearchScopeBar(),
         ],
       ),
     );
   }
 
   Future<void> _showSingleSourceAdvancedSearch(BuildContext context) async {
+    if (_openingAdvancedSearch) return;
     final searchCubit = context.read<SearchCubit>();
     final state = searchCubit.state;
-    final source = state.from;
+    final source = normalizePluginId(state.from);
 
-    if (source.trim().isEmpty) {
+    if (source.isEmpty) {
       showWarningToast(t.search.advancedSearchNotSupported);
       return;
     }
-    final scheme = await _loadAdvancedSearchScheme(source, state.pluginExtern);
-    if (!context.mounted) {
-      return;
-    }
-    if (scheme == null) {
-      showWarningToast(t.search.advancedSearchNotSupported);
-      return;
-    }
-
-    final newStates = await showDialog<SearchStates>(
-      context: context,
-      builder: (context) =>
-          _PluginAdvancedSearchDialog(initialState: state, scheme: scheme),
-    );
-
-    if (newStates != null && context.mounted) {
-      searchCubit.update(newStates);
+    final owner = pluginSessionWriteFence.generation(source);
+    final revision = searchCubit.queryRevision.value;
+    bool ownsQuery() =>
+        context.mounted &&
+        searchCubit.state.from == state.from &&
+        searchCubit.state.searchKeyword == state.searchKeyword &&
+        jsonEncode(searchCubit.state.pluginExtern) ==
+            jsonEncode(state.pluginExtern) &&
+        searchCubit.queryRevision.value == revision &&
+        pluginSessionWriteFence.generation(source) == owner &&
+        !pluginSessionWriteFence.isChanging(source);
+    if (!ownsQuery()) return;
+    _openingAdvancedSearch = true;
+    try {
+      final scheme = await _schemeFor(state);
+      if (!ownsQuery() || ModalRoute.of(context)?.isCurrent == false) return;
+      if (scheme == null) {
+        showWarningToast(t.search.advancedSearchNotSupported);
+        return;
+      }
+      final current = searchCubit.state;
+      _mergeExternValues(scheme.fields, current.pluginExtern, scheme.values);
+      final changes = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (_) => PluginAdvancedSearchDialog(
+          initialSort: current.sortBy,
+          scheme: scheme,
+        ),
+      );
+      if (changes == null || !ownsQuery()) return;
+      final latest = searchCubit.state;
+      searchCubit.update(
+        latest.copyWith(
+          sortBy: int.tryParse('${changes['sortBy']}') ?? latest.sortBy,
+          pluginExtern: {...latest.pluginExtern, ...changes},
+        ),
+      );
+    } on PluginLoginRequiredException catch (error) {
+      if (ownsQuery() && ModalRoute.of(context)?.isCurrent != false) {
+        eventBus.fire(
+          NeedLogin(
+            from: error.payload.pluginId,
+            message: error.payload.message,
+          ),
+        );
+      }
+    } finally {
+      _openingAdvancedSearch = false;
     }
   }
 
-  Future<_AdvancedSearchScheme?> _loadAdvancedSearchScheme(
+  Future<PluginAdvancedSearchScheme?> _loadAdvancedSearchScheme(
     String source,
     Map<String, dynamic> extern,
   ) async {
@@ -203,7 +240,8 @@ class _SearchBarState extends State<SearchBar> {
         pluginId: source,
         fnPath: 'getAdvancedSearchScheme',
         core: const <String, dynamic>{},
-        extern: extern,
+        extern: keywordSearchRequestExtern(source, extern),
+        notifyUnauthorized: false,
       );
       final scheme = Map<String, dynamic>.from(
         (response['scheme'] as Map?) ?? const <String, dynamic>{},
@@ -227,11 +265,13 @@ class _SearchBarState extends State<SearchBar> {
         (data['values'] as Map?) ?? const <String, dynamic>{},
       );
       _mergeExternValues(fields, extern, values);
-      return _AdvancedSearchScheme(
+      return PluginAdvancedSearchScheme(
         source: response['source']?.toString() ?? source,
         fields: fields,
         values: values,
       );
+    } on PluginLoginRequiredException {
+      rethrow;
     } catch (_) {
       return null;
     }
@@ -257,284 +297,5 @@ class _SearchBarState extends State<SearchBar> {
         values[key] = externValue;
       }
     }
-  }
-}
-
-class _AdvancedSearchScheme {
-  const _AdvancedSearchScheme({
-    required this.source,
-    required this.fields,
-    required this.values,
-  });
-
-  final String source;
-  final List<Map<String, dynamic>> fields;
-  final Map<String, dynamic> values;
-}
-
-class _PluginAdvancedSearchDialog extends StatefulWidget {
-  const _PluginAdvancedSearchDialog({
-    required this.initialState,
-    required this.scheme,
-  });
-
-  final SearchStates initialState;
-  final _AdvancedSearchScheme scheme;
-
-  @override
-  State<_PluginAdvancedSearchDialog> createState() =>
-      _PluginAdvancedSearchDialogState();
-}
-
-class _PluginAdvancedSearchDialogState
-    extends State<_PluginAdvancedSearchDialog> {
-  late final Map<String, dynamic> _values;
-
-  @override
-  void initState() {
-    super.initState();
-    _values = Map<String, dynamic>.from(widget.scheme.values);
-    _values['sortBy'] = _values['sortBy'] ?? widget.initialState.sortBy;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(t.search.advancedSearchOptions),
-      scrollable: true,
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: widget.scheme.fields
-            .map((field) => _buildField(context, field))
-            .toList(),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(t.common.cancel),
-        ),
-        FilledButton(
-          onPressed: () {
-            final sortBy =
-                int.tryParse(_values['sortBy']?.toString() ?? '') ??
-                widget.initialState.sortBy;
-            final nextExtern = <String, dynamic>{
-              ...widget.initialState.pluginExtern,
-            };
-            for (final field in widget.scheme.fields) {
-              final key = field['key']?.toString() ?? '';
-              final kind = field['kind']?.toString() ?? '';
-              if (key.isEmpty) continue;
-              if (kind == 'choice') {
-                nextExtern[key] = _values[key];
-              } else if (kind == 'multiChoice') {
-                nextExtern[key] = _multiValues(key);
-              } else if (kind == 'switch') {
-                nextExtern[key] = _switchValue(key);
-              } else if (kind == 'text') {
-                nextExtern[key] = _textValue(key);
-              }
-            }
-            Navigator.of(context).pop(
-              widget.initialState.copyWith(
-                sortBy: sortBy,
-                pluginExtern: nextExtern,
-              ),
-            );
-          },
-          child: Text(t.common.apply),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildField(BuildContext context, Map<String, dynamic> field) {
-    final key = field['key']?.toString() ?? '';
-    final label = field['label']?.toString() ?? key;
-    final kind = field['kind']?.toString() ?? 'choice';
-    if (key.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    if (kind == 'switch') {
-      final current = _switchValue(key);
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: SwitchListTile(
-          value: current,
-          title: Text(label),
-          contentPadding: EdgeInsets.zero,
-          onChanged: (value) {
-            setState(() {
-              _values[key] = value;
-            });
-          },
-        ),
-      );
-    }
-
-    if (kind == 'text') {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 14),
-        child: TextFormField(
-          initialValue: _textValue(key),
-          decoration: InputDecoration(
-            labelText: label,
-            border: const OutlineInputBorder(),
-            isDense: true,
-          ),
-          onChanged: (value) {
-            _values[key] = value;
-          },
-        ),
-      );
-    }
-
-    final options = ((field['options'] as List?) ?? const [])
-        .whereType<Map>()
-        .map((e) => Map<String, dynamic>.from(e))
-        .toList();
-    if (options.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    if (kind == 'multiChoice') {
-      final selected = _multiValues(key);
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: Theme.of(
-                context,
-              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    selected.isEmpty
-                        ? t.search.notSelected
-                        : t.search.selectedCount(count: selected.length),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                OutlinedButton(
-                  onPressed: () async {
-                    final values = await showMultiChoiceListDialog(
-                      context,
-                      title: label,
-                      options: options
-                          .map(
-                            (option) => MultiChoiceDialogOption(
-                              label:
-                                  option['label']?.toString() ??
-                                  option['value']?.toString() ??
-                                  '',
-                              value: option['value']?.toString() ?? '',
-                            ),
-                          )
-                          .toList(),
-                      initialSelected: selected,
-                      confirmText: t.common.apply,
-                      useFilledConfirmButton: true,
-                      width: 420,
-                      height: 420,
-                    );
-                    if (values == null) {
-                      return;
-                    }
-                    setState(() {
-                      _values[key] = values.toList();
-                    });
-                  },
-                  child: Text(t.common.select),
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (kind != 'choice') {
-      return const SizedBox.shrink();
-    }
-
-    final current = _values[key]?.toString() ?? '';
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: Theme.of(
-              context,
-            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: options.map((option) {
-              final value = option['value']?.toString() ?? '';
-              final text = option['label']?.toString() ?? value;
-              return ChoiceChip(
-                showCheckmark: false,
-                label: Text(text),
-                selected: current == value,
-                onSelected: (selected) {
-                  if (!selected) {
-                    return;
-                  }
-                  setState(() {
-                    _values[key] = option['value'];
-                  });
-                },
-              );
-            }).toList(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  List<String> _multiValues(String key) {
-    final value = _values[key];
-    if (value is List) {
-      return value.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
-    }
-    if (value is Map) {
-      return value.entries
-          .where((entry) => entry.value == true)
-          .map((entry) => entry.key.toString())
-          .where((e) => e.isNotEmpty)
-          .toList();
-    }
-    return const <String>[];
-  }
-
-  bool _switchValue(String key) {
-    final value = _values[key];
-    if (value is bool) {
-      return value;
-    }
-    if (value is num) {
-      return value != 0;
-    }
-    final text = value?.toString().toLowerCase();
-    return text == 'true' || text == '1';
-  }
-
-  String _textValue(String key) {
-    final value = _values[key];
-    return value == null ? '' : value.toString();
   }
 }

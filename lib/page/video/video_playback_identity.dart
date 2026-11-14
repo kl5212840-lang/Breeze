@@ -2,6 +2,15 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 
+bool _apiVideoDetailPath(String path) =>
+    RegExp(r'^/voddetail/[1-9][0-9]{0,14}\.html$').hasMatch(path) ||
+    RegExp(
+      r'^/index\.php/vod/detail/id/[1-9][0-9]{0,14}\.html$',
+    ).hasMatch(path) ||
+    RegExp(r'^/vod/[1-9][0-9]{0,14}/$').hasMatch(path) ||
+    RegExp(r'^/anime/[a-f0-9]{16,64}\.html$').hasMatch(path) ||
+    RegExp(r'^/videos/[A-Za-z0-9_-]{1,64}$').hasMatch(path);
+
 /// Stable page identity, never a temporary CDN URL. Legacy Hanime identities
 /// retain their original shape; API libraries carry explicit line/episode IDs.
 Uri? videoPlaybackIdentity(Uri uri) {
@@ -21,7 +30,7 @@ Uri? videoPlaybackIdentity(Uri uri) {
       queryParameters: {'v': id},
     );
   }
-  if (!RegExp(r'^/voddetail/[1-9][0-9]{0,14}\.html$').hasMatch(uri.path)) {
+  if (!_apiVideoDetailPath(uri.path)) {
     return null;
   }
   final line = uri.queryParameters['line'];
@@ -60,7 +69,7 @@ Uri? videoPublicPage(Uri uri) {
       uri.host.isNotEmpty &&
       uri.userInfo.isEmpty &&
       (!uri.hasPort || uri.port == 443) &&
-      RegExp(r'^/voddetail/[1-9][0-9]{0,14}\.html$').hasMatch(uri.path)) {
+      _apiVideoDetailPath(uri.path)) {
     return Uri(scheme: 'https', host: uri.host, path: uri.path);
   }
   return null;

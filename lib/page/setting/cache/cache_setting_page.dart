@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -7,10 +5,13 @@ import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/util/get_path.dart';
 import 'package:zephyr/util/manage_cache.dart';
 import 'package:zephyr/i18n/strings.g.dart';
-import 'package:zephyr/widgets/fluent_dropdown.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/service/cache_workspace_guard.dart';
+import 'package:zephyr/widgets/touch_hover_intent.dart';
+import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 
 import 'package:zephyr/page/setting/common/setting_ui.dart';
+import 'package:zephyr/widgets/breeze_switch.dart';
 
 const Map<int, String> _cacheLimitLabels = {
   536870912: '512 MB',
@@ -21,11 +22,12 @@ const Map<int, String> _cacheLimitLabels = {
   17179869184: '16 GB',
 };
 
-final List<int> _cacheLimitOptions = _cacheLimitLabels.keys.toList()..sort();
-
 @RoutePage()
 class CacheSettingPage extends StatefulWidget {
-  const CacheSettingPage({super.key});
+  const CacheSettingPage({super.key, this.source, this.sourceName});
+
+  final String? source;
+  final String? sourceName;
 
   @override
   State<CacheSettingPage> createState() => _CacheSettingPageState();
@@ -34,6 +36,8 @@ class CacheSettingPage extends StatefulWidget {
 class _CacheSettingPageState extends State<CacheSettingPage> {
   int? _cacheSizeBytes;
   bool _calculating = false;
+  bool _clearing = false;
+  int _measurementGeneration = 0;
 
   @override
   void initState() {
@@ -41,44 +45,34 @@ class _CacheSettingPageState extends State<CacheSettingPage> {
     _calculateCacheSize();
   }
 
+  @override
+  void didUpdateWidget(covariant CacheSettingPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.source != widget.source) {
+      _measurementGeneration++;
+      _calculating = false;
+      _cacheSizeBytes = null;
+      _calculateCacheSize();
+    }
+  }
+
   Future<void> _calculateCacheSize() async {
     if (_calculating) return;
+    final generation = ++_measurementGeneration;
+    final source = widget.source;
     setState(() => _calculating = true);
 
     try {
       final cachePath = await getCachePath();
-      final directory = Directory(cachePath);
-      if (!await directory.exists()) {
-        if (!mounted) return;
-        setState(() {
-          _cacheSizeBytes = 0;
-          _calculating = false;
-        });
-        return;
-      }
+      final totalSize = await imageCacheSize(cachePath, source: source);
 
-      int totalSize = 0;
-      final entities = directory.listSync(recursive: true);
-      for (final entity in entities) {
-        final isSentry = entity.path
-            .split(Platform.pathSeparator)
-            .contains('sentry');
-        if (entity is File && !isSentry) {
-          try {
-            totalSize += await entity.length();
-          } on FileSystemException {
-            continue;
-          }
-        }
-      }
-
-      if (!mounted) return;
+      if (!mounted || generation != _measurementGeneration) return;
       setState(() {
         _cacheSizeBytes = totalSize;
         _calculating = false;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || generation != _measurementGeneration) return;
       setState(() {
         _cacheSizeBytes = null;
         _calculating = false;
@@ -105,12 +99,18 @@ class _CacheSettingPageState extends State<CacheSettingPage> {
     }
   }
 
-  Future<void> _handleClearCache() async {
+  Future<void> _handleClearCache(BuildContext pageContext) async {
+    if (_clearing) return;
+    final source = widget.source;
     final confirmed = await showDialog<bool>(
-      context: context,
+      context: pageContext,
       builder: (context) => AlertDialog(
         title: Text(t.cache.clearCache),
-        content: Text(t.cache.clearCacheConfirm),
+        content: Text(
+          source == null
+              ? t.cache.clearCacheConfirm
+              : t.cache.sourceClearConfirm,
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -118,141 +118,142 @@ class _CacheSettingPageState extends State<CacheSettingPage> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text(t.common.ok),
+            child: Text(t.cache.clear),
           ),
         ],
       ),
     );
 
-    if (confirmed != true) return;
+    if (confirmed != true || !mounted || _clearing || source != widget.source) {
+      return;
+    }
+    setState(() => _clearing = true);
 
     try {
       final cachePath = await getCachePath();
-      await clearCache(cachePath);
+      if (!mounted || source != widget.source) return;
+      await clearCache(cachePath, source: source);
+      if (!mounted || source != widget.source) return;
       showSuccessToast(t.cache.cleared);
-      _calculateCacheSize();
+      _measurementGeneration++;
+      _calculating = false;
+      await _calculateCacheSize();
+    } on CacheWorkspaceBusy {
+      if (mounted && source == widget.source) {
+        showErrorToast(t.cache.backupBusy);
+      }
     } catch (_) {
-      showSuccessToast(t.cache.clearFailed);
+      if (mounted && source == widget.source) {
+        showErrorToast(t.cache.clearFailed);
+      }
+    } finally {
+      if (mounted) setState(() => _clearing = false);
     }
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => widget.source == null
+      ? _buildSettings(context)
+      : SourceExperienceBoundary(
+          source: widget.source!,
+          builder: _buildSettings,
+        );
+
+  Widget _buildSettings(BuildContext context) {
     final cubit = context.watch<GlobalSettingCubit>();
-    final state = cubit.state;
+    final settings = cubit.state.cacheSetting;
+    final savedLimit = settings.cacheSizeLimit;
+    final effectiveCacheLimit = _cacheLimitLabels.containsKey(savedLimit)
+        ? savedLimit
+        : 1073741824;
+    final sourceScoped = widget.source != null;
+    final name = widget.sourceName?.trim() ?? '';
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          t.cache.title,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-        ),
-        centerTitle: false,
-        scrolledUnderElevation: 0,
-      ),
-      body: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 768),
-          child: ListView(
-            children: [
-              _buildSectionTitle(context, t.cache.currentCache),
-              ListTile(
-                leading: const Icon(Icons.storage_outlined),
-                title: Text(t.cache.cacheSize),
-                subtitle: Text(
-                  _calculating
-                      ? t.cache.calculating
-                      : _formatSize(_cacheSizeBytes),
-                ),
-                trailing: _calculating
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : IconButton(
-                        icon: const Icon(Icons.refresh, size: 20),
-                        tooltip: t.cache.recalculate,
-                        onPressed: _calculateCacheSize,
+    return SettingPageShell(
+      grouped: true,
+      title: sourceScoped
+          ? (name.isEmpty ? t.cache.sourceTitle : '$name · ${t.cache.title}')
+          : t.cache.title,
+      child: SettingListView(
+        children: [
+          settingSectionTitle(context, t.cache.currentCache),
+          ListTile(
+            leading: const Icon(Icons.storage_outlined),
+            title: Text(t.cache.cacheSize),
+            subtitle: Text(
+              _calculating ? t.cache.calculating : _formatSize(_cacheSizeBytes),
+            ),
+            trailing: _calculating
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : _cacheSizeBytes != null
+                ? null
+                : TouchHoverIntent(
+                    identity: 'cache.recalculate',
+                    builder: (context, hover) => IconButton(
+                      style: ButtonStyle(
+                        overlayColor: hover.overlayColor(null),
                       ),
-              ),
-              const Divider(height: 1, thickness: 0.3),
-              ListTile(
-                leading: const Icon(Icons.cleaning_services_outlined),
-                title: Text(t.cache.manualClear),
-                subtitle: Text(t.cache.manualClearSubtitle),
-                trailing: FilledButton.tonalIcon(
-                  onPressed: _handleClearCache,
-                  icon: const Icon(Icons.delete_outline, size: 18),
-                  label: Text(t.cache.clear),
-                ),
-              ),
+                      icon: const Icon(Icons.refresh, size: 20),
+                      tooltip: t.cache.recalculate,
+                      onPressed: _calculateCacheSize,
+                    ),
+                  ),
+          ),
+          TouchHoverIntent(
+            identity: 'cache.clear',
+            builder: (context, hover) => ListTile(
+              hoverColor: hover.hoverColor(),
+              leading: const Icon(Icons.cleaning_services_outlined),
+              title: Text(t.cache.clearCache),
+              trailing: _clearing
+                  ? const SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : null,
+              onTap: _clearing ? null : () => _handleClearCache(context),
+            ),
+          ),
 
-              const SizedBox(height: 8),
-              const Divider(height: 1, thickness: 0.3),
-              _buildSectionTitle(context, t.cache.cacheLimit),
-              ListTile(
-                leading: const Icon(Icons.data_thresholding_outlined),
-                title: Text(t.cache.sizeLimit),
-                subtitle: Text(t.cache.sizeLimitSubtitle),
-                trailing: Builder(
-                  builder: (context) {
-                    final effectiveCacheLimit =
-                        _cacheLimitOptions.contains(
-                          state.cacheSetting.cacheSizeLimit,
-                        )
-                        ? state.cacheSetting.cacheSizeLimit
-                        : 1073741824;
-                    return FluentDropdown<int>(
-                      value: effectiveCacheLimit,
-                      displayValue: _cacheLimitLabels[effectiveCacheLimit]!,
-                      items: _cacheLimitLabels,
-                      onChanged: (int value) {
-                        cubit.updateCacheSetting(
-                          (current) => current.copyWith(cacheSizeLimit: value),
-                        );
-                      },
+          if (!sourceScoped) ...[
+            settingSectionTitle(context, t.cache.cacheLimit),
+            TouchHoverIntent(
+              identity: 'cache.autoClear',
+              builder: (context, hover) => BreezeSwitchListTile(
+                SwitchListTile.adaptive(
+                  hoverColor: hover.hoverColor(),
+                  secondary: const Icon(Icons.auto_delete_outlined),
+                  title: Text(t.cache.autoClean),
+                  subtitle: Text(t.cache.autoCleanSubtitle),
+                  thumbIcon: settingSwitchThumbIcon(context),
+                  value: settings.autoCleanCache,
+                  onChanged: (bool value) {
+                    cubit.updateCacheSetting(
+                      (current) => current.copyWith(autoCleanCache: value),
                     );
                   },
                 ),
               ),
-
-              const SizedBox(height: 8),
-              const Divider(height: 1, thickness: 0.3),
-              _buildSectionTitle(context, t.cache.autoClean),
-              SwitchListTile(
-                secondary: const Icon(Icons.auto_delete_outlined),
-                title: Text(t.cache.autoClean),
-                subtitle: Text(t.cache.autoCleanSubtitle),
-                thumbIcon: kSettingSwitchThumbIcon,
-                value: state.cacheSetting.autoCleanCache,
-                onChanged: (bool value) {
+            ),
+            if (settings.autoCleanCache)
+              SettingChoiceTile<int>(
+                leading: const Icon(Icons.data_thresholding_outlined),
+                title: t.cache.sizeLimit,
+                value: effectiveCacheLimit,
+                valueIsFallback: effectiveCacheLimit != savedLimit,
+                items: _cacheLimitLabels,
+                onChanged: (int value) {
                   cubit.updateCacheSetting(
-                    (current) => current.copyWith(autoCleanCache: value),
+                    (current) => current.copyWith(cacheSizeLimit: value),
                   );
                 },
               ),
-
-              const SizedBox(height: 32),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSectionTitle(BuildContext context, String title) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 8),
-      child: Text(
-        title,
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          color: Theme.of(context).colorScheme.primary,
-          letterSpacing: 0.5,
-        ),
+          ],
+        ],
       ),
     );
   }

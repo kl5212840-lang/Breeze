@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/touch_hover_intent.dart';
 import 'dart:io';
 
 import 'package:auto_route/auto_route.dart';
@@ -13,8 +14,8 @@ import 'package:zephyr/page/setting/real_sr/service/real_sr_settings.dart';
 import 'package:zephyr/page/setting/real_sr/service/real_sr_super_resolution.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/coreml_model_config.dart';
-import 'package:zephyr/widgets/fluent_dropdown.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/widgets/breeze_switch.dart';
 
 final Map<int, String> _concurrencyLabels = {
   1: '1',
@@ -283,44 +284,31 @@ class _RealSrSettingPageState extends State<RealSrSettingPage> {
   List<Widget> _buildModelItems() {
     if (_usesCoreML) {
       return [
-        ListTile(
+        SettingChoiceTile<CoreMLModelFamily>(
           leading: const Icon(Icons.speed_outlined),
-          title: Text(t.realSr.model),
-          subtitle: Text(t.realSr.modelSubtitle),
-          trailing: FluentDropdown<CoreMLModelFamily>(
-            value: _coreMLFamily,
-            displayValue: _coreMLFamily.localizedLabel,
-            items: {
-              for (final family in CoreMLModelConfig.families)
-                family: family.localizedLabel,
-            },
-            onChanged: _setCoreMLFamily,
-          ),
+          title: t.realSr.model,
+          description: t.realSr.modelSubtitle,
+          value: _coreMLFamily,
+          items: {
+            for (final family in CoreMLModelConfig.families)
+              family: family.localizedLabel,
+          },
+          onChanged: _setCoreMLFamily,
         ),
-        ListTile(
+        SettingChoiceTile<CoreMLModelVariant>(
           leading: const Icon(Icons.healing_outlined),
-          title: Text(t.realSr.noiseLevel),
-          subtitle: Text(t.realSr.noiseLevelSubtitle),
-          trailing: FluentDropdown<CoreMLModelVariant>(
-            value: _coreMLVariant,
-            displayValue: _coreMLVariant.localizedDisplayName,
-            items: {
-              for (final variant in _coreMLFamily.variants)
-                variant: variant.localizedDisplayName,
-            },
-            onChanged: _setCoreMLVariant,
-          ),
+          title: t.realSr.noiseLevel,
+          description: t.realSr.noiseLevelSubtitle,
+          value: _coreMLVariant,
+          items: {
+            for (final variant in _coreMLFamily.variants)
+              variant: variant.localizedDisplayName,
+          },
+          onChanged: _setCoreMLVariant,
         ),
-        ListTile(
-          leading: const Icon(Icons.grid_view_outlined),
-          title: Text(t.realSr.blockInfo),
-          subtitle: Text(_coreMLBlockInfo),
-          trailing: Tooltip(
-            triggerMode: TooltipTriggerMode.tap,
-            showDuration: const Duration(seconds: 5),
-            message: t.realSr.blockInfoTooltip,
-            child: const Icon(Icons.help_outline),
-          ),
+        SettingDetailsNotes(
+          sectionTitle: t.realSr.blockInfo,
+          details: {'': '$_coreMLBlockInfo\n\n${t.realSr.blockInfoTooltip}'},
         ),
       ];
     }
@@ -336,29 +324,23 @@ class _RealSrSettingPageState extends State<RealSrSettingPage> {
     }
 
     return [
-      ListTile(
+      SettingChoiceTile<AndroidNcnnMode>(
         leading: const Icon(Icons.speed_outlined),
-        title: Text(t.realSr.desktopStrategy),
-        subtitle: Text(t.realSr.desktopStrategySubtitle),
-        trailing: FluentDropdown<AndroidNcnnMode>(
-          value: _desktopNcnnMode,
-          displayValue: _desktopNcnnMode.label,
-          items: {for (final mode in AndroidNcnnMode.values) mode: mode.label},
-          onChanged: _setDesktopNcnnMode,
-        ),
+        title: t.realSr.desktopStrategy,
+        description: t.realSr.desktopStrategySubtitle,
+        value: _desktopNcnnMode,
+        items: {for (final mode in AndroidNcnnMode.values) mode: mode.label},
+        onChanged: _setDesktopNcnnMode,
       ),
-      ListTile(
+      SettingChoiceTile<AndroidNcnnNoise>(
         leading: const Icon(Icons.healing_outlined),
-        title: Text(t.realSr.desktopNoiseLevel),
-        subtitle: Text(t.realSr.desktopNoiseLevelSubtitle),
-        trailing: FluentDropdown<AndroidNcnnNoise>(
-          value: _desktopNcnnNoise,
-          displayValue: _desktopNcnnNoise.label,
-          items: {
-            for (final noise in AndroidNcnnNoise.values) noise: noise.label,
-          },
-          onChanged: _setDesktopNcnnNoise,
-        ),
+        title: t.realSr.desktopNoiseLevel,
+        description: t.realSr.desktopNoiseLevelSubtitle,
+        value: _desktopNcnnNoise,
+        items: {
+          for (final noise in AndroidNcnnNoise.values) noise: noise.label,
+        },
+        onChanged: _setDesktopNcnnNoise,
       ),
     ];
   }
@@ -387,16 +369,38 @@ class _RealSrSettingPageState extends State<RealSrSettingPage> {
           color: Theme.of(context).colorScheme.primary,
         ),
         title: Text(t.realSr.modelReady),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
+        subtitle: Wrap(
+          spacing: 8,
           children: [
-            TextButton(
-              onPressed: _deleteModel,
-              child: Text(t.realSr.deleteModel),
+            TouchHoverIntent(
+              identity: 'real_sr_setting_page.button:0',
+              builder: (context, hover) {
+                final style = TextButton.styleFrom(
+                  minimumSize: const Size(44, 44),
+                );
+                return TextButton(
+                  style: style.copyWith(
+                    overlayColor: hover.overlayColor(style.overlayColor),
+                  ),
+                  onPressed: _deleteModel,
+                  child: Text(t.realSr.deleteModel),
+                );
+              },
             ),
-            TextButton(
-              onPressed: _downloadModel,
-              child: Text(t.realSr.redownload),
+            TouchHoverIntent(
+              identity: 'real_sr_setting_page.button:1',
+              builder: (context, hover) {
+                final style = TextButton.styleFrom(
+                  minimumSize: const Size(44, 44),
+                );
+                return TextButton(
+                  style: style.copyWith(
+                    overlayColor: hover.overlayColor(style.overlayColor),
+                  ),
+                  onPressed: _downloadModel,
+                  child: Text(t.realSr.redownload),
+                );
+              },
             ),
           ],
         ),
@@ -407,9 +411,20 @@ class _RealSrSettingPageState extends State<RealSrSettingPage> {
       leading: const Icon(Icons.warning_amber_rounded),
       title: Text(t.realSr.modelNotDownloaded),
       subtitle: Text(t.realSr.modelNotDownloadedSubtitle),
-      trailing: ElevatedButton(
-        onPressed: _downloadModel,
-        child: Text(t.realSr.downloadModel),
+      trailing: TouchHoverIntent(
+        identity: 'real_sr_setting_page.button:2',
+        builder: (context, hover) {
+          final style = ElevatedButton.styleFrom(
+            minimumSize: const Size(44, 44),
+          );
+          return ElevatedButton(
+            style: style.copyWith(
+              overlayColor: hover.overlayColor(style.overlayColor),
+            ),
+            onPressed: _downloadModel,
+            child: Text(t.realSr.downloadModel),
+          );
+        },
       ),
     );
   }
@@ -427,9 +442,18 @@ class _RealSrSettingPageState extends State<RealSrSettingPage> {
       leading: const Icon(Icons.open_in_browser_outlined),
       title: Text(t.realSr.manualDownload),
       subtitle: Text(url, maxLines: 2, overflow: TextOverflow.ellipsis),
-      trailing: TextButton(
-        onPressed: _openManualDownloadUrl,
-        child: Text(t.realSr.openDownloadUrl),
+      trailing: TouchHoverIntent(
+        identity: 'real_sr_setting_page.button:3',
+        builder: (context, hover) {
+          final style = TextButton.styleFrom(minimumSize: const Size(44, 44));
+          return TextButton(
+            style: style.copyWith(
+              overlayColor: hover.overlayColor(style.overlayColor),
+            ),
+            onPressed: _openManualDownloadUrl,
+            child: Text(t.realSr.openDownloadUrl),
+          );
+        },
       ),
     );
   }
@@ -445,9 +469,20 @@ class _RealSrSettingPageState extends State<RealSrSettingPage> {
               height: 22,
               child: CircularProgressIndicator(strokeWidth: 2),
             )
-          : TextButton(
-              onPressed: _importModel,
-              child: Text(t.realSr.importModelAction),
+          : TouchHoverIntent(
+              identity: 'real_sr_setting_page.button:4',
+              builder: (context, hover) {
+                final style = TextButton.styleFrom(
+                  minimumSize: const Size(44, 44),
+                );
+                return TextButton(
+                  style: style.copyWith(
+                    overlayColor: hover.overlayColor(style.overlayColor),
+                  ),
+                  onPressed: _importModel,
+                  child: Text(t.realSr.importModelAction),
+                );
+              },
             ),
     );
   }
@@ -455,6 +490,7 @@ class _RealSrSettingPageState extends State<RealSrSettingPage> {
   @override
   Widget build(BuildContext context) {
     return SettingPageShell(
+      grouped: true,
       title: t.realSr.title,
       child: _loading
           ? const Center(
@@ -464,38 +500,42 @@ class _RealSrSettingPageState extends State<RealSrSettingPage> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
             )
-          : ListView(
+          : SettingListView(
               children: [
                 settingSectionTitle(context, t.realSr.autoUpscaleSection),
-                SwitchListTile(
-                  secondary: const Icon(Icons.auto_fix_high_outlined),
-                  title: Text(t.realSr.autoUpscale),
-                  subtitle: Text(
-                    !_isAvailable
-                        ? t.realSr.autoUpscaleSubtitleUnavailable
-                        : t.realSr.autoUpscaleSubtitleAvailable,
+                TouchHoverIntent(
+                  identity: 'real_sr_setting_page.switch:0',
+                  builder: (context, hover) => BreezeSwitchListTile(
+                    SwitchListTile.adaptive(
+                      hoverColor: hover.hoverColor(),
+                      secondary: const Icon(Icons.auto_fix_high_outlined),
+                      title: Text(t.realSr.autoUpscale),
+                      subtitle: Text(
+                        !_isAvailable
+                            ? t.realSr.autoUpscaleSubtitleUnavailable
+                            : t.realSr.autoUpscaleSubtitleAvailable,
+                      ),
+                      thumbIcon: settingSwitchThumbIcon(context),
+                      value: _autoUpscale,
+                      onChanged: _setAutoUpscale,
+                    ),
                   ),
-                  thumbIcon: kSettingSwitchThumbIcon,
-                  value: _autoUpscale,
-                  onChanged: _setAutoUpscale,
                 ),
 
                 const SizedBox(height: 8),
                 const Divider(height: 1, thickness: 0.3),
                 settingSectionTitle(context, t.realSr.conditionSection),
-                ListTile(
+                SettingChoiceTile<RealSrResolutionThreshold>(
                   leading: const Icon(Icons.hd_outlined),
-                  title: Text(t.realSr.resolutionThreshold),
-                  subtitle: Text(t.realSr.resolutionThresholdSubtitle),
-                  trailing: FluentDropdown<RealSrResolutionThreshold>(
-                    value: _effectiveThreshold,
-                    displayValue: _effectiveThreshold.label,
-                    items: {
-                      for (final threshold in _availableThresholds)
-                        threshold: threshold.label,
-                    },
-                    onChanged: _setResolutionThreshold,
-                  ),
+                  title: t.realSr.resolutionThreshold,
+                  description: t.realSr.resolutionThresholdSubtitle,
+                  value: _effectiveThreshold,
+                  valueIsFallback: _effectiveThreshold != _resolutionThreshold,
+                  items: {
+                    for (final threshold in _availableThresholds)
+                      threshold: threshold.label,
+                  },
+                  onChanged: _setResolutionThreshold,
                 ),
 
                 const SizedBox(height: 8),
@@ -506,19 +546,17 @@ class _RealSrSettingPageState extends State<RealSrSettingPage> {
                     final effective = _concurrencyOptions.contains(_concurrency)
                         ? _concurrency
                         : RealSrSettings.defaultConcurrency;
-                    return ListTile(
+                    return SettingChoiceTile<int>(
                       leading: const Icon(Icons.speed_outlined),
-                      title: Text(t.realSr.concurrency),
-                      subtitle: Text(t.realSr.concurrencySubtitle),
-                      trailing: FluentDropdown<int>(
-                        value: effective,
-                        displayValue: _concurrencyLabels[effective]!,
-                        items: {
-                          for (final option in _concurrencyOptions)
-                            option: _concurrencyLabels[option]!,
-                        },
-                        onChanged: _setConcurrency,
-                      ),
+                      title: t.realSr.concurrency,
+                      description: t.realSr.concurrencySubtitle,
+                      value: effective,
+                      valueIsFallback: effective != _concurrency,
+                      items: {
+                        for (final option in _concurrencyOptions)
+                          option: _concurrencyLabels[option]!,
+                      },
+                      onChanged: _setConcurrency,
                     );
                   },
                 ),
@@ -528,19 +566,17 @@ class _RealSrSettingPageState extends State<RealSrSettingPage> {
                       final effective = _tileSizeOptions.contains(_tileSize)
                           ? _tileSize
                           : 0;
-                      return ListTile(
+                      return SettingChoiceTile<int>(
                         leading: const Icon(Icons.grid_on_outlined),
-                        title: Text(t.realSr.tileSize),
-                        subtitle: Text(t.realSr.tileSizeSubtitle),
-                        trailing: FluentDropdown<int>(
-                          value: effective,
-                          displayValue: _tileSizeLabels[effective]!,
-                          items: {
-                            for (final option in _tileSizeOptions)
-                              option: _tileSizeLabels[option]!,
-                          },
-                          onChanged: _setTileSize,
-                        ),
+                        title: t.realSr.tileSize,
+                        description: t.realSr.tileSizeSubtitle,
+                        value: effective,
+                        valueIsFallback: effective != _tileSize,
+                        items: {
+                          for (final option in _tileSizeOptions)
+                            option: _tileSizeLabels[option]!,
+                        },
+                        onChanged: _setTileSize,
                       );
                     },
                   ),
@@ -556,7 +592,6 @@ class _RealSrSettingPageState extends State<RealSrSettingPage> {
                 _buildModelManagementTile(),
                 _buildManualDownloadTile(),
                 _buildImportModelTile(),
-                const SizedBox(height: 32),
               ],
             ),
     );

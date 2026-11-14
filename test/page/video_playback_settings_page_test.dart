@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_playback_preferences.dart';
 import 'package:zephyr/page/video/video_playback_settings_page.dart';
+import 'package:zephyr/page/setting/common/setting_ui.dart';
 
 Future<void> pump(WidgetTester tester, [int count = 5]) async {
   for (var i = 0; i < count; i++) {
@@ -16,28 +17,43 @@ Future<void> pump(WidgetTester tester, [int count = 5]) async {
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  testWidgets('control styles switch and persist with large phone text', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(320, 760);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(
-      MaterialApp(
-        builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(
-            context,
-          ).copyWith(textScaler: const TextScaler.linear(2)),
-          child: child!,
+  testWidgets(
+    'video settings omit global style and keep hide timeout in playback',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 760);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await VideoPlaybackPreferences.save('controlsStyle', 'breeze');
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: const VideoPlaybackSettingsPage(),
         ),
-        home: const VideoPlaybackSettingsPage(),
-      ),
-    );
-    await pump(tester);
-    for (final style in ['breeze', 'system']) {
+      );
+      await pump(tester);
+      final playback = find.byWidgetPredicate(
+        (widget) =>
+            widget is SettingSection &&
+            widget.title == t.videoPlayback.playbackGroup,
+      );
+      expect(playback, findsOneWidget);
+      expect(
+        find.descendant(
+          of: playback,
+          matching: find.text(t.videoPlayback.controlsTimeout),
+        ),
+        findsOneWidget,
+      );
+      expect(find.text(t.videoPlayback.controlsGroup), findsNothing);
+      expect(find.text(t.videoPlayback.controlsStyle), findsNothing);
       await tester.scrollUntilVisible(
-        find.text(t.videoPlayback.controlsStyle).hitTestable(),
+        find.text(t.videoPlayback.controlsTimeout).hitTestable(),
         150,
         scrollable: find
             .byWidgetPredicate(
@@ -45,24 +61,26 @@ void main() {
             )
             .first,
       );
-      await tester.pumpAndSettle();
-      await tester.tap(find.text(t.videoPlayback.controlsStyle).hitTestable());
-      await tester.pumpAndSettle();
       await tester.tap(
-        find
-            .widgetWithText(
-              ListTile,
-              style == 'breeze'
-                  ? t.videoPlayback.breezeControls
-                  : t.videoPlayback.systemControls,
-            )
-            .last,
+        find.text(t.videoPlayback.controlsTimeout).hitTestable(),
       );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(t.videoPlayback.seconds(value: 8)).last);
       await pump(tester);
-      expect((await VideoPlaybackPreferences.read()).controlsStyle, style);
+      final preferences = await VideoPlaybackPreferences.read();
+      expect(preferences.hideSeconds, 8);
+      expect(preferences.controlsStyle, 'breeze');
+      expect(VideoPlaybackPreferences.interfaceStyle.value, 'breeze');
+      await tester.enterText(
+        find.byType(TextField),
+        t.videoPlayback.controlsStyle,
+      );
+      await tester.pump();
+      expect(find.text(t.videoPlayback.settingsSearchEmpty), findsOneWidget);
       expect(tester.takeException(), isNull);
-    }
-  });
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets('history disables resume and a rejected save stays unchanged', (
     tester,
@@ -99,6 +117,26 @@ void main() {
       isNull,
     );
     expect((await VideoPlaybackPreferences.read()).recordHistory, isFalse);
+    expect(
+      (await VideoPlaybackPreferences.read()).resumeProgress,
+      isTrue,
+      reason:
+          'disabling recording suspends resume without discarding its saved choice',
+    );
+    await tester.tap(historyRow);
+    await pump(tester);
+    final resumeRow = find.widgetWithText(
+      SwitchListTile,
+      t.videoPlayback.resumeProgress,
+    );
+    await tester.ensureVisible(resumeRow);
+    await tester.pumpAndSettle();
+    expect(tester.widget<SwitchListTile>(resumeRow).onChanged, isNotNull);
+    await tester.tap(resumeRow);
+    await pump(tester);
+    expect((await VideoPlaybackPreferences.read()).recordHistory, isTrue);
+    expect((await VideoPlaybackPreferences.read()).resumeProgress, isFalse);
+
     await tester.pumpWidget(
       MaterialApp(
         home: VideoPlaybackSettingsPage(
@@ -214,26 +252,27 @@ void main() {
     await tester.tap(find.text(t.videoPlayback.defaultSpeed));
     await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
-      find.text('2.0×'),
+      find.text('2.0×').last,
       100,
       scrollable: find.byType(Scrollable).last,
     );
     await tester.pumpAndSettle();
-    expect(find.text('2.0×').hitTestable(), findsOneWidget);
-    await tester.tap(find.text('2.0×'));
+    expect(find.text('2.0×').last.hitTestable(), findsOneWidget);
+    await tester.tap(find.text('2.0×').last);
     await pump(tester);
     expect((await VideoPlaybackPreferences.read()).defaultSpeed, 2);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
   testWidgets(
-    'settings search filters real source fields and keeps host preferences isolated',
+    'explicit compatibility form filters source fields and keeps host preferences isolated',
     (tester) async {
       var quality = 'auto';
       final sourceWrites = <String>[];
       await tester.pumpWidget(
         MaterialApp(
           home: VideoPlaybackSettingsPage(
+            includeSourcePreferences: true,
             source: 'fixture-video',
             sourceName: 'Fixture',
             readSourceBundle: () async => {
@@ -278,7 +317,9 @@ void main() {
       expect((await VideoPlaybackPreferences.read()).defaultSpeed, 1);
       await tester.enterText(find.byType(TextField), 'animation');
       await tester.pump();
-      expect(find.text(t.videoPlayback.settingsMotionNote), findsOneWidget);
+      expect(find.text(t.videoPlayback.settingsMotionNote), findsNothing);
+      expect(find.text(t.videoPlayback.settingsMotion), findsNothing);
+      expect(find.text(t.videoPlayback.settingsSearchEmpty), findsOneWidget);
       await tester.enterText(find.byType(TextField), 'unknown-absent');
       await tester.pump();
       expect(find.text(t.videoPlayback.settingsSearchEmpty), findsOneWidget);

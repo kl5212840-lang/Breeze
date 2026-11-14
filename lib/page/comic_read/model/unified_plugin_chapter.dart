@@ -1,3 +1,4 @@
+import 'package:zephyr/network/http/plugin/unified_plugin_envelope.dart';
 import 'package:zephyr/util/json/json_value.dart';
 
 class UnifiedPluginChapterDoc {
@@ -39,10 +40,14 @@ class UnifiedPluginChapter {
     required this.epPages,
     required this.docs,
     required this.extern,
+    this.requestId = '',
+    this.logicalKey = '',
   });
 
   final String epId;
   final String epName;
+  final String requestId;
+  final String logicalKey;
   final int order;
   final int length;
   final String epPages;
@@ -59,6 +64,8 @@ class UnifiedPluginChapter {
     return UnifiedPluginChapter(
       epId: map['id']?.toString() ?? map['epId']?.toString() ?? '',
       epName: map['name']?.toString() ?? map['epName']?.toString() ?? '',
+      requestId: map['requestId']?.toString() ?? '',
+      logicalKey: map['logicalKey']?.toString() ?? '',
       order: _toInt(map['order'], 0),
       length: _toInt(map['length'], docs.length),
       epPages: map['epPages']?.toString() ?? docs.length.toString(),
@@ -71,6 +78,8 @@ class UnifiedPluginChapter {
     return {
       'epId': epId,
       'epName': epName,
+      'requestId': requestId,
+      'logicalKey': logicalKey,
       'order': order,
       'length': length,
       'epPages': epPages,
@@ -98,7 +107,9 @@ class UnifiedPluginChapterResponse {
   final UnifiedPluginChapter chapter;
 
   factory UnifiedPluginChapterResponse.fromMap(Map<String, dynamic> map) {
+    requireSuccessfulPluginEnvelope(map);
     final data = asJsonMap(map['data']);
+    requireSuccessfulPluginEnvelope(data);
     final chapterMap = data.isNotEmpty
         ? asJsonMap(data['chapter'])
         : asJsonMap(map['chapter']);

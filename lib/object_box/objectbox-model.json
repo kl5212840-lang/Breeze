@@ -1638,10 +1638,31 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "24:8056410748370734871",
+      "lastPropertyId": "2:823802972751471027",
+      "name": "LocalStorageCommit",
+      "properties": [
+        {
+          "id": "1:7165417984173947226",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:823802972751471027",
+          "name": "operationToken",
+          "indexId": "22:1609379430984371764",
+          "type": 9,
+          "flags": 2080
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "23:8024759089770245234",
-  "lastIndexId": "21:6523988624980157350",
+  "lastEntityId": "24:8056410748370734871",
+  "lastIndexId": "22:1609379430984371764",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,

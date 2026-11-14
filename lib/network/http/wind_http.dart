@@ -51,6 +51,17 @@ class WindHttp {
     );
   }
 
+  /// App and plug-in distribution must validate certificates and never
+  /// follow a redirect to plaintext, even when a source relaxes TLS globally.
+  factory WindHttp.distribution({
+    Duration? connectTimeout,
+    Duration? receiveTimeout,
+  }) => WindHttp(
+    connectTimeout: connectTimeout,
+    receiveTimeout: receiveTimeout,
+    dangerAcceptInvalidCerts: false,
+  );
+
   /// 强制直连（忽略代理）。
   factory WindHttp.direct({
     Duration? connectTimeout,

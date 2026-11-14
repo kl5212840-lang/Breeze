@@ -11,7 +11,7 @@ use rquickjs_playground::{
     current_http_client_config, is_http_requests_blocked as is_http_requests_blocked_global,
     js_error_stack_enabled, register_bridge_route_async_handler,
     register_bridge_route_blocking_handler, register_bridge_route_sync_handler,
-    set_http_requests_blocked as set_http_requests_blocked_global, wrap_http_client,
+    set_http_requests_blocked as set_http_requests_blocked_global,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -244,6 +244,9 @@ pub struct QjsRuntimeBuildRequest {
     pub runtime_name: String,
     pub inject_filesystem: bool,
     pub bundle: Option<QjsRuntimeBundleBuild>,
+    /// None snapshots global routing at creation; empty selects system routing.
+    /// A nonempty HTTP/SOCKS URL is immutable for this runtime's lifetime.
+    pub network_proxy: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -251,6 +254,7 @@ pub struct QjsRuntimeBuilder {
     runtime_name: String,
     options: WebRuntimeOptions,
     bundle: Option<QjsRuntimeBundleBuild>,
+    network_proxy: Option<String>,
 }
 
 impl QjsRuntimeBuilder {
@@ -259,11 +263,17 @@ impl QjsRuntimeBuilder {
             runtime_name: runtime_name.into(),
             options: WebRuntimeOptions::default(),
             bundle: None,
+            network_proxy: None,
         }
     }
 
     pub fn filesystem(mut self, enabled: bool) -> Self {
         self.options.fs = enabled;
+        self
+    }
+
+    pub fn network_proxy(mut self, proxy: impl Into<String>) -> Self {
+        self.network_proxy = Some(proxy.into());
         self
     }
 
@@ -305,11 +315,14 @@ impl QjsRuntimeBuilder {
                 &bundle_name,
                 &bundle.bundle_js,
                 self.options,
+                self.network_proxy.as_deref(),
             )
             .await;
         }
 
-        let _runtime = qjs_runtime_with_options(&runtime_name, self.options).await?;
+        let _runtime =
+            qjs_runtime_with_options(&runtime_name, self.options, self.network_proxy.as_deref())
+                .await?;
         Ok(())
     }
 }
@@ -701,11 +714,13 @@ fn value_u64(value: &Value, key: &str) -> Option<u64> {
 async fn create_qjs_runtime_with_options(
     runtime_name: &str,
     options: WebRuntimeOptions,
+    network_proxy: Option<&str>,
 ) -> Result<AsyncHostRuntime> {
-    let runtime = AsyncHostRuntimeBuilder::new(runtime_name)
-        .filesystem(options.fs)
-        .build()
-        .map_err(|err: String| anyhow!(err))?;
+    let mut builder = AsyncHostRuntimeBuilder::new(runtime_name).filesystem(options.fs);
+    if let Some(proxy) = network_proxy {
+        builder = builder.network_proxy(proxy);
+    }
+    let runtime = builder.build().map_err(|err: String| anyhow!(err))?;
     let init_script = r#"(async () => {
             return "ok";
     })()"#;
@@ -728,7 +743,16 @@ fn ensure_runtime_options(
     runtime_name: &str,
     runtime: &AsyncHostRuntime,
     expected: WebRuntimeOptions,
+    network_proxy: Option<&str>,
 ) -> Result<()> {
+    if let Some(proxy) = network_proxy {
+        let actual = runtime.http_config();
+        if &actual.clone().with_network_proxy(Some(proxy))? != actual {
+            return Err(anyhow!(
+                "runtime already exists with a different network route; close it or use a new runtime name"
+            ));
+        }
+    }
     let actual = runtime.options();
     if actual == expected {
         return Ok(());
@@ -744,6 +768,7 @@ fn ensure_runtime_options(
 async fn qjs_runtime_with_options(
     runtime_name: &str,
     options: WebRuntimeOptions,
+    network_proxy: Option<&str>,
 ) -> Result<Arc<AsyncHostRuntime>> {
     if runtime_name.trim().is_empty() {
         return Err(anyhow!(rquickjs_playground::tr!(
@@ -754,7 +779,7 @@ async fn qjs_runtime_with_options(
     {
         let map = qjs_runtime_map().read().await;
         if let Some(runtime) = map.get(runtime_name) {
-            ensure_runtime_options(runtime_name, runtime, options)?;
+            ensure_runtime_options(runtime_name, runtime, options, network_proxy)?;
             return Ok(runtime.clone());
         }
     }
@@ -764,12 +789,13 @@ async fn qjs_runtime_with_options(
     {
         let map = qjs_runtime_map().read().await;
         if let Some(runtime) = map.get(runtime_name) {
-            ensure_runtime_options(runtime_name, runtime, options)?;
+            ensure_runtime_options(runtime_name, runtime, options, network_proxy)?;
             return Ok(runtime.clone());
         }
     }
 
-    let new_runtime = Arc::new(create_qjs_runtime_with_options(runtime_name, options).await?);
+    let new_runtime =
+        Arc::new(create_qjs_runtime_with_options(runtime_name, options, network_proxy).await?);
 
     let mut map = qjs_runtime_map().write().await;
     map.insert(runtime_name.to_owned(), new_runtime.clone());
@@ -800,7 +826,7 @@ async fn qjs_runtime(runtime_name: &str) -> Result<Arc<AsyncHostRuntime>> {
         }
     }
 
-    qjs_runtime_with_options(runtime_name, WebRuntimeOptions::default()).await
+    qjs_runtime_with_options(runtime_name, WebRuntimeOptions::default(), None).await
 }
 
 async fn create_qjs_runtime_with_bundle_and_options(
@@ -808,6 +834,7 @@ async fn create_qjs_runtime_with_bundle_and_options(
     bundle_name: &str,
     bundle_js: &str,
     options: WebRuntimeOptions,
+    network_proxy: Option<&str>,
 ) -> Result<()> {
     if runtime_name.trim().is_empty() {
         return Err(anyhow!(rquickjs_playground::tr!(
@@ -830,7 +857,7 @@ async fn create_qjs_runtime_with_bundle_and_options(
     {
         let map = qjs_runtime_map().read().await;
         if let Some(existing_runtime) = map.get(runtime_name) {
-            ensure_runtime_options(runtime_name, existing_runtime, options)?;
+            ensure_runtime_options(runtime_name, existing_runtime, options, network_proxy)?;
             replace_bundle_inner(existing_runtime, bundle_name, bundle_js).await?;
             tracing::info!(
                 "{}",
@@ -844,7 +871,8 @@ async fn create_qjs_runtime_with_bundle_and_options(
         }
     }
 
-    let new_runtime = Arc::new(create_qjs_runtime_with_options(runtime_name, options).await?);
+    let new_runtime =
+        Arc::new(create_qjs_runtime_with_options(runtime_name, options, network_proxy).await?);
     load_bundle_inner(&new_runtime, bundle_name, bundle_js).await?;
 
     let mut map = qjs_runtime_map().write().await;
@@ -1092,7 +1120,7 @@ async fn call_current_bundle_start_by_json(
     call_current_bundle_start(runtime_name, &runtime, fn_path, &args, task_group_key).await
 }
 
-async fn load_bundle_js_from_url(bundle_url: &str) -> Result<String> {
+async fn load_bundle_js_from_url(runtime_name: &str, bundle_url: &str) -> Result<String> {
     let bundle_url = bundle_url.trim();
     if bundle_url.is_empty() {
         return Err(anyhow!(rquickjs_playground::tr!(
@@ -1100,14 +1128,8 @@ async fn load_bundle_js_from_url(bundle_url: &str) -> Result<String> {
         )));
     }
 
-    // 与全局 TLS 校验开关保持一致，规避 reqwest 0.13 在部分证书场景下的验证失败问题
-    let http_config = current_http_client_config();
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(http_config.disable_tls_verify)
-        .build()
-        .with_context(|| rquickjs_playground::tr!("failed-to-create-bundle-download-client"))?;
-    let client = wrap_http_client(client);
-    let request = client.get(bundle_url);
+    let runtime = qjs_runtime(runtime_name).await?;
+    let request = runtime.http_client().get(bundle_url);
     let response = request
         .send()
         .await
@@ -1163,7 +1185,7 @@ async fn call_bundle_once_start_by_url(
     args_json: &str,
     task_group_key: &str,
 ) -> Result<u64> {
-    let bundle_js = load_bundle_js_from_url(bundle_url).await?;
+    let bundle_js = load_bundle_js_from_url(runtime_name, bundle_url).await?;
     call_bundle_once_start_by_json(runtime_name, &bundle_js, fn_path, args_json, task_group_key)
         .await
 }
@@ -1248,7 +1270,7 @@ async fn start_qjs_task(
     if is_once {
         let bundle_input = match (bundle_js, bundle_url) {
             (Some(js), _) => js,
-            (None, Some(url)) => load_bundle_js_from_url(&url).await?,
+            (None, Some(url)) => load_bundle_js_from_url(runtime_name, &url).await?,
             (None, None) => {
                 return Err(anyhow!("once 模式必须提供 bundle_js 或 bundle_url"));
             }
@@ -1400,6 +1422,18 @@ pub async fn qjs_drop_runtime(runtime_name: String) -> Result<bool> {
     let _ = qjs_tracked_task_map().write().await.remove(&runtime_name);
 
     Ok(runtime.is_some())
+}
+
+/// Does not initialize a runtime or issue any network request.
+pub async fn qjs_drain_observed_http_domains(runtime_name: String) -> Result<Vec<String>> {
+    let runtime = qjs_runtime_map()
+        .read()
+        .await
+        .get(runtime_name.trim())
+        .cloned();
+    Ok(runtime
+        .map(|runtime| runtime.drain_observed_http_domains())
+        .unwrap_or_default())
 }
 
 pub async fn qjs_debug_snapshot(runtime_name: String) -> Result<String> {
@@ -1565,31 +1599,32 @@ pub async fn qjs_cancel_tasks_by_group(
     })
 }
 
+fn proxy_config(mut config: HttpClientConfig, proxy: &str, socks: bool) -> HttpClientConfig {
+    config.use_http_proxy = false;
+    config.use_socks5_proxy = false;
+    config.http_proxy = None;
+    config.socks5_proxy = None;
+    let proxy = proxy.trim();
+    if !proxy.is_empty() {
+        if socks {
+            config.use_socks5_proxy = true;
+            config.socks5_proxy = Some(proxy.to_string());
+        } else {
+            config.use_http_proxy = true;
+            config.http_proxy = Some(proxy.to_string());
+        }
+    }
+    config
+}
+
 pub fn set_http_proxy(proxy: String) -> Result<()> {
-    configure_http_client(HttpClientConfig {
-        use_http_proxy: true,
-        use_socks5_proxy: false,
-        http_proxy: Some(proxy),
-        socks5_proxy: None,
-        disable_tls_verify: true,
-        allow_private_network: false,
-    })
-    .map_err(|err| anyhow!("设置 http 代理失败: {err}"))
+    configure_http_client(proxy_config(current_http_client_config(), &proxy, false))
+        .map_err(|err| anyhow!("设置 http 代理失败: {err}"))
 }
 
 pub fn set_socks5_proxy(proxy: String) -> Result<()> {
-    let mut config = current_http_client_config();
-    let proxy = proxy.trim();
-    if proxy.is_empty() {
-        config.use_socks5_proxy = false;
-        config.socks5_proxy = None;
-    } else {
-        config.use_http_proxy = false;
-        config.http_proxy = None;
-        config.use_socks5_proxy = true;
-        config.socks5_proxy = Some(proxy.to_string());
-    }
-    configure_http_client(config).map_err(|err| anyhow!("设置 socks5 代理失败: {err}"))
+    configure_http_client(proxy_config(current_http_client_config(), &proxy, true))
+        .map_err(|err| anyhow!("设置 socks5 代理失败: {err}"))
 }
 
 pub fn set_tls_verify_enabled(enabled: bool) -> Result<()> {
@@ -1655,6 +1690,9 @@ pub async fn is_qjs_runtime_initialized(name: String) -> Result<bool> {
 pub async fn build_qjs_runtime(request: QjsRuntimeBuildRequest) -> Result<()> {
     let mut builder =
         QjsRuntimeBuilder::new(request.runtime_name).filesystem(request.inject_filesystem);
+    if let Some(proxy) = request.network_proxy {
+        builder = builder.network_proxy(proxy);
+    }
 
     if let Some(bundle) = request.bundle {
         builder = builder.with_bundle(bundle);
@@ -1828,6 +1866,50 @@ mod tests {
         qjs_fetch_image, qjs_task_call,
     };
     use rquickjs_playground::HttpClientConfig;
+
+    #[test]
+    fn proxy_configuration_clears_both_routes_and_preserves_security() {
+        let previous = HttpClientConfig {
+            use_http_proxy: true,
+            use_socks5_proxy: true,
+            http_proxy: Some("http://127.0.0.1:8118".to_string()),
+            socks5_proxy: Some("127.0.0.1:1080".to_string()),
+            disable_tls_verify: true,
+            allow_private_network: true,
+        };
+        for socks in [false, true] {
+            let cleared = super::proxy_config(previous.clone(), "  ", socks);
+            assert!(!cleared.use_http_proxy && !cleared.use_socks5_proxy);
+            assert!(cleared.http_proxy.is_none() && cleared.socks5_proxy.is_none());
+            assert_eq!(cleared.disable_tls_verify, previous.disable_tls_verify);
+            assert_eq!(
+                cleared.allow_private_network,
+                previous.allow_private_network
+            );
+        }
+        // Existing clients own this earlier snapshot; changing the new config
+        // neither mutates in-flight clients nor changes their security policy.
+        assert!(previous.use_http_proxy && previous.use_socks5_proxy);
+    }
+
+    #[test]
+    fn proxy_configuration_switches_http_socks_without_stale_endpoints() {
+        let base = HttpClientConfig::default();
+        let http = super::proxy_config(base.clone(), " http://127.0.0.1:8118 ", false);
+        assert!(http.use_http_proxy && !http.use_socks5_proxy);
+        assert_eq!(http.http_proxy.as_deref(), Some("http://127.0.0.1:8118"));
+        assert!(http.socks5_proxy.is_none());
+        let socks = super::proxy_config(http, "127.0.0.1:1080", true);
+        assert!(!socks.use_http_proxy && socks.use_socks5_proxy);
+        assert!(socks.http_proxy.is_none());
+        assert_eq!(socks.socks5_proxy.as_deref(), Some("127.0.0.1:1080"));
+        let http = super::proxy_config(socks, "https://127.0.0.1:8119", false);
+        assert!(http.use_http_proxy && !http.use_socks5_proxy);
+        assert_eq!(http.http_proxy.as_deref(), Some("https://127.0.0.1:8119"));
+        assert!(http.socks5_proxy.is_none());
+        assert_eq!(http.disable_tls_verify, base.disable_tls_verify);
+        assert_eq!(http.allow_private_network, base.allow_private_network);
+    }
 
     #[test]
     fn opencc_convert_caches_converters_and_rejects_bad_config() {

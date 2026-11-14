@@ -6,6 +6,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/cubit/comic_read_preference_cubit.dart';
 import 'package:zephyr/page/comic_read/controller/reader_action_controller.dart';
 import 'package:zephyr/page/comic_read/cubit/reader_cubit.dart';
@@ -23,6 +24,7 @@ class ReaderInputController {
     required this.readerCubit,
     required this.pageController,
     required this.transformationController,
+    required TickerProvider vsync,
     required this.onToggleMenu,
     required this._onToggleDesktopFullscreen,
     required this.onRefreshState,
@@ -30,7 +32,10 @@ class ReaderInputController {
     required this.onUpdateScrollLock,
     required this.buildColumnMode,
     required this.buildRowMode,
-  });
+  }) : _zoomAnimation = AnimationController(
+         vsync: vsync,
+         duration: const Duration(milliseconds: 160),
+       );
 
   final BuildContext context;
   final ReaderCubit readerCubit;
@@ -47,6 +52,9 @@ class ReaderInputController {
 
   final FocusNode focusNode = FocusNode();
   final Set<int> _activeTouchPointers = <int>{};
+  final AnimationController _zoomAnimation;
+  ({Matrix4Tween tween, int slot})? _zoom;
+  bool _applyingZoomFrame = false;
 
   TapDownDetails? _tapDownDetails;
   TapDownDetails? _doubleTapDownDetails;
@@ -61,9 +69,12 @@ class ReaderInputController {
 
   void init() {
     transformationController.addListener(_onTransformationChanged);
+    _zoomAnimation.addListener(_onZoomFrame);
   }
 
   void dispose() {
+    transformationController.removeListener(_onTransformationChanged);
+    _zoomAnimation.dispose();
     focusNode.dispose();
   }
 
@@ -89,6 +100,9 @@ class ReaderInputController {
               ? (details) => _doubleTapDownDetails = details
               : null,
           onDoubleTap: isDoubleTapActionEnabled ? _onDoubleTap : null,
+          onDoubleTapCancel: isDoubleTapActionEnabled
+              ? () => _doubleTapDownDetails = null
+              : null,
           child: InteractiveViewer(
             transformationController: transformationController,
             boundaryMargin: EdgeInsets.zero,
@@ -101,6 +115,7 @@ class ReaderInputController {
                 transformationController.value.getMaxScaleOnAxis() >
                     kScaleLockThreshold,
             interactionEndFrictionCoefficient: kReaderPanFriction,
+            onInteractionStart: (_) => stopZoomAnimation(),
             onInteractionUpdate: (_) => _updateMultiTouchScrollLock(),
             onInteractionEnd: (_) => _updateMultiTouchScrollLock(),
             child: isColumnReadMode(readSetting.readMode)
@@ -156,7 +171,7 @@ class ReaderInputController {
     _tapDownDetails = null;
     final readSetting = context.readEffectiveReadSetting();
     if (readSetting.doubleTapZoom) {
-      _onDoubleTapZoom();
+      _onDoubleTapZoom(readSetting);
       return;
     }
     if (readSetting.doubleTapOpenMenu) {
@@ -169,20 +184,31 @@ class ReaderInputController {
     _doubleTapDownDetails = null;
   }
 
-  void _onDoubleTapZoom() {
+  void _onDoubleTapZoom(ReadSettingState setting) {
     final details = _doubleTapDownDetails;
+    _doubleTapDownDetails = null;
     if (details == null) return;
 
-    if (resetViewerTransformIfNeeded()) {
-      _doubleTapDownDetails = null;
+    final animate =
+        setting.doubleTapZoomAnimation &&
+        !MediaQuery.disableAnimationsOf(context) &&
+        !context.read<GlobalSettingCubit>().state.eInkSetting.enabled &&
+        !setting.einkOptimization;
+    final pendingTarget = _zoom?.tween.end;
+    final zoomOut = pendingTarget == null
+        ? _viewerIsTransformed
+        : pendingTarget.getMaxScaleOnAxis() > kScaleLockThreshold;
+    if (zoomOut) {
+      if (animate) {
+        _zoomTo(Matrix4.identity());
+      } else {
+        resetViewerTransformIfNeeded();
+      }
       return;
     }
 
     final renderObject = context.findRenderObject();
-    if (renderObject is! RenderBox || !renderObject.hasSize) {
-      _doubleTapDownDetails = null;
-      return;
-    }
+    if (renderObject is! RenderBox || !renderObject.hasSize) return;
 
     // 以双击点为锚点放大，手感更自然。
     final localPosition = renderObject.globalToLocal(details.globalPosition);
@@ -196,9 +222,53 @@ class ReaderInputController {
       )
       ..scaleByDouble(targetScale, targetScale, 1, 1);
 
-    transformationController.value = matrix;
+    if (animate) {
+      _zoomTo(matrix);
+    } else {
+      stopZoomAnimation();
+      transformationController.value = matrix;
+    }
+  }
+
+  void _zoomTo(Matrix4 target) {
+    _zoom = (
+      tween: Matrix4Tween(
+        begin: transformationController.value.clone(),
+        end: target,
+      ),
+      slot: readerCubit.state.currentSlot,
+    );
+    _zoomAnimation.forward(from: 0);
     _updateMultiTouchScrollLock();
-    _doubleTapDownDetails = null;
+  }
+
+  void _onZoomFrame() {
+    final zoom = _zoom;
+    if (zoom == null) return;
+    // A previous drag or automatic scroll can still settle on another page.
+    if (readerCubit.state.currentSlot != zoom.slot) {
+      resetViewerTransformIfNeeded();
+      return;
+    }
+    final progress = _zoomAnimation.value;
+    final finished = progress >= 1;
+    if (finished) _zoom = null;
+    _applyingZoomFrame = true;
+    try {
+      transformationController.value = finished
+          ? zoom.tween.end!
+          : zoom.tween.transform(Curves.easeOutCubic.transform(progress));
+    } finally {
+      _applyingZoomFrame = false;
+    }
+    _updateMultiTouchScrollLock();
+  }
+
+  void stopZoomAnimation() {
+    if (_zoom == null) return;
+    _zoom = null;
+    _zoomAnimation.stop();
+    _updateMultiTouchScrollLock();
   }
 
   void _onPointerDown(PointerDownEvent event) {
@@ -220,7 +290,9 @@ class ReaderInputController {
   }
 
   void _onPointerSignal(PointerSignalEvent event) {
-    if (event is! PointerScrollEvent || !_isDesktopPlatform) return;
+    if (event is! PointerScrollEvent) return;
+    stopZoomAnimation();
+    if (!_isDesktopPlatform) return;
 
     final newCtrlPressed =
         HardwareKeyboard.instance.logicalKeysPressed.contains(
@@ -246,6 +318,7 @@ class ReaderInputController {
   }
 
   void _onTransformationChanged() {
+    if (!_applyingZoomFrame && _zoom != null) stopZoomAnimation();
     _updateMultiTouchScrollLock();
   }
 
@@ -253,19 +326,26 @@ class ReaderInputController {
   void _updateMultiTouchScrollLock() {
     final currentScale = transformationController.value.getMaxScaleOnAxis();
     final shouldLock =
-        _activeTouchPointers.length >= 2 || currentScale > kScaleLockThreshold;
+        _activeTouchPointers.length >= 2 ||
+        _zoom != null ||
+        currentScale > kScaleLockThreshold;
     if (isScrollLockedByMultiTouch() == shouldLock || !context.mounted) return;
     onUpdateScrollLock(shouldLock);
   }
 
-  /// 翻页前统一归位缩放与位移，避免跨页后仍停留在局部放大状态。
-  bool resetViewerTransformIfNeeded() {
+  bool get _viewerIsTransformed {
     final matrix = transformationController.value;
     final scale = matrix.getMaxScaleOnAxis();
     final tx = matrix.storage[12].abs();
     final ty = matrix.storage[13].abs();
-    final shouldReset = scale > kScaleLockThreshold || tx > 0.5 || ty > 0.5;
-    if (!shouldReset) return false;
+    return scale > kScaleLockThreshold || tx > 0.5 || ty > 0.5;
+  }
+
+  /// 翻页前统一归位缩放与位移，避免跨页后仍停留在局部放大状态。
+  bool resetViewerTransformIfNeeded() {
+    final wasAnimating = _zoom != null;
+    stopZoomAnimation();
+    if (!wasAnimating && !_viewerIsTransformed) return false;
 
     transformationController.value = Matrix4.identity();
     _activeTouchPointers.clear();

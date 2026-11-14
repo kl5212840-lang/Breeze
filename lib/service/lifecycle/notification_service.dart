@@ -4,6 +4,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:path/path.dart' as p;
 import 'package:permission_guard/permission_guard.dart';
 import 'package:zephyr/main.dart';
+import 'package:zephyr/service/download/resource_download_notifications.dart';
 import 'package:zephyr/util/get_path.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/widgets/toast.dart';
@@ -53,6 +54,7 @@ Future<void> initializeNotifications() async {
     settings: initializationSettings,
     onDidReceiveNotificationResponse: (NotificationResponse response) async {},
   );
+  ResourceDownloadNotifications.instance.enableDelivery();
 
   if (Platform.isLinux) return;
 

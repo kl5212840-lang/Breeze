@@ -1,8 +1,65 @@
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zephyr/page/video/video_site_access.dart';
 
 void main() {
   final home = Uri.parse('https://hanime1.me/');
+  test(
+    'actual document script distinguishes provider block markup from challenges and ordinary content',
+    () async {
+      const harness = r'''
+const assert = require('node:assert/strict'), vm = require('node:vm');
+const script = JSON.parse(process.argv[1]);
+function read({blocked=false, challenge=false, native=false, heading='Sorry, you have been blocked'}={}) {
+  const nodes = new Map();
+  if (blocked) { nodes.set('#cf-error-details', {}); nodes.set('#cf-error-details h1', {textContent:heading}); }
+  if (challenge) nodes.set('form#challenge-form', {});
+  if (native) nodes.set('.card', {});
+  const document = {readyState:'complete', title:'Attention Required! | Cloudflare',
+    querySelector: s => s.split(',').map(x=>nodes.get(x.trim())).find(Boolean) || null};
+  return JSON.parse(vm.runInNewContext(script, {document, window:{},
+    location:{href:'https://hanime1.me/',pathname:'/',origin:'https://hanime1.me'}}));
+}
+assert.equal(read({blocked:true}).accessBlocked, true);
+assert.equal(read({blocked:true,challenge:true}).accessBlocked, false);
+assert.equal(read({blocked:true,native:true}).accessBlocked, false);
+assert.equal(read().accessBlocked, false);
+assert.equal(read({blocked:true,heading:'A normal article about blocked access'}).accessBlocked, false);
+''';
+      final result = await Process.run('node', [
+        '-e',
+        harness,
+        jsonEncode(
+          videoSiteStateScript({'cards': '.card'}, diagnostics: false),
+        ),
+      ]);
+      expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+    },
+  );
+  test(
+    'terminal block is distinct from real challenge, native content and an empty document',
+    () {
+      VideoSiteState state(Map<String, dynamic> signals) =>
+          VideoSiteState.fromRaw({'url': home.toString(), ...signals});
+      final blocked = state({'accessBlocked': true});
+      expect(blocked.accessBlocked, isTrue);
+      expect(blocked.challenge, isFalse);
+      expect(blocked.websiteReady, isFalse);
+      expect(
+        state({'accessBlocked': true, 'challengeShell': true}).accessBlocked,
+        isFalse,
+      );
+      expect(
+        state({'accessBlocked': true, 'nativeContent': true}).accessBlocked,
+        isFalse,
+      );
+      expect(state({}).accessBlocked, isFalse);
+      final diagnostic = VideoBrowserDiagnostics();
+      diagnostic.observed(blocked, matchesRequested: true);
+      expect(diagnostic.report(), contains('observed access-blocked'));
+    },
+  );
   test(
     'expanded diagnostics keep error codes but discard raw messages and headers',
     () {

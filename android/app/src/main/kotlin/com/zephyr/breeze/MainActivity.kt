@@ -48,6 +48,8 @@ class MainActivity: FlutterFragmentActivity() {
     private var volumeEventSink: EventChannel.EventSink? = null
     private var pendingFilePickerResult: MethodChannel.Result? = null
     private var pendingFilePickerDestPath: String? = null
+    private var videoSystemActions: VideoSystemActions? = null
+    private var backupSecurity: BackupSecurityStore? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         initRustlsPlatformVerifier(applicationContext)
@@ -75,6 +77,10 @@ class MainActivity: FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        videoSystemActions?.close()
+        videoSystemActions = VideoSystemActions(this, flutterEngine.dartExecutor.binaryMessenger)
+        backupSecurity?.close()
+        backupSecurity = BackupSecurityStore(this, flutterEngine.dartExecutor.binaryMessenger)
         
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
@@ -204,7 +210,8 @@ class MainActivity: FlutterFragmentActivity() {
         Log.i("FilePicker", "打开系统文件选择器")
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
-            type = "application/zip"
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/zip", "application/octet-stream"))
         }
         try {
             startActivityForResult(intent, REQUEST_CODE_PICK_BACKUP_ZIP)
@@ -236,6 +243,8 @@ class MainActivity: FlutterFragmentActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (videoSystemActions?.onActivityResult(requestCode, resultCode, data) == true) return
+        if (backupSecurity?.onActivityResult(requestCode, resultCode, data) == true) return
         if (requestCode == REQUEST_CODE_PICK_BACKUP_ZIP) {
             Log.i("FilePicker", "onActivityResult: resultCode=$resultCode, data=$data")
             val result = pendingFilePickerResult
@@ -260,6 +269,12 @@ class MainActivity: FlutterFragmentActivity() {
                 result?.success(null)
             }
         }
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        videoSystemActions?.close()
+        videoSystemActions = null
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 
     private fun saveForceEnableImpeller(enable: Boolean) {

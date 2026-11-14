@@ -1,7 +1,24 @@
-import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/page/plugin_settings/widgets/plugin_settings_web_account.dart';
+import 'package:zephyr/page/account/plugin_saved_accounts_page.dart';
+import 'package:zephyr/service/plugin_account_authentication.dart';
+import 'package:zephyr/service/plugin_account_profiles.dart';
+import 'package:zephyr/service/plugin_account_sync_coordinator.dart';
+import 'package:zephyr/page/video/omo_network.dart' show omoNetworkSource;
+import 'package:zephyr/page/video/omofun_account_page.dart';
+import 'package:zephyr/page/video/omofun_site_client.dart';
+import 'package:zephyr/page/discover/service/discover_router.dart';
+import 'package:zephyr/page/source_shell/source_experience_scope.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart'
+    show normalizePluginId;
+import 'package:zephyr/page/setting/common/setting_ui.dart';
+import 'package:zephyr/page/setting/common/setting_page_route.dart';
+import 'package:zephyr/page/login_page.dart';
+import 'package:zephyr/page/plugin_settings/view/plugin_detail_page.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'dart:async';
 import 'dart:io';
+import 'package:collection/collection.dart';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:zephyr/plugin/utils/plugin_local_file_picker.dart';
@@ -18,6 +35,18 @@ import 'package:zephyr/page/plugin_settings/widgets/plugin_settings_content.dart
 import 'package:zephyr/plugin/plugin_cloud_update_service.dart';
 import 'package:zephyr/plugin/plugin_install_service.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
+import 'package:zephyr/service/local_plugin_installation_state.dart';
+import 'package:zephyr/config/global/global_setting.dart';
+import 'package:zephyr/network/sync/sync_service.dart'
+    show createSyncArchiveAdapter;
+import 'package:zephyr/page/setting/common/backup_protection_ui.dart';
+import 'package:zephyr/service/backup_security/backup_security.dart';
+import 'package:zephyr/service/plugin_cloud_purge.dart';
+import 'package:zephyr/service/plugin_data_removal.dart';
+import 'package:zephyr/page/plugin_settings/widgets/plugin_removal_flow.dart';
+import 'package:zephyr/page/video/video_local_resources.dart'
+    show ManagedVideoResourceBusy;
+import 'package:zephyr/widgets/plugin_installation_guard.dart';
 import 'package:zephyr/plugin/utils/plugin_cloud_download_utils.dart';
 import 'package:zephyr/util/event/event.dart';
 import 'package:zephyr/util/event/webview_observe_bus.dart';
@@ -25,6 +54,9 @@ import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/widgets/action_feedback.dart';
+import 'package:zephyr/util/error_filter.dart';
+import 'package:zephyr/page/plugin_settings/plugin_settings_action_policy.dart';
 
 @RoutePage()
 class PluginSettingsPage extends StatelessWidget {
@@ -35,6 +67,7 @@ class PluginSettingsPage extends StatelessWidget {
     required this.pluginRuntimeName,
     required this.pluginDisplayName,
     this.insideSource = false,
+    this.scope = PluginSettingsScope.all,
   });
 
   final String from;
@@ -42,17 +75,52 @@ class PluginSettingsPage extends StatelessWidget {
   final String pluginRuntimeName;
   final String pluginDisplayName;
   final bool insideSource;
+  final PluginSettingsScope scope;
 
   @override
-  Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (_) => PluginSettingsCubit()..load(from),
-      child: _PluginSettingsPageView(
-        from: from,
-        pluginUuid: pluginUuid,
-        pluginRuntimeName: pluginRuntimeName,
-        pluginDisplayName: pluginDisplayName,
-        insideSource: insideSource,
+  Widget build(BuildContext context) =>
+      SourceExperienceBoundary(source: pluginUuid, builder: _buildSourcePage);
+
+  Widget _buildSourcePage(BuildContext context) {
+    String? settingsUserInfoFunction;
+    final plugin = PluginRegistryService.I.getByUuid(pluginUuid);
+    if (plugin != null) {
+      try {
+        final info = asJsonMap(
+          PluginRegistryService.I.getCachedPluginInfo(plugin.uuid),
+        );
+        final experience = asJsonMap(info['breezeExperience']);
+        final summaryFunction = experience['settingsUserInfoFunction'];
+        if (summaryFunction is String && summaryFunction.trim().isNotEmpty) {
+          settingsUserInfoFunction = summaryFunction.trim();
+        }
+      } catch (_) {}
+    }
+    final effectiveScope = scope;
+    // Personal avatars and account shortcuts lead here too. Read only the
+    // plugin's declared account capabilities; a profile tab no longer hides
+    // the account task from this shared settings destination.
+    final showAccount = effectiveScope != PluginSettingsScope.management;
+    return PluginSettingsWebAccount(
+      key: ValueKey('settings-account:$from'),
+      source: showAccount ? from : '',
+      builder: (readWebIdentity) => BlocProvider(
+        create: (_) => PluginSettingsCubit(
+          includeAccount: showAccount,
+          includeLogin: showAccount,
+          userInfoFunction: settingsUserInfoFunction,
+          readWebIdentity: readWebIdentity,
+        )..load(from),
+        child: _PluginSettingsPageView(
+          from: from,
+          pluginUuid: pluginUuid,
+          pluginRuntimeName: pluginRuntimeName,
+          pluginDisplayName: pluginDisplayName,
+          insideSource: insideSource,
+          scope: effectiveScope,
+          showAccount: showAccount,
+          readOnlyAccount: settingsUserInfoFunction != null,
+        ),
       ),
     );
   }
@@ -65,6 +133,9 @@ class _PluginSettingsPageView extends StatefulWidget {
     required this.pluginRuntimeName,
     required this.pluginDisplayName,
     required this.insideSource,
+    required this.scope,
+    required this.showAccount,
+    required this.readOnlyAccount,
   });
 
   final String from;
@@ -72,6 +143,9 @@ class _PluginSettingsPageView extends StatefulWidget {
   final String pluginRuntimeName;
   final String pluginDisplayName;
   final bool insideSource;
+  final PluginSettingsScope scope;
+  final bool showAccount;
+  final bool readOnlyAccount;
 
   @override
   State<_PluginSettingsPageView> createState() =>
@@ -79,8 +153,15 @@ class _PluginSettingsPageView extends StatefulWidget {
 }
 
 class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
+  bool _lifecycleBusy = false;
+  bool _confirmingRemoval = false;
+  int _purgeGeneration = 0;
+  final Set<String> _pendingFields = {};
+  final Set<String> _pendingActions = {};
+  final Map<String, String> _fieldErrors = {};
   StreamSubscription<WebViewObserveEvent>? _webLoginSub;
   PluginWebLoginFlowConfig? _activeWebLogin;
+  int? _webLoginSessionGeneration;
   bool _submittingWebCookie = false;
   bool _externalFallbackTriggered = false;
   bool _externalLoginPolling = false;
@@ -98,12 +179,43 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
     super.dispose();
   }
 
-  Future<bool> _maybeHandleWebLoginResult(Map<String, dynamic> result) async {
+  int? _webLoginReadGeneration(
+    String source,
+    String fnPath,
+    bool sessionChange,
+  ) {
+    if (sessionChange || isStandardPluginSessionChange(fnPath)) return null;
+    return pluginSessionWriteFence.generation(normalizePluginId(source));
+  }
+
+  Future<bool> _maybeHandleWebLoginResult(
+    Map<String, dynamic> result, {
+    required String source,
+    required int installationEpoch,
+    required int? readGeneration,
+  }) async {
     final config = _parseWebLoginFlowConfig(result);
     if (config == null) {
       return false;
     }
-    await _startWebLoginFlow(config);
+    final canonicalSource = normalizePluginId(source);
+    // Session-changing calls have already verified their own transition.
+    // An ordinary read must keep the generation from its original dispatch.
+    final generation =
+        readGeneration ?? pluginSessionWriteFence.generation(canonicalSource);
+    await _startWebLoginFlow(
+      config,
+      sessionGeneration: generation,
+      current: () =>
+          mounted &&
+          !_lifecycleBusy &&
+          widget.from == source &&
+          LocalPluginInstallationState.instance.installationEpoch(
+                widget.pluginUuid,
+              ) ==
+              installationEpoch &&
+          pluginSessionWriteFence.generation(canonicalSource) == generation,
+    );
     return true;
   }
 
@@ -174,10 +286,17 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
     );
   }
 
-  Future<void> _startWebLoginFlow(PluginWebLoginFlowConfig config) async {
+  Future<void> _startWebLoginFlow(
+    PluginWebLoginFlowConfig config, {
+    required int sessionGeneration,
+    required bool Function() current,
+  }) async {
+    if (!current()) return;
     await _stopWebLoginFlow();
+    if (!current()) return;
     _stopExternalChromiumLoginFlow();
     _activeWebLogin = config;
+    _webLoginSessionGeneration = sessionGeneration;
     _submittingWebCookie = false;
     _externalFallbackTriggered = false;
     _externalLoginPolling = false;
@@ -186,10 +305,6 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
       (event) => unawaited(_handleWebLoginObserveEvent(event)),
     );
 
-    if (!mounted) {
-      await _stopWebLoginFlow();
-      return;
-    }
     unawaited(
       context.pushRoute(WebViewRoute(info: [config.openTitle, config.openUrl])),
     );
@@ -203,6 +318,7 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
       await sub.cancel();
     }
     _activeWebLogin = null;
+    _webLoginSessionGeneration = null;
     _submittingWebCookie = false;
   }
 
@@ -414,7 +530,14 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
     required String cookie,
     required String url,
   }) async {
-    if (_submittingWebCookie) {
+    if (_lifecycleBusy || _submittingWebCookie) {
+      return;
+    }
+    if (_webLoginSessionGeneration !=
+        pluginSessionWriteFence.generation(normalizePluginId(widget.from))) {
+      // An old browser flow is not a fresh user login after logout/account change.
+      await _stopWebLoginFlow();
+      _stopExternalChromiumLoginFlow();
       return;
     }
     final cookieNames = extractCookieNames(cookie);
@@ -423,13 +546,25 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
       'count=${cookieNames.length} names=${cookieNames.join(',')}',
     );
     _submittingWebCookie = true;
+    final epoch = LocalPluginInstallationState.instance.installationEpoch(
+      widget.pluginUuid,
+    );
     try {
       final result = await callUnifiedComicPlugin(
         from: widget.from,
         fnPath: config.setCookieFnPath,
+        sessionChange: true,
         core: {'cookie': cookie, 'url': url},
         extern: const <String, dynamic>{},
       );
+      if (!mounted ||
+          _lifecycleBusy ||
+          LocalPluginInstallationState.instance.installationEpoch(
+                widget.pluginUuid,
+              ) !=
+              epoch) {
+        return;
+      }
       final message = result['message']?.toString().trim();
       showSuccessToast(
         message?.isNotEmpty == true ? message! : t.plugin.cookieSynced,
@@ -462,67 +597,282 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
     final pluginVersion = pluginState?.version ?? '';
     final state = context.watch<PluginSettingsCubit>().state;
 
-    return Scaffold(
-      appBar: AppBar(
-        leading: const SourceBackButton(),
-        title: Text(
-          t.plugin.pluginSettingsTitle(name: widget.pluginDisplayName),
-        ),
-        centerTitle: false,
-        elevation: 0,
-        backgroundColor: Colors.transparent,
-        actions: [
-          if (!deleted)
-            SourceChromeIconButton(
-              tooltip: t.plugin.sync,
-              onPressed: _syncPlugin,
-              icon: Icons.sync,
-              symbol: 'arrow.triangle.2.circlepath',
-            ),
-          if (widget.insideSource) SourceMoreButton(source: widget.from),
-        ],
-      ),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 680),
-          child: PluginSettingsContent(
-            from: widget.from,
-            pluginRuntimeName: widget.pluginRuntimeName,
-            state: state,
-            debugEnabled: debugEnabled,
-            debugUrl: debugUrl,
-            deleted: deleted,
-            pluginVersion: pluginVersion,
-            colorScheme: colorScheme,
-            onUpdateDebugConfig: _updateDebugConfig,
-            onConfirmDeletePlugin: _confirmDeletePlugin,
-            onUpdatePlugin: _updatePlugin,
-            onOpenLoginPage: _openLoginPage,
-            onOpenDetailPage: _openDetailPage,
-            onCommitField: _commitField,
-            onRunAction: (action) => _runAction(context, action),
+    return SettingPageShell(
+      title: widget.scope == PluginSettingsScope.management
+          ? t.plugin.management
+          : t.plugin.pluginSettingsTitle(name: widget.pluginDisplayName),
+      grouped: true,
+      actions: [
+        if (widget.insideSource)
+          SourceMoreButton(source: widget.from, showSettings: false),
+      ],
+      child: PluginSettingsContent(
+        from: widget.from,
+        pluginUuid: widget.pluginUuid,
+        pluginRuntimeName: widget.pluginRuntimeName,
+        state: state,
+        debugEnabled: debugEnabled,
+        debugUrl: debugUrl,
+        deleted: deleted,
+        pluginVersion: pluginVersion,
+        colorScheme: colorScheme,
+        scope: widget.scope,
+        showAccount: widget.showAccount,
+        readOnlyAccount: widget.readOnlyAccount,
+        jmEndpointBusy:
+            widget.from == PluginAccountAuthenticationService.jm &&
+            isPluginEndpointUpdating(widget.from),
+        pendingActions: _pendingActions,
+        onUpdateDebugConfig: _updateDebugConfig,
+        onConfirmDeletePlugin: _confirmDeletePlugin,
+        lifecycleBusy: _lifecycleBusy,
+        lifecycleExecuting: _lifecycleBusy && !_confirmingRemoval,
+        onReinstall: () async {
+          if (_lifecycleBusy) return;
+          setState(() => _lifecycleBusy = true);
+          try {
+            await ensurePluginInstalled(context, widget.pluginUuid);
+          } finally {
+            if (mounted) setState(() => _lifecycleBusy = false);
+          }
+        },
+        dataExcluded: PluginDataScope.values.any(
+          (scope) => LocalPluginInstallationState.instance.isDataExcluded(
+            widget.pluginUuid,
+            scope,
           ),
         ),
+        onRefresh: deleted || _lifecycleBusy ? null : _refresh,
+        onCheckPluginUpdate: _syncPlugin,
+        onUpdatePlugin: _updatePlugin,
+        onOpenLoginPage:
+            state.loginSupported ||
+                (state.userInfoLoginRequired &&
+                    state.accountProfilesSupported &&
+                    _hasVideoAccountLogin())
+            ? _openLoginPage
+            : null,
+        onOpenSavedAccounts:
+            state.loginSupported || state.accountProfilesSupported
+            ? _openSavedAccounts
+            : null,
+        onOpenDetailPage: _openDetailPage,
+        onCommitField: _commitField,
+        pendingFields: Set.unmodifiable(_pendingFields),
+        fieldErrors: Map.unmodifiable(_fieldErrors),
+        onRunAction: (action) => _runAction(context, action),
       ),
     );
   }
 
-  Future<void> _openLoginPage() async {
-    await context.pushRoute(LoginRoute(from: widget.from));
-    if (!mounted) {
+  Future<void> _openSavedAccounts() async {
+    final revealBrowser = await openPluginSavedAccounts(
+      context,
+      source: widget.from,
+      onAddAccount: () async {
+        await _openAccountLogin();
+      },
+      prepareSession: () =>
+          context.read<PluginSettingsCubit>().loadUserInfo(widget.from),
+    );
+    if (!mounted) return;
+    if (revealBrowser) {
+      final coordinator = PluginAccountSyncCoordinator.instance;
+      // Reveal the existing source browser, retaining its store and mode.
+      Navigator.of(context).pop();
+      await coordinator.continueProfileLogin(widget.from);
       return;
     }
     await context.read<PluginSettingsCubit>().load(widget.from);
   }
 
+  ({Uri? home, Map<String, dynamic>? catalog}) _videoAccountLogin() {
+    final info = PluginRegistryService.I.getCachedPluginInfo(widget.pluginUuid);
+    final actions = asJsonList(
+      info?['function'],
+    ).map(asJsonMap).map((f) => asJsonMap(f['action'])).toList();
+    if (widget.from == omoNetworkSource) {
+      final action = actions
+          .where((a) => a['type'] == 'openVideoLibrary')
+          .firstOrNull;
+      final raw = asJsonMap(action?['payload'])['url']?.toString();
+      final home =
+          PluginAccountSyncCoordinator.instance.profileOrigin(widget.from) ??
+          Uri.tryParse(raw ?? '');
+      return (
+        home:
+            home != null &&
+                home.scheme == 'https' &&
+                home.host.isNotEmpty &&
+                home.userInfo.isEmpty &&
+                home.port == 443
+            ? home
+            : null,
+        catalog: null,
+      );
+    }
+    return (
+      home: null,
+      catalog: actions
+          .where(
+            (a) =>
+                a['type'] == 'openVideoCatalog' &&
+                asJsonMap(a['payload'])['nativeAuth'] == true,
+          )
+          .firstOrNull,
+    );
+  }
+
+  bool _hasVideoAccountLogin() {
+    final target = _videoAccountLogin();
+    return target.home != null || target.catalog != null;
+  }
+
+  Future<bool> _openAccountLogin({bool recoverCurrent = false}) async {
+    final state = context.read<PluginSettingsCubit>().state;
+    final source = widget.from;
+    if (state.loginSupported) {
+      final generation = pluginSessionWriteFence.generation(
+        normalizePluginId(source),
+      );
+      final sessionField = switch (source) {
+        PluginAccountAuthenticationService.copy => 'auth.token',
+        PluginAccountAuthenticationService.jm => 'auth.jwt',
+        _ when PluginAccountAuthenticationService.bika.contains(source) =>
+          'auth.authorization',
+        _ => null,
+      };
+      final username = recoverCurrent
+          ? await PluginAccountProfiles.currentLoginHint(
+              source,
+              legacySessionKey: sessionField,
+            )
+          : null;
+      if (!mounted ||
+          source != widget.from ||
+          isPluginEndpointUpdating(source)) {
+        return false;
+      }
+      await openPluginAccountLoginForm(
+        context,
+        source: source,
+        username: username,
+        recoveryGeneration: recoverCurrent && username != null
+            ? generation
+            : null,
+      );
+      return PluginAccountIdentities.current(source) != null;
+    }
+    final target = _videoAccountLogin();
+    if (target.home case final home?) {
+      final username = recoverCurrent
+          ? await PluginAccountProfiles.currentLoginHint(
+                  source,
+                  origin: home,
+                ) ??
+                ''
+          : null;
+      if (!mounted || source != widget.from) return false;
+      final client = OmoSiteClient(
+        home: home,
+        request: (_, _) async => throw const OmoSiteException('unavailable'),
+      );
+      try {
+        await openOmoSitePage(
+          context,
+          client,
+          title: t.plugin.accountLogin,
+          path: '/user/login',
+          credentialSource: source,
+          recoveryUsername: username,
+        );
+        return client.account?.id.isNotEmpty == true;
+      } finally {
+        client.dispose();
+      }
+    }
+    final action = target.catalog;
+    if (action == null) throw StateError(t.accountProfiles.verificationHint);
+    final payload = asJsonMap(action['payload']);
+    final origin = Uri.tryParse(payload['url']?.toString() ?? '');
+    final username = !recoverCurrent
+        ? null
+        : origin == null
+        ? ''
+        : await PluginAccountProfiles.currentLoginHint(
+                source,
+                origin: origin,
+              ) ??
+              '';
+    if (!mounted || source != widget.from) return false;
+    await DiscoverRouter.route(
+      context,
+      currentFrom: source,
+      accountLoginUsername: username,
+      action: {
+        ...action,
+        'payload': {...payload, 'source': source, 'initialAccountLogin': true},
+      },
+    );
+    return PluginAccountIdentities.current(source) != null;
+  }
+
+  bool _openingLoginPage = false;
+  Future<void> _openLoginPage() async {
+    final source = widget.from;
+    if (!mounted ||
+        _openingLoginPage ||
+        _lifecycleBusy ||
+        isPluginEndpointUpdating(source)) {
+      return;
+    }
+    _openingLoginPage = true;
+    var submitted = false;
+    final signIn = eventBus.on<PluginLoginSucceeded>().listen((event) {
+      if (event.from == source) submitted = true;
+    });
+    try {
+      final confirmed = await _openAccountLogin(recoverCurrent: true);
+      if (mounted && source == widget.from && (confirmed || submitted)) {
+        await context.read<PluginSettingsCubit>().load(source);
+      }
+    } catch (_) {
+      if (mounted && source == widget.from) {
+        showErrorToast(t.login.loginNotSupported);
+      }
+    } finally {
+      await signIn.cancel();
+      _openingLoginPage = false;
+    }
+  }
+
   Future<void> _openDetailPage() async {
-    await context.pushRoute(
-      PluginDetailRoute(
+    await openSettingPage(
+      context,
+      route: PluginDetailRoute(
+        from: widget.from,
+        pluginUuid: widget.pluginUuid,
+        pluginDisplayName: widget.pluginDisplayName,
+      ),
+      builder: (_) => PluginDetailPage(
         from: widget.from,
         pluginUuid: widget.pluginUuid,
         pluginDisplayName: widget.pluginDisplayName,
       ),
     );
+  }
+
+  Future<void>? _refreshRequest;
+  Future<void> _refresh() {
+    if (_lifecycleBusy || !mounted) return Future.value();
+    late final Future<void> request;
+    request = _refreshRequest ??= context
+        .read<PluginSettingsCubit>()
+        .load(widget.from, refreshAvatar: true)
+        .whenComplete(() {
+          if (identical(_refreshRequest, request)) _refreshRequest = null;
+        });
+    return request;
   }
 
   Future<void> _syncPlugin() async {
@@ -673,107 +1023,467 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
   }
 
   Future<void> _confirmDeletePlugin() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(t.plugin.deletePlugin),
-        content: Text(t.plugin.confirmDeletePlugin),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(t.common.cancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(t.common.confirm),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) {
+    if (_lifecycleBusy) return;
+    if (_pendingFields.isNotEmpty ||
+        _pendingActions.isNotEmpty ||
+        _submittingWebCookie) {
+      showInfoToast(t.pluginLifecycle.working);
       return;
     }
-    try {
-      await PluginRegistryService.I.deletePlugin(widget.pluginUuid);
-    } catch (e) {
-      if (!mounted) {
-        return;
+    setState(() {
+      _lifecycleBusy = true;
+      _confirmingRemoval = true;
+    });
+    final generation = ++_purgeGeneration;
+    final local = LocalPluginInstallationState.instance;
+    final epoch = local.installationEpoch(widget.pluginUuid);
+    var cloudCompleted = false;
+    PluginRemovalScope? scope;
+    void guard() {
+      if (!mounted ||
+          generation != _purgeGeneration ||
+          local.installationEpoch(widget.pluginUuid) != epoch ||
+          local.isInstalling(widget.pluginUuid)) {
+        throw const PluginLifecycleChanged();
       }
-      showErrorToast(t.plugin.deleteFailed(error: e.toString()));
-      return;
     }
-    if (!mounted) {
-      return;
+
+    try {
+      scope = await showPluginRemovalScope(
+        context,
+        pluginName: widget.pluginDisplayName,
+      );
+      if (scope == null || !mounted) return;
+      guard();
+      if (!await confirmPluginRemoval(
+            context,
+            pluginName: widget.pluginDisplayName,
+            scope: scope,
+          ) ||
+          !mounted)
+        return;
+      guard();
+      setState(() => _confirmingRemoval = false);
+      await _stopWebLoginFlow();
+      _stopExternalChromiumLoginFlow();
+      if (!scope.local) {
+        await PluginRegistryService.I.deletePlugin(
+          widget.pluginUuid,
+          expectedInstallationEpoch: epoch,
+        );
+      } else {
+        final adapter = scope.cloud
+            ? createSyncArchiveAdapter(context.read<GlobalSettingCubit>().state)
+            : null;
+        if (scope.cloud && adapter == null) {
+          showInfoToast(t.pluginLifecycle.deleteCloudUnconfigured);
+          return;
+        }
+        final result = await clearPluginPersonalData(
+          widget.pluginUuid,
+          expectedEpoch: epoch,
+          // Cloud deletion is completed now, not represented by future-sync
+          // tombstones. Local clearing uses the existing physical-delete path.
+          choice: const PluginDataRemovalChoice(
+            cloudDelete: false,
+            includeDownloads: true,
+          ),
+          removeInstallation: true,
+          beforeLocalMutation: scope.cloud
+              ? () async {
+                  Future<void> purge() => purgeCloudPluginAccountData(
+                    adapter!,
+                    widget.pluginUuid,
+                    guard: guard,
+                  );
+                  try {
+                    await purge();
+                  } on CloudPluginPurgeFailure catch (error) {
+                    final cause = error.cause;
+                    if (error.mayHaveChanged ||
+                        cause is! BackupProtectionException ||
+                        cause.code != 'backup_locked')
+                      rethrow;
+                    guard();
+                    if (!await unlockCloudBackupProtection(context))
+                      throw const BackupProtectionCancelled();
+                    guard();
+                    await purge();
+                  }
+                  cloudCompleted = true;
+                }
+              : null,
+        );
+        if (!local.isRemoved(widget.pluginUuid)) {
+          throw StateError(
+            'Local data committed but plugin removal is incomplete',
+          );
+        }
+        if (!mounted) return;
+        context.read<PluginSettingsCubit>().resetAfterPersonalDataClear();
+        _fieldErrors.clear();
+        if (result.cleanupPending) {
+          showInfoToast(t.pluginLifecycle.cleanupPending);
+          return;
+        }
+      }
+      if (!mounted) return;
+      showSuccessToast(t.pluginLifecycle.removed);
+      if (ModalRoute.of(context)?.isCurrent == true &&
+          Navigator.of(context).canPop())
+        Navigator.of(context).pop();
+    } on BackupProtectionCancelled {
+      // Unlock cancellation happens before the local journal or data mutations.
+    } catch (error) {
+      if (!mounted) return;
+      showErrorToast(
+        cloudCompleted
+            ? t.pluginLifecycle.cloudDeleteCompleteLocalFailed
+            : scope?.cloud == true
+            ? t.pluginLifecycle.cloudDeleteFailed
+            : error is ManagedVideoResourceBusy
+            ? t.backupSecurity.localVideoInUse
+            : error is PluginLifecycleChanged
+            ? t.pluginLifecycle.changed
+            : t.pluginLifecycle.removeFailed,
+      );
+    } finally {
+      _purgeGeneration++;
+      if (mounted) {
+        setState(() {
+          _lifecycleBusy = false;
+          _confirmingRemoval = false;
+        });
+      }
     }
-    showSuccessToast(t.plugin.pluginDeleted);
-    Navigator.of(context).pop();
   }
 
   Future<void> _runAction(
     BuildContext context,
     Map<String, dynamic> action,
   ) async {
+    if (_lifecycleBusy) return;
     final fnPath = action['fnPath']?.toString() ?? '';
-    if (fnPath.isEmpty) {
+    final source = widget.from;
+    final epoch = LocalPluginInstallationState.instance.installationEpoch(
+      widget.pluginUuid,
+    );
+    if (!mounted ||
+        !isUserFacingPluginSettingsAction(action) ||
+        _pendingActions.contains(fnPath)) {
       return;
     }
+    final sessionChange = action['sessionChange'] == true;
+    final cubit = context.read<PluginSettingsCubit>();
+    final copyAutoMeasurement =
+        source == PluginAccountAuthenticationService.copy &&
+        fnPath == 'testLineSpeeds' &&
+        cubit.state.values['api.domain'] == 'auto';
+    final jmMeasurement =
+        source == PluginAccountAuthenticationService.jm &&
+        fnPath == 'measureEndpointSpeeds';
+    final resumeAccount =
+        (copyAutoMeasurement || jmMeasurement) && cubit.state.loadingUserInfo;
+    final endpointUpdate = copyAutoMeasurement || jmMeasurement
+        ? beginPluginEndpointUpdate(source, supersede: copyAutoMeasurement)
+        : null;
+    if (jmMeasurement && endpointUpdate == null) return;
+    bool currentEndpoint() =>
+        endpointUpdate == null ||
+        endpointUpdate == pluginEndpointRevision(source);
+    var effectiveRouteChanged = false;
+    final readGeneration = _webLoginReadGeneration(
+      source,
+      fnPath,
+      sessionChange,
+    );
+    setState(() => _pendingActions.add(fnPath));
     try {
       final result = await callUnifiedComicPlugin(
-        from: widget.from,
+        from: source,
         fnPath: fnPath,
+        sessionChange: sessionChange,
         core: const <String, dynamic>{},
         extern: const <String, dynamic>{},
       );
-      final startedWebLogin = await _maybeHandleWebLoginResult(result);
-      if (!startedWebLogin) {
-        final message =
-            result['message']?.toString() ?? t.plugin.executeSuccess;
-        showSuccessToast(message);
+      final data = asJsonMap(result['data']);
+      if (result['ok'] == false ||
+          result['success'] == false ||
+          data['ok'] == false ||
+          data['success'] == false) {
+        throw StateError(t.error.operationFailed);
       }
-      if (!mounted) return;
-      if (fnPath == 'clearPluginSession') {
-        this.context.router.push(LoginRoute(from: widget.from));
+      if (!mounted ||
+          _lifecycleBusy ||
+          !currentEndpoint() ||
+          LocalPluginInstallationState.instance.installationEpoch(
+                widget.pluginUuid,
+              ) !=
+              epoch) {
+        return;
+      }
+      effectiveRouteChanged = data['effectiveRouteChanged'] == true;
+      final handledWebLogin = await _maybeHandleWebLoginResult(
+        result,
+        source: source,
+        installationEpoch: epoch,
+        readGeneration: readGeneration,
+      );
+      if (!mounted || !currentEndpoint()) return;
+      if (!handledWebLogin) {
+        if (jmMeasurement) {
+          // Completing the measurement is not evidence that a route works.
+          // Read the measured results, including those from older bundles.
+          final api = data['api'] is List ? data['api'] as List : const [];
+          final images = data['image'] is List
+              ? data['image'] as List
+              : const [];
+          bool passed(Object? value) => asJsonMap(value)['ok'] == true;
+          final anyPassed = [...api, ...images].any(passed);
+          if (!anyPassed) {
+            showErrorToast(t.plugin.lineTestFailure);
+          } else if (api.isEmpty ||
+              images.isEmpty ||
+              ![...api, ...images].every(passed)) {
+            showWarningToast(t.plugin.lineTestPartial);
+          } else {
+            showSuccessToast(t.plugin.lineTestSuccess);
+          }
+        } else {
+          final message =
+              result['message']?.toString() ?? t.plugin.executeSuccess;
+          showSuccessToast(message);
+        }
+      }
+      if ((source == PluginAccountAuthenticationService.copy &&
+              fnPath == 'testLineSpeeds') ||
+          jmMeasurement) {
+        // The schema reflects the last measurement. The endpoint fence
+        // separately refreshes the account if Auto actually changed lines.
+        await cubit.load(widget.from, refreshAccount: false);
       }
     } catch (e) {
-      showErrorToast(t.plugin.executeFailed(error: e.toString()));
+      if (mounted && currentEndpoint()) {
+        showErrorToast(
+          t.plugin.executeFailed(error: userFacingErrorMessage(e)),
+        );
+      }
+    } finally {
+      if (endpointUpdate != null) {
+        finishPluginEndpointUpdate(
+          source,
+          endpointUpdate,
+          refreshSettings:
+              resumeAccount || (jmMeasurement && effectiveRouteChanged),
+          refreshProfile: copyAutoMeasurement && effectiveRouteChanged,
+        );
+      }
+      if (mounted) setState(() => _pendingActions.remove(fnPath));
     }
   }
 
   Future<void> _commitField(Map<String, dynamic> field, dynamic value) async {
+    if (_lifecycleBusy) return;
+    if (isInternalPluginMaintenanceFunction(field['fnPath'])) return;
+    final identity = pluginSettingsFieldIdentity(field);
+    // Callbacks retained by a closing menu share this guard with current rows.
+    if (!mounted || _pendingFields.contains(identity)) return;
     final key = field['key']?.toString() ?? '';
     final fnPath = field['fnPath']?.toString().trim() ?? '';
     final persist = field['persist'] != false;
-    var startedWebLogin = false;
-
-    if (fnPath.isNotEmpty) {
-      final result = await callUnifiedComicPlugin(
-        from: widget.from,
-        fnPath: fnPath,
-        core: {'key': key, 'value': value},
-        extern: const <String, dynamic>{},
-      );
-      startedWebLogin = await _maybeHandleWebLoginResult(result);
+    final source = widget.from;
+    final runtime = widget.pluginRuntimeName;
+    if (persist &&
+        key.isNotEmpty &&
+        const DeepCollectionEquality().equals(
+          context.read<PluginSettingsCubit>().state.values[key],
+          value,
+        ))
+      return;
+    final epoch = LocalPluginInstallationState.instance.installationEpoch(
+      widget.pluginUuid,
+    );
+    final sessionChange = field['sessionChange'] == true;
+    final readGeneration = _webLoginReadGeneration(
+      source,
+      fnPath,
+      sessionChange,
+    );
+    final appliesJmNetwork =
+        source == PluginAccountAuthenticationService.jm &&
+        fnPath == 'onNetworkChanged' &&
+        (key == 'network.apiBase' || key == 'network.imageBase');
+    if (appliesJmNetwork && isPluginEndpointUpdating(source)) return;
+    final appliesJmApiLine = appliesJmNetwork && key == 'network.apiBase';
+    final mayMeasureJmApi =
+        appliesJmNetwork && key == 'network.imageBase' && value == '';
+    final appliesJmEndpoint = appliesJmApiLine || mayMeasureJmApi;
+    final appliesCopyNetwork =
+        !persist &&
+        source == PluginAccountAuthenticationService.copy &&
+        fnPath == 'saveSettings' &&
+        (key == 'api.domain' || key == 'api.platform');
+    final cubit = context.read<PluginSettingsCubit>();
+    final hadAccountRead = cubit.state.loadingUserInfo;
+    final endpointUpdate = appliesJmEndpoint || appliesCopyNetwork
+        ? beginPluginEndpointUpdate(source, supersede: appliesCopyNetwork)
+        : null;
+    if (appliesJmEndpoint && endpointUpdate == null) return;
+    bool currentEndpoint() =>
+        endpointUpdate == null ||
+        endpointUpdate == pluginEndpointRevision(source);
+    var fieldCommitted = false;
+    var savingLocally = false;
+    var handledWebLogin = false;
+    bool? effectiveRouteChanged;
+    setState(() {
+      _pendingFields.add(identity);
+      _fieldErrors.remove(identity);
+    });
+    try {
+      if (fnPath.isNotEmpty) {
+        final result = await callUnifiedComicPlugin(
+          from: source,
+          fnPath: fnPath,
+          sessionChange: sessionChange,
+          core: {'key': key, 'value': value},
+          extern: const <String, dynamic>{},
+        );
+        final data = asJsonMap(result['data']);
+        if (result['ok'] == false ||
+            result['success'] == false ||
+            data['ok'] == false ||
+            data['success'] == false) {
+          throw StateError(
+            result['message']?.toString() ??
+                data['message']?.toString() ??
+                t.error.saveFailed,
+          );
+        }
+        if (!mounted ||
+            source != widget.from ||
+            runtime != widget.pluginRuntimeName ||
+            _lifecycleBusy ||
+            !currentEndpoint() ||
+            LocalPluginInstallationState.instance.installationEpoch(
+                  widget.pluginUuid,
+                ) !=
+                epoch) {
+          return;
+        }
+        final routeChange = data['effectiveRouteChanged'];
+        if (routeChange is bool) effectiveRouteChanged = routeChange;
+        handledWebLogin = await _maybeHandleWebLoginResult(
+          result,
+          source: source,
+          installationEpoch: epoch,
+          readGeneration: readGeneration,
+        );
+      }
+      if (!mounted ||
+          source != widget.from ||
+          runtime != widget.pluginRuntimeName ||
+          _lifecycleBusy ||
+          !currentEndpoint() ||
+          LocalPluginInstallationState.instance.installationEpoch(
+                widget.pluginUuid,
+              ) !=
+              epoch) {
+        return;
+      }
+      if (persist && key.isNotEmpty) {
+        // This awaits the bridge's ObjectBox transaction, not a Cubit-only value.
+        savingLocally = true;
+        await savePluginConfigValue(runtime, key, value);
+        final actual = loadPluginConfigValue<dynamic>(
+          runtime,
+          key,
+          fallback: null,
+        );
+        if (!const DeepCollectionEquality().equals(actual, value)) {
+          throw StateError(t.error.saveFailed);
+        }
+      }
+      if (!mounted ||
+          source != widget.from ||
+          runtime != widget.pluginRuntimeName ||
+          _lifecycleBusy ||
+          LocalPluginInstallationState.instance.installationEpoch(
+                widget.pluginUuid,
+              ) !=
+              epoch)
+        return;
+      if (persist && key.isNotEmpty) {
+        cubit.saveFieldValue(key, value);
+      }
+      fieldCommitted = true;
+      if (appliesCopyNetwork || appliesJmNetwork) {
+        await cubit.load(source, refreshAccount: false);
+      }
+      if (!mounted || !currentEndpoint()) return;
+      if (!handledWebLogin) {
+        showActionFeedback(
+          context,
+          persist || appliesCopyNetwork
+              ? t.common.saved
+              : t.plugin.executeSuccess,
+        );
+      }
+    } catch (error) {
+      if (mounted &&
+          source == widget.from &&
+          runtime == widget.pluginRuntimeName &&
+          !_lifecycleBusy &&
+          currentEndpoint() &&
+          LocalPluginInstallationState.instance.installationEpoch(
+                widget.pluginUuid,
+              ) ==
+              epoch) {
+        setState(
+          () => _fieldErrors[identity] = savingLocally
+              ? t.error.saveFailed
+              : _fieldSaveError(field, error),
+        );
+        showErrorToast(t.error.saveFailed, context: context);
+      }
+    } finally {
+      if (endpointUpdate != null) {
+        final resumeAccount =
+            hadAccountRead &&
+            (appliesCopyNetwork ||
+                mayMeasureJmApi ||
+                (appliesJmApiLine && fieldCommitted));
+        finishPluginEndpointUpdate(
+          source,
+          endpointUpdate,
+          refreshSettings:
+              resumeAccount ||
+              (!appliesCopyNetwork &&
+                  fieldCommitted &&
+                  (effectiveRouteChanged ??
+                      (appliesJmApiLine && widget.readOnlyAccount))),
+          refreshProfile: appliesCopyNetwork && effectiveRouteChanged == true,
+        );
+      }
+      if (mounted) setState(() => _pendingFields.remove(identity));
     }
-
-    if (persist && key.isNotEmpty) {
-      await savePluginConfigValue(widget.pluginRuntimeName, key, value);
-    }
-
-    await _saveFieldState(key, value, showToast: !startedWebLogin);
   }
 
-  Future<void> _saveFieldState(
-    String key,
-    dynamic value, {
-    bool showToast = true,
-  }) async {
-    if (!mounted) return;
-
-    if (key.isNotEmpty) {
-      context.read<PluginSettingsCubit>().saveFieldValue(key, value);
-    }
-    if (showToast) {
-      // showSuccessToast('已保存');
-    }
+  String _fieldSaveError(Map<String, dynamic> field, Object error) {
+    // Third-party exceptions may echo submitted credentials. Never log them or
+    // render credential fields' raw errors, even when their message is short.
+    final key = field['key']?.toString().toLowerCase() ?? '';
+    final text = error.toString();
+    final sensitive =
+        field['kind'] == 'password' ||
+        RegExp(
+          r'password|passwd|token|secret|cookie|credential|authorization',
+        ).hasMatch(key) ||
+        RegExp(
+          r'password|passwd|token|secret|cookie|authorization',
+          caseSensitive: false,
+        ).hasMatch(text);
+    if (sensitive) return t.error.saveFailed;
+    return '${t.error.saveFailed} · ${userFacingErrorMessage(error)}';
   }
 }

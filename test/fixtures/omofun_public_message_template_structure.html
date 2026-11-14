@@ -1,0 +1,71 @@
+<!doctype html><html><body>
+<!-- Public template /template/the4/html/user/message.html, read 2026-11-06.
+Unrelated markup omitted. These are literal bindings, not authenticated data. -->
+                        <div class="posts-item" v-for="item in posts.data">
+
+                            <div class="posts-wrapper">
+                                <div class="posts-avatar">
+                                    <img :src="item.head_image" alt="头像">
+                                </div>
+                                <div class="posts-content">
+                                    <div class="posts-header">
+                                        <span class="posts-username">
+                                            {{ item.title }}
+                                        </span>
+                                        <span class="posts-text">
+                                            评论了
+                                        </span>
+                                        <span class="posts-title">
+                                            <a :href="item.url">{{ item.vod.vod_name }} </a>
+                                        </span>
+                                    </div>
+
+                                    <div class="posts-body">
+                                        <div class="posts-body-text" v-if="item.reply_content">{{ item.reply_content }}
+                                        </div>
+                                        <div class="posts-body-text2">{{ item.context }}</div>
+                                    </div>
+
+
+
+<span class="posts-time">{{ item.create_time }}</span>
+</div></div></div></div>
+<script>const messageReaders = {
+                async fetchMyPosts() {
+                    const result = await fetchWrapper('/user/message_json?type=1&offset=' + this.posts.offset, {
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                    })
+
+                    this.posts.data.push(...result.data);
+                    this.posts.hasMore = result.hasMore;
+                    this.posts.offset = this.posts.offset + result.data.length;
+                },
+                //获取回复我的消息
+                async fetchReplies() {
+                    const result = await fetchWrapper('/user/message_json?type=2&offset=' + this.replies.offset, {
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                    })
+
+                    this.replies.data.push(...result.data);
+                    this.replies.hasMore = result.hasMore;
+                    this.replies.offset = this.replies.offset + result.data.length;
+                },
+                //获取收到的赞
+                async fetchLikes() {
+                    const result = await fetchWrapper('/user/message_json?type=3&offset=' + this.likes.offset, {
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                    })
+
+                    this.likes.data.push(...result.data);
+                    this.likes.hasMore = result.hasMore;
+                    this.likes.offset = this.likes.offset + result.data.length;
+
+                },
+};</script>
+</body></html>

@@ -1,3 +1,9 @@
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
+import 'package:zephyr/page/source_shell/source_loading_indicator.dart';
+import 'package:zephyr/page/source_shell/source_experience_scope.dart';
+import 'package:zephyr/page/search/method/search_history_entries.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
+import 'package:zephyr/page/search/method/copy_search_topic.dart';
 import 'package:zephyr/page/source_shell/source_list_presentation.dart';
 import 'package:zephyr/page/source_shell/source_list_scroll_positions.dart';
 import 'package:auto_route/auto_route.dart';
@@ -11,12 +17,18 @@ import 'package:zephyr/page/comic_list/view/plugin_comic_grid_sliver.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search_result/search_result.dart';
 import 'package:zephyr/page/search_result/view/source_quick_category_bar.dart';
+import 'package:zephyr/page/search_result/view/source_loaded_result_filter.dart';
 import 'package:zephyr/page/search_result/view/source_search_detail_list.dart';
 import 'package:zephyr/page/search_result/view/source_list_categories.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/source_shell/widgets/bika_connection_notice.dart';
 import 'package:zephyr/util/error_filter.dart';
+import 'package:zephyr/service/jm_list_like_counts.dart';
+import 'package:zephyr/widgets/comic_simplify_entry/jm_cover_like_badge.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_mapper.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
+import 'package:zephyr/widgets/section_header.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 
 SearchEvent searchRetryEvent(
   SearchEvent lastSuccessful,
@@ -24,8 +36,9 @@ SearchEvent searchRetryEvent(
   SearchStatus targetStatus,
 ) {
   final source =
-      targetStatus == SearchStatus.loadingMore &&
-          current.status == SearchStatus.getMoreFailure
+      current.status == SearchStatus.failure ||
+          (targetStatus == SearchStatus.loadingMore &&
+              current.status == SearchStatus.getMoreFailure)
       ? current.searchEvent
       : lastSuccessful;
   return source.copyWith(status: targetStatus);
@@ -60,7 +73,10 @@ class SearchResultPage extends StatelessWidget implements AutoRouteWrapper {
 
   @override
   Widget build(BuildContext context) {
-    return _SearchResultPage(searchEvent: searchEvent);
+    return SourceExperienceBoundary(
+      source: context.select<SearchCubit, String>((cubit) => cubit.state.from),
+      builder: (_) => _SearchResultPage(searchEvent: searchEvent),
+    );
   }
 }
 
@@ -80,6 +96,10 @@ class _SearchResultPageState extends State<_SearchResultPage>
   ScrollController get _scrollController => _scrollPositions.controller;
   late AnimationController _animationController;
   late Animation<Offset> _slideAnimation;
+  bool _quickActionsHidden = false;
+  bool _reduceMotion = false;
+  (String, String, int)? _topicLookupKey;
+  Future<CopySearchTopic?>? _topicLookup;
 
   @override
   void initState() {
@@ -103,19 +123,28 @@ class _SearchResultPageState extends State<_SearchResultPage>
     _scrollPositions.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final keyword = widget.searchEvent.searchStates.searchKeyword.trim();
-      if (keyword.isEmpty) return;
-      final historyItem = _buildHistoryItem(widget.searchEvent);
+      if (keyword.isEmpty || !mounted) return;
       final settingCubit = context.read<GlobalSettingCubit>();
-      final history = settingCubit.state.searchHistory.toList();
-      history
-        ..remove(historyItem)
-        ..insert(0, historyItem);
-      await Future.delayed(const Duration(milliseconds: 200));
       settingCubit.updateState(
-        (current) =>
-            current.copyWith(searchHistory: history.take(300).toList()),
+        (current) => current.copyWith(
+          searchHistory: SearchHistoryEntries.add(
+            current.searchHistory,
+            keyword,
+            scope: widget.searchEvent.searchStates.from,
+          ),
+        ),
       );
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    if (reduceMotion && !_reduceMotion) {
+      _animationController.value = _quickActionsHidden ? 1 : 0;
+    }
+    _reduceMotion = reduceMotion;
   }
 
   @override
@@ -130,9 +159,7 @@ class _SearchResultPageState extends State<_SearchResultPage>
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final source = context.read<SearchCubit>().state.from;
-    final quickCategories = sourceQuickCategories(source);
     final resultState = context.watch<SearchBloc>().state;
-    final pageLabel = _pageLabel(resultState);
     return BlocListener<SearchCubit, SearchStates>(
       listener: (_, _) => _scrollPositions.reset(),
       child: SourceListPresentation(
@@ -141,18 +168,24 @@ class _SearchResultPageState extends State<_SearchResultPage>
         builder: (context, detailedView, onViewChanged) {
           _scrollPositions.select(detailedView);
           return Scaffold(
-            appBar: SearchResultBar(searchEvent: searchEvent),
-            body: Column(
-              children: [
-                SourceQuickCategoryBar(
-                  categories: quickCategories,
-                  detailedView: detailedView,
-                  pageLabel: pageLabel,
-                  onPageTap: _jumpToPage,
-                  onViewChanged: onViewChanged,
-                ),
-                Expanded(child: _bloc(detailedView)),
-              ],
+            appBar: SearchToolbarScope.appBar(
+              context,
+              (height) => SearchResultBar(
+                searchEvent: searchEvent,
+                toolbarHeight: height,
+              ),
+              searching: context
+                  .read<SearchCubit>()
+                  .state
+                  .searchKeyword
+                  .trim()
+                  .isNotEmpty,
+            ),
+            body: _resultBody(
+              context,
+              resultState,
+              detailedView,
+              onViewChanged,
             ),
             floatingActionButtonLocation:
                 context.watch<GlobalSettingCubit>().state.leftHandModeEnabled
@@ -161,6 +194,8 @@ class _SearchResultPageState extends State<_SearchResultPage>
             floatingActionButton: SlideTransition(
               position: _slideAnimation,
               child: SpeedDial(
+                // SpeedDial reads its controller duration at creation.
+                key: ValueKey(_reduceMotion),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),
@@ -170,8 +205,10 @@ class _SearchResultPageState extends State<_SearchResultPage>
                 foregroundColor: colorScheme.onPrimaryContainer,
                 icon: Icons.menu,
                 activeIcon: Icons.close,
-                useRotationAnimation: true,
-                animationDuration: const Duration(milliseconds: 300),
+                useRotationAnimation: !_reduceMotion,
+                animationDuration: _reduceMotion
+                    ? Duration.zero
+                    : const Duration(milliseconds: 300),
                 spacing: 12,
                 spaceBetweenChildren: 8,
                 children: [
@@ -184,11 +221,16 @@ class _SearchResultPageState extends State<_SearchResultPage>
                     backgroundColor: colorScheme.secondaryContainer,
                     foregroundColor: colorScheme.onSecondaryContainer,
                     onTap: () {
-                      _scrollController.animateTo(
-                        0,
-                        duration: const Duration(milliseconds: 500),
-                        curve: Curves.easeInOut,
-                      );
+                      if (!_scrollController.hasClients) return;
+                      if (_reduceMotion) {
+                        _scrollController.jumpTo(0);
+                      } else {
+                        _scrollController.animateTo(
+                          0,
+                          duration: const Duration(milliseconds: 500),
+                          curve: Curves.easeInOut,
+                        );
+                      }
                     },
                   ),
                   SpeedDialChild(
@@ -209,6 +251,102 @@ class _SearchResultPageState extends State<_SearchResultPage>
       ),
     );
   }
+
+  Widget _resultBody(
+    BuildContext context,
+    SearchState state,
+    bool detailedView,
+    ValueChanged<bool> onViewChanged,
+  ) {
+    final search = context.watch<SearchCubit>().state;
+    final categories = sourceQuickCategories(search.from);
+    final pageLabel = _pageLabel(state);
+    Widget toolbar([Widget? filter]) => SourceQuickCategoryBar(
+      categories: categories,
+      detailedView: detailedView,
+      pageLabel: pageLabel,
+      onPageTap: _jumpToPage,
+      onViewChanged: onViewChanged,
+      trailingAction: filter,
+    );
+    Widget content(Widget controls, [List<UnifiedComicListItem>? entries]) =>
+        Column(
+          children: [
+            controls,
+            if (supportsCopyTopicSearch(search.from) &&
+                search.searchKeyword.trim().isNotEmpty &&
+                sourceKeywordSearchScope(search.from, search.pluginExtern) ==
+                    KeywordSearchScope.all)
+              _copyTopicEntry(search),
+            Expanded(child: _bloc(detailedView, loadedEntries: entries)),
+          ],
+        );
+    if (search.from != copyComicSourceId ||
+        search.searchKeyword.trim().isEmpty ||
+        explicitKeywordSearchScope(search.pluginExtern) == null) {
+      return content(toolbar());
+    }
+    return SourceLoadedResultFilter(
+      key: ValueKey((
+        search.from,
+        search.searchKeyword,
+        sourceKeywordSearchScope(search.from, search.pluginExtern),
+      )),
+      scope: '${search.from}|publicSearch',
+      entries: state.comics.map((item) => item.comic).toList(),
+      blockedCategories: _blockedCategories(search),
+      complete: state.hasReachedMax,
+      publicBrowseFacets: true,
+      filterScopeLabel: t.videoLibrary.loadedResultScope,
+      loadingMore: state.status == SearchStatus.loadingMore,
+      onChanged: () => _scrollPositions.reset(afterLayout: true),
+      chromeBuilder: (_, chrome) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          toolbar(chrome.hasFilterOptions ? chrome.filterButton : null),
+          SourceLoadedFacetSummary(chrome: chrome),
+        ],
+      ),
+      builder: (_, entries, controls) => content(controls, entries),
+    );
+  }
+
+  Widget _copyTopicEntry(SearchStates search) {
+    final generation = pluginSessionWriteFence.generation(search.from);
+    final key = (search.from, search.searchKeyword, generation);
+    if (_topicLookupKey != key) {
+      _topicLookupKey = key;
+      _topicLookup = resolveCopySearchTopic(
+        search.searchKeyword,
+      ).catchError((Object _) => null);
+    }
+    return FutureBuilder<CopySearchTopic?>(
+      key: ValueKey(key),
+      future: _topicLookup,
+      builder: (context, snapshot) {
+        final topic = snapshot.data;
+        if (topic == null) return const SizedBox.shrink();
+        return SectionHeader(
+          title: '${t.videoLibrary.genres} · ${topic.label}',
+          onTap: () {
+            final cubit = context.read<SearchCubit>();
+            if (cubit.state != search ||
+                pluginSessionWriteFence.isChanging(search.from) ||
+                pluginSessionWriteFence.generation(search.from) != generation)
+              return;
+            final next = copyTopicSearchState(search, topic);
+            cubit.update(next);
+            context.read<SearchBloc>().add(SearchEvent(searchStates: next));
+          },
+        );
+      },
+    );
+  }
+
+  Set<String> _blockedCategories(SearchStates search) => {
+    ...blockedCategoryNames(search.pluginExtern['blockedCategories']),
+    ...blockedCategoryNames(search.pluginExtern['settingsBlockedCategories']),
+  };
 
   String? _pageLabel(SearchState state) {
     if (state.currentPage < 1 || state.status == SearchStatus.initial) {
@@ -251,73 +389,142 @@ class _SearchResultPageState extends State<_SearchResultPage>
     _scrollPositions.reset();
   }
 
-  Widget _bloc(bool detailedView) => BlocConsumer<SearchBloc, SearchState>(
+  Widget _bloc(
+    bool detailedView, {
+    List<UnifiedComicListItem>? loadedEntries,
+  }) => BlocConsumer<SearchBloc, SearchState>(
     listenWhen: (_, state) => state.status == SearchStatus.initial,
     listener: (_, _) => _scrollPositions.reset(),
     builder: (context, state) {
-      switch (state.status) {
-        case SearchStatus.initial:
-          return Center(child: CircularProgressIndicator());
-        case SearchStatus.failure:
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
-                  child: Text(
-                    userFacingErrorMessage(state.result),
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 16),
+      Widget content() {
+        switch (state.status) {
+          case SearchStatus.initial:
+            return Center(
+              child: SourceLoadingIndicator(
+                source: context.read<SearchCubit>().state.from,
+              ),
+            );
+          case SearchStatus.failure:
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Text(
+                      userFacingErrorMessage(state.result),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 16),
+                    ),
                   ),
-                ),
-                SizedBox(height: 10), // 添加间距
-                ElevatedButton(
-                  onPressed: () {
-                    _refresh(SearchStatus.initial);
-                  },
-                  child: Text(t.searchResult.retry),
-                ),
-              ],
-            ),
-          );
-        case SearchStatus.success:
-        case SearchStatus.loadingMore:
-        case SearchStatus.getMoreFailure:
-          if (state.status == SearchStatus.success) {
-            final searchCubit = context.read<SearchCubit>();
-            // A category tap can happen while an older request is still
-            // running. Do not let that older response undo the user's choice.
-            if (searchCubit.state == searchEvent.searchStates &&
-                searchCubit.state != state.searchEvent.searchStates) {
-              searchCubit.update(state.searchEvent.searchStates);
+                  SizedBox(height: 10), // 添加间距
+                  ElevatedButton(
+                    onPressed: () {
+                      _refresh(SearchStatus.initial);
+                    },
+                    child: Text(t.searchResult.retry),
+                  ),
+                ],
+              ),
+            );
+          case SearchStatus.success:
+          case SearchStatus.loadingMore:
+          case SearchStatus.getMoreFailure:
+            if (state.status == SearchStatus.success) {
+              final searchCubit = context.read<SearchCubit>();
+              // A category tap can happen while an older request is still
+              // running. Do not let that older response undo the user's choice.
+              if (searchCubit.state == searchEvent.searchStates &&
+                  searchCubit.state != state.searchEvent.searchStates) {
+                searchCubit.update(state.searchEvent.searchStates);
+              }
+              searchEvent = state.searchEvent;
             }
-            searchEvent = state.searchEvent;
-          }
-          return _comicList(context, state, detailedView);
+            final results = _comicList(
+              context,
+              state,
+              detailedView,
+              loadedEntries,
+            );
+            return state.searchEvent.searchStates.from ==
+                    JmListLikeCounts.source
+                ? JmCoverLikeScope(
+                    counts: JmListLikeCounts.instance,
+                    child: results,
+                  )
+                : results;
+        }
       }
+
+      final search = context.read<SearchCubit>().state;
+      return BikaConnectionNotice.wrap(
+        source: search.from,
+        scope: search,
+        failure: state.status == SearchStatus.failure ? state.result : null,
+        ready: state.status == SearchStatus.success,
+        retry: () => _refresh(SearchStatus.initial),
+        child: content(),
+      );
     },
   );
-
-  String _buildHistoryItem(SearchEvent event) {
-    return event.searchStates.searchKeyword.trim();
-  }
 
   Widget _comicList(
     BuildContext context,
     SearchState state,
     bool detailedView,
+    List<UnifiedComicListItem>? loadedEntries,
   ) {
     final search = context.watch<SearchCubit>().state;
-    final blocked = blockedCategoryNames(
-      search.pluginExtern['blockedCategories'],
-    );
-    final entries = filterEntriesByBlockedCategories(
+    final returned = filterEntriesByBlockedCategories(
       state.comics.map((item) => item.comic),
-      blocked,
+      _blockedCategories(search),
     );
+    final applied = state.searchEvent.searchStates;
+    final titleOnly = needsLoadedTitleMatch(applied.from, applied.pluginExtern);
+    final matchesTitle = titleOnly
+        ? keywordTitleMatcher(applied.searchKeyword)
+        : null;
+    final entries =
+        loadedEntries ??
+        (matchesTitle == null
+            ? returned
+            : returned.where((entry) => matchesTitle([entry.title])).toList());
+    if ((titleOnly || loadedEntries != null) &&
+        entries.isEmpty &&
+        (!state.hasReachedMax || returned.isNotEmpty)) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              loadedEntries != null
+                  ? t.videoLibrary.noLoadedMatches
+                  : t.videoLibrary.filteredLoaded(
+                      loaded: returned.length,
+                      shown: 0,
+                    ),
+            ),
+            if (state.status == SearchStatus.loadingMore)
+              const Padding(
+                padding: EdgeInsets.all(12),
+                child: CircularProgressIndicator(),
+              )
+            else if (state.status == SearchStatus.getMoreFailure)
+              TextButton(
+                onPressed: () => _refresh(SearchStatus.loadingMore),
+                child: Text(t.oldHome.loadMoreFailed),
+              )
+            else if (!state.hasReachedMax)
+              TextButton(
+                onPressed: _fetchSearchResult,
+                child: Text(t.videoLibrary.continueCatalogSearch),
+              ),
+          ],
+        ),
+      );
+    }
     if (detailedView) {
       if (state.status == SearchStatus.success &&
           entries.isEmpty &&
@@ -373,25 +580,32 @@ class _SearchResultPageState extends State<_SearchResultPage>
     final state = context.read<SearchBloc>().state;
     if (state.status != SearchStatus.success || state.hasReachedMax) return;
     context.read<SearchBloc>().add(
-      searchEvent.copyWith(
-        page: searchEvent.page + 1,
+      state.searchEvent.copyWith(
+        page: state.currentPage + 1,
         status: SearchStatus.loadingMore,
       ),
     );
   }
 
   void _onScroll() {
-    if (_scrollPositions.isChanging || !mounted) return;
-    // 控制 FAB 的上下移动
-    if (_scrollController.position.userScrollDirection ==
-        ScrollDirection.reverse) {
-      if (_animationController.isDismissed) {
-        _animationController.forward(); // 向上滚动时隐藏 FAB
-      }
-    } else if (_scrollController.position.userScrollDirection ==
-        ScrollDirection.forward) {
-      if (_animationController.isCompleted) {
-        _animationController.reverse(); // 向下滚动时显示 FAB
+    if (_scrollPositions.isChanging ||
+        !mounted ||
+        !_scrollController.hasClients)
+      return;
+    final hideActions =
+        switch (_scrollController.position.userScrollDirection) {
+          ScrollDirection.reverse => true,
+          ScrollDirection.forward => false,
+          ScrollDirection.idle => _quickActionsHidden,
+        };
+    if (hideActions != _quickActionsHidden) {
+      _quickActionsHidden = hideActions;
+      if (_reduceMotion) {
+        _animationController.value = hideActions ? 1 : 0;
+      } else if (hideActions) {
+        _animationController.forward();
+      } else {
+        _animationController.reverse();
       }
     }
 

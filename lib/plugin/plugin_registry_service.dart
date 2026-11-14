@@ -1,19 +1,26 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
-import 'package:path/path.dart' as p;
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+
 import 'package:zephyr/main.dart';
-import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
+import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart';
+import 'package:zephyr/network/http/plugin/qjs_network_route.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/object_box/object_box.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
-import 'package:zephyr/page/bookshelf/service/comic_link_service.dart';
 import 'package:zephyr/plugin/models/plugin_runtime_state.dart';
+import 'package:zephyr/plugin/plugin_host_compatibility.dart';
 import 'package:zephyr/src/rust/api/qjs.dart';
 import 'package:zephyr/src/rust/qjs.dart';
-import 'package:zephyr/util/get_path.dart';
 import 'package:zephyr/util/json/json_value.dart';
+import 'package:zephyr/service/local_plugin_installation_state.dart';
+import 'package:zephyr/service/download/download_queue_manager.dart';
+import 'package:zephyr/page/video/video_download.dart';
+import 'package:zephyr/network/sync/sync_service.dart'
+    show runExclusiveStorageOperation;
+import 'package:zephyr/network/sync/portable_preferences.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 export 'package:zephyr/plugin/models/plugin_runtime_state.dart';
 
@@ -28,13 +35,44 @@ class PluginRegistryService {
   ObjectBox? _objectbox;
   final Map<String, Map<String, dynamic>> _pluginInfoCache = {};
   final Set<String> _pluginInitDone = <String>{};
+  final Set<String> _explicitInstallations = {};
+  final Map<String, ({int depth, PluginRuntimeState? previous})>
+  _publicationHolds = {};
 
   Stream<Map<String, PluginRuntimeState>> get stream =>
       _streamController.stream;
 
-  Map<String, PluginRuntimeState> get snapshot => Map.unmodifiable(_states);
+  Map<String, PluginRuntimeState> get snapshot {
+    final published = Map<String, PluginRuntimeState>.from(_states);
+    for (final entry in _publicationHolds.entries) {
+      final previous = entry.value.previous;
+      if (previous == null) {
+        published.remove(entry.key);
+      } else {
+        published[entry.key] = previous;
+      }
+    }
+    return Map.unmodifiable(published);
+  }
 
-  PluginRuntimeState? getByUuid(String uuid) => _states[uuid];
+  PluginRuntimeState? getByUuid(String uuid) {
+    final key = canonicalQjsSource(uuid),
+        state = _states[canonicalQjsSource(uuid)];
+    if (state != null &&
+        !_explicitInstallations.contains(key) &&
+        LocalPluginInstallationState.instance.isRemoved(key)) {
+      return state.copyWith(isDeleted: true, isEnabled: false);
+    }
+    return state;
+  }
+
+  bool isLocallyRemoved(String uuid) =>
+      LocalPluginInstallationState.instance.isRemoved(canonicalQjsSource(uuid));
+
+  Future<void> reloadLocalInstallationState() async {
+    await LocalPluginInstallationState.instance.reload();
+    await refreshFromDb();
+  }
 
   /// 内存缓存未命中时，从 DB 持久化的 `getInfoJson` 兜底水合。
   ///
@@ -72,6 +110,7 @@ class PluginRegistryService {
       return;
     }
 
+    await LocalPluginInstallationState.instance.load();
     final list = objectbox.pluginInfoBox.getAll();
     _states
       ..clear()
@@ -108,20 +147,36 @@ class PluginRegistryService {
       'affected=${affected.length} uuids=${affected.join(',')}',
     );
 
+    // The refreshed registry already prevents new chapters from starting.
+    // Pause live chapters before any runtime drop can surface as cancellation.
+    final stoppingDownloads = <Future<void>>[];
+    for (final uuid in affected) {
+      final plugin = current[uuid];
+      if (previous[uuid]?.isActive == true &&
+          plugin != null &&
+          !plugin.isEnabled &&
+          !plugin.isDeleted) {
+        stoppingDownloads.add(
+          DownloadQueueManager.instance
+              .stopSourceRetainingFiles(uuid, disabling: true)
+              .catchError((Object e, StackTrace st) {
+                logger.w('同步禁用插件时暂停下载失败: $uuid', error: e, stackTrace: st);
+              }),
+        );
+      }
+    }
+
     for (final uuid in affected) {
       _pluginInfoCache.remove(uuid);
       _pluginInitDone.remove(uuid);
 
-      final runtimeName = resolveRuntimeName(uuid);
       try {
-        final runtimeReady = await isQjsRuntimeInitialized(name: runtimeName);
-        if (runtimeReady) {
-          await qjsDropRuntime(runtimeName: runtimeName);
-        }
+        await dropQjsRuntimesForPlugin(uuid);
       } catch (e, st) {
         logger.w('同步后清理插件 runtime 失败: $uuid', error: e, stackTrace: st);
       }
     }
+    if (stoppingDownloads.isNotEmpty) await Future.wait(stoppingDownloads);
 
     for (final uuid in affected) {
       final plugin = current[uuid];
@@ -210,23 +265,59 @@ class PluginRegistryService {
       throw StateError('插件不可用: $uuid');
     }
 
-    final onceRuntimeName = 'plugin_info_${uuid.replaceAll('-', '_')}';
-    final bundleJs = await _resolveBundleJs(plugin);
-    final bytes = await qjsTaskCall(
-      runtimeName: onceRuntimeName,
-      taskGroupKey: '',
-      isOnce: true,
-      bundleJs: bundleJs,
-      fnPath: 'getInfo',
-      argsJson: '{}',
+    final onceRuntimeName = await ensureQjsRuntimeReady(
+      pluginId: uuid,
+      runtimeName: runtimeName,
+      initialize: false,
+    );
+    final bundleUrl = plugin.debug ? plugin.debugUrl?.trim() : null;
+    final bundleJs = bundleUrl?.isNotEmpty == true
+        ? null
+        : await loadQjsBundleJs(uuid);
+    final bytes = await runWithPluginSessionRuntimeCall(
+      onceRuntimeName,
+      () => qjsTaskCall(
+        runtimeName: onceRuntimeName,
+        taskGroupKey: '',
+        isOnce: true,
+        bundleJs: bundleJs,
+        bundleUrl: bundleUrl?.isNotEmpty == true ? bundleUrl : null,
+        fnPath: 'getInfo',
+        argsJson: '{}',
+      ),
     );
     final raw = utf8.decode(bytes, allowMalformed: true);
     final decoded = requireJsonMap(jsonDecode(raw));
+    // A released runtime can finish after a replacement has been installed.
+    // Commit metadata together, only while it still belongs to this bundle.
+    final current = _states[uuid];
+    if (current == null || !_sameInfoSource(plugin, current)) {
+      return decoded;
+    }
+    final found = _objectbox?.pluginInfoBox
+        .query(PluginInfo_.uuid.equals(uuid))
+        .build()
+        .findFirst();
+    if (found != null) {
+      found.getInfoJson = jsonEncode(decoded);
+      found.lastLoadSuccess = true;
+      found.lastLoadError = null;
+      found.updatedAt = DateTime.now().toUtc();
+      _objectbox!.pluginInfoBox.put(found);
+      _states[uuid] = _toState(found);
+    }
     _pluginInfoCache[uuid] = decoded;
-    await updateLoadResult(uuid, success: true, error: null);
-    await persistGetInfoJson(uuid, jsonEncode(decoded));
+    _emit(uuid: uuid);
     return decoded;
   }
+
+  bool _sameInfoSource(PluginRuntimeState a, PluginRuntimeState b) =>
+      a.originScript == b.originScript &&
+      a.version == b.version &&
+      a.debug == b.debug &&
+      a.debugUrl == b.debugUrl &&
+      a.isEnabled == b.isEnabled &&
+      a.isDeleted == b.isDeleted;
 
   /// 持久化 getInfo JSON 字符串到 ObjectBox（不清理 runtime / 内存 cache）。
   Future<void> persistGetInfoJson(String uuid, String getInfoJson) async {
@@ -383,7 +474,7 @@ class PluginRegistryService {
     return activePlugins();
   }
 
-  Future<void> upsert(PluginInfo info) async {
+  Future<void> upsert(PluginInfo info, {bool notify = true}) async {
     final objectbox = _objectbox;
     if (objectbox == null) {
       return;
@@ -393,13 +484,167 @@ class PluginRegistryService {
     _states[info.uuid] = _toState(info);
     _pluginInfoCache.remove(info.uuid);
     _pluginInitDone.remove(info.uuid);
-    _emit();
+    if (notify) _emit(uuid: info.uuid);
   }
 
-  Future<void> setEnabled(String uuid, bool enabled) async {
+  /// Installs a replacement and settles its runtime before publishing it.
+  /// The hold starts synchronously, before upsert can yield to stream listeners.
+  Future<void> upsertAndSetEnabled(
+    PluginInfo info, {
+    bool initialize = true,
+    bool explicitInstallation = false,
+    int? expectedInstallationEpoch,
+    bool Function(PluginInfo?)? matchesCurrentInstallation,
+  }) async {
+    // Reject unsupported replacements before leases, runtime ownership or
+    // publication change. Deleted metadata is permitted by the shared check.
+    PluginHostCompatibility.requireCompatiblePluginInfo(info.toJson());
+    final local = LocalPluginInstallationState.instance;
+    final installLease = explicitInstallation
+        ? local.beginExplicitInstallation(info.uuid)
+        : null;
+    Future<void> install() async {
+      if (expectedInstallationEpoch != null &&
+          local.installationEpoch(info.uuid) != expectedInstallationEpoch) {
+        throw const PluginLifecycleChanged();
+      }
+      final box = _objectbox;
+      if (box == null) throw StateError('Plugin registry is unavailable');
+      final wasRemoved = isLocallyRemoved(info.uuid);
+      final previous = box.pluginInfoBox
+          .getAll()
+          .where((row) => row.uuid == info.uuid)
+          .firstOrNull;
+      // A silent update can replace the bundle without changing the install
+      // epoch. Compare the candidate's original target inside the write queue.
+      if (matchesCurrentInstallation?.call(previous) == false) {
+        throw const PluginLifecycleChanged();
+      }
+      final ownedNames = _buildPluginConfigNameCandidates(info.uuid);
+      final previousConfigs = box.pluginConfigBox
+          .getAll()
+          .where((row) => ownedNames.contains(row.name.trim()))
+          .toList();
+      final before = <String, dynamic>{}, expected = <String, dynamic>{};
+      Future<void> beforePreferenceWrite(Map<String, dynamic> updates) async {
+        final prefs = await SharedPreferences.getInstance();
+        for (final entry in updates.entries) {
+          before.putIfAbsent(entry.key, () => prefs.get(entry.key));
+          expected[entry.key] = entry.value;
+        }
+      }
+
+      _holdPublication(info.uuid);
+      try {
+        if (wasRemoved && !explicitInstallation) {
+          throw StateError('Plugin is not installed on this device');
+        }
+        if (explicitInstallation) _explicitInstallations.add(info.uuid);
+        if (previous != null &&
+            (previous.originScript != info.originScript ||
+                previous.version != info.version)) {
+          invalidateQjsRuntimeForPluginReplacement(info.uuid);
+        }
+        await upsert(info, notify: false);
+        await setEnabled(info.uuid, info.isEnabled, initialize: initialize);
+        if (explicitInstallation) {
+          // Installation does not undo a separately confirmed personal-data
+          // clear. Record/config tombstones and device data masks remain until
+          // the user explicitly restores data; only installation is changed.
+          await local.completeExplicitInstallation(
+            info.uuid,
+            beforeWrite: beforePreferenceWrite,
+          );
+          final current = box.pluginInfoBox
+              .getAll()
+              .where((row) => row.uuid == info.uuid)
+              .firstOrNull;
+          if (current != null) _states[info.uuid] = _toState(current);
+        }
+      } catch (_) {
+        // Both store updates and explicit installs must restore the last
+        // published script/config when preparing the replacement fails.
+        try {
+          await dropQjsRuntimesForPlugin(info.uuid);
+        } catch (_) {}
+        box.store.runInTransaction(TxMode.write, () {
+          box.pluginInfoBox.removeMany(
+            box.pluginInfoBox
+                .getAll()
+                .where((row) => row.uuid == info.uuid)
+                .map((row) => row.id)
+                .toList(),
+          );
+          if (previous != null) box.pluginInfoBox.put(previous);
+          box.pluginConfigBox.removeMany(
+            box.pluginConfigBox
+                .getAll()
+                .where((row) => ownedNames.contains(row.name.trim()))
+                .map((row) => row.id)
+                .toList(),
+          );
+          box.pluginConfigBox.putMany(previousConfigs);
+        });
+        final prefs = await SharedPreferences.getInstance();
+        for (final entry in before.entries) {
+          if (jsonEncode(prefs.get(entry.key)) !=
+              jsonEncode(expected[entry.key])) {
+            continue;
+          }
+          final bool saved = switch (entry.value) {
+            null => await prefs.remove(entry.key),
+            String v => await prefs.setString(entry.key, v),
+            bool v => await prefs.setBool(entry.key, v),
+            int v => await prefs.setInt(entry.key, v),
+            double v => await prefs.setDouble(entry.key, v),
+            List v => await prefs.setStringList(entry.key, v.cast<String>()),
+            _ => false,
+          };
+          if (!saved) {
+            throw StateError('Plugin installation rollback was not saved');
+          }
+        }
+        await local.reload();
+        if (before.isNotEmpty) {
+          await PortablePreferences.notifyRestored(keys: before.keys.toSet());
+        }
+        _explicitInstallations.remove(info.uuid);
+        _pluginInfoCache.remove(info.uuid);
+        _pluginInitDone.remove(info.uuid);
+        if (previous != null) {
+          _states[info.uuid] = _toState(previous);
+        } else {
+          _states.remove(info.uuid);
+        }
+        rethrow;
+      } finally {
+        _explicitInstallations.remove(info.uuid);
+        _releasePublication(info.uuid);
+      }
+    }
+
+    try {
+      if (explicitInstallation) {
+        await runExclusiveStorageOperation(install);
+      } else {
+        await install();
+      }
+    } finally {
+      installLease?.release();
+    }
+  }
+
+  Future<void> setEnabled(
+    String uuid,
+    bool enabled, {
+    bool initialize = true,
+  }) async {
     final objectbox = _objectbox;
     if (objectbox == null) {
       return;
+    }
+    if (isLocallyRemoved(uuid) && !_explicitInstallations.contains(uuid)) {
+      throw StateError('Plugin is not installed on this device');
     }
     final found = objectbox.pluginInfoBox
         .query(PluginInfo_.uuid.equals(uuid))
@@ -408,32 +653,46 @@ class PluginRegistryService {
     if (found == null) {
       return;
     }
-    found.isEnabled = enabled;
-    found.updatedAt = DateTime.now().toUtc();
-    objectbox.pluginInfoBox.put(found);
-    _states[uuid] = _toState(found);
-    _pluginInfoCache.remove(uuid);
-    _pluginInitDone.remove(uuid);
-    _emit();
-
-    final runtimeName = resolveRuntimeName(uuid);
-    if (enabled) {
-      await ensurePluginRuntimeReady(_states[uuid]!, runtimeName: runtimeName);
-      await runPluginInitIfNeeded(_states[uuid]!, runtimeName: runtimeName);
-      try {
-        await fetchPluginInfo(uuid: uuid, runtimeName: runtimeName);
-      } catch (e, st) {
-        logger.w('启用插件后刷新 info 失败: $uuid', error: e, stackTrace: st);
-      }
-    } else {
-      try {
-        final runtimeReady = await isQjsRuntimeInitialized(name: runtimeName);
-        if (runtimeReady) {
-          await qjsDropRuntime(runtimeName: runtimeName);
+    _holdPublication(uuid);
+    try {
+      found.isEnabled = enabled;
+      found.updatedAt = DateTime.now().toUtc();
+      objectbox.pluginInfoBox.put(found);
+      _states[uuid] = _toState(found);
+      _pluginInfoCache.remove(uuid);
+      _pluginInitDone.remove(uuid);
+      final runtimeName = resolveRuntimeName(uuid);
+      if (enabled && initialize) {
+        await ensurePluginRuntimeReady(
+          _states[uuid]!,
+          runtimeName: runtimeName,
+        );
+        await runPluginInitIfNeeded(_states[uuid]!, runtimeName: runtimeName);
+        try {
+          await fetchPluginInfo(uuid: uuid, runtimeName: runtimeName);
+        } catch (e, st) {
+          logger.w('启用插件后刷新 info 失败: $uuid', error: e, stackTrace: st);
         }
-      } catch (e, st) {
-        logger.w('禁用插件时释放 runtime 失败: $uuid', error: e, stackTrace: st);
+      } else {
+        Future<void> dropRuntime() async {
+          try {
+            await dropQjsRuntimesForPlugin(uuid);
+          } catch (e, st) {
+            logger.w('禁用插件时释放 runtime 失败: $uuid', error: e, stackTrace: st);
+          }
+        }
+
+        await Future.wait([
+          if (!enabled)
+            DownloadQueueManager.instance.stopSourceRetainingFiles(
+              uuid,
+              disabling: true,
+            ),
+          dropRuntime(),
+        ]);
       }
+    } finally {
+      _releasePublication(uuid);
     }
   }
 
@@ -458,7 +717,7 @@ class PluginRegistryService {
     found.updatedAt = DateTime.now().toUtc();
     objectbox.pluginInfoBox.put(found);
     _states[uuid] = _toState(found);
-    _emit();
+    _emit(uuid: uuid);
   }
 
   Future<void> updateDebugConfig(
@@ -483,7 +742,7 @@ class PluginRegistryService {
     objectbox.pluginInfoBox.put(found);
     _states[uuid] = _toState(found);
     _pluginInitDone.remove(uuid);
-    _emit();
+    _emit(uuid: uuid);
     // 用 debug bundle / DB bundle 后台刷新 getInfo（内存 + getInfoJson），
     // 让详情页/书架/搜索的插件名跟上调试中的脚本；不阻塞返回，
     // 失败时保留旧名字（getCachedPluginInfo 会用 persisted getInfo 兜底）。
@@ -496,7 +755,53 @@ class PluginRegistryService {
     }());
   }
 
-  Future<void> deletePlugin(String uuid) async {
+  /// Personal-data clearing is independent of installation. Temporarily refuse
+  /// new source work, settle workers, then let the journal owner change data.
+  /// Neither success nor failure changes this device's installation marker.
+  Future<T> withStoppedRuntime<T>(
+    String uuid, {
+    required int expectedInstallationEpoch,
+    required Future<T> Function() action,
+  }) async {
+    final box = _objectbox;
+    if (box == null) throw StateError('Plugin registry is unavailable');
+    final local = LocalPluginInstallationState.instance;
+    void guard() {
+      if (local.installationEpoch(uuid) != expectedInstallationEpoch ||
+          local.isInstalling(uuid)) {
+        throw const PluginLifecycleChanged();
+      }
+    }
+
+    guard();
+    _holdPublication(uuid);
+    local.beginRemoval(uuid);
+    try {
+      await DownloadQueueManager.instance.stopSourceRetainingFiles(uuid);
+      await VideoSystemDownload.stopSource(uuid);
+      return await runExclusiveStorageOperation(() async {
+        guard();
+        await dropQjsRuntimesForPlugin(uuid);
+        guard();
+        _pluginInfoCache.remove(uuid);
+        _pluginInitDone.remove(uuid);
+        return action();
+      });
+    } finally {
+      local.endRemoval(uuid);
+      final current = box.pluginInfoBox
+          .getAll()
+          .where((row) => row.uuid == uuid)
+          .firstOrNull;
+      if (current != null) _states[uuid] = _toState(current);
+      _releasePublication(uuid);
+    }
+  }
+
+  Future<void> deletePlugin(
+    String uuid, {
+    int? expectedInstallationEpoch,
+  }) async {
     final objectbox = _objectbox;
     if (objectbox == null) {
       return;
@@ -509,125 +814,44 @@ class PluginRegistryService {
       throw StateError('插件不存在: $uuid');
     }
 
-    final runtimeName = resolveRuntimeName(uuid);
+    final local = LocalPluginInstallationState.instance;
+    final epoch = local.installationEpoch(uuid);
+    if ((expectedInstallationEpoch != null &&
+            epoch != expectedInstallationEpoch) ||
+        local.isInstalling(uuid)) {
+      throw const PluginLifecycleChanged();
+    }
+    _holdPublication(uuid);
+    local.beginRemoval(uuid);
     try {
-      final runtimeReady = await isQjsRuntimeInitialized(name: runtimeName);
-      if (runtimeReady) {
-        await qjsDropRuntime(runtimeName: runtimeName);
-      }
-    } catch (_) {
-      // runtime 失败不阻断删除主流程
+      await DownloadQueueManager.instance.stopSourceRetainingFiles(uuid);
+      await VideoSystemDownload.stopSource(uuid);
+      await runExclusiveStorageOperation(() async {
+        if (local.installationEpoch(uuid) != epoch ||
+            local.isInstalling(uuid)) {
+          throw const PluginLifecycleChanged();
+        }
+        await dropQjsRuntimesForPlugin(uuid);
+        if (local.installationEpoch(uuid) != epoch ||
+            local.isInstalling(uuid)) {
+          throw const PluginLifecycleChanged();
+        }
+        await local.markRemoved(
+          uuid,
+          revision: found.updatedAt.millisecondsSinceEpoch,
+          expectedEpoch: epoch,
+        );
+      });
+      final latest = objectbox.pluginInfoBox.get(found.id) ?? found;
+      _states[uuid] = _toState(latest);
+      _pluginInfoCache.remove(uuid);
+      _pluginInitDone.remove(uuid);
+    } finally {
+      local.endRemoval(uuid);
+      final latest = objectbox.pluginInfoBox.get(found.id);
+      if (latest != null) _states[uuid] = _toState(latest);
+      _releasePublication(uuid);
     }
-
-    await _deletePluginDownloadFolders(uuid);
-    _deletePluginConfigs(objectbox, uuid);
-    _deletePluginRelatedData(objectbox, uuid);
-    _deletePluginDownloadTasks(objectbox, uuid);
-
-    final now = DateTime.now().toUtc();
-    found
-      ..originScript = ''
-      ..isEnabled = false
-      ..isDeleted = true
-      ..deletedAt = now
-      ..updatedAt = now
-      ..lastLoadSuccess = false
-      ..lastLoadError = null;
-    objectbox.pluginInfoBox.put(found);
-    _states[uuid] = _toState(found);
-    _pluginInfoCache.remove(uuid);
-    _pluginInitDone.remove(uuid);
-    _emit();
-  }
-
-  Future<void> _deletePluginDownloadFolders(String uuid) async {
-    final downloadRoot = await getDownloadPath();
-    final root = p.join(downloadRoot, uuid);
-    final directory = Directory(root);
-    final exists = await directory.exists();
-    if (!exists) {
-      return;
-    }
-    try {
-      await directory.delete(recursive: true);
-    } catch (e) {
-      throw StateError('删除下载目录失败: $root, error: $e');
-    }
-  }
-
-  void _deletePluginRelatedData(ObjectBox objectbox, String uuid) {
-    final favorites = objectbox.unifiedFavoriteBox
-        .query(UnifiedComicFavorite_.source.equals(uuid))
-        .build()
-        .find();
-    final histories = objectbox.unifiedHistoryBox
-        .query(UnifiedComicHistory_.source.equals(uuid))
-        .build()
-        .find();
-    final downloads = objectbox.unifiedDownloadBox
-        .query(UnifiedComicDownload_.source.equals(uuid))
-        .build()
-        .find();
-
-    final now = DateTime.now().toUtc();
-
-    // 收藏/历史属于同步数据，应当软删除（标记 deleted），让同步能把删除传播出去。
-    for (final comic in favorites) {
-      ComicLinkService.removeComicFromAll(
-        comic.uniqueKey,
-        ComicFolderType.favorite,
-      );
-    }
-
-    for (final comic in histories) {
-      if (!comic.deleted) {
-        comic
-          ..deleted = true
-          ..updatedAt = now;
-        objectbox.unifiedHistoryBox.put(comic);
-      }
-      // 历史记录目前没有 ComicLink，只需要软删除本体即可。
-    }
-
-    // 下载记录不参与同步，直接物理删除。
-    for (final comic in downloads) {
-      ComicLinkService.removeComicFromAll(
-        comic.uniqueKey,
-        ComicFolderType.download,
-      );
-    }
-  }
-
-  void _deletePluginDownloadTasks(ObjectBox objectbox, String uuid) {
-    final idsToDelete = objectbox.downloadTaskBox
-        .getAll()
-        .where((task) {
-          final info = task.taskInfo;
-          if (info == null) return false;
-          return info.from == uuid;
-        })
-        .map((task) => task.id)
-        .toList();
-    if (idsToDelete.isNotEmpty) {
-      objectbox.downloadTaskBox.removeMany(idsToDelete);
-    }
-  }
-
-  void _deletePluginConfigs(ObjectBox objectbox, String uuid) {
-    final candidateNames = _buildPluginConfigNameCandidates(uuid);
-    if (candidateNames.isEmpty) {
-      return;
-    }
-
-    final idsToDelete = objectbox.pluginConfigBox
-        .getAll()
-        .where((item) => candidateNames.contains(item.name.trim()))
-        .map((item) => item.id)
-        .toList();
-    if (idsToDelete.isEmpty) {
-      return;
-    }
-    objectbox.pluginConfigBox.removeMany(idsToDelete);
   }
 
   Set<String> _buildPluginConfigNameCandidates(String uuid) {
@@ -663,24 +887,17 @@ class PluginRegistryService {
     return names;
   }
 
-  String resolveRuntimeName(String uuid) {
-    return uuid;
-  }
+  String resolveRuntimeName(String uuid) => canonicalQjsSource(uuid);
 
   Future<void> ensurePluginRuntimeReady(
     PluginRuntimeState plugin, {
     required String runtimeName,
   }) async {
-    final bundleJs = await _resolveBundleJs(plugin);
-    await buildQjsRuntime(
-      request: QjsRuntimeBuildRequest(
-        runtimeName: runtimeName,
-        injectFilesystem: false,
-        bundle: QjsRuntimeBundleBuild(
-          bundleName: runtimeName,
-          bundleJs: bundleJs,
-        ),
-      ),
+    await ensureQjsRuntimeReady(
+      pluginId: plugin.uuid,
+      runtimeName: runtimeName,
+      forceReload: true,
+      initialize: false,
     );
     _pluginInitDone.remove(plugin.uuid);
   }
@@ -693,17 +910,29 @@ class PluginRegistryService {
       return;
     }
 
-    // init 不需要等待结果，触发后即返回，避免阻塞安装/启用流程。
+    final generation = pluginSessionWriteFence.generation(plugin.uuid);
+    bool ownsCurrentBundle() {
+      final current = _states[plugin.uuid];
+      return current != null &&
+          _sameInfoSource(plugin, current) &&
+          pluginSessionWriteFence.generation(plugin.uuid) == generation;
+    }
+
+    // Preserve asynchronous startup, but never let an old init own a new
+    // script's status or start work after its replacement has been installed.
     Future(() async {
+      if (!ownsCurrentBundle()) return;
       try {
-        await callUnifiedComicPlugin(
-          pluginId: runtimeName,
-          fnPath: 'init',
-          core: {},
+        await ensureQjsRuntimeReady(
+          pluginId: plugin.uuid,
+          runtimeName: runtimeName,
+          sessionGeneration: generation,
         );
+        if (!ownsCurrentBundle()) return;
         _pluginInitDone.add(plugin.uuid);
         await updateLoadResult(plugin.uuid, success: true, error: null);
       } catch (e) {
+        if (!ownsCurrentBundle()) return;
         final err = e.toString();
         if (err.contains('target is not function: init')) {
           _pluginInitDone.add(plugin.uuid);
@@ -722,50 +951,16 @@ class PluginRegistryService {
     });
   }
 
-  Future<String> _resolveBundleJs(PluginRuntimeState plugin) async {
-    if (plugin.debug && (plugin.debugUrl?.trim().isNotEmpty ?? false)) {
-      try {
-        final response = await fetchDirect(plugin.debugUrl!.trim());
-        final debugBundle = response.text;
-        if (debugBundle.trim().isNotEmpty) {
-          logger.d('[plugin-bundle] source=debugUrl plugin=${plugin.uuid}');
-          return debugBundle;
-        }
-        throw StateError('debug bundle 为空');
-      } catch (e) {
-        await updateLoadResult(
-          plugin.uuid,
-          success: false,
-          error: 'debug bundle 拉取失败: $e',
-        );
-        logger.w('debug bundle 拉取失败，回退数据库: ${plugin.uuid}', error: e);
-      }
-    }
-
-    final dbBundle = _loadPluginBundleFromDb(plugin.uuid);
-    if (dbBundle != null) {
-      logger.d('[plugin-bundle] source=db plugin=${plugin.uuid}');
-      return dbBundle;
-    }
-
-    throw StateError('bundle_js不能为空: ${plugin.uuid}');
-  }
-
-  String? _loadPluginBundleFromDb(String pluginId) {
-    final text = _states[pluginId]?.originScript ?? '';
-    if (text.trim().isEmpty) {
-      return null;
-    }
-    return text;
-  }
-
   PluginRuntimeState _toState(PluginInfo item) {
+    final removedHere =
+        !_explicitInstallations.contains(item.uuid) &&
+        LocalPluginInstallationState.instance.isRemoved(item.uuid);
     return PluginRuntimeState(
       uuid: item.uuid,
       version: item.version,
       originScript: item.originScript,
-      isEnabled: item.isEnabled,
-      isDeleted: item.isDeleted,
+      isEnabled: item.isEnabled && !removedHere,
+      isDeleted: item.isDeleted || removedHere,
       debug: item.debug,
       debugUrl: item.debugUrl,
       lastLoadSuccess: item.lastLoadSuccess,
@@ -777,7 +972,29 @@ class PluginRegistryService {
     );
   }
 
-  void _emit() {
+  void _holdPublication(String uuid) {
+    final held = _publicationHolds[uuid];
+    _publicationHolds[uuid] = (
+      depth: (held?.depth ?? 0) + 1,
+      previous: held == null ? _states[uuid] : held.previous,
+    );
+  }
+
+  void _releasePublication(String uuid) {
+    final held = _publicationHolds[uuid]!;
+    if (held.depth > 1) {
+      _publicationHolds[uuid] = (
+        depth: held.depth - 1,
+        previous: held.previous,
+      );
+      return;
+    }
+    _publicationHolds.remove(uuid);
+    _emit(uuid: uuid);
+  }
+
+  void _emit({String? uuid}) {
+    if (uuid != null && _publicationHolds.containsKey(uuid)) return;
     _streamController.add(snapshot);
   }
 

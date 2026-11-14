@@ -14,5 +14,6 @@ abstract class GetComicInfoState with _$GetComicInfoState {
     dynamic comicInfo,
     String? comicId,
     @Default('') String result,
+    @Default(false) bool recovering,
   }) = _GetComicInfoState;
 }

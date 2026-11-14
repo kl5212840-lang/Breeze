@@ -17,6 +17,8 @@ typedef AutoReadTickCallback = void Function({double? deltaMs});
 /// - 平滑模式：与 vsync 对齐的帧回调 + 真实 [deltaMs]，避免 Timer 与屏幕刷新不同步造成的抖动
 class ReaderAutoReadController {
   Timer? _timer;
+  int? _frameId;
+  bool _visible = false;
   bool _isPaused = false;
   bool _lastEnabled = false;
   int _lastIntervalMs = 0;
@@ -32,6 +34,16 @@ class ReaderAutoReadController {
   static const double _maxSmoothDeltaMs = 48;
 
   bool get isPaused => _isPaused;
+
+  void setVisible(bool visible) {
+    if (_visible == visible) return;
+    _visible = visible;
+    if (visible) {
+      _start(smooth: _lastSmooth, intervalMs: _lastIntervalMs);
+    } else {
+      _stop();
+    }
+  }
 
   /// 根据当前设置同步自动阅读状态。
   ///
@@ -120,6 +132,7 @@ class ReaderAutoReadController {
 
   void _start({required bool smooth, required int intervalMs}) {
     _stop();
+    if (!_visible || !_lastEnabled || _isPaused) return;
     if (smooth) {
       _smoothRunning = true;
       _lastFrameTimestamp = null;
@@ -133,10 +146,11 @@ class ReaderAutoReadController {
   }
 
   void _scheduleSmoothFrame() {
-    if (!_smoothRunning || _isPaused) return;
+    if (!_smoothRunning || _frameId != null) return;
 
-    SchedulerBinding.instance.scheduleFrameCallback((timestamp) {
-      if (!_smoothRunning || _isPaused) return;
+    _frameId = SchedulerBinding.instance.scheduleFrameCallback((timestamp) {
+      _frameId = null;
+      if (!_smoothRunning) return;
 
       final last = _lastFrameTimestamp;
       _lastFrameTimestamp = timestamp;
@@ -148,17 +162,17 @@ class ReaderAutoReadController {
         }
       }
 
-      if (_smoothRunning && !_isPaused) {
-        SchedulerBinding.instance.scheduleFrame();
-        _scheduleSmoothFrame();
-      }
+      _scheduleSmoothFrame();
     });
-    SchedulerBinding.instance.scheduleFrame();
   }
 
   void _stop() {
     _timer?.cancel();
     _timer = null;
+    if (_frameId case final id?) {
+      SchedulerBinding.instance.cancelFrameCallbackWithId(id);
+      _frameId = null;
+    }
     _smoothRunning = false;
     _lastFrameTimestamp = null;
   }

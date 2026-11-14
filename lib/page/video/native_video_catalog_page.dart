@@ -1,16 +1,48 @@
+import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
+import 'package:zephyr/page/video/video_personal_page_window.dart';
+import 'package:zephyr/page/video/video_personal_snapshot_store.dart';
+import 'package:zephyr/page/video/video_personal_preferences.dart';
+import 'package:zephyr/page/video/api_video_collection.dart';
+import 'package:zephyr/page/video/api_video_models.dart';
+import 'package:zephyr/service/collection_view_preferences.dart';
+import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/page/video/source_video_list_header.dart';
+import 'package:zephyr/page/search/widget/search_input_dialog.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
+import 'package:zephyr/page/search/widget/search_keyboard.dart';
+import 'package:zephyr/page/bookshelf/models/shelf_facets.dart';
+import 'package:zephyr/page/bookshelf/widgets/shelf_filter_sheet.dart';
+import 'package:zephyr/util/text/public_search_text.dart';
+import 'package:zephyr/page/video/source_profile_video_preview.dart';
+import 'package:zephyr/page/video/video_download_retry.dart';
+import 'package:zephyr/network/http/plugin/qjs_network_route.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/service/plugin_account_profiles.dart';
+import 'package:zephyr/page/source_shell/source_settings_destination.dart';
+import 'package:zephyr/widgets/collection_cover_privacy.dart';
+import 'package:zephyr/widgets/collection_cover_settings.dart';
+import 'package:zephyr/page/video/video_account_credentials.dart';
+import 'package:zephyr/page/video/video_account_backup.dart';
+import 'package:zephyr/service/plugin_account_sync_coordinator.dart';
+import 'package:zephyr/page/video/omo_network.dart';
+import 'package:zephyr/page/video/video_network_scope.dart';
+import 'package:zephyr/network/source_network_policy.dart';
 import 'package:zephyr/page/video/video_personal_overview.dart';
 import 'package:zephyr/page/video/video_personal_recent.dart';
 import 'package:zephyr/page/video/video_page_analysis.dart';
+import 'package:zephyr/page/video/api_video_playback_diagnostics.dart';
 import 'package:zephyr/page/video/video_browse_theme.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'package:zephyr/service/read_recovery.dart';
+import 'package:zephyr/widgets/read_recovery_scope.dart';
+import 'package:zephyr/widgets/image_recovery_region.dart';
 
 import 'package:zephyr/page/video/video_page_route.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, TargetPlatform;
-import 'package:auto_route/auto_route.dart';
-import 'package:zephyr/config/router/router.gr.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -21,6 +53,7 @@ import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_return_preferences.dart';
 import 'package:zephyr/page/source_shell/source_diagnostic_preferences.dart';
 import 'package:zephyr/page/source_shell/source_website.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/page/video/video_verification_gate.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
 import 'package:zephyr/page/video/native_video_page.dart';
@@ -31,13 +64,10 @@ import 'package:zephyr/page/video/video_catalog_cache.dart';
 import 'package:zephyr/page/video/video_content_transition.dart';
 import 'package:zephyr/page/video/video_back_gesture.dart';
 import 'package:zephyr/page/video/video_site_presentation.dart';
-import 'package:zephyr/page/video/video_account_backup.dart';
-import 'package:zephyr/page/video/video_account_page.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/page/video/video_public_metadata.dart';
 import 'package:zephyr/page/video/video_card_metadata.dart';
 import 'package:zephyr/page/video/video_playback_preferences.dart';
-import 'package:zephyr/page/video/video_playback_settings_page.dart';
 import 'package:zephyr/page/video/video_library_view.dart';
 import 'package:zephyr/page/video/video_profile_header.dart';
 import 'package:zephyr/page/video/video_creator_shelf.dart';
@@ -49,6 +79,7 @@ import 'package:zephyr/page/video/native_video_auth_form.dart';
 import 'package:zephyr/page/video/native_video_account_form.dart';
 import 'package:zephyr/page/video/video_site_account.dart';
 import 'package:zephyr/page/video/video_site_forms.dart';
+import 'package:zephyr/page/video/video_site_verified_identity.dart';
 import 'package:zephyr/page/video/video_site_operations.dart';
 import 'package:zephyr/page/video/video_playlist_editor.dart';
 import 'package:zephyr/page/video/video_comment_drafts.dart';
@@ -58,7 +89,6 @@ import 'package:zephyr/page/video/video_filter_schema_reader.dart';
 import 'package:zephyr/page/video/video_interaction.dart';
 import 'package:zephyr/page/video/video_search_page.dart';
 import 'package:zephyr/page/video/video_search_history.dart';
-import 'package:zephyr/page/plugin_settings/view/plugin_settings_page.dart';
 import 'package:zephyr/util/json/json_value.dart';
 
 typedef NativeVideoPluginCall =
@@ -127,11 +157,23 @@ class NativeVideoCatalogPage extends StatefulWidget {
     this.externalAuthenticationEntries = const [],
     this.searchFilters,
     this.initialUrl,
+    this.accountLoginUsername,
+    this.initialKeywordScope,
     this.initialCreator,
+    this.accountSyncCoordinator,
+    this.accountCookies,
+    this.readLocalDownloads,
+    this.returnToCallerAfterPlayback = false,
   });
 
   final Uri? initialUrl;
+  final String? accountLoginUsername;
+  final KeywordSearchScope? initialKeywordScope;
   final VideoCreatorReference? initialCreator;
+  final PluginAccountSyncCoordinator? accountSyncCoordinator;
+  final VideoAccountCookies? accountCookies;
+  final Future<List<Map<String, dynamic>>> Function()? readLocalDownloads;
+  final bool returnToCallerAfterPlayback;
 
   final String source;
   final String title;
@@ -158,6 +200,184 @@ class NativeVideoCatalogPage extends StatefulWidget {
 class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     with WidgetsBindingObserver {
   InAppWebViewController? _web;
+  Object? _downloadRetryResolver;
+  Object? _accountSyncRegistration;
+  int _accountSyncEpoch = 0;
+  bool _applyingAccountRestore = false;
+  void _registerDownloadRetry() {
+    if (!widget.nativeSiteActions || _web == null) return;
+    final previous = _downloadRetryResolver;
+    if (previous != null)
+      VideoDownloadRetry.unregister(widget.source, previous);
+    final web = _web;
+    _downloadRetryResolver = VideoDownloadRetry.register(
+      widget.source,
+      (row) async {
+        final page = Uri.parse(row['url'] as String);
+        if (page.origin != widget.homeUrl.origin || page.path != '/watch')
+          throw const VideoDownloadRetryFailure('missingIdentity');
+        if (!mounted || !identical(web, _web))
+          throw const VideoDownloadRetryFailure('sourceVisitRequired');
+        if (_verificationVisible || _applyingAccountRestore)
+          throw const VideoDownloadRetryFailure('verificationRequired');
+        final operations = VideoSiteOperations(
+          page: page,
+          evaluate: (script) => _evaluate(script),
+        );
+        try {
+          final result = await operations.readDownloadChoices();
+          if (result.value == null)
+            throw VideoDownloadRetryFailure(switch (result.status.name) {
+              'login' => 'loginRequired',
+              'verification' => 'verificationRequired',
+              'changed' => 'accountChanged',
+              'unsupported' => 'unsupported',
+              _ => 'network',
+            });
+          await _networkContext?.prepare();
+          return VideoDownloadRetryResolution(
+            choices: result.value!,
+            networkContext: _networkContext?.token,
+          );
+        } finally {
+          operations.dispose();
+        }
+      },
+      current: () => mounted && identical(web, _web),
+      accepts: (row) {
+        final page = Uri.tryParse('${row['url']}');
+        return page?.origin == widget.homeUrl.origin && page?.path == '/watch';
+      },
+    );
+  }
+
+  PluginAccountSyncCoordinator get _accountSync =>
+      widget.accountSyncCoordinator ?? PluginAccountSyncCoordinator.instance;
+
+  void _unregisterAccountSync() {
+    _accountSyncEpoch++;
+    final registration = _accountSyncRegistration;
+    _accountSyncRegistration = null;
+    if (registration != null)
+      _accountSync.unregister(widget.source, registration);
+  }
+
+  Future<bool> _authenticatedAccountSession() async {
+    if (!mounted ||
+        _web == null ||
+        !_currentAccountDocument ||
+        _applyingAccountRestore ||
+        _verificationWindowActive ||
+        _verificationVisible)
+      return false;
+    final epoch = _loadEpoch;
+    try {
+      final state = await _readSiteState();
+      if (!mounted ||
+          epoch != _loadEpoch ||
+          state.challenge ||
+          state.accessBlocked ||
+          !videoSiteDocumentMatches(_requestedUrl, state.url) ||
+          !(state.nativeReady || state.websiteReady))
+        return false;
+      final header = await _evaluate(videoSiteProfileLinkScript);
+      return mounted &&
+          epoch == _loadEpoch &&
+          _currentAccountDocument &&
+          _personalRoot(Uri.tryParse(header?.toString() ?? '')) != null;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<PluginAccountAuthentication?> _freshAccountIdentity() async {
+    final web = _web, epoch = _loadEpoch;
+    final generation = _accountGeneration;
+    if (!mounted ||
+        web == null ||
+        _verificationVisible ||
+        _verificationWindowActive)
+      return null;
+    try {
+      final raw = await videoBrowserReadAsync(
+        web,
+        videoSiteFreshAccountScript(widget.homeUrl),
+      ).timeout(const Duration(seconds: 15));
+      final value = asJsonMap(raw is String ? jsonDecode(raw) : raw);
+      if (!mounted ||
+          epoch != _loadEpoch ||
+          generation != _accountGeneration ||
+          !identical(web, _web))
+        return null;
+      final id = value['id']?.toString() ?? '';
+      final own = _ownIdentityRoot == widget.homeUrl.resolve('/user/$id')
+          ? _ownIdentity
+          : const <String, dynamic>{};
+      return videoSiteVerifiedIdentity(value, widget.homeUrl, ownProfile: own);
+    } on PluginAccountAuthenticationRejected {
+      rethrow;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _configureAccountSync(Map<String, dynamic> config) async {
+    final web = _web;
+    if (web == null || !VideoAccountService.supported(config, widget.homeUrl))
+      return;
+    final cookies = widget.accountCookies ?? videoSiteAccountCookies(web);
+    if (cookies == null)
+      return; // Never substitute the default iOS cookie store.
+    final epoch = ++_accountSyncEpoch;
+    final registration = await _accountSync.register(
+      source: widget.source,
+      origin: Uri.parse(widget.homeUrl.origin),
+      accountSync: config,
+      call: _callPlugin,
+      cookies: cookies,
+      authenticated: _authenticatedAccountSession,
+      identity: _freshAccountIdentity,
+      continueLogin: () async {
+        if (!mounted || !identical(web, _web))
+          throw const PluginAccountNeedsLogin();
+        _loginReturnUrl = _requestedUrl;
+        await _load(widget.homeUrl.resolve('/login'));
+      },
+    );
+    if (!mounted || epoch != _accountSyncEpoch) {
+      _accountSync.unregister(widget.source, registration);
+      return;
+    }
+    final previous = _accountSyncRegistration;
+    _accountSyncRegistration = registration;
+    if (previous != null) _accountSync.unregister(widget.source, previous);
+    _applyingAccountRestore = true;
+    try {
+      // A normal entry is a no-op. Only global restore's pending marker may
+      // apply cookies; successful readback never changes the page's login UI.
+      await _accountSync.restoreOnEntry(widget.source);
+    } finally {
+      if (mounted && epoch == _accountSyncEpoch)
+        _applyingAccountRestore = false;
+    }
+  }
+
+  Future<void> _captureAccountSession() async {
+    if (!mounted || _accountSyncRegistration == null || _applyingAccountRestore)
+      return;
+    try {
+      await _accountSync.captureAuthenticated(
+        widget.source,
+        explicitSave: _loginReturnUrl != null && _requestedUrl.path != '/login',
+      );
+    } catch (_) {
+      /* Backup failure is not a website login failure. */
+    }
+  }
+
+  late final Future<SourceNetworkLease?> _networkLease;
+  late final Future<OmoNetworkContext?> _network;
+  OmoNetworkContext? _networkContext;
   Timer? _loadWatchdog;
   Timer? _loadDeadline;
   int? _deadlineEpoch;
@@ -176,12 +396,78 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   final _browserDiagnostics = VideoBrowserDiagnostics();
   Uri? _lastDocumentUrl;
   Uri? _challengeResponseUrl;
+  Uri? _accessDeniedResponseUrl;
+  Uri? _blockedDocumentUrl;
+  bool _websiteRefreshInFlight = false;
+  Object? _documentReadFailure;
+  Completer<void>? _automaticRead;
+  late final _readRecovery = ReadRecoveryController(
+    source: widget.source,
+    retry: _retryCatalogRead,
+  );
+
+  bool get _automaticCatalogAllowed =>
+      !_websiteVisible &&
+      !_catalogWebsite &&
+      !_personalVisible &&
+      !_detailVisible &&
+      !_verificationVisible &&
+      !_verificationWindowActive &&
+      !_authSubmissionStarted &&
+      !_accountSubmissionStarted &&
+      !_recoverySubmissionStarted &&
+      !_isAccountEdit(_requestedUrl) &&
+      !const {
+        '/login',
+        '/register',
+        '/password/reset',
+        '/password/email',
+        '/watch',
+      }.contains(_requestedUrl.path);
+
+  void _completeAutomaticRead() {
+    final pending = _automaticRead;
+    if (pending != null && !pending.isCompleted) pending.complete();
+  }
+
+  Future<void> _retryCatalogRead() async {
+    if (!mounted ||
+        !_automaticCatalogAllowed ||
+        _busy ||
+        _refreshingCatalog ||
+        _documentLoading ||
+        _refreshCompleter != null)
+      return;
+    final pending = _automaticRead = Completer<void>();
+    try {
+      await _load(
+        _requestedUrl,
+        rememberHistory: false,
+        creator: _creatorContext,
+        automaticRecovery: true,
+      );
+      await pending.future.timeout(
+        Duration(seconds: _sourceOptions.parseTimeoutSeconds + 10),
+      );
+    } finally {
+      if (identical(_automaticRead, pending)) _automaticRead = null;
+    }
+  }
+
+  void _clearDocumentFailureEvidence() {
+    _documentReadFailure = null;
+    _challengeResponseUrl = null;
+    _accessDeniedResponseUrl = null;
+    _blockedDocumentUrl = null;
+  }
+
   int _loadEpoch = 0;
   int? _parsingEpoch;
   bool _busy = true;
   bool _refreshingCatalog = false;
   bool _catalogRefreshFailed = false;
   bool _documentLoading = false;
+  bool _browserNeedsRecovery = false;
   bool _awaitingCommit = false;
   bool _websiteVisible = false;
   // Explicit renderer intent lasts for this open source session. Required
@@ -192,8 +478,13 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   Uri? _websiteFallbackUrl;
   _VideoLocation? _watchOrigin;
   bool _personalVisible = false;
+  bool _personalSearching = false, _personalFilterOpen = false;
+  final _personalSearchFocus = FocusNode();
+  final _personalQueries = <Uri, String>{}, _personalSorts = <Uri, String>{};
+  final _personalKeywordScopes = <Uri, KeywordSearchScope>{};
+  final _personalFacets = <Uri, ShelfFacetSelection>{};
   bool _returnToPersonal = false;
-  int _personalRevision = 0;
+  bool _openingLocalHistory = false;
   bool _siteLoadFailed = false;
   bool _verificationVisible = false;
   bool _verificationStalled = false;
@@ -202,12 +493,14 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   Uri? _verificationResumeUrl;
   ({Uri url, NativePlaybackReturnState state})? _pendingPlaybackReturn;
   bool _searchVisible = false;
+  final _keywordScopes = <String, KeywordSearchScope>{};
   String _activeTab = 'recommend';
   String _nativeTab = 'recommend';
   String? _message;
   String? _diagnostic;
   Uri? _listUrl;
   late Uri _requestedUrl = widget.initialUrl ?? widget.homeUrl;
+  late String? _accountLoginUsername = widget.accountLoginUsername;
   Uri? _nextVideoUrl;
   late _VideoCreator? _creatorContext = widget.initialCreator == null
       ? null
@@ -263,15 +556,38 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   String _catalogTitle = '';
   Uri? _loginReturnUrl;
   VideoSourceOptions _sourceOptions = const VideoSourceOptions();
-  VideoAccountService? _account;
   final _backStack = <_VideoLocation>[];
   final _tabHistory = <String>[];
   final _detailParents = <String, _VideoLocation?>{};
-  final _catalogCache = VideoCatalogCache();
+  late final _catalogCache = VideoCatalogCache(cacheSource: widget.source);
+  Object _catalogImageRefresh = Object();
+  int _documentCacheGeneration = 0;
+  int _documentPersonalCacheGeneration = 0;
+  late final _accountSource = canonicalQjsSource(widget.source);
+  int get _accountGeneration =>
+      pluginSessionWriteFence.generation(_accountSource);
+  bool get _accountChanging =>
+      pluginSessionWriteFence.isChanging(_accountSource);
+  int? _documentAccountGeneration;
+  bool get _currentAccountDocument =>
+      !widget.nativeAccount ||
+      !_accountChanging && _documentAccountGeneration == _accountGeneration;
+  StreamSubscription<PluginSessionBoundary>? _accountChanges;
+  ({Uri from, bool account, bool website})? _accountRefresh;
+  late final _personalSnapshots = VideoPersonalSnapshotStore(
+    cacheSource: widget.source,
+  );
+  int _personalLoadIntent = 0;
+  final _personalPageWindow = VideoPersonalPageWindow();
+  Uri? _personalContinuationTarget;
+  bool _personalContinuationFailed = false;
+  final _personalViews = <Uri, String>{};
+  final _personalPreferencesLoaded = <String>{};
   final _personalRecentCache =
       <Uri, ({DateTime readAt, List<Map<String, dynamic>> videos})>{};
   final _commentDrafts = VideoCommentDraftStore();
   VideoFilterSchema? _siteFilters;
+  Map<String, List<VideoFilterChoice>> _observedTagGroups = const {};
   bool _filterPanelOpen = false;
   bool _returning = false;
   bool _animateCatalogArrival = true;
@@ -330,7 +646,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     _resetAccountTask();
     _returning = true;
     try {
-      if (_inPersonalLibrary) {
+      if (_inPersonalLibrary && _ownIdentityRoot != null) {
         await _load(
           _ownIdentityRoot!,
           rememberHistory: false,
@@ -362,7 +678,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
             playbackReturn: entry.playback,
           );
         } else {
-          final cached = _catalogCache[_catalogKey(entry.uri)];
+          final cached = _cachedCatalog(entry.uri);
           if (cached == null) {
             await _load(
               entry.uri,
@@ -434,6 +750,29 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   @override
   void initState() {
     super.initState();
+    if (widget.nativeAccount) {
+      _accountChanges = pluginSessionWriteFence.changes.listen(
+        _accountSessionChanged,
+      );
+    }
+    _networkLease = SourceNetworkPolicies.supports(widget.source)
+        ? SourceNetworkPolicies.acquire(widget.source)
+        : Future.value(null);
+    _network = _networkLease
+        .then(
+          (lease) => lease == null
+              ? null
+              : OmoNetworkContext.open(
+                  null,
+                  source: widget.source,
+                  siteOrigins: [widget.homeUrl],
+                ),
+        )
+        .then((value) {
+          _networkContext = value;
+          return value;
+        });
+    unawaited(_network.then<void>((_) {}, onError: (Object _) {}));
     SourceReturnPreferences.changes.addListener(_onReturnModeChanged);
     SourceDiagnosticPreferences.changes.addListener(_onDiagnosticToolsChanged);
     unawaited(_readDiagnosticToolsPreference());
@@ -492,7 +831,78 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _foreground = state == AppLifecycleState.resumed;
     if (!_foreground) _dismissCatalogMenu();
-    if (_foreground) unawaited(_inspectSite());
+    if (_foreground) {
+      if (_browserNeedsRecovery) {
+        unawaited(_recoverBrowserDocument());
+      } else {
+        unawaited(_inspectSite());
+      }
+    }
+  }
+
+  void _browserProcessTerminated() {
+    if (!mounted) return;
+    _browserDiagnostics.document('process-terminated', _requestedUrl);
+    _browserNeedsRecovery = true;
+    _loadWatchdog?.cancel();
+    _loadDeadline?.cancel();
+    _deadlineEpoch = null;
+    // Process eviction is neither a website choice nor a failed native parse.
+    // Keep the rendered catalog; defer a single GET until the app is active.
+    if (_foreground) unawaited(_recoverBrowserDocument());
+  }
+
+  Future<void> _recoverBrowserDocument() async {
+    final web = _web;
+    if (!mounted ||
+        _accountChanging ||
+        !_foreground ||
+        !_browserNeedsRecovery ||
+        web == null ||
+        _detailVisible ||
+        _personalVisible ||
+        _refreshCompleter != null ||
+        // The watch parser also owns restoration after its detail route pops.
+        // Wait until it has selected the originating page, never reopen watch
+        // while that Navigator completion is still restoring the catalog.
+        _requestedUrl.path == '/watch' && _parsingEpoch == _loadEpoch ||
+        _verificationWindowActive)
+      return;
+    _browserNeedsRecovery = false;
+    final target = _requestedUrl;
+    final keepNative =
+        !_websiteVisible &&
+        !_verificationVisible &&
+        (!_busy && !_siteLoadFailed || _refreshingCatalog);
+    final epoch = ++_loadEpoch;
+    _documentCacheGeneration = _catalogCache.generation;
+    _documentPersonalCacheGeneration = _personalSnapshots.generation;
+    _documentAccountGeneration = _accountGeneration;
+    _parsingEpoch = null;
+    _documentLoading = true;
+    _awaitingCommit = true;
+    _authSubmissionStarted = false;
+    _accountSubmissionStarted = false;
+    _recoverySubmissionStarted = false;
+    setState(() {
+      _refreshingCatalog = keepNative;
+      _busy = !keepNative;
+      _siteLoadFailed = false;
+      _catalogRefreshFailed = false;
+      _message = null;
+    });
+    _startLoadWatchdog(target);
+    try {
+      _clearDocumentFailureEvidence();
+      _browserDiagnostics.requested('process-recovery');
+      await web
+          .loadUrl(urlRequest: URLRequest(url: WebUri(target.toString())))
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {
+      if (mounted && epoch == _loadEpoch) {
+        _showLoadError(reason: 'process-recovery-failed', path: target.path);
+      }
+    }
   }
 
   @override
@@ -555,6 +965,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   }
 
   Future<void> _inspectSite() async {
+    if (_browserNeedsRecovery) {
+      await _recoverBrowserDocument();
+      return;
+    }
     if (!mounted ||
         _verificationWindowActive ||
         !_foreground ||
@@ -623,6 +1037,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         _personalVisible) {
       return;
     }
+    _readRecovery.reset();
+    _completeAutomaticRead();
     // Read-only observation revisits this state every two seconds. Only the
     // transition into verification owns focus/menu cleanup; repeating it would
     // close the verification actions while the user is trying to use them.
@@ -670,11 +1086,56 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     }
   }
 
+  Future<void> _refreshWebsiteDocument() async {
+    if (_verificationVisible) return _reloadVerification();
+    final web = _web;
+    if (!mounted || !_websiteVisible || _websiteRefreshInFlight || web == null)
+      return;
+    _websiteRefreshInFlight = true;
+    final target = _requestedUrl, epoch = ++_loadEpoch;
+    _parsingEpoch = null;
+    _clearVerification();
+    _clearDocumentFailureEvidence();
+    setState(() {
+      _busy = true;
+      _documentLoading = true;
+      _awaitingCommit = true;
+      _siteLoadFailed = false;
+      _message = null;
+    });
+    try {
+      await web.stopLoading().timeout(const Duration(seconds: 5));
+      final current = Uri.tryParse(
+        (await web.getUrl().timeout(const Duration(seconds: 3)))?.toString() ??
+            '',
+      );
+      if (!mounted || epoch != _loadEpoch || target != _requestedUrl) return;
+      _startLoadWatchdog(target);
+      if (videoSiteDocumentMatches(target, current)) {
+        await web.reload().timeout(const Duration(seconds: 5));
+      } else {
+        await web
+            .loadUrl(urlRequest: URLRequest(url: WebUri(target.toString())))
+            .timeout(const Duration(seconds: 5));
+      }
+    } catch (_) {
+      if (mounted && epoch == _loadEpoch)
+        _showLoadError(reason: 'website-refresh-failed', path: target.path);
+    } finally {
+      _websiteRefreshInFlight = false;
+    }
+  }
+
   Future<void> _reloadVerification() async {
     if (_verificationReloading || !_verificationVisible) return;
     _verificationReloading = true;
-    final epoch = _loadEpoch;
     final target = _requestedUrl;
+    var reloadEpoch = _loadEpoch;
+    bool ownsVerification() =>
+        mounted &&
+        reloadEpoch == _loadEpoch &&
+        _requestedUrl == target &&
+        _verificationVisible;
     try {
       final confirmed = await showAdaptiveDialog<bool>(
         context: context,
@@ -693,13 +1154,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           ],
         ),
       );
-      if (!mounted ||
-          epoch != _loadEpoch ||
-          confirmed != true ||
-          !_verificationVisible) {
-        return;
-      }
-      final reloadEpoch = ++_loadEpoch;
+      if (confirmed != true || !ownsVerification()) return;
+      reloadEpoch = ++_loadEpoch;
       _parsingEpoch = null;
       _verificationDeadline?.cancel();
       _verificationDeadline = null;
@@ -707,16 +1163,15 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       // Keep the browser visible and at exactly the same size while restarting.
       // Do not route through _load/_openWebsitePage, which cover the document.
       await _web?.stopLoading().timeout(const Duration(seconds: 5));
-      if (!mounted || reloadEpoch != _loadEpoch || _requestedUrl != target) {
-        return;
-      }
+      if (!ownsVerification()) return;
       _documentLoading = true;
+      _clearDocumentFailureEvidence();
       _browserDiagnostics.requested('user-verification-reload');
       await _web
           ?.loadUrl(urlRequest: URLRequest(url: WebUri(target.toString())))
           .timeout(const Duration(seconds: 5));
     } catch (_) {
-      if (mounted) setState(() => _verificationStalled = true);
+      if (ownsVerification()) setState(() => _verificationStalled = true);
     } finally {
       _verificationReloading = false;
     }
@@ -743,11 +1198,26 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     try {
       retry = await (browser as VideoBrowserVerificationWindow)
           .openVerificationWindow(target);
-    } catch (_) {
+    } catch (error) {
+      final reason =
+          error is PlatformException &&
+              const {
+                'BUSY',
+                'UNAVAILABLE',
+                'NETWORK_CLOSED',
+                'URL_REJECTED',
+              }.contains(error.code)
+          ? error.code.toLowerCase()
+          : 'unknown';
+      _browserDiagnostics.document('verification-window-open-$reason', null);
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(t.webview.loadFailed)));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${t.videoPlayback.verificationWindow} · ${t.error.operationFailed}',
+            ),
+          ),
+        );
       }
     } finally {
       if (mounted) setState(() => _verificationWindowActive = false);
@@ -759,6 +1229,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     if (retry) {
       try {
         _documentLoading = true;
+        _clearDocumentFailureEvidence();
         _browserDiagnostics.requested('user-verification-window-return');
         await _web
             ?.loadUrl(urlRequest: URLRequest(url: WebUri(target.toString())))
@@ -782,9 +1253,31 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     );
     if (videoSiteDocumentMatches(_requestedUrl, uri)) {
       _challengeResponseUrl = challenged ? uri : null;
+      _accessDeniedResponseUrl = status == 403 ? uri : null;
+      if (!challenged &&
+          (status == 408 || status == 425 || status == 429 || status >= 500)) {
+        final retry = headers.entries
+            .where((e) => e.key.toLowerCase() == 'retry-after')
+            .firstOrNull
+            ?.value;
+        _documentReadFailure = HttpException(
+          'HTTP $status${retry == null ? '' : ' Retry-After: $retry'}',
+        );
+      }
     }
     // The document must commit before it is revealed. The response alone may
     // still be followed by a cancelled navigation or a different document.
+  }
+
+  bool _stopBlockedDocument(VideoSiteState state, Uri expected) {
+    if (!state.accessBlocked ||
+        !videoSiteDocumentMatches(expected, state.url) ||
+        !videoSiteDocumentMatches(expected, _accessDeniedResponseUrl))
+      return false;
+    _blockedDocumentUrl = expected;
+    _clearVerification();
+    _showLoadError(reason: 'site-access-blocked-http-403', path: expected.path);
+    return true;
   }
 
   Future<void> _readSourceOptions() async {
@@ -796,17 +1289,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       _sourceOptions = VideoSourceOptions.fromValues(
         asJsonMap(asJsonMap(response['data'])['values']),
       );
-      final account = asJsonMap(asJsonMap(response['data'])['accountSync']);
-      if (VideoAccountService.supported(account, widget.homeUrl)) {
-        _account = VideoAccountService(
-          origin: widget.homeUrl,
-          call: _callPlugin,
-          cookies: PlatformVideoAccountCookies(),
-          readFn: account['readFn'] as String,
-          saveFn: account['saveFn'] as String,
-          forgetFn: account['forgetFn'] as String,
+      if (mounted)
+        await _configureAccountSync(
+          asJsonMap(asJsonMap(response['data'])['accountSync']),
         );
-      }
     } catch (_) {
       // Older video plugins use the documented host defaults.
     }
@@ -823,19 +1309,6 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     }
   }
 
-  Future<void> _showPlaybackSettings() async {
-    await Navigator.of(context).push<void>(
-      videoPageRoute(
-        builder: (_) => VideoPlaybackSettingsPage(
-          source: widget.source,
-          sourceName: widget.title,
-          onAccountSync: _account == null ? null : _openAccountSync,
-        ),
-      ),
-    );
-    if (mounted) await _readSourceOptions();
-  }
-
   bool get _isPersonalContext =>
       _personalVisible ||
       _hasPersonalShell ||
@@ -843,31 +1316,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
 
   Future<void> _showTools() async {
     _dismissCatalogMenu();
-    final action = await showVideoTaskSheet<String>(
-      context: context,
-      builder: (sheetContext) => SingleChildScrollView(
-        child: VideoAccountTools(
-          onClose: () => Navigator.of(sheetContext).pop(),
-          onHistory: () => Navigator.of(sheetContext).pop('history'),
-          onPlaybackSettings: () => Navigator.of(sheetContext).pop('playback'),
-          onSourceSettings: () => Navigator.of(sheetContext).pop('source'),
-          onAccountSync: _account == null
-              ? null
-              : () => Navigator.of(sheetContext).pop('sync'),
-        ),
-      ),
-    );
-    if (!mounted) return;
-    switch (action) {
-      case 'history':
-        _showPersonal();
-      case 'playback':
-        _showPlaybackSettings();
-      case 'source':
-        await _openSettings();
-      case 'sync':
-        await _openAccountSync();
-    }
+    await _openSettings();
   }
 
   Future<void> _openSearch() async {
@@ -878,9 +1327,13 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     }
     if (_searchVisible || _verificationVisible) return;
     final epoch = _loadEpoch;
+    final searchUrl = _listUrl ?? widget.homeUrl;
+    var scope = _keywordScopeFor(searchUrl) ?? KeywordSearchScope.all;
     setState(() => _searchVisible = true);
     final result = await Navigator.of(context).push<VideoSearchFilters>(
       videoPageRoute(
+        networkSource: widget.source,
+        network: _network,
         builder: (_) => VideoSearchPage(
           source: widget.source,
           initial: widget.searchFilters == null
@@ -889,8 +1342,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                       (_listUrl ?? widget.homeUrl).queryParameters['query'] ??
                       '',
                 )
-              : VideoSearchFilters.fromUri(_listUrl ?? widget.homeUrl),
+              : VideoSearchFilters.fromUri(searchUrl),
           authorEnabled: widget.searchFilters != null,
+          initialScope: scope,
+          onSubmitScope: (value) => scope = value,
         ),
       ),
     );
@@ -902,6 +1357,13 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         context,
       ).showSnackBar(SnackBar(content: Text(t.videoSearch.contextChanged)));
       return;
+    }
+    if (!result.author) {
+      _keywordScopes.remove(result.query);
+      _keywordScopes[result.query] = scope;
+      if (_keywordScopes.length > VideoSearchHistory.limit) {
+        _keywordScopes.remove(_keywordScopes.keys.first);
+      }
     }
     _rememberLocation();
     final tab = widget.tabs.where((tab) => tab.mode == 'catalog').firstOrNull;
@@ -931,6 +1393,63 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     );
   }
 
+  void _clearCatalogSearch() {
+    final url = _listUrl;
+    if (url == null ||
+        url.path != '/search' ||
+        url.queryParameters['query']?.isNotEmpty != true)
+      return;
+    final filters = VideoSearchFilters.fromUri(
+      url,
+    ).copyWith(query: '', author: false, page: 1);
+    unawaited(
+      _load(
+        filters.activeCount == 0
+            ? widget.homeUrl
+            : filters.toUri(widget.homeUrl),
+      ),
+    );
+  }
+
+  KeywordSearchScope? _keywordScopeFor(Uri url) {
+    if (url.path != '/search' || url.queryParameters['type'] == 'artist')
+      return null;
+    final query = url.queryParameters['query'];
+    if (query == null || query.isEmpty) return null;
+    return _keywordScopes[query] ??
+        (query == widget.initialUrl?.queryParameters['query']
+            ? widget.initialKeywordScope
+            : null) ??
+        KeywordSearchScope.all;
+  }
+
+  VideoFilterChoice? _exactKeywordTag(Uri page) {
+    if (widget.homeUrl.host != 'hanime1.me' ||
+        _observedTagGroups.isEmpty ||
+        _keywordScopeFor(page) != KeywordSearchScope.all) {
+      return null;
+    }
+    final filters = VideoSearchFilters.fromUri(page);
+    if (filters.tags.isNotEmpty) return null;
+    String fold(String value) => value.trim().toLowerCase();
+    final keyword = fold(filters.query);
+    if (keyword.isEmpty) return null;
+    VideoFilterChoice? match;
+    for (final group in _observedTagGroups.values) {
+      for (final tag in group) {
+        if (tag.value.isEmpty ||
+            tag.value.length > 100 ||
+            (fold(tag.label) != keyword && fold(tag.value) != keyword)) {
+          continue;
+        }
+        // A display name can be shared by several different site values.
+        if (match != null && match.value != tag.value) return null;
+        match = tag;
+      }
+    }
+    return match;
+  }
+
   Future<void> _editPlaylist() async {
     if (!widget.nativeSiteActions || _playlistEditor['supported'] != true) {
       return;
@@ -943,6 +1462,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     final result = await Navigator.of(context)
         .push<String>(
           videoPageRoute(
+            networkSource: widget.source,
+            network: _network,
             builder: (_) => VideoPlaylistEditor(
               initial: _playlistEditor,
               operations: operations,
@@ -973,16 +1494,11 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   }
 
   Future<void> _openSettings() async {
-    await Navigator.of(context).push<void>(
-      videoPageRoute(
-        builder: (_) => PluginSettingsPage(
-          insideSource: true,
-          from: widget.source,
-          pluginUuid: widget.source,
-          pluginRuntimeName: widget.source,
-          pluginDisplayName: widget.title,
-        ),
-      ),
+    await openSourceSettings(
+      context,
+      source: widget.source,
+      sourceName: widget.title,
+      network: _network,
     );
     if (mounted) {
       await _readSourceOptions();
@@ -992,63 +1508,146 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     }
   }
 
-  Future<void> _openAccountSync() async {
-    final account = _account;
-    if (account == null) return;
-    _invalidateCatalogCaches();
-    await Navigator.of(context).push<void>(
-      videoPageRoute(
-        builder: (pageContext) => VideoAccountPage(
-          service: account,
-          backupCurrent: () async {
-            final state = await _readSiteState();
-            if (state.challenge || !_isFirstParty(state.url)) {
-              throw const FormatException('Login required');
-            }
-            final raw = await _evaluate(r'''
-            (() => {
-              const profile = document.querySelector('#user-modal-trigger a[href*="/user/"], a#user-modal-trigger[href*="/user/"]');
-              const link = profile?.getAttribute('href') || '';
-              let signedIn = false;
-              try {
-                const url = new URL(link, location.origin);
-                signedIn = url.origin === location.origin && /^\/user\/\d+\/?$/.test(url.pathname);
-              } catch (_) {}
-              return JSON.stringify({ signedIn, name: (profile?.textContent || '').trim().slice(0, 80) });
-            })()
-          ''');
-            final data = raw is String ? jsonDecode(raw) : raw;
-            if (data is! Map || data['signedIn'] != true) {
-              throw const FormatException('Login required');
-            }
-            await account.backup(data['name']?.toString() ?? '');
-          },
-          onLogin: () async {
-            if (!await _allowLeaveAccount() ||
-                !mounted ||
-                !pageContext.mounted) {
-              return;
-            }
-            Navigator.of(pageContext).pop();
-            final tab = widget.tabs
-                .where((tab) => tab.mode == 'account')
-                .firstOrNull;
-            if (tab != null && mounted) {
-              setState(() => _activeTab = tab.id);
-              unawaited(_openSiteAccount(tab));
-            }
-          },
-          onCloudSettings: () async {
-            await context.router.root.push(const SyncSettingRoute());
-            if (mounted) await _readSourceOptions();
-          },
-        ),
-      ),
+  bool get _accountNavigationInUse =>
+      _authSubmissionStarted ||
+      _externalAuthenticationBusy ||
+      _accountSubmissionStarted ||
+      _recoverySubmissionStarted ||
+      _verificationVisible ||
+      _verificationWindowActive ||
+      _detailVisible ||
+      _refreshCompleter != null;
+
+  bool _accountPage(Uri uri, Uri? owner) =>
+      _recordPrivacyPage(uri) ||
+      _isAccountEdit(uri) ||
+      owner != null && _personalRoot(uri) == owner;
+
+  void _accountSessionChanged(PluginSessionBoundary boundary) {
+    if (!mounted || boundary.source != _accountSource) return;
+    final owner = _ownIdentityRoot;
+    final account = _accountPage(_requestedUrl, owner);
+    final subscriptions = _requestedUrl.path == '/subscriptions';
+    if (_accountRefresh?.from != _requestedUrl) _accountRefresh = null;
+    if ((account ||
+            subscriptions ||
+            !_websiteVisible && (_busy || _refreshingCatalog)) &&
+        !_isAuthenticationPage(_requestedUrl)) {
+      _accountRefresh ??= (
+        from: _requestedUrl,
+        account: account,
+        website: _websiteVisible,
+      );
+    }
+    // Keep a WebKit login, verification, or player in progress. The account
+    // generation still revokes its old private catalog and cache results.
+    if (_documentAccountGeneration != null && !_accountNavigationInUse) {
+      _loadEpoch++;
+      _parsingEpoch = null;
+      _loadWatchdog?.cancel();
+      _loadDeadline?.cancel();
+      _deadlineEpoch = null;
+      _readRecovery.reset();
+      _completeAutomaticRead();
+    }
+    _personalLoadIntent++;
+    _backStack.removeWhere((entry) => _accountPage(entry.uri, owner));
+    _detailParents.removeWhere(
+      (_, entry) => entry != null && _accountPage(entry.uri, owner),
     );
+    if (_watchOrigin case final origin? when _accountPage(origin.uri, owner)) {
+      _watchOrigin = null;
+    }
+    setState(() {
+      if (_creatorDirectoryOwner == null) {
+        _resetPersonalCollections();
+        _invalidateCatalogCaches();
+      } else {
+        _bindCreatorOwner(null);
+      }
+      _ownIdentity = const {};
+      _ownIdentityRoot = null;
+      _profile = const {};
+      _playlistEditor = const {};
+      _personalStorage = PageStorageBucket();
+      _commentDrafts.clear();
+      if (account || subscriptions) {
+        _publicProfile = const {};
+        _sections = const [];
+        _videos = const [];
+        _paging = const {};
+        _creators = const [];
+        _creatorGroups = const [];
+        _catalogTitle = '';
+        _busy = true;
+        _refreshingCatalog = false;
+        _siteLoadFailed = false;
+        if (!_accountSubmissionStarted) _resetAccountTask();
+      }
+    });
+    if (!boundary.changing) {
+      scheduleMicrotask(() {
+        if (mounted && boundary.generation == _accountGeneration) {
+          _resumeAccountCatalog();
+        }
+      });
+    }
   }
+
+  bool _resumeAccountCatalog() {
+    final refresh = _accountRefresh;
+    if (refresh == null ||
+        _accountChanging ||
+        _accountNavigationInUse ||
+        _web == null)
+      return false;
+    _accountRefresh = null;
+    if (_requestedUrl != refresh.from || _websiteVisible != refresh.website) {
+      return false;
+    }
+    final target = refresh.account ? widget.homeUrl : refresh.from;
+    if (refresh.website) {
+      unawaited(_openWebsitePage(target, rememberHistory: false));
+      return true;
+    }
+    if (refresh.account &&
+        widget.tabs.any(
+          (tab) => tab.id == _activeTab && tab.mode == 'account',
+        )) {
+      _accountEntryTabId = _activeTab;
+    }
+    unawaited(_load(target, rememberHistory: false));
+    return true;
+  }
+
+  bool _isAuthenticationPage(Uri uri) => const {
+    '/login',
+    '/register',
+    '/password/reset',
+    '/password/email',
+  }.contains(uri.path);
 
   @override
   void dispose() {
+    unawaited(_accountChanges?.cancel());
+    _readRecovery.dispose();
+    _completeAutomaticRead();
+    _personalSearchFocus.dispose();
+    final retry = _downloadRetryResolver;
+    if (retry != null) VideoDownloadRetry.unregister(widget.source, retry);
+    _unregisterAccountSync();
+    unawaited(
+      _network.then<void>(
+        (value) async => value?.close(),
+        onError: (Object _) {},
+      ),
+    );
+    unawaited(
+      _networkLease.then<void>(
+        (lease) async => lease?.close(),
+        onError: (Object _) {},
+      ),
+    );
     SourceReturnPreferences.changes.removeListener(_onReturnModeChanged);
     SourceDiagnosticPreferences.changes.removeListener(
       _onDiagnosticToolsChanged,
@@ -1100,7 +1699,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                       ).hasMatch(uri.queryParameters['list'] ?? '')));
 
   void _rememberWatchOrigin(Uri destination) {
-    if (destination.path == '/watch') _personalRecentCache.clear();
+    if (destination.path == '/watch') {
+      _personalRecentCache.clear();
+      _personalSnapshots.invalidate();
+    }
     if (destination.path == '/watch' &&
         (_requestedUrl.path != '/watch' || _personalVisible)) {
       _watchOrigin = _location;
@@ -1110,6 +1712,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   /// Follow a real website link while retaining the user's renderer choice.
   /// Account/subscription pages do not turn all video links into web pages.
   bool _adoptWebsiteNavigation(Uri? uri) {
+    if (_browserNeedsRecovery) return false;
     // A real account form posts to the owner's root, then may redirect back
     // to edit. Keep this task mounted; its private inputs never join catalog
     // extraction or a cached frame. Only the same owner can be adopted.
@@ -1349,6 +1952,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         }
         final state = await _readSiteState();
         if (!mounted || epoch != _loadEpoch) return;
+        if (_stopBlockedDocument(state, expected)) return;
         if (videoSiteDocumentMatches(expected, state.url) &&
             (state.challenge ||
                 (_websiteVisible ? state.websiteReady : state.nativeReady) ||
@@ -1366,7 +1970,11 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     });
   }
 
-  void _showLoadError({String reason = 'main-frame-error', String path = '/'}) {
+  void _showLoadError({
+    String reason = 'main-frame-error',
+    String path = '/',
+    Object? error,
+  }) {
     _loadWatchdog?.cancel();
     _loadDeadline?.cancel();
     _deadlineEpoch = null;
@@ -1376,18 +1984,51 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       setState(() => _verificationStalled = true);
       return;
     }
+    _completeAutomaticRead();
+    final transport =
+        RegExp(
+          r'^WKNavigation url -(1001|1003|1004|1005|1006|1009) ',
+        ).hasMatch(reason) ||
+        const {
+          'HOST_LOOKUP',
+          'CONNECT',
+          'IO',
+          'TIMEOUT',
+          'ERROR_HOST_LOOKUP',
+          'ERROR_CONNECT',
+          'ERROR_IO',
+          'ERROR_TIMEOUT',
+        }.contains(reason);
+    final failure =
+        error ??
+        _documentReadFailure ??
+        (transport
+            ? const SocketException('Web document connection failed')
+            : StateError(reason));
+    if (_automaticCatalogAllowed)
+      _readRecovery.failed(failure);
+    else
+      _readRecovery.reset();
     setState(() {
       final keepCatalog = _refreshingCatalog && !_websiteVisible;
+      final showOriginalBlockedPage =
+          _websiteVisible && reason == 'site-access-blocked-http-403';
       _busy = false;
       _accountSubmissionStarted = false;
       _documentLoading = false;
       _refreshingCatalog = false;
       _catalogRefreshFailed = keepCatalog;
+      if (_personalContinuationTarget == _requestedUrl)
+        _personalContinuationFailed = true;
       if (keepCatalog) _browserDiagnostics.catalog('refresh-failed');
-      _siteLoadFailed = !keepCatalog;
+      _siteLoadFailed = !keepCatalog && !showOriginalBlockedPage;
       _searchVisible = false;
-      _message = keepCatalog
+      _message = keepCatalog || showOriginalBlockedPage
           ? null
+          : reason == 'site-access-blocked-http-403'
+          ? (Localizations.localeOf(context).languageCode == 'zh'
+                ? '站点已拒绝本次访问（HTTP 403），此页面没有可完成的验证。请稍后重试，或在官方浏览器中核对访问情况。'
+                : 'The site refused this visit (HTTP 403). This page has no verification to complete. Try later or check the official site in your browser.')
           : _websiteVisible
           ? t.webview.loadFailed
           : t.videoPlayback.catalogFallback;
@@ -1404,8 +2045,30 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     _VideoCreator? creator,
     bool preserveAccountTask = false,
     NativePlaybackReturnState? playbackReturn,
+    bool automaticRecovery = false,
   }) async {
     if (!mounted || !_isFirstParty(uri)) return;
+    if (uri.path != '/login') _accountLoginUsername = null;
+    final accountGeneration = _accountGeneration;
+    if (!automaticRecovery) {
+      _readRecovery.reset();
+      _completeAutomaticRead();
+    }
+    final personalLoadIntent = ++_personalLoadIntent;
+    final personalCacheGeneration = _personalSnapshots.generation;
+    final continuingPersonal =
+        _personalContinuationTarget == uri &&
+        _personalScope(uri) == _personalScope(_requestedUrl) &&
+        _personalSnapshotAllowed(uri, _ownIdentityRoot) &&
+        _videos.isNotEmpty;
+    if (!continuingPersonal) {
+      _personalContinuationTarget = null;
+      _personalContinuationFailed = false;
+    }
+    if (_personalScope(uri) != _personalScope(_requestedUrl)) {
+      _personalSearchFocus.unfocus();
+      _personalSearching = false;
+    }
     if (_catalogWebsite) {
       await _openWebsitePage(uri, rememberHistory: rememberHistory);
       return;
@@ -1438,16 +2101,41 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       _rememberLocation();
     }
     final key = _catalogKey(uri);
+    final snapshotOwner = _ownIdentityRoot, snapshotEpoch = _loadEpoch;
+    Map<String, dynamic>? personalSnapshot;
+    if (_personalSnapshotAllowed(uri, snapshotOwner)) {
+      personalSnapshot = await _personalSnapshots.read(
+        VideoPersonalSnapshotStore.scope(widget.source, snapshotOwner!, uri),
+      );
+      if (!mounted ||
+          personalLoadIntent != _personalLoadIntent ||
+          snapshotEpoch != _loadEpoch ||
+          accountGeneration != _accountGeneration ||
+          snapshotOwner != _ownIdentityRoot)
+        return;
+      await _readPersonalPreferences(uri);
+      if (!mounted ||
+          personalLoadIntent != _personalLoadIntent ||
+          snapshotEpoch != _loadEpoch ||
+          accountGeneration != _accountGeneration ||
+          snapshotOwner != _ownIdentityRoot)
+        return;
+    }
     final cached =
         (_isAccountEdit(uri) ||
             const {'/login', '/register', '/password/reset'}.contains(uri.path))
         ? null
-        : _catalogCache[key];
+        : _cachedCatalog(uri) ??
+              (personalSnapshot == null
+                  ? null
+                  : {...personalSnapshot, 'account': _ownIdentity});
     final useFresh =
         reuseFresh &&
         !_verificationVisible &&
         cached != null &&
-        _catalogCache.isFresh(key);
+        (_catalogCache.isFresh(key) ||
+            personalSnapshot != null &&
+                _personalSnapshots.fresh(personalSnapshot));
     final wasLoading = _documentLoading;
     if (_creatorDirectoryPending != null) {
       _creatorDirectoryReader?.dispose();
@@ -1460,6 +2148,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     _openingCreator = null;
     if (uri.path == '/' || uri.path == '/search') _listUrl = uri;
     _loadEpoch++;
+    _documentCacheGeneration = _catalogCache.generation;
+    _documentPersonalCacheGeneration = personalCacheGeneration;
+    _documentAccountGeneration = accountGeneration;
     final epoch = _loadEpoch;
     _requestedUrl = uri;
     _pendingPlaybackReturn = uri.path == '/watch' && playbackReturn != null
@@ -1477,9 +2168,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     setState(() {
       _animateCatalogArrival = !_returning && (cached == null || useFresh);
       if (cached != null) _applyCatalog(cached);
-      _refreshingCatalog = cached != null && !useFresh;
+      _refreshingCatalog = (cached != null || continuingPersonal) && !useFresh;
       _catalogRefreshFailed = false;
-      _busy = cached == null;
+      _busy = cached == null && !continuingPersonal;
       _websiteVisible = false;
       _personalVisible = false;
       _siteLoadFailed = false;
@@ -1489,6 +2180,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     });
     if (cached != null) _recordCatalogFrame('cache-frame-ready');
     if (useFresh) {
+      _personalContinuationTarget = null;
+      _personalContinuationFailed = false;
       // No network, DOM traversal or plugin call on a recent tab revisit.
       // The existing browser remains available for a genuine fresh request
       // or website mode; do not create a second browser/session.
@@ -1501,12 +2194,17 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       await web.stopLoading().timeout(const Duration(seconds: 5));
       if (!mounted || epoch != _loadEpoch) return;
       _browserDiagnostics.requested('native-navigation');
+      _clearDocumentFailureEvidence();
       await web
           .loadUrl(urlRequest: URLRequest(url: WebUri(uri.toString())))
           .timeout(const Duration(seconds: 5));
-    } catch (_) {
+    } catch (error) {
       if (epoch == _loadEpoch) {
-        _showLoadError(reason: 'load-url-exception', path: uri.path);
+        _showLoadError(
+          reason: 'load-url-exception',
+          path: uri.path,
+          error: error,
+        );
       }
     }
   }
@@ -1540,6 +2238,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   void _invalidateCatalogCaches() {
     _catalogCache.clear();
     _personalRecentCache.clear();
+    _personalSnapshots.invalidate();
     _creatorDirectoryGeneration++;
     _creatorDirectoryReader?.dispose();
     _creatorDirectoryReader = null;
@@ -1551,6 +2250,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
 
   void _bindCreatorOwner(Uri? owner) {
     if (owner == _creatorDirectoryOwner) return;
+    _resetPersonalCollections();
     _invalidateCatalogCaches();
     _creatorIntent++;
     _creatorResolver?.dispose();
@@ -1559,6 +2259,18 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     _creatorBridges.clear();
     _openingCreator = null;
     _subscriptionStorage = PageStorageBucket();
+  }
+
+  void _resetPersonalCollections() {
+    _personalPageWindow.clear();
+    _personalContinuationTarget = null;
+    _personalContinuationFailed = false;
+    _personalPreferencesLoaded.clear();
+    _personalQueries.clear();
+    _personalKeywordScopes.clear();
+    _personalSorts.clear();
+    _personalFacets.clear();
+    _personalViews.clear();
   }
 
   void _rememberCreator(VideoCreatorReference? creator) {
@@ -1785,9 +2497,13 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   Future<void> _pushContentPage(
     Uri target, {
     VideoCreatorReference? creator,
+    BuildContext? navigatorContext,
   }) async {
-    await Navigator.of(context).push<void>(
+    await Navigator.of(navigatorContext ?? context).push<void>(
       videoPageRoute<void>(
+        settings: const RouteSettings(name: 'breeze.video.catalog-content'),
+        networkSource: widget.source,
+        network: _network,
         builder: (_) => NativeVideoCatalogPage(
           source: widget.source,
           title: widget.title,
@@ -1807,6 +2523,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           searchFilters: widget.searchFilters,
           initialUrl: target,
           initialCreator: creator,
+          returnToCallerAfterPlayback:
+              navigatorContext != null && target.path == '/watch',
         ),
       ),
     );
@@ -1838,6 +2556,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     final wasBusy = _busy || _refreshingCatalog || _documentLoading;
     final target = _requestedUrl;
     final epoch = ++_loadEpoch;
+    // Website navigation invalidates older native snapshots. This new native
+    // extraction belongs to the current generation; later invalidations still
+    // prevent its asynchronous result from entering the cache.
+    _documentCacheGeneration = _catalogCache.generation;
     _parsingEpoch = null;
     _clearVerification();
     setState(() {
@@ -1849,6 +2571,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       _busy = true;
       _message = null;
     });
+    if (!_currentAccountDocument && _hasNativePage(target)) {
+      await _load(target, rememberHistory: false);
+      return;
+    }
     // Changing presentation must not restart an in-flight site request.
     if (wasBusy && _hasNativePage(target)) {
       _startLoadWatchdog(target);
@@ -1932,7 +2658,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     final settled =
         !_documentLoading && videoSiteDocumentMatches(target, _lastDocumentUrl);
     if (!_personalVisible &&
-        !_siteLoadFailed &&
+        (!_siteLoadFailed ||
+            videoSiteDocumentMatches(target, _blockedDocumentUrl)) &&
         (videoSiteDocumentMatches(target, _lastDocumentUrl) ||
             (_busy || _refreshingCatalog || _documentLoading) &&
                 videoSiteDocumentMatches(target, _requestedUrl))) {
@@ -1943,6 +2670,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         _refreshingCatalog = false;
         _catalogRefreshFailed = false;
         _requestedUrl = target;
+        _siteLoadFailed = false;
+        _message = null;
         _busy = !settled;
       });
       if (_busy) {
@@ -1983,6 +2712,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     if (uri.path == '/' || uri.path == '/search') _listUrl = uri;
     _loadEpoch++;
     final epoch = _loadEpoch;
+    _documentAccountGeneration = _accountGeneration;
     _requestedUrl = uri;
     if (!_sameCreatorPage(_creatorContext, uri)) _creatorContext = null;
     _parsingEpoch = null;
@@ -2005,6 +2735,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       await web.stopLoading().timeout(const Duration(seconds: 5));
       if (!mounted || epoch != _loadEpoch) return;
       _browserDiagnostics.requested('website-navigation');
+      _clearDocumentFailureEvidence();
       await web
           .loadUrl(urlRequest: URLRequest(url: WebUri(uri.toString())))
           .timeout(const Duration(seconds: 5));
@@ -2067,43 +2798,27 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   }
 
   Future<void> _showPersonal({bool remember = true}) async {
-    if (!mounted || _verificationVisible) return;
+    if (!mounted || _verificationVisible || _openingLocalHistory) return;
     if (!await _allowLeaveAccount() || !mounted) return;
     _resetAccountTask();
     _dismissCatalogMenu();
-    _authSubmissionStarted = false;
-    _loginReturnUrl = null;
-    if (remember) _rememberLocation();
-    _creatorContext = null;
     FocusScope.of(context).unfocus();
-    _loadEpoch++;
-    _clearVerification();
-    _parsingEpoch = null;
-    _returnToPersonal = false;
-    _websiteFallbackUrl = null;
-    setState(() {
-      _personalVisible = true;
-      _refreshingCatalog = false;
-      _catalogRefreshFailed = false;
-      _websiteVisible = false;
-      _siteLoadFailed = false;
-      _busy = false;
-      _searchVisible = false;
-      _message = null;
-      _diagnostic = null;
-      _personalRevision++;
-    });
-    unawaited(
-      _web
-          ?.stopLoading()
-          .timeout(const Duration(seconds: 5))
-          .catchError((_) {}),
-    );
-    unawaited(
-      _evaluate(
+    _openingLocalHistory = true;
+    try {
+      await _evaluate(
         'document.querySelector(${jsonEncode(widget.selectors['video'])})?.pause();',
-      ).catchError((_) => null),
-    );
+      ).catchError((_) => null);
+      if (!mounted) return;
+      await openVideoLocalHistory(
+        context,
+        source: widget.source,
+        siteHost: widget.homeUrl.host,
+        onOpenVideo: (recordContext, uri) =>
+            unawaited(_pushContentPage(uri, navigatorContext: recordContext)),
+      );
+    } finally {
+      _openingLocalHistory = false;
+    }
   }
 
   Future<void> _openSiteAccount(
@@ -2113,15 +2828,23 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     final epoch = _loadEpoch;
     Future<void> open(Uri target) =>
         widget.nativeAccount && !_catalogWebsite && !website
-        ? _load(target, rememberHistory: false)
+        ? _load(target, rememberHistory: false, reuseFresh: true)
         : _openWebsitePage(target, fallback: website, rememberHistory: false);
-    _invalidateCatalogCaches();
+    if (!_currentAccountDocument && widget.nativeAccount && !website) {
+      if (_accountChanging) return;
+      _accountEntryTabId = tab.id;
+      await _load(widget.homeUrl, rememberHistory: false);
+      return;
+    }
     try {
       final raw = await _evaluate(videoSiteProfileLinkScript);
       if (!mounted || epoch != _loadEpoch || _activeTab != tab.id) return;
       final profile = widget.homeUrl.resolve(raw?.toString() ?? '');
       if (_isFirstParty(profile) &&
           RegExp(r'^/user/\d+(?:/)?$').hasMatch(profile.path)) {
+        if (_ownIdentityRoot != null && profile != _ownIdentityRoot) {
+          _invalidateCatalogCaches();
+        }
         await open(profile);
         return;
       }
@@ -2132,6 +2855,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       ''');
       if (!mounted || epoch != _loadEpoch || _activeTab != tab.id) return;
       if (signedOut == true) {
+        _invalidateCatalogCaches();
         await open(tab.url);
         return;
       }
@@ -2147,6 +2871,30 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       widget.searchFilters != null && uri.path == '/search'
       ? VideoSearchFilters.fromUri(uri).toUri(widget.homeUrl).toString()
       : videoSiteDocumentUrl(uri).toString();
+
+  Uri? _catalogOwner(Map<String, dynamic> data) {
+    final account = asJsonMap(data['account']);
+    if (account['status'] != 'signedIn') return null;
+    return _personalRoot(Uri.tryParse('${account['profileUrl'] ?? ''}'));
+  }
+
+  Map<String, dynamic>? _cachedCatalog(Uri uri) {
+    final data = _catalogCache[_catalogKey(uri)];
+    if (data == null || !widget.nativeAccount) return data;
+    if (_recordPrivacyPage(uri) ||
+        asJsonMap(data['account'])['isOwnProfile'] == true &&
+            _personalRoot(uri) != null) {
+      final owner = _ownIdentityRoot;
+      final root = _personalRoot(uri);
+      if (!_currentAccountDocument ||
+          owner == null ||
+          _catalogOwner(data) != owner ||
+          root != null && root != owner) {
+        return null;
+      }
+    }
+    return data;
+  }
 
   Future<void> _openFilters(
     VideoFilterSection section, {
@@ -2170,6 +2918,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         final choice = await showVideoTaskSheet<Object>(
           context: context,
           builder: (_) => VideoQuickFilterPanel(
+            source: widget.source,
             section: section,
             initial: initial,
             schema: base,
@@ -2197,6 +2946,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       result = await showVideoTaskSheet<VideoSearchFilters>(
         context: context,
         builder: (_) => VideoSearchFilterPanel(
+          source: widget.source,
           initial: initial,
           schema: base,
           initialSection: section,
@@ -2204,7 +2954,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           onCancelRead: reader.dispose,
           onSchema: (schema) {
             if (mounted && epoch == _loadEpoch) {
-              setState(() => _siteFilters = schema);
+              setState(() {
+                _siteFilters = schema;
+                _observedTagGroups = schema.tagGroups;
+              });
             }
           },
         ),
@@ -2311,8 +3064,13 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   Future<Map<String, dynamic>> _snapshot(bool detail) async {
     final web = _web;
     if (web == null) throw StateError('WebView unavailable');
+    final epoch = _loadEpoch, generation = _accountGeneration;
     final script = detail ? _detailScript() : _catalogScript();
     final raw = await _evaluate(script);
+    if (!detail &&
+        (!mounted || epoch != _loadEpoch || generation != _accountGeneration)) {
+      throw const PluginSessionChanged();
+    }
     final decoded = raw is String ? jsonDecode(raw) : raw;
     if (decoded is! Map) throw const FormatException('Invalid DOM snapshot');
     final snapshot = Map<String, dynamic>.from(decoded);
@@ -2515,6 +3273,30 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     }
   }
 
+  Future<Map<String, dynamic>> _watchSnapshot(Uri watchUrl) async {
+    final snapshot = await _snapshot(true);
+    final documentUrl = Uri.tryParse(snapshot['documentUrl']?.toString() ?? '');
+    if (!videoSiteDocumentMatches(watchUrl, documentUrl)) {
+      throw const FormatException('Watch snapshot identity unavailable');
+    }
+    return snapshot;
+  }
+
+  Future<NativePlaybackSession> _watchDetails(
+    Uri watchUrl,
+    Map<String, dynamic> snapshot,
+  ) async {
+    final result = await _callPlugin(widget.detailFnPath, {
+      'watchUrl': watchUrl.toString(),
+      'snapshot': snapshot,
+    });
+    final title = asJsonMap(result['data'])['title']?.toString().trim();
+    if (title?.isNotEmpty != true) {
+      throw const FormatException('Video detail unavailable');
+    }
+    return NativePlaybackSession.fromDetailResponse(result, watchUrl: watchUrl);
+  }
+
   Future<NativePlaybackSession> _refreshPlayback(Uri watchUrl) {
     final epoch = _loadEpoch;
     final task = _playbackDocumentQueue.then((_) async {
@@ -2566,6 +3348,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       // The underlying WebView may have followed a site redirect while the
       // native detail was open. Refresh this video, not whichever page won.
       _browserDiagnostics.requested('playback-source-refresh');
+      _clearDocumentFailureEvidence();
       await web
           .loadUrl(urlRequest: URLRequest(url: WebUri(watchUrl.toString())))
           .timeout(const Duration(seconds: 5));
@@ -2590,6 +3373,11 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
               fresh = origin is num && origin != previousOrigin;
             } catch (_) {}
           }
+          if (fresh &&
+              state.accessBlocked &&
+              videoSiteDocumentMatches(watchUrl, _accessDeniedResponseUrl)) {
+            throw const VideoSiteAccessBlocked();
+          }
           if (fresh && state.challenge) {
             throw const VideoSiteVerificationRequired();
           }
@@ -2606,28 +3394,17 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       if (!documentReady) throw TimeoutException('Video document not ready');
       final session = await bounded(
         _onceAfterDomSettles(() async {
-          final snapshot = await _snapshot(true);
-          final documentUrl = Uri.tryParse(
-            snapshot['documentUrl']?.toString() ?? '',
-          );
-          if (!videoSiteDocumentMatches(watchUrl, documentUrl)) {
-            throw const FormatException(
-              'Episode snapshot identity unavailable',
-            );
-          }
+          final snapshot = await _watchSnapshot(watchUrl);
           final response = await _callPlugin(widget.playbackFnPath, {
             'watchUrl': watchUrl.toString(),
             'snapshot': snapshot,
           });
-          final detail = await _callPlugin(widget.detailFnPath, {
-            'watchUrl': watchUrl.toString(),
-            'snapshot': snapshot,
-          });
-          return NativePlaybackSession.fromPluginResponse(
+          final detail = await _watchDetails(watchUrl, snapshot);
+          final media = NativePlaybackSession.fromPluginResponse(
             response,
             watchUrl: watchUrl,
-            detailResponse: detail,
           );
+          return detail.withSources(media.sources);
         }, epoch),
       );
       try {
@@ -2645,6 +3422,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     } finally {
       _refreshWatchUrl = null;
       _refreshCompleter = null;
+      if (_browserNeedsRecovery) unawaited(_recoverBrowserDocument());
     }
   }
 
@@ -2656,6 +3434,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     if (!videoSiteDocumentMatches(_requestedUrl, loadedUri)) return;
     final uri = _requestedUrl;
     final epoch = _loadEpoch;
+    final accountGeneration = _accountGeneration;
     if (_parsingEpoch == epoch) return;
     _parsingEpoch = epoch;
     try {
@@ -2674,6 +3453,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         }
         return;
       }
+      if (_stopBlockedDocument(state, uri)) return;
       if (_authenticationReady(state) && _hasNativePage(uri)) {
         final raw = await _evaluate(videoSiteProfileLinkScript);
         if (!mounted || epoch != _loadEpoch) return;
@@ -2710,6 +3490,14 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         _showVerification(epoch);
         return;
       }
+      if (_documentReadFailure != null) {
+        _showLoadError(
+          reason: 'document-http-error',
+          path: uri.path,
+          error: _documentReadFailure,
+        );
+        return;
+      }
       if (!(_websiteVisible ? state.websiteReady : state.nativeReady)) {
         _startLoadWatchdog(uri);
         return;
@@ -2719,7 +3507,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       }
       _clearVerification();
       _documentLoading = false;
+      if (!_currentAccountDocument && _resumeAccountCatalog()) return;
+      if (!_currentAccountDocument && _accountRefresh?.from == uri) return;
       if (_websiteVisible) {
+        unawaited(_captureAccountSession());
         await _updateWebsitePresentation();
         if (mounted && epoch == _loadEpoch) {
           setState(() {
@@ -2751,6 +3542,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           );
           if (!mounted || epoch != _loadEpoch) return;
           if ((profile?.toString() ?? '').isEmpty && signedOut == true) {
+            await _accountSync.recordSignOut(widget.source);
+            if (!mounted || epoch != _loadEpoch) return;
             _resetAccountTask();
             _profile = {'status': 'signedOut'};
             _captureOwnIdentity();
@@ -2783,53 +3576,30 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       });
       if (uri.path == '/watch') {
         Map<String, dynamic>? detailSnapshot;
-        final detail = await _onceAfterDomSettles(() async {
-          final snapshot = detailSnapshot = await _snapshot(true);
-          final result = await _callPlugin(widget.detailFnPath, {
-            'watchUrl': uri.toString(),
-            'snapshot': snapshot,
-          });
-          if (asJsonMap(result['data'])['title']?.toString().isEmpty != false) {
-            throw const FormatException('Video detail unavailable');
-          }
-          return result;
+        var session = await _onceAfterDomSettles(() async {
+          final snapshot = detailSnapshot = await _watchSnapshot(uri);
+          return _watchDetails(uri, snapshot);
         }, epoch);
         if (!mounted || epoch != _loadEpoch) return;
-        NativePlaybackSession session;
-        try {
-          var initialSnapshot = detailSnapshot;
-          session = await _onceAfterDomSettles(() async {
-            // Detail and media sources are in the same snapshot. Retry reads
-            // a newer DOM only if the first source has not appeared yet.
-            final snapshot = initialSnapshot ?? await _snapshot(true);
-            initialSnapshot = null;
-            final playback = await _callPlugin(widget.playbackFnPath, {
-              'watchUrl': uri.toString(),
-              'snapshot': snapshot,
-            });
-            return NativePlaybackSession.fromPluginResponse(
-              playback,
-              watchUrl: uri,
-              detailResponse: detail,
-            );
-          }, epoch);
-        } catch (_) {
-          // A playable URL can be delayed or expire independently of the
-          // detail. Preserve the native page with retry and website actions.
-          session = NativePlaybackSession.fromDetailResponse(
-            detail,
-            watchUrl: uri,
-          );
+        var operations = widget.nativeSiteActions
+            ? VideoSiteOperations(
+                page: uri,
+                evaluate: (script) => _evaluate(script),
+                onMutation: _invalidateCatalogCaches,
+                onUncertainWrite: _invalidateCatalogCaches,
+                drafts: _commentDrafts,
+              )
+            : null;
+        // Read the controls from the current document before exposing them.
+        // This is a bounded DOM read. Playlists and comments load on demand.
+        final initialSiteInteraction = await operations?.readInteraction();
+        if (!mounted ||
+            epoch != _loadEpoch ||
+            accountGeneration != _accountGeneration ||
+            ModalRoute.of(context)?.isActive != true) {
+          operations?.dispose();
+          return;
         }
-        if (!mounted || epoch != _loadEpoch) return;
-        try {
-          await _evaluate(
-            'document.querySelector(${jsonEncode(widget.selectors['video'])})?.pause();',
-          );
-        } catch (_) {
-          // A navigation between extraction and playback can remove the node.
-        }
-        if (!mounted || epoch != _loadEpoch) return;
         var verifyRequested = false;
         final initialPosition =
             videoSiteDocumentMatches(_verificationResumeUrl, uri)
@@ -2840,27 +3610,76 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         _detailVisible = true;
         _siteVerificationRequired.value = false;
         _rememberCreator(session.creator);
+        bool currentDetail() =>
+            mounted && epoch == _loadEpoch && _detailVisible;
+        final initialMedia = () async {
+          try {
+            // Reuse the validated document snapshot for media. If its source
+            // tags have not arrived, retry once from a fresh snapshot.
+            var initialSnapshot = detailSnapshot;
+            final resolved = await _onceAfterDomSettles(() async {
+              if (!currentDetail()) throw StateError('Video detail closed');
+              final snapshot = initialSnapshot ?? await _watchSnapshot(uri);
+              initialSnapshot = null;
+              if (!currentDetail()) throw StateError('Video detail closed');
+              final playback = await _callPlugin(widget.playbackFnPath, {
+                'watchUrl': uri.toString(),
+                'snapshot': snapshot,
+              });
+              return NativePlaybackSession.fromPluginResponse(
+                playback,
+                watchUrl: uri,
+              ).sources;
+            }, epoch);
+            if (!currentDetail()) return null;
+            await _networkContext?.prepare();
+            if (!currentDetail()) return null;
+            session = session.withSources(resolved);
+            return session;
+          } catch (_) {
+            return null;
+          }
+        }();
+        // A website video should stay paused even while native media is pending.
+        unawaited(
+          _evaluate(
+            'if (location.pathname === "/watch" && '
+            'new URL(location.href).searchParams.get("v") === '
+            '${jsonEncode(uri.queryParameters['v'])}) '
+            'document.querySelector(${jsonEncode(widget.selectors['video'])})?.pause();',
+          ).then<void>((_) {}, onError: (Object _) {}),
+        );
         var detailLocation = _location;
         final initialPlaybackState =
             videoSiteDocumentMatches(_pendingPlaybackReturn?.url, uri)
             ? _pendingPlaybackReturn?.state
             : null;
         _pendingPlaybackReturn = null;
-        var operations = widget.nativeSiteActions
-            ? VideoSiteOperations(
-                page: uri,
-                evaluate: (script) => _evaluate(script),
-                onMutation: _invalidateCatalogCaches,
-                onUncertainWrite: _invalidateCatalogCaches,
-                drafts: _commentDrafts,
-              )
-            : null;
         Future<NativePlaybackSession>? episodeDocumentTask;
+        final callerRoute = ModalRoute.of(context);
+        final callerNavigator = callerRoute?.navigator;
         final useWebsite = await Navigator.of(context)
             .push<bool>(
               videoPageRoute<bool>(
+                networkSource: widget.source,
+                network: _network,
                 builder: (_) => NativeVideoPage(
                   session: session,
+                  initialMedia: initialMedia,
+                  networkContext: _networkContext,
+                  playerFactory: _networkContext == null
+                      ? null
+                      : (source) =>
+                            _networkContext!.player(source.url, source.headers),
+                  analyzePlayback: (context, current, error) =>
+                      showApiPlaybackAnalysis(
+                        context,
+                        source: widget.source,
+                        network: _networkContext,
+                        session: current,
+                        lineCount: session.sources.length,
+                        platformError: error,
+                      ),
                   loadEpisode: (next) async {
                     if (!_isFirstParty(next) ||
                         next.path != '/watch' ||
@@ -2869,6 +3688,11 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                         ).hasMatch(next.queryParameters['v'] ?? '')) {
                       throw const FormatException('Invalid episode');
                     }
+                    // Both reads share the same WebView document. Finish the
+                    // bounded initial parse before moving it to another episode.
+                    await initialMedia;
+                    if (!currentDetail())
+                      throw StateError('Video detail closed');
                     final task = episodeDocumentTask = _refreshPlayback(next);
                     late NativePlaybackSession nextSession;
                     try {
@@ -2899,6 +3723,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                   },
                   source: widget.source,
                   siteOperations: operations,
+                  initialSiteInteraction: initialSiteInteraction,
                   onOpenAccount: widget.nativeAuth
                       ? () {
                           _loginReturnUrl = session.watchUrl;
@@ -2957,7 +3782,17 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                       ? null
                       : (target) => _queueTagFilter(target: target),
                   refreshSession: _sourceOptions.refreshExpiredSources
-                      ? () => _refreshPlayback(session.watchUrl)
+                      ? () async {
+                          await initialMedia;
+                          if (!currentDetail()) {
+                            throw StateError('Video detail closed');
+                          }
+                          final current = session;
+                          final refreshed = await _refreshPlayback(
+                            current.watchUrl,
+                          );
+                          return current.withSources(refreshed.sources);
+                        }
                       : null,
                   preferredSource: _sourceOptions.preferredSource,
                 ),
@@ -3018,6 +3853,16 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
             );
           } else if (await _restoreWatchOrigin()) {
             return;
+          } else if (widget.returnToCallerAfterPlayback) {
+            if (callerRoute != null &&
+                callerRoute.isActive &&
+                callerNavigator != null) {
+              // The player is already reversing to this temporary catalog
+              // route. Remove it so that one animation returns directly to
+              // the caller instead of starting a second route pop.
+              callerNavigator.removeRoute(callerRoute);
+            }
+            return;
           } else if (_returnToPersonal) {
             _showPersonal(remember: false);
           } else if (_sections.isNotEmpty || _videos.isNotEmpty) {
@@ -3038,14 +3883,25 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         _showLoadError(reason: 'unsupported-native-page', path: uri.path);
         return;
       }
+      final authentication = _isAuthenticationPage(uri);
+      if (!authentication && !_currentAccountDocument) return;
       final result = await _onceAfterDomSettles(() async {
         final snapshot = await _snapshot(false);
+        if (!mounted ||
+            epoch != _loadEpoch ||
+            accountGeneration != _accountGeneration) {
+          throw const PluginSessionChanged();
+        }
         return _callPlugin(widget.catalogFnPath, {
           'pageUrl': uri.toString(),
           'snapshot': snapshot,
         });
       }, epoch);
-      if (!mounted || epoch != _loadEpoch) return;
+      if (!mounted ||
+          epoch != _loadEpoch ||
+          accountGeneration != _accountGeneration ||
+          !authentication && !_currentAccountDocument)
+        return;
       final data = Map<String, dynamic>.from(asJsonMap(result['data']));
       if (_accountEntryTabId == _activeTab) {
         _accountEntryTabId = null;
@@ -3109,14 +3965,49 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         );
         return;
       }
+      final responseOwner = _catalogOwner(data);
+      final pageOwner = _personalRoot(uri);
+      final privateList = _recordPrivacyPage(uri) && pageOwner != null;
+      if (privateList && responseOwner != pageOwner) {
+        data['sections'] = const [];
+        data['videos'] = const [];
+        data['paging'] = const {};
+      }
       final key = _catalogKey(uri);
-      if (!const {'/login', '/register'}.contains(uri.path)) {
+      if (_documentCacheGeneration == _catalogCache.generation &&
+          !authentication &&
+          (!_recordPrivacyPage(uri) ||
+              responseOwner != null &&
+                  responseOwner == _ownIdentityRoot &&
+                  (pageOwner == null || responseOwner == pageOwner))) {
         _catalogCache[key] = data;
       }
-      setState(() => _applyCatalog(data));
+      setState(() {
+        if (_refreshingCatalog) _catalogImageRefresh = Object();
+        _applyCatalog(data);
+      });
+      final owner = _ownIdentityRoot;
+      if (_personalSnapshotAllowed(uri, owner) &&
+          _currentAccountDocument &&
+          responseOwner == owner) {
+        unawaited(
+          _personalSnapshots
+              .write(
+                VideoPersonalSnapshotStore.scope(widget.source, owner!, uri),
+                data,
+                _documentPersonalCacheGeneration,
+              )
+              .catchError((Object _) {}),
+        );
+      }
+      _personalContinuationTarget = null;
+      _personalContinuationFailed = false;
       _recordCatalogFrame('fresh-frame-ready');
     } catch (error) {
-      if (!mounted || epoch != _loadEpoch) return;
+      if (!mounted ||
+          epoch != _loadEpoch ||
+          accountGeneration != _accountGeneration)
+        return;
       if (_verificationVisible) {
         setState(() {
           _verificationStalled = true;
@@ -3146,10 +4037,20 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       if (!mounted || epoch != _loadEpoch) return;
       final diagnostic = await _safeDiagnostic(uri, error);
       if (!mounted || epoch != _loadEpoch) return;
+      // The catalog plugin parses a captured DOM; its deadline is not proof
+      // of a failed network GET. Keep parser failures out of transport retries.
       _showLoadError(reason: 'parser-failed', path: uri.path);
       setState(() => _diagnostic = diagnostic);
     } finally {
       if (_parsingEpoch == epoch) _parsingEpoch = null;
+      // A popped detail first restores _requestedUrl to its source above.
+      // Only now can an evicted data document resume without opening another
+      // detail route or stealing a still-running playback-document refresh.
+      if (_browserNeedsRecovery &&
+          mounted &&
+          ModalRoute.of(context)?.isActive == true) {
+        unawaited(_recoverBrowserDocument());
+      }
     }
   }
 
@@ -3162,10 +4063,16 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       state.websiteReady;
 
   void _applyCatalog(Map<String, dynamic> data) {
+    _readRecovery.succeeded();
+    _completeAutomaticRead();
     if (widget.searchFilters case final base?) {
-      _siteFilters = (_siteFilters ?? base).merge(
-        VideoFilterSchema.fromWire(asJsonMap(data['searchFilters'])),
+      final observed = VideoFilterSchema.fromWire(
+        asJsonMap(data['searchFilters']),
       );
+      _siteFilters = (_siteFilters ?? base).merge(observed);
+      if (observed.tagGroups.isNotEmpty) {
+        _observedTagGroups = observed.tagGroups;
+      }
     }
     final siteCategories = <NativeCatalogCategory>[];
     for (final item in asJsonList(data['categories']).take(30)) {
@@ -3207,7 +4114,19 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     _authRevision++;
     _creators = asJsonList(data['creators']).map(asJsonMap).toList();
     _creatorGroups = asJsonList(data['creatorGroups']).map(asJsonMap).toList();
-    _captureOwnIdentity();
+    if (_currentAccountDocument) _captureOwnIdentity();
+    if (_personalSnapshotAllowed(_requestedUrl, _ownIdentityRoot) &&
+        _profile['status'] == 'signedIn' &&
+        _personalRoot(Uri.tryParse('${_profile['profileUrl'] ?? ''}')) ==
+            _ownIdentityRoot) {
+      _personalPageWindow.put(
+        _personalPreferenceScope(_requestedUrl),
+        _requestedUrl,
+        data,
+      );
+      _videos = _personalPageWindow.videos;
+      _paging = _personalPageWindow.paging;
+    }
     _catalogTitle = data['title']?.toString() ?? '';
     _websiteVisible = false;
     _refreshingCatalog = false;
@@ -3260,6 +4179,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       Uri.tryParse(_profile['profileUrl']?.toString() ?? ''),
     );
     if (_profile['status'] == 'signedIn' && observedOwner != null) {
+      unawaited(_captureAccountSession());
       // Header identity is authoritative even while viewing someone else's profile.
       _bindCreatorOwner(observedOwner);
       _commentDrafts.bindOwner(observedOwner);
@@ -3275,6 +4195,12 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       _ownIdentity = const {};
       _ownIdentityRoot = null;
       _personalStorage = PageStorageBucket();
+      _personalPreferencesLoaded.clear();
+      _personalQueries.clear();
+      _personalKeywordScopes.clear();
+      _personalSorts.clear();
+      _personalFacets.clear();
+      _personalViews.clear();
       _subscriptionStorage = PageStorageBucket();
       _invalidateCatalogCaches();
       return;
@@ -3290,6 +4216,12 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     if (_ownIdentityRoot != null && _ownIdentityRoot != root) {
       _ownIdentity = const {};
       _personalStorage = PageStorageBucket();
+      _personalPreferencesLoaded.clear();
+      _personalQueries.clear();
+      _personalKeywordScopes.clear();
+      _personalSorts.clear();
+      _personalFacets.clear();
+      _personalViews.clear();
       _subscriptionStorage = PageStorageBucket();
       _invalidateCatalogCaches();
     }
@@ -3348,9 +4280,12 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       _hasPersonalShell && _personalTabs.isNotEmpty;
   bool get _inPersonalLibrary =>
       !_websiteVisible &&
-      _personalOverviewEnabled &&
-      _requestedUrl.path.replaceFirst(RegExp(r'/$'), '') !=
-          _ownIdentityRoot!.path.replaceFirst(RegExp(r'/$'), '');
+      !_verificationVisible &&
+      ((_personalOverviewEnabled &&
+              _requestedUrl.path.replaceFirst(RegExp(r'/$'), '') !=
+                  _ownIdentityRoot!.path.replaceFirst(RegExp(r'/$'), '')) ||
+          _requestedUrl.path == '/playlist' &&
+              _recordPrivacyPage(_requestedUrl));
 
   String _personalTabTitle(({String title, Uri url}) tab) =>
       switch (tab.url.path.split('/').last) {
@@ -3361,28 +4296,70 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         _ => tab.title,
       };
 
+  Future<List<Map<String, dynamic>>?> _readCachedPersonalRecent(
+    Uri page,
+  ) async {
+    final owner = _ownIdentityRoot, epoch = _loadEpoch;
+    final generation = _accountGeneration;
+    if (!_currentAccountDocument || !_personalSnapshotAllowed(page, owner)) {
+      return null;
+    }
+    final scope = VideoPersonalSnapshotStore.scope(widget.source, owner!, page);
+    final value =
+        await _personalSnapshots.read(scope) ??
+        await _personalSnapshots.read('$scope|preview');
+    if (!mounted ||
+        epoch != _loadEpoch ||
+        generation != _accountGeneration ||
+        owner != _ownIdentityRoot)
+      return null;
+    return value == null
+        ? null
+        : asJsonList(value['videos']).map(asJsonMap).take(4).toList();
+  }
+
   Future<List<Map<String, dynamic>>> _readPersonalRecent(Uri history) async {
     final owner = _ownIdentityRoot;
-    final epoch = _loadEpoch;
-    if (owner == null ||
-        history.path != '${owner.path}/histories' ||
+    final epoch = _loadEpoch, cacheGeneration = _personalSnapshots.generation;
+    final generation = _accountGeneration;
+    bool current() =>
+        mounted &&
+        owner == _ownIdentityRoot &&
+        epoch == _loadEpoch &&
+        generation == _accountGeneration &&
+        !_websiteVisible;
+    if (!_currentAccountDocument ||
+        owner == null ||
+        !const [
+          'histories',
+          'saves',
+          'likes',
+          'playlists',
+        ].any((kind) => history.path == '${owner.path}/$kind') ||
         !_isFirstParty(history) ||
         !_personalTabs.any((tab) => tab.url == history)) {
       throw StateError('History unavailable');
     }
     final key = _catalogKey(history);
-    final full = _catalogCache[key];
+    final full = _cachedCatalog(history);
     if (full != null && _catalogCache.isFresh(key)) {
       return asJsonList(full['videos'])
           .map(asJsonMap)
-          .where((card) => card['watchUrl'] != null)
-          .take(3)
+          .where((card) => card['watchUrl'] != null || card['pageUrl'] != null)
+          .take(4)
           .toList();
     }
-    final cached = _personalRecentCache[owner];
-    if (cached != null &&
-        DateTime.now().difference(cached.readAt) < const Duration(minutes: 2)) {
-      return cached.videos;
+    final snapshotScope = VideoPersonalSnapshotStore.scope(
+      widget.source,
+      owner,
+      history,
+    );
+    final persistent =
+        await _personalSnapshots.read(snapshotScope) ??
+        await _personalSnapshots.read('$snapshotScope|preview');
+    if (!current()) throw const PluginSessionChanged();
+    if (persistent != null && _personalSnapshots.fresh(persistent)) {
+      return asJsonList(persistent['videos']).map(asJsonMap).take(4).toList();
     }
     final script = videoPersonalRecentScript(history, widget.selectors);
     final web = _web;
@@ -3391,32 +4368,318 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       web,
       script,
     ).timeout(const Duration(seconds: 9));
-    if (!mounted ||
-        owner != _ownIdentityRoot ||
-        epoch != _loadEpoch ||
-        _websiteVisible) {
-      throw StateError('Account page changed');
-    }
+    if (!current()) throw const PluginSessionChanged();
     final data = asJsonMap(raw is String ? jsonDecode(raw) : raw);
     if (data['status'] != 'ok') throw StateError('History unavailable');
     final parsed = await _callPlugin(widget.catalogFnPath, {
       'pageUrl': history.toString(),
       'snapshot': asJsonMap(data['snapshot']),
     });
-    if (!mounted ||
-        owner != _ownIdentityRoot ||
-        epoch != _loadEpoch ||
-        _websiteVisible) {
-      throw StateError('Account page changed');
-    }
-    final videos = asJsonList(
-      asJsonMap(parsed['data'])['videos'],
-    ).map(asJsonMap).where((card) => card['watchUrl'] != null).take(3).toList();
-    _personalRecentCache[owner] = (readAt: DateTime.now(), videos: videos);
+    if (!current()) throw const PluginSessionChanged();
+    final videos = asJsonList(asJsonMap(parsed['data'])['videos'])
+        .map(asJsonMap)
+        .where((card) => card['watchUrl'] != null || card['pageUrl'] != null)
+        .take(4)
+        .toList();
+    _personalRecentCache[history] = (readAt: DateTime.now(), videos: videos);
+    await _personalSnapshots.write('$snapshotScope|preview', {
+      'videos': videos,
+    }, cacheGeneration);
+    if (!current()) throw const PluginSessionChanged();
     return videos;
   }
 
-  Widget _catalogBody() {
+  Future<void> _loadMorePersonal({bool retry = false}) async {
+    if (!mounted ||
+        !_currentAccountDocument ||
+        _documentLoading ||
+        _busy ||
+        _websiteVisible ||
+        (_personalContinuationTarget != null && !retry) ||
+        (_personalContinuationFailed && !retry))
+      return;
+    final owner = _ownIdentityRoot, scope = _personalScope(_requestedUrl);
+    final next = _searchPage(_paging['nextUrl']);
+    if (owner == null ||
+        next == null ||
+        _personalScope(next) != scope ||
+        !_personalSnapshotAllowed(next, owner) ||
+        _personalPageWindow.contains(next))
+      return;
+    setState(() {
+      _personalContinuationTarget = next;
+      _personalContinuationFailed = false;
+    });
+    await _load(next, rememberHistory: false, reuseFresh: true);
+  }
+
+  bool _personalSnapshotAllowed(Uri page, Uri? owner) =>
+      owner != null &&
+      _creatorDirectoryOwner == owner &&
+      _isFirstParty(page) &&
+      (_personalRoot(page) == owner &&
+              RegExp(
+                r'/(histories|saves|likes|playlists)/?$',
+              ).hasMatch(page.path) ||
+          page.path == '/playlist' && _recordPrivacyPage(page));
+
+  String _personalPreferenceScope(Uri page) => VideoPersonalSnapshotStore.scope(
+    widget.source,
+    _ownIdentityRoot ?? _personalRoot(page) ?? widget.homeUrl,
+    _personalScope(page),
+  );
+
+  Future<void> _readPersonalPreferences(Uri page) async {
+    final scope = _personalScope(page), key = _personalPreferenceScope(page);
+    if (!_personalPreferencesLoaded.add(key)) return;
+    final owner = _ownIdentityRoot;
+    final generation = _accountGeneration;
+    final values = await VideoPersonalPreferences.read(key);
+    final view = await CollectionViewPreferences.read(key);
+    if (!mounted ||
+        owner != _ownIdentityRoot ||
+        generation != _accountGeneration)
+      return;
+    _personalViews[scope] = view ?? 'grid';
+    _personalQueries[scope] = values['query'] is String
+        ? values['query'] as String
+        : '';
+    _personalKeywordScopes[scope] =
+        parseKeywordSearchScope(values['keywordScope']) ??
+        KeywordSearchScope.all;
+    _personalSorts[scope] = values['sort'] == 'title' ? 'title' : 'source';
+    final facets = asJsonMap(values['facets']);
+    _personalFacets[scope] = ShelfFacetSelection(
+      values: {
+        for (final entry in facets.entries)
+          if (shelfFacetDimensions.contains(entry.key) && entry.value is List)
+            entry.key: (entry.value as List).whereType<String>().toSet(),
+      },
+    );
+  }
+
+  void _savePersonalPreferences(Uri page) {
+    final scope = _personalScope(page), key = _personalPreferenceScope(page);
+    unawaited(
+      VideoPersonalPreferences.write(key, {
+        'query': _personalQueries[scope] ?? '',
+        'keywordScope':
+            (_personalKeywordScopes[scope] ?? KeywordSearchScope.all).name,
+        'sort': _personalSorts[scope] ?? 'source',
+        'facets': {
+          for (final entry
+              in (_personalFacets[scope]?.values ?? <String, Set<String>>{})
+                  .entries)
+            entry.key: entry.value.toList(),
+        },
+      }).catchError((Object _) {
+        if (mounted) showErrorToast(t.videoLibrary.saveFailed);
+      }),
+    );
+  }
+
+  Uri _personalScope(Uri page) => page.replace(
+    queryParameters: page.path == '/playlist'
+        ? {'list': page.queryParameters['list'] ?? ''}
+        : const <String, String>{},
+    fragment: '',
+  );
+  ShelfFacetEntry _personalFacet(Map<String, dynamic> row) {
+    Set<String> values(Object? raw) => raw is Iterable
+        ? raw
+              .whereType<String>()
+              .map((v) => v.trim())
+              .where((v) => v.isNotEmpty)
+              .toSet()
+        : raw is String && raw.trim().isNotEmpty
+        ? {raw.trim()}
+        : <String>{};
+    final fields = <String, Set<String>>{
+      'tags': {...values(row['tags']), ...values(row['genres'])},
+      'category': values(row['category']),
+      'author': values(row['creatorName']),
+      'year': values(row['year']),
+      'area': values(row['area']),
+      'language': values(row['language']),
+    }..removeWhere((_, values) => values.isEmpty);
+    return ShelfFacetEntry(
+      key: '${row['watchUrl'] ?? row['pageUrl'] ?? ''}',
+      source: widget.source,
+      searchText:
+          '${row['title'] ?? ''} ${row['subtitle'] ?? ''} ${fields.values.expand((v) => v).join(' ')}',
+      fields: fields,
+    );
+  }
+
+  List<Map<String, dynamic>> _personalFiltered(
+    List<Map<String, dynamic>> rows,
+    Uri page,
+  ) {
+    final scope = _personalScope(page),
+        query = normalizePublicSearchText(
+          _personalQueries[_personalScope(page)] ?? '',
+        );
+    final facets = _personalFacets[scope] ?? const ShelfFacetSelection();
+    final searchAll = _personalKeywordScopes[scope] != KeywordSearchScope.title;
+    final result = rows.where((row) {
+      final entry = _personalFacet(row);
+      return (query.isEmpty ||
+              normalizePublicSearchText(
+                searchAll ? entry.searchText : '${row['title'] ?? ''}',
+              ).contains(query)) &&
+          shelfFacetMatches(entry, facets, currentFolder: null);
+    }).toList();
+    if (_personalSorts[scope] == 'title') {
+      result.sort(
+        (a, b) => '${a['title'] ?? ''}'.compareTo('${b['title'] ?? ''}'),
+      );
+    }
+    return result;
+  }
+
+  Future<void> _personalFilter(
+    List<Map<String, dynamic>> rows,
+    Uri page,
+  ) async {
+    if (_personalFilterOpen) return;
+    _personalFilterOpen = true;
+    _personalSearchFocus.unfocus();
+    final scope = _personalScope(page), owner = _ownIdentityRoot;
+    try {
+      final selected = await showShelfFilterSheet(
+        context,
+        entries: rows.map(_personalFacet).toList(),
+        initial: _personalFacets[scope] ?? const ShelfFacetSelection(),
+        preferenceKey: _personalPreferenceScope(page),
+        scopeLabel: t.videoLibrary.localCatalogSearchHint,
+        currentFolder: null,
+        hierarchical: false,
+        focusedLayout: true,
+      );
+      if (!mounted ||
+          owner != _ownIdentityRoot ||
+          scope != _personalScope(_requestedUrl) ||
+          selected == null) {
+        return;
+      }
+      setState(() => _personalFacets[scope] = selected);
+      _savePersonalPreferences(page);
+    } finally {
+      _personalFilterOpen = false;
+    }
+  }
+
+  void _togglePersonalView(Uri page) {
+    final scope = _personalScope(page), owner = _ownIdentityRoot;
+    if (scope != _personalScope(_requestedUrl)) return;
+    final old = _personalViews[scope] ?? 'grid';
+    final next = old == 'list' ? 'grid' : 'list';
+    _personalSearchFocus.unfocus();
+    setState(() => _personalViews[scope] = next);
+    unawaited(
+      CollectionViewPreferences.write(
+        _personalPreferenceScope(page),
+        next,
+      ).catchError((Object _) {
+        if (mounted &&
+            owner == _ownIdentityRoot &&
+            _personalViews[scope] == next) {
+          setState(() => _personalViews[scope] = old);
+          showErrorToast(t.videoLibrary.saveFailed);
+        }
+      }),
+    );
+  }
+
+  PreferredSizeWidget _personalListAppBar() {
+    final scope = _personalScope(_requestedUrl);
+    final title =
+        _personalTabs
+            .where((tab) => tab.url.path == _requestedUrl.path)
+            .map(_personalTabTitle)
+            .firstOrNull ??
+        (_catalogTitle.isNotEmpty ? _catalogTitle : t.videoPersonal.playlists);
+    return AppBar(
+      automaticallyImplyLeading: false,
+      titleSpacing: 0,
+      title: SourceVideoListHeader(
+        keyPrefix: 'personal-records',
+        leading: SourceBackButton(onPressed: () => unawaited(_goBackInside())),
+        title: title,
+        searching: _personalSearching,
+        searchScope: KeywordScopeMenu(
+          scope: _personalKeywordScopes[scope] ?? KeywordSearchScope.all,
+          compact: true,
+          onChanged: (value) {
+            if (!mounted || scope != _personalScope(_requestedUrl)) return;
+            setState(() => _personalKeywordScopes[scope] = value);
+            _savePersonalPreferences(_requestedUrl);
+          },
+        ),
+        searchField: SearchQueryField(
+          query: _personalQueries[scope] ?? '',
+          inline: true,
+          focusNode: _personalSearchFocus,
+          closeOnSubmit: false,
+          hintText: t.videoLibrary.localCatalogSearchHint,
+          onChanged: (value) {
+            setState(() => _personalQueries[scope] = value);
+            _savePersonalPreferences(_requestedUrl);
+          },
+        ),
+        onSearch: () {
+          setState(() => _personalSearching = !_personalSearching);
+          if (_personalSearching) {
+            requestSearchKeyboard(
+              _personalSearchFocus,
+              isCurrent: () =>
+                  mounted &&
+                  _inPersonalLibrary &&
+                  _personalSearching &&
+                  scope == _personalScope(_requestedUrl),
+            );
+          } else {
+            _personalSearchFocus.unfocus();
+          }
+        },
+        options: {
+          'refresh': t.common.refresh,
+          if (widget.nativeSiteActions && _playlistEditor['supported'] == true)
+            'playlist-edit': t.videoCommunity.editPlaylist,
+          'website': t.videoPlayback.backToWeb,
+        },
+        onMore: (action) {
+          _personalSearchFocus.unfocus();
+          if (action == 'refresh') {
+            _personalPageWindow.clear();
+            unawaited(
+              _load(_personalScope(_requestedUrl), rememberHistory: false),
+            );
+          } else if (action == 'playlist-edit') {
+            unawaited(_editPlaylist());
+          } else if (action == 'website') {
+            unawaited(
+              _openWebsitePage(_requestedUrl, fallback: true, userChoice: true),
+            );
+          }
+        },
+      ),
+    );
+  }
+
+  bool _recordPrivacyPage(Uri page) =>
+      _isFirstParty(page) &&
+      (RegExp(
+            r'^/user/[0-9]+/(?:histories|saves|likes|playlists)/?$',
+          ).hasMatch(page.path) ||
+          page.path == '/playlist' &&
+              (page.queryParameters['list']?.isNotEmpty ?? false));
+
+  Widget _catalogBody() => _recordPrivacyPage(_requestedUrl)
+      ? CollectionCoverPrivacyScope(child: _catalogBodyContent())
+      : _catalogBodyContent();
+
+  Widget _catalogBodyContent() {
     if (_recoveryPage case final page?) {
       if (!_recoveryReady) {
         return const Center(child: CircularProgressIndicator());
@@ -3534,12 +4797,16 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       ready: !_busy,
       revision: _loadEpoch,
       enabled: _animateCatalogArrival,
-      child: _nativeContent(contentOnly: personal),
+      child: PageImageRefreshScope(
+        revision: _catalogImageRefresh,
+        child: _nativeContent(contentOnly: personal),
+      ),
     );
     if (_hasPersonalShell) {
       return PageStorage(
         bucket: _personalStorage,
         child: VideoPersonalShell(
+          showTabs: false,
           key: ValueKey(_ownIdentityRoot),
           account: _personalDisplayAccount,
           page: _ownIdentityRoot!,
@@ -3561,7 +4828,20 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                   onAccountSettings: _ownIdentity['settingsUrl'] is String
                       ? () => unawaited(_openAccountSettings())
                       : null,
+                  showPrivacyAction: false,
+                  localRecords: SourceProfileLocalVideoPreviews(
+                    source: widget.source,
+                    readDownloads: widget.readLocalDownloads,
+                    active:
+                        !_websiteVisible &&
+                        ModalRoute.of(context)?.isCurrent != false,
+                    responsivePreview: true,
+                    groupDownloads: true,
+                    showPrivacyAction: false,
+                    onHistory: () => unawaited(_showPersonal()),
+                  ),
                   readRecent: _readPersonalRecent,
+                  readCached: _readCachedPersonalRecent,
                   readReady: !_documentLoading && !_busy,
                 ),
           onTab: (target) {
@@ -3736,6 +5016,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     double width, {
     bool subtitle = true,
     bool statistics = false,
+    bool portrait = false,
   }) {
     double lineHeight(TextStyle style) {
       final painter = TextPainter(
@@ -3750,7 +5031,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
 
     // Keep both title lines and the author at the user's chosen text scale.
     // Fixed card aspect ratios clip metadata when accessibility text grows.
-    return width * 9 / 16 +
+    return (portrait ? width * 3 / 2 : width * 9 / 16) +
         6 +
         lineHeight(_cardTitleStyle) * 2 +
         ((subtitle ? 1 : 0) + (statistics ? 1 : 0)) *
@@ -3758,7 +5039,11 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         4;
   }
 
-  Widget _videoCard(Map<String, dynamic> card, {bool showSubtitle = true}) {
+  Widget _videoCard(
+    Map<String, dynamic> card, {
+    bool showSubtitle = true,
+    bool portrait = false,
+  }) {
     final title = card['title']?.toString() ?? '';
     final cover = card['coverUrl']?.toString() ?? '';
     final metadata = VideoPublicMetadata.fromWire(card);
@@ -3777,7 +5062,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           AspectRatio(
-            aspectRatio: 16 / 9,
+            aspectRatio: portrait ? 2 / 3 : 16 / 9,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(12),
               child: VideoCardCover(
@@ -3830,6 +5115,18 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       return NativeVideoAuthForm(
         key: ValueKey('native-auth.${authPage.path}'),
         revision: _authRevision,
+        loginUsername: _accountLoginUsername,
+        credentials: _accountLoginUsername == null
+            ? VideoAccountCredentials.load(widget.source, widget.homeUrl)
+            : null,
+        saveCredentials: (account, password) => VideoAccountCredentials.save(
+          widget.source,
+          widget.homeUrl,
+          account,
+          password,
+        ),
+        clearCredentials: () =>
+            VideoAccountCredentials.clear(widget.source, widget.homeUrl),
         registration: authPage.path == '/register',
         hasRemember: _authForm['remember'] == true,
         onForgotPassword:
@@ -3849,6 +5146,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                 ),
               ),
         siteRejected: _authForm['failed'] == true,
+        siteErrorKind: _authForm['errorKind'] is String
+            ? _authForm['errorKind'] as String
+            : '',
         submit: (email, password, name, remember) async {
           if (!videoSiteDocumentMatches(authPage, _requestedUrl) ||
               _documentLoading ||
@@ -3885,7 +5185,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     final sections = preview == null
         ? _sections
         : asJsonList(preview['sections']).map(asJsonMap).toList();
-    final videos = preview == null
+    final unfilteredVideos = preview == null
         ? _videos
         : asJsonList(preview['videos']).map(asJsonMap).toList();
     final paging = preview == null ? _paging : asJsonMap(preview['paging']);
@@ -3903,6 +5203,135 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         ? _catalogTitle
         : preview['title']?.toString() ?? '';
     final currentPage = page ?? _requestedUrl;
+    final recordCollection = _recordPrivacyPage(currentPage);
+    final titleOnly = _keywordScopeFor(currentPage) == KeywordSearchScope.title;
+    final exactTag = _exactKeywordTag(currentPage);
+    final matchesTitle = titleOnly
+        ? keywordTitleMatcher(currentPage.queryParameters['query'] ?? '')
+        : null;
+    final videos = recordCollection
+        ? _personalFiltered(unfilteredVideos, currentPage)
+        : matchesTitle != null
+        ? unfilteredVideos
+              .where(
+                (row) => matchesTitle([
+                  '${row['title'] ?? ''}',
+                  if (row['alternateTitle'] is String)
+                    row['alternateTitle'] as String,
+                ]),
+              )
+              .toList()
+        : unfilteredVideos;
+    if (recordCollection) {
+      final scope = _personalScope(currentPage);
+      final items = <ApiVideoItem>[];
+      for (final row in videos) {
+        final target = Uri.tryParse(
+          '${row['watchUrl'] ?? row['pageUrl'] ?? ''}',
+        );
+        if (!_isFirstParty(target)) continue;
+        items.add(
+          ApiVideoItem(
+            id: target.toString(),
+            title: '${row['title'] ?? ''}',
+            detailUrl: target!,
+            coverUrl: Uri.tryParse('${row['coverUrl'] ?? ''}'),
+            description: '${row['creatorName'] ?? row['subtitle'] ?? ''}',
+            sourceViews: VideoPublicMetadata.fromWire(row).viewCount,
+            sourceDuration: VideoPublicMetadata.fromWire(row).duration ?? '',
+            year: '${row['year'] ?? ''}',
+            area: '${row['area'] ?? ''}',
+            language: '${row['language'] ?? ''}',
+            genres: (row['tags'] is List
+                ? (row['tags'] as List).join(' / ')
+                : '${row['tags'] ?? ''}'),
+          ),
+        );
+      }
+      return CollectionCoverPrivacyScope(
+        child: ApiVideoCollection(
+          key: PageStorageKey(
+            'video-catalog.${Uri(scheme: currentPage.scheme, host: currentPage.host, path: currentPage.path, queryParameters: currentPage.path == '/playlist' ? {'list': currentPage.queryParameters['list'] ?? ''} : null)}',
+          ),
+          items: items,
+          mode: _personalViews[scope] == 'list'
+              ? ApiVideoView.list
+              : ApiVideoView.grid,
+          storageKey:
+              'hanime-personal.${_personalPreferenceScope(currentPage)}',
+          gridColumns: 3,
+          posterAspectRatio: 2 / 3,
+          onOpen: (item) => unawaited(_load(item.detailUrl)),
+          onNearEnd: () => unawaited(_loadMorePersonal()),
+          header: SourceVideoResultsToolbar(
+            keyPrefix: 'personal-records',
+            count: _searchPage(paging['nextUrl']) == null
+                ? t.videoLibrary.results(count: videos.length)
+                : t.videoLibrary.localCatalogUnknownTotal(
+                    loaded: unfilteredVideos.length,
+                    shown: videos.length,
+                  ),
+            sort: _personalSorts[scope] ?? 'source',
+            sortOptions: {
+              'source': t.videoSource.sourceOrder,
+              'title': t.videoLibrary.titleOrder,
+            },
+            onSort: (value) {
+              if (!mounted || scope != _personalScope(_requestedUrl)) return;
+              _personalSearchFocus.unfocus();
+              setState(() => _personalSorts[scope] = value);
+              _savePersonalPreferences(currentPage);
+            },
+            gridView: _personalViews[scope] != 'list',
+            onToggleView: () => _togglePersonalView(currentPage),
+            filter: SourceFilterIconButton(
+              key: const ValueKey('personal-records.filter'),
+              bare: false,
+              tooltip: (_personalFacets[scope]?.isActive ?? false)
+                  ? t.videoFilters.active
+                  : t.videoFilters.title,
+              active: _personalFacets[scope]?.isActive ?? false,
+              onPressed: _personalFilterOpen
+                  ? null
+                  : () => _personalFilter(unfilteredVideos, currentPage),
+            ),
+          ),
+          emptyState: Center(
+            child: Text(
+              contentOnly
+                  ? t.videoLibrary.noResults
+                  : switch (account['status']) {
+                      'signedOut' => t.videoCommunity.loginRequired,
+                      'unknown' => t.videoPlayback.accountUnconfirmed,
+                      _ => t.videoLibrary.noResults,
+                    },
+            ),
+          ),
+          footer: _searchPage(paging['nextUrl']) == null
+              ? null
+              : Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: _documentLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : TextButton.icon(
+                          key: const ValueKey('personal-records.load-more'),
+                          onPressed: () =>
+                              unawaited(_loadMorePersonal(retry: true)),
+                          icon: Icon(
+                            _personalContinuationFailed
+                                ? Icons.refresh_rounded
+                                : Icons.expand_more_rounded,
+                          ),
+                          label: Text(
+                            _personalContinuationFailed
+                                ? t.common.retry
+                                : t.videoLibrary.continueCatalogSearch,
+                          ),
+                        ),
+                ),
+        ),
+      );
+    }
     final personal =
         widget.nativeAccount &&
         (currentPage.path == '/login' || currentPage.path.startsWith('/user/'));
@@ -3932,209 +5361,235 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     final activeCategory = _categories
         .where((item) => _categorySelected(item.url, page: page))
         .firstOrNull;
-    return CustomScrollView(
-      key: PageStorageKey('video-catalog.${page ?? _requestedUrl}'),
-      slivers: [
-        SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-          sliver: SliverMainAxisGroup(
-            slivers: [
-              SliverList.list(
-                children: [
-                  if (!contentOnly &&
-                      profile.isNotEmpty &&
-                      (personal || subscriptions))
-                    VideoProfileHeader(
-                      account: profile,
-                      page: currentPage,
-                      personal: personal,
-                      onOpenSite: () {
-                        final login =
-                            profile['status'] != 'signedIn' &&
-                            profile['status'] != 'profile';
-                        if (login && currentPage.path != '/login') {
-                          _loginReturnUrl = currentPage;
-                        }
-                        unawaited(
-                          (login && widget.nativeAuth
-                              ? _load
-                              : (Uri uri) => _openWebsitePage(
-                                  uri,
-                                  fallback: true,
-                                  userChoice: !login,
-                                ))(
-                            login
-                                ? widget.homeUrl.resolve('/login')
-                                : currentPage,
-                          ),
-                        );
-                      },
-                      onRegister:
-                          widget.nativeAuth && profile['status'] != 'signedIn'
-                          ? () => _load(widget.homeUrl.resolve('/register'))
-                          : null,
-                    ),
-                  if (!contentOnly &&
-                      personal &&
-                      asJsonList(profile['links']).isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 16),
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Row(
-                          children: [
-                            for (final raw in asJsonList(profile['links']))
-                              if (Uri.tryParse(
-                                    asJsonMap(raw)['url']?.toString() ?? '',
-                                  )
-                                  case final target?
-                                  when _hasNativePage(target) &&
-                                      target.path.startsWith('/user/'))
-                                Padding(
-                                  padding: const EdgeInsetsDirectional.only(
-                                    end: 8,
-                                  ),
-                                  child: ChoiceChip(
-                                    selected:
-                                        currentPage.path.replaceFirst(
-                                          RegExp(r'/$'),
-                                          '',
-                                        ) ==
-                                        target.path.replaceFirst(
-                                          RegExp(r'/$'),
-                                          '',
-                                        ),
-                                    label: Text(
-                                      asJsonMap(raw)['title']?.toString() ?? '',
-                                    ),
-                                    onSelected: (_) => _load(target),
-                                  ),
-                                ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  if (subscriptions &&
-                      preview == null &&
-                      _creatorDirectoryFailed)
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(t.videoCommunity.followedCreators),
-                        ),
-                        TextButton(
-                          onPressed: () {
-                            unawaited(
-                              _load(_requestedUrl, rememberHistory: false),
-                            );
-                          },
-                          child: Text(t.common.retry),
-                        ),
-                      ],
-                    ),
-                  if (_refreshingCatalog && preview == null)
-                    const LinearProgressIndicator(
-                      key: ValueKey('catalog-background-refresh'),
-                      minHeight: 2,
-                    ),
-                  if (_catalogRefreshFailed && preview == null)
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(t.videoPlayback.catalogRefreshFailed),
-                        ),
-                        TextButton(
-                          onPressed: () =>
-                              _load(_requestedUrl, rememberHistory: false),
-                          child: Text(t.common.retry),
-                        ),
-                      ],
-                    ),
-                  if (personal &&
-                      (contentOnly || !profileRoot) &&
-                      videos.isEmpty &&
-                      sections.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 48),
-                      child: Center(child: Text(t.videoCommunity.emptyLibrary)),
-                    ),
-                  if (sections.isEmpty &&
-                      videos.isEmpty &&
-                      creators.isEmpty &&
-                      groups.isEmpty &&
-                      !personal &&
-                      !(subscriptions && profile['status'] != 'signedIn')) ...[
-                    const SizedBox(height: 72),
-                    Icon(
-                      Icons.search_off_rounded,
-                      size: 40,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(height: 12),
-                    Center(
-                      child: Text(
-                        subscriptions
-                            ? t.videoPlayback.subscriptionsEmpty
-                            : t.search.noResults,
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Center(
-                      child: TextButton.icon(
-                        onPressed: () => _load(currentPage),
-                        icon: const Icon(Icons.refresh_rounded),
-                        label: Text(t.common.retry),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-              if (subscriptions)
-                SliverList.builder(
-                  itemCount: groups.length,
-                  itemBuilder: (_, index) {
-                    final group = groups[index];
-                    final creator = asJsonMap(group['creator']);
-                    return VideoCreatorShelf(
-                      key: ValueKey(
-                        '${widget.source}.$_creatorDirectoryOwner.${creator['entityKey']}',
-                      ),
-                      creator: creator,
-                      videos: asJsonList(
-                        group['videos'],
-                      ).map(asJsonMap).toList(),
-                      page: currentPage,
-                      opening: _openingCreator == creator['entityKey'],
-                      onOpenCreator: () {
-                        final ref = VideoCreatorReference.fromWire(
-                          creator,
-                          widget.homeUrl,
-                        );
-                        final cards = asJsonList(group['videos']);
-                        final watch = cards.isEmpty
-                            ? null
-                            : Uri.tryParse(
-                                asJsonMap(
-                                      cards.first,
-                                    )['watchUrl']?.toString() ??
-                                    '',
-                              );
-                        if (ref != null) {
+    return CollectionCoverPrivacyScope(
+      enabled: _recordPrivacyPage(currentPage),
+      child: CustomScrollView(
+        key: PageStorageKey('video-catalog.${page ?? _requestedUrl}'),
+        slivers: [
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              16,
+              16,
+              32 + MediaQuery.paddingOf(context).bottom,
+            ),
+            sliver: SliverMainAxisGroup(
+              slivers: [
+                SliverList.list(
+                  children: [
+                    if (!contentOnly &&
+                        profile.isNotEmpty &&
+                        (personal || subscriptions))
+                      VideoProfileHeader(
+                        account: profile,
+                        page: currentPage,
+                        personal: personal,
+                        onOpenSite: () {
+                          final login =
+                              profile['status'] != 'signedIn' &&
+                              profile['status'] != 'profile';
+                          if (login && currentPage.path != '/login') {
+                            _loginReturnUrl = currentPage;
+                          }
                           unawaited(
-                            _openCreatorReference(
-                              ref,
-                              representativeWatch: watch,
+                            (login && widget.nativeAuth
+                                ? _load
+                                : (Uri uri) => _openWebsitePage(
+                                    uri,
+                                    fallback: true,
+                                    userChoice: !login,
+                                  ))(
+                              login
+                                  ? widget.homeUrl.resolve('/login')
+                                  : currentPage,
                             ),
                           );
-                        }
-                      },
-                      onOpenWorks: () {
-                        final ref = VideoCreatorReference.fromWire(
-                          creator,
-                          widget.homeUrl,
-                        );
-                        if (ref != null) {
+                        },
+                        onRegister:
+                            widget.nativeAuth && profile['status'] != 'signedIn'
+                            ? () => _load(widget.homeUrl.resolve('/register'))
+                            : null,
+                      ),
+                    if (!contentOnly &&
+                        personal &&
+                        asJsonList(profile['links']).isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
+                              for (final raw in asJsonList(profile['links']))
+                                if (Uri.tryParse(
+                                      asJsonMap(raw)['url']?.toString() ?? '',
+                                    )
+                                    case final target?
+                                    when _hasNativePage(target) &&
+                                        target.path.startsWith('/user/'))
+                                  Padding(
+                                    padding: const EdgeInsetsDirectional.only(
+                                      end: 8,
+                                    ),
+                                    child: ChoiceChip(
+                                      selected:
+                                          currentPage.path.replaceFirst(
+                                            RegExp(r'/$'),
+                                            '',
+                                          ) ==
+                                          target.path.replaceFirst(
+                                            RegExp(r'/$'),
+                                            '',
+                                          ),
+                                      label: Text(
+                                        asJsonMap(raw)['title']?.toString() ??
+                                            '',
+                                      ),
+                                      onSelected: (_) => _load(target),
+                                    ),
+                                  ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    if (subscriptions &&
+                        preview == null &&
+                        _creatorDirectoryFailed)
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(t.videoCommunity.followedCreators),
+                          ),
+                          TextButton(
+                            onPressed: () {
+                              unawaited(
+                                _load(_requestedUrl, rememberHistory: false),
+                              );
+                            },
+                            child: Text(t.common.retry),
+                          ),
+                        ],
+                      ),
+                    if (_refreshingCatalog && preview == null)
+                      const LinearProgressIndicator(
+                        key: ValueKey('catalog-background-refresh'),
+                        minHeight: 2,
+                      ),
+                    if (_catalogRefreshFailed && preview == null)
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(t.videoPlayback.catalogRefreshFailed),
+                          ),
+                          TextButton(
+                            onPressed: () =>
+                                _load(_requestedUrl, rememberHistory: false),
+                            child: Text(t.common.retry),
+                          ),
+                        ],
+                      ),
+                    if (exactTag != null)
+                      Align(
+                        alignment: AlignmentDirectional.centerStart,
+                        child: TextButton.icon(
+                          key: const ValueKey('video-search.exact-tag'),
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size(44, 44),
+                          ),
+                          icon: const Icon(Icons.sell_outlined, size: 18),
+                          label: Text(
+                            '${t.videoFilters.searchTags} · ${exactTag.label}',
+                          ),
+                          onPressed: preview != null
+                              ? null
+                              : () {
+                                  if (_requestedUrl != currentPage || _busy)
+                                    return;
+                                  final filters =
+                                      VideoSearchFilters.fromUri(
+                                        currentPage,
+                                      ).copyWith(
+                                        query: '',
+                                        tags: [exactTag.value],
+                                        anyTag: false,
+                                        page: 1,
+                                      );
+                                  unawaited(
+                                    _load(filters.toUri(widget.homeUrl)),
+                                  );
+                                },
+                        ),
+                      ),
+                    if (personal &&
+                        (contentOnly || !profileRoot) &&
+                        videos.isEmpty &&
+                        sections.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 48),
+                        child: Center(
+                          child: Text(t.videoCommunity.emptyLibrary),
+                        ),
+                      ),
+                    if (sections.isEmpty &&
+                        videos.isEmpty &&
+                        creators.isEmpty &&
+                        groups.isEmpty &&
+                        !personal &&
+                        !(subscriptions &&
+                            profile['status'] != 'signedIn')) ...[
+                      const SizedBox(height: 72),
+                      Icon(
+                        Icons.search_off_rounded,
+                        size: 40,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                      const SizedBox(height: 12),
+                      Center(
+                        child: Text(
+                          subscriptions
+                              ? t.videoPlayback.subscriptionsEmpty
+                              : titleOnly &&
+                                    (unfilteredVideos.isNotEmpty ||
+                                        _searchPage(paging['nextUrl']) != null)
+                              ? t.videoLibrary.filteredLoaded(
+                                  loaded: unfilteredVideos.length,
+                                  shown: 0,
+                                )
+                              : t.search.noResults,
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Center(
+                        child: TextButton.icon(
+                          onPressed: () => _load(currentPage),
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: Text(t.common.retry),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                if (subscriptions)
+                  SliverList.builder(
+                    itemCount: groups.length,
+                    itemBuilder: (_, index) {
+                      final group = groups[index];
+                      final creator = asJsonMap(group['creator']);
+                      return VideoCreatorShelf(
+                        key: ValueKey(
+                          '${widget.source}.$_creatorDirectoryOwner.${creator['entityKey']}',
+                        ),
+                        creator: creator,
+                        videos: asJsonList(
+                          group['videos'],
+                        ).map(asJsonMap).toList(),
+                        page: currentPage,
+                        opening: _openingCreator == creator['entityKey'],
+                        onOpenCreator: () {
+                          final ref = VideoCreatorReference.fromWire(
+                            creator,
+                            widget.homeUrl,
+                          );
                           final cards = asJsonList(group['videos']);
                           final watch = cards.isEmpty
                               ? null
@@ -4144,85 +5599,53 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                                       )['watchUrl']?.toString() ??
                                       '',
                                 );
-                          unawaited(
-                            _openCreatorReference(
-                              ref,
-                              works: true,
-                              representativeWatch: watch,
-                            ),
+                          if (ref != null) {
+                            unawaited(
+                              _openCreatorReference(
+                                ref,
+                                representativeWatch: watch,
+                              ),
+                            );
+                          }
+                        },
+                        onOpenWorks: () {
+                          final ref = VideoCreatorReference.fromWire(
+                            creator,
+                            widget.homeUrl,
                           );
-                        }
-                      },
-                      cardBuilder: (card) =>
-                          _videoCard(card, showSubtitle: false),
-                      cardExtent: (width) => _cardExtent(
-                        width,
-                        subtitle: asJsonList(group['videos'])
-                            .map(asJsonMap)
-                            .any(
-                              (card) =>
-                                  VideoPublicMetadata.fromWire(
-                                    card,
-                                  ).publishedRelative !=
-                                  null,
-                            ),
-                        statistics: asJsonList(group['videos'])
-                            .map(asJsonMap)
-                            .any(
-                              (card) => VideoPublicMetadata.fromWire(
-                                card,
-                              ).hasCardStatistics,
-                            ),
-                      ),
-                    );
-                  },
-                ),
-              if (subscriptions &&
-                  (_creatorDirectory?['nextUrl']?.toString().isNotEmpty ??
-                      false))
-                SliverToBoxAdapter(
-                  child: Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: TextButton(
-                      onPressed: _loadingMoreCreators
-                          ? null
-                          : _loadMoreCreators,
-                      child: Text(t.videoCommunity.moreSubscribedCreators),
-                    ),
-                  ),
-                ),
-              if (subscriptions && unassignedVideos.isNotEmpty)
-                SliverToBoxAdapter(
-                  child: _subscriptionUpdates(unassignedVideos),
-                ),
-              SliverList.builder(
-                itemCount: sections.length,
-                itemBuilder: (_, index) {
-                  final section = sections[index];
-                  final cards = asJsonList(section['videos']);
-                  return Column(
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              section['title']?.toString() ?? '',
-                              style: Theme.of(context).textTheme.titleLarge,
-                            ),
-                          ),
-                          if (Uri.tryParse(section['moreUrl']?.toString() ?? '')
-                              case final more? when _isFirstParty(more))
-                            TextButton(
-                              onPressed: () => _load(more),
-                              child: const Icon(Icons.chevron_right_rounded),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        height: _cardExtent(
-                          180,
-                          statistics: cards
+                          if (ref != null) {
+                            final cards = asJsonList(group['videos']);
+                            final watch = cards.isEmpty
+                                ? null
+                                : Uri.tryParse(
+                                    asJsonMap(
+                                          cards.first,
+                                        )['watchUrl']?.toString() ??
+                                        '',
+                                  );
+                            unawaited(
+                              _openCreatorReference(
+                                ref,
+                                works: true,
+                                representativeWatch: watch,
+                              ),
+                            );
+                          }
+                        },
+                        cardBuilder: (card) =>
+                            _videoCard(card, showSubtitle: false),
+                        cardExtent: (width) => _cardExtent(
+                          width,
+                          subtitle: asJsonList(group['videos'])
+                              .map(asJsonMap)
+                              .any(
+                                (card) =>
+                                    VideoPublicMetadata.fromWire(
+                                      card,
+                                    ).publishedRelative !=
+                                    null,
+                              ),
+                          statistics: asJsonList(group['videos'])
                               .map(asJsonMap)
                               .any(
                                 (card) => VideoPublicMetadata.fromWire(
@@ -4230,167 +5653,223 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                                 ).hasCardStatistics,
                               ),
                         ),
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: cards.length,
-                          separatorBuilder: (_, _) => const SizedBox(width: 12),
-                          itemBuilder: (_, index) => SizedBox(
-                            width: 180,
-                            child: _videoCard(asJsonMap(cards[index])),
-                          ),
-                        ),
+                      );
+                    },
+                  ),
+                if (subscriptions &&
+                    (_creatorDirectory?['nextUrl']?.toString().isNotEmpty ??
+                        false))
+                  SliverToBoxAdapter(
+                    child: Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: TextButton(
+                        onPressed: _loadingMoreCreators
+                            ? null
+                            : _loadMoreCreators,
+                        child: Text(t.videoCommunity.moreSubscribedCreators),
                       ),
-                      const SizedBox(height: 24),
-                    ],
-                  );
-                },
-              ),
-              if (preview == null &&
-                  widget.nativeSiteActions &&
-                  currentPage.path == '/playlist' &&
-                  _playlistEditor['supported'] == true)
-                SliverToBoxAdapter(
-                  child: Align(
-                    alignment: AlignmentDirectional.centerEnd,
-                    child: TextButton.icon(
-                      onPressed: _editPlaylist,
-                      icon: const Icon(Icons.edit_outlined),
-                      label: Text(t.videoCommunity.editPlaylist),
                     ),
                   ),
-                ),
-              if (!contentOnly &&
-                  !subscriptions &&
-                  videos.isNotEmpty &&
-                  sections.isEmpty)
-                SliverList.list(
-                  children: [
-                    Text(
-                      catalogTitle.isNotEmpty
-                          ? catalogTitle
-                          : personal
-                          ? t.videoPlayback.siteContents
-                          : subscriptions
-                          ? t.videoCommunity.subscriptionFeed
-                          : activeCategory?.title ??
-                                t.videoPlayback.searchVideos,
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                ),
-              if (!subscriptions && videos.isNotEmpty && sections.isEmpty)
-                SliverLayoutBuilder(
-                  builder: (context, constraints) {
-                    final scale =
-                        MediaQuery.textScalerOf(context).scale(14) / 14;
-                    final columns = contentOnly
-                        ? (constraints.crossAxisExtent /
-                                  (152 * scale.clamp(1.0, 1.6)))
-                              .floor()
-                              .clamp(1, 3)
-                        : scale > 1.4
-                        ? (constraints.crossAxisExtent /
-                                  (138 * scale.clamp(1.0, 1.8)))
-                              .floor()
-                              .clamp(1, 3)
-                        : constraints.crossAxisExtent >= 620
-                        ? 3
-                        : 2;
-                    return SliverGrid.builder(
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: columns,
-                        crossAxisSpacing: 12,
-                        mainAxisSpacing: 16,
-                        mainAxisExtent: _cardExtent(
-                          (constraints.crossAxisExtent - (columns - 1) * 12) /
-                              columns,
-                          statistics: videos.any(
-                            (card) => VideoPublicMetadata.fromWire(
-                              card,
-                            ).hasCardStatistics,
+                if (subscriptions && unassignedVideos.isNotEmpty)
+                  SliverToBoxAdapter(
+                    child: _subscriptionUpdates(unassignedVideos),
+                  ),
+                SliverList.builder(
+                  itemCount: sections.length,
+                  itemBuilder: (_, index) {
+                    final section = sections[index];
+                    final cards = asJsonList(section['videos']);
+                    return Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                section['title']?.toString() ?? '',
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                            ),
+                            if (Uri.tryParse(
+                                  section['moreUrl']?.toString() ?? '',
+                                )
+                                case final more? when _isFirstParty(more))
+                              TextButton(
+                                onPressed: () => _load(more),
+                                child: const Icon(Icons.chevron_right_rounded),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          height: _cardExtent(
+                            180,
+                            statistics: cards
+                                .map(asJsonMap)
+                                .any(
+                                  (card) => VideoPublicMetadata.fromWire(
+                                    card,
+                                  ).hasCardStatistics,
+                                ),
+                          ),
+                          child: ListView.separated(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: cards.length,
+                            separatorBuilder: (_, _) =>
+                                const SizedBox(width: 12),
+                            itemBuilder: (_, index) => SizedBox(
+                              width: 180,
+                              child: _videoCard(asJsonMap(cards[index])),
+                            ),
                           ),
                         ),
-                      ),
-                      itemCount: videos.length,
-                      itemBuilder: (_, index) => _videoCard(videos[index]),
+                        const SizedBox(height: 24),
+                      ],
                     );
                   },
                 ),
-              if (!contentOnly &&
-                  personal &&
-                  profileRoot &&
-                  profile['status'] != 'profile')
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 24),
-                    child: VideoAccountTools(
-                      onHistory: _showPersonal,
-                      onPlaybackSettings: _showPlaybackSettings,
-                      onSourceSettings: () => unawaited(_openSettings()),
-                      onAccountSync: _account == null
-                          ? null
-                          : () => unawaited(_openAccountSync()),
+                if (preview == null &&
+                    !_inPersonalLibrary &&
+                    widget.nativeSiteActions &&
+                    currentPage.path == '/playlist' &&
+                    _playlistEditor['supported'] == true)
+                  SliverToBoxAdapter(
+                    child: Align(
+                      alignment: AlignmentDirectional.centerEnd,
+                      child: TextButton.icon(
+                        onPressed: _editPlaylist,
+                        icon: const Icon(Icons.edit_outlined),
+                        label: Text(t.videoCommunity.editPlaylist),
+                      ),
                     ),
                   ),
-                ),
-              if (paging.isNotEmpty && (paging['totalPages'] as num? ?? 1) > 1)
-                SliverList.list(
-                  children: [
-                    const SizedBox(height: 18),
-                    LayoutBuilder(
-                      builder: (context, constraints) {
-                        final previous = OutlinedButton(
-                          onPressed: _searchPage(paging['previousUrl']) == null
-                              ? null
-                              : () =>
-                                    _load(_searchPage(paging['previousUrl'])!),
-                          child: Text(
-                            t.common.previousPage,
-                            textAlign: TextAlign.center,
+                if (!contentOnly &&
+                    !_inPersonalLibrary &&
+                    !subscriptions &&
+                    videos.isNotEmpty &&
+                    sections.isEmpty)
+                  SliverList.list(
+                    children: [
+                      Text(
+                        catalogTitle.isNotEmpty
+                            ? catalogTitle
+                            : personal
+                            ? t.videoPlayback.siteContents
+                            : subscriptions
+                            ? t.videoCommunity.subscriptionFeed
+                            : activeCategory?.title ??
+                                  t.videoPlayback.searchVideos,
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                  ),
+                if (!subscriptions && videos.isNotEmpty && sections.isEmpty)
+                  SliverLayoutBuilder(
+                    builder: (context, constraints) {
+                      const columns = 3;
+                      return SliverGrid.builder(
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: columns,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 16,
+                          mainAxisExtent: _cardExtent(
+                            (constraints.crossAxisExtent - (columns - 1) * 12) /
+                                columns,
+                            portrait: recordCollection,
+                            statistics: videos.any(
+                              (card) => VideoPublicMetadata.fromWire(
+                                card,
+                              ).hasCardStatistics,
+                            ),
                           ),
-                        );
-                        final next = OutlinedButton(
-                          onPressed: _searchPage(paging['nextUrl']) == null
-                              ? null
-                              : () => _load(_searchPage(paging['nextUrl'])!),
-                          child: Text(
-                            t.common.nextPage,
-                            textAlign: TextAlign.center,
-                          ),
-                        );
-                        final counter = Text(
-                          '${paging['page'] ?? 1} / ${paging['totalPages'] ?? 1}',
-                        );
-                        final scale =
-                            MediaQuery.textScalerOf(context).scale(14) / 14;
-                        if (constraints.maxWidth < 360 * scale) {
-                          return Column(
-                            children: [
-                              counter,
-                              const SizedBox(height: 8),
-                              Row(
-                                children: [
-                                  Expanded(child: previous),
-                                  const SizedBox(width: 12),
-                                  Expanded(child: next),
-                                ],
-                              ),
-                            ],
-                          );
-                        }
-                        return Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [previous, counter, next],
-                        );
-                      },
+                        ),
+                        itemCount: videos.length,
+                        itemBuilder: (_, index) => _videoCard(
+                          videos[index],
+                          portrait: recordCollection,
+                        ),
+                      );
+                    },
+                  ),
+                if (!contentOnly &&
+                    personal &&
+                    profileRoot &&
+                    profile['status'] != 'profile')
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 24),
+                      child: VideoAccountTools(
+                        onSourceSettings: () => unawaited(_openSettings()),
+                      ),
                     ),
-                  ],
-                ),
-            ],
+                  ),
+                if (paging.isNotEmpty &&
+                    ((paging['totalPages'] as num? ?? 1) > 1 ||
+                        titleOnly && _searchPage(paging['nextUrl']) != null))
+                  SliverList.list(
+                    children: [
+                      const SizedBox(height: 18),
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final previous = OutlinedButton(
+                            onPressed:
+                                _searchPage(paging['previousUrl']) == null
+                                ? null
+                                : () => _load(
+                                    _searchPage(paging['previousUrl'])!,
+                                  ),
+                            child: Text(
+                              t.common.previousPage,
+                              textAlign: TextAlign.center,
+                            ),
+                          );
+                          final next = OutlinedButton(
+                            onPressed: _searchPage(paging['nextUrl']) == null
+                                ? null
+                                : () => _load(_searchPage(paging['nextUrl'])!),
+                            child: Text(
+                              t.common.nextPage,
+                              textAlign: TextAlign.center,
+                            ),
+                          );
+                          final counter = Text(
+                            paging['totalPages'] is num
+                                ? '${paging['page'] ?? 1} / ${paging['totalPages']}'
+                                : t.searchResult.pageOnly(
+                                    page:
+                                        (paging['page'] as num?)?.toInt() ?? 1,
+                                  ),
+                          );
+                          final scale =
+                              MediaQuery.textScalerOf(context).scale(14) / 14;
+                          if (constraints.maxWidth < 360 * scale) {
+                            return Column(
+                              children: [
+                                counter,
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
+                                    Expanded(child: previous),
+                                    const SizedBox(width: 12),
+                                    Expanded(child: next),
+                                  ],
+                                ),
+                              ],
+                            );
+                          }
+                          return Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [previous, counter, next],
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -4501,7 +5980,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         : _backStack.lastOrNull;
     if (previous?.website == true || previous?.personal == true) return null;
     final uri = previous?.uri ?? _previousTab?.url;
-    final data = uri == null ? null : _catalogCache[_catalogKey(uri)];
+    final data = uri == null ? null : _cachedCatalog(uri);
     if (data == null || uri == null) return null;
     return Scaffold(
       appBar: AppBar(
@@ -4521,6 +6000,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                 ? PageStorage(
                     bucket: _personalStorage,
                     child: VideoPersonalShell(
+                      showTabs: false,
                       account: _personalDisplayAccount,
                       page: _ownIdentityRoot!,
                       current: uri,
@@ -4701,10 +6181,40 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   }
 
   @override
-  Widget build(BuildContext context) {
-    final officialWebsite =
-        sourceOfficialWebsite(widget.source) ??
-        validatedSourceWebsite(widget.homeUrl.toString());
+  Widget build(BuildContext context) => ReadRecoveryHost(
+    onActiveChanged: (active) =>
+        _readRecovery.setActive(active && _automaticCatalogAllowed),
+    child: _buildNetwork(context),
+  );
+
+  Widget _buildNetwork(BuildContext context) => VideoNetworkScope(
+    source: widget.source,
+    network: _network,
+    child: FutureBuilder<OmoNetworkContext?>(
+      future: _network,
+      builder: (context, snapshot) =>
+          snapshot.connectionState != ConnectionState.done
+          ? _networkStatus(loading: true)
+          : snapshot.hasError
+          ? _networkStatus(loading: false)
+          : _buildPage(context),
+    ),
+  );
+
+  Widget _networkStatus({required bool loading}) => Scaffold(
+    appBar: AppBar(
+      leading: const SourceBackButton(),
+      title: Text(widget.title),
+    ),
+    body: Center(
+      child: loading
+          ? const CircularProgressIndicator()
+          : Text(t.videoSource.readFailed),
+    ),
+  );
+
+  Widget _buildPage(BuildContext context) {
+    final officialWebsite = sourceOfficialWebsite(widget.source);
     final tabIndex = widget.tabs.indexWhere((tab) => tab.id == _activeTab);
     final internalBack = !_verificationVisible && _canGoBackInside;
     final requiredBrowser =
@@ -4727,204 +6237,261 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           child: Stack(
             children: [
               Scaffold(
-                appBar: AppBar(
-                  leading: Center(
-                    child: NativeVideoIconButton(
-                      light: false,
-                      tooltip: internalBack || widget.initialUrl != null
-                          ? t.common.back
-                          : t.videoPlayback.closeSource,
-                      symbol: internalBack || widget.initialUrl != null
-                          ? 'chevron.left'
-                          : 'xmark',
-                      icon: internalBack || widget.initialUrl != null
-                          ? Icons.arrow_back_rounded
-                          : Icons.close_rounded,
-                      onPressed: () {
-                        if (_verificationVisible) {
-                          Navigator.of(context).pop();
-                        } else {
-                          unawaited(_goBackInside());
-                        }
-                      },
-                    ),
-                  ),
-                  titleSpacing: 0,
-                  title:
-                      !_verificationVisible &&
-                          !_websiteVisible &&
-                          !_isPersonalContext &&
-                          _creatorContext == null
-                      ? VideoSearchEntry(
-                          query: VideoSearchFilters.fromUri(
-                            _listUrl ?? widget.homeUrl,
-                          ).query,
-                          onTap: _openSearch,
-                        )
-                      : Text(
-                          _verificationVisible
-                              ? t.videoPlayback.verificationTitle
-                              : _personalVisible
-                              ? t.videoPlayback.localWatchHistory
-                              : _personalOverviewEnabled && !_websiteVisible
-                              ? _inPersonalLibrary
-                                    ? _personalTabs
-                                              .where(
-                                                (tab) =>
-                                                    tab.url.path ==
-                                                    _requestedUrl.path,
-                                              )
-                                              .map(_personalTabTitle)
-                                              .firstOrNull ??
-                                          t.videoPersonal.my
-                                    : t.videoPersonal.my
-                              : _creatorContext?.name ?? widget.title,
+                extendBody: usesNativeSourceChrome(context),
+                appBar: _personalVisible
+                    ? null
+                    : _inPersonalLibrary
+                    ? _personalListAppBar()
+                    : AppBar(
+                        leading: Center(
+                          child: NativeVideoIconButton(
+                            light: false,
+                            tooltip: internalBack || widget.initialUrl != null
+                                ? t.common.back
+                                : t.videoPlayback.closeSource,
+                            symbol: internalBack || widget.initialUrl != null
+                                ? 'chevron.left'
+                                : 'xmark',
+                            icon: internalBack || widget.initialUrl != null
+                                ? Icons.arrow_back_rounded
+                                : Icons.close_rounded,
+                            onPressed: () {
+                              if (_verificationVisible) {
+                                Navigator.of(context).pop();
+                              } else {
+                                unawaited(_goBackInside());
+                              }
+                            },
+                          ),
                         ),
-                  actionsPadding: const EdgeInsetsDirectional.only(
-                    start: 8,
-                    end: 8,
-                  ),
-                  actions: [
-                    if (_creatorContext != null &&
-                        !_verificationVisible &&
-                        !_websiteVisible)
-                      NativeVideoIconButton(
-                        light: false,
-                        tooltip: t.videoPlayback.search,
-                        symbol: 'magnifyingglass',
-                        icon: Icons.search_rounded,
-                        onPressed: _openSearch,
+                        titleSpacing: 0,
+                        title:
+                            !_verificationVisible &&
+                                !_websiteVisible &&
+                                !_isPersonalContext &&
+                                _creatorContext == null
+                            ? VideoSearchEntry(
+                                query: VideoSearchFilters.fromUri(
+                                  _listUrl ?? widget.homeUrl,
+                                ).query,
+                                onTap: _openSearch,
+                                onClear: _clearCatalogSearch,
+                              )
+                            : Text(
+                                _verificationVisible
+                                    ? t.videoPlayback.verificationTitle
+                                    : _personalVisible
+                                    ? t.videoPlayback.localWatchHistory
+                                    : _personalOverviewEnabled &&
+                                          !_websiteVisible
+                                    ? _inPersonalLibrary
+                                          ? _personalTabs
+                                                    .where(
+                                                      (tab) =>
+                                                          tab.url.path ==
+                                                          _requestedUrl.path,
+                                                    )
+                                                    .map(_personalTabTitle)
+                                                    .firstOrNull ??
+                                                t.videoPersonal.my
+                                          : t.videoPersonal.my
+                                    : _creatorContext?.name ?? widget.title,
+                              ),
+                        actionsPadding: const EdgeInsetsDirectional.only(
+                          start: 8,
+                          end: 8,
+                        ),
+                        actions: [
+                          if (!_verificationVisible &&
+                              !_websiteVisible &&
+                              _hasPersonalShell)
+                            const CollectionCoverPrivacyButton(),
+                          if (_creatorContext != null &&
+                              !_verificationVisible &&
+                              !_websiteVisible)
+                            NativeVideoIconButton(
+                              light: false,
+                              tooltip: t.videoPlayback.search,
+                              symbol: 'magnifyingglass',
+                              icon: Icons.search_rounded,
+                              onPressed: _openSearch,
+                            ),
+                          NativeVideoMenu(
+                            hostPresentation: true,
+                            selectAfterDismissal: const {
+                              collectionCoverSettingsAction,
+                            },
+                            // UIKit and the Breeze fallback each own outside-tap
+                            // dismissal; the page must not add a second barrier.
+                            controller: _modeMenu,
+                            onOpened: () => _catalogMenuOpened(_modeMenu),
+                            onClosed: () => _catalogMenuClosed(_modeMenu),
+                            tooltip: _verificationVisible
+                                ? t.videoPlayback.verificationActions
+                                : requiredBrowser
+                                ? t.videoPlayback.browserActions
+                                : t.videoPlayback.websiteToggle,
+                            selected: _websiteVisible ? 'website' : 'native',
+                            label: '',
+                            width: 44,
+                            symbol: 'ellipsis',
+                            icon: Icons.more_horiz_rounded,
+                            options: {
+                              if (!_websiteVisible &&
+                                  !_verificationVisible &&
+                                  (_personalVisible ||
+                                      _hasPersonalShell ||
+                                      _recordPrivacyPage(_requestedUrl)))
+                                collectionCoverSettingsAction:
+                                    collectionCoverSettingsLabel(context),
+                              if (!_verificationVisible &&
+                                  !_personalVisible &&
+                                  !_isPersonalContext &&
+                                  !_inPersonalLibrary)
+                                'personal': t.videoPlayback.localWatchHistory,
+                              if (!requiredBrowser) ...{
+                                'native': t.videoPlayback.nativeCatalog,
+                                'website': t.videoPlayback.backToWeb,
+                              },
+                              if (_verificationVisible) ...{
+                                'check': t.videoPlayback.checkVerification,
+                                'reload': t.videoPlayback.reloadVerification,
+                                if (defaultTargetPlatform ==
+                                        TargetPlatform.iOS &&
+                                    _web?.platform
+                                        is VideoBrowserVerificationWindow)
+                                  'verificationWindow':
+                                      t.videoPlayback.verificationWindow,
+                                'help': t.videoPlayback.verificationHelp,
+                              },
+                              if (_websiteVisible && !_verificationVisible)
+                                'webRefresh': t.common.refresh,
+                              if (_diagnosticToolsEnabled)
+                                'diagnostics': t.videoPlayback.pageAnalysis,
+                              if (_diagnosticToolsEnabled &&
+                                  _web?.platform is VideoBrowserInspection)
+                                'browserInspection': _inspectionEnabled
+                                    ? t.videoPlayback.disableBrowserInspection
+                                    : t.videoPlayback.enableBrowserInspection,
+                              'tools': t.discover.settings,
+                              if (officialWebsite != null)
+                                'officialWebsite':
+                                    t.sourceShell.openOfficialWebsite,
+                              'exit': t.sourceShell.exitPlugin,
+                            },
+                            groups: const [
+                              [
+                                'personal',
+                                'native',
+                                'website',
+                                'check',
+                                'reload',
+                                'webRefresh',
+                                'verificationWindow',
+                                'help',
+                              ],
+                              ['diagnostics', 'browserInspection'],
+                              [
+                                collectionCoverSettingsAction,
+                                'tools',
+                                'officialWebsite',
+                              ],
+                              ['exit'],
+                            ],
+                            optionIcons: const {
+                              collectionCoverSettingsAction: (
+                                icon: Icons.visibility_off_outlined,
+                                symbol: 'eye.slash',
+                              ),
+                              'browserInspection': (
+                                icon: Icons.bug_report_outlined,
+                                symbol: 'ladybug',
+                              ),
+                              'diagnostics': (
+                                icon: Icons.analytics_outlined,
+                                symbol: 'waveform.path.ecg',
+                              ),
+                              'officialWebsite': (
+                                icon: Icons.open_in_browser_outlined,
+                                symbol: 'safari',
+                              ),
+                              'exit': (
+                                icon: Icons.exit_to_app,
+                                symbol: 'rectangle.portrait.and.arrow.right',
+                              ),
+                              'native': (
+                                icon: Icons.grid_view_rounded,
+                                symbol: 'square.grid.2x2',
+                              ),
+                              'website': (
+                                icon: Icons.language_rounded,
+                                symbol: 'safari',
+                              ),
+                              'tools': (
+                                icon: Icons.settings_outlined,
+                                symbol: 'gearshape',
+                              ),
+                              'personal': (
+                                icon: Icons.history_rounded,
+                                symbol: 'clock.arrow.circlepath',
+                              ),
+                              'check': (
+                                icon: Icons.verified_user_outlined,
+                                symbol: 'checkmark.shield',
+                              ),
+                              'reload': (
+                                icon: Icons.refresh_rounded,
+                                symbol: 'arrow.clockwise',
+                              ),
+                              'webRefresh': (
+                                icon: Icons.refresh_rounded,
+                                symbol: 'arrow.clockwise',
+                              ),
+                              'verificationWindow': (
+                                icon: Icons.open_in_new_rounded,
+                                symbol: 'arrow.up.right.square',
+                              ),
+                              'help': (
+                                icon: Icons.help_outline_rounded,
+                                symbol: 'questionmark.circle',
+                              ),
+                            },
+                            onSelected: (value) {
+                              _dismissCatalogMenu();
+                              if (requiredBrowser &&
+                                  const {'native', 'website'}.contains(value)) {
+                                return;
+                              }
+                              unawaited(switch (value) {
+                                collectionCoverSettingsAction =>
+                                  openCollectionCoverSettings(context),
+                                'personal' => Future<void>.sync(_showPersonal),
+                                'tools' => _showTools(),
+                                'officialWebsite' =>
+                                  officialWebsite == null
+                                      ? Future<void>.value()
+                                      : openSourceOfficialWebsite(
+                                          context,
+                                          officialWebsite,
+                                        ),
+                                'check' => _onLoaded(_requestedUrl),
+                                'reload' => _reloadVerification(),
+                                'webRefresh' => _refreshWebsiteDocument(),
+                                'verificationWindow' =>
+                                  _openVerificationWindow(),
+                                'help' => _showVerificationHelp(),
+                                'diagnostics' => _showPageAnalysis(),
+                                'browserInspection' =>
+                                  _toggleBrowserInspection(),
+                                'exit' => _exitSource(),
+                                'native' => _chooseDisplayMode(false),
+                                'website' => _chooseDisplayMode(true),
+                                _ => Future<void>.value(),
+                              });
+                            },
+                          ),
+                        ],
                       ),
-                    NativeVideoMenu(
-                      hostPresentation: true,
-                      // UIKit owns its presentation and outside-tap handling;
-                      // never layer a competing Flutter barrier above UIMenu.
-                      controller: _modeMenu,
-                      onOpened: () => _catalogMenuOpened(_modeMenu),
-                      onClosed: () => _catalogMenuClosed(_modeMenu),
-                      tooltip: _verificationVisible
-                          ? t.videoPlayback.verificationActions
-                          : requiredBrowser
-                          ? t.videoPlayback.browserActions
-                          : t.videoPlayback.websiteToggle,
-                      selected: _websiteVisible ? 'website' : 'native',
-                      label: '',
-                      width: 44,
-                      symbol: 'ellipsis',
-                      icon: Icons.more_horiz_rounded,
-                      options: {
-                        if (!_verificationVisible &&
-                            !widget.tabs.any((tab) => tab.mode == 'account'))
-                          'personal': t.videoPlayback.personalPage,
-                        if (!requiredBrowser) ...{
-                          'native': t.videoPlayback.nativeCatalog,
-                          'website': t.videoPlayback.backToWeb,
-                        },
-                        if (_verificationVisible) ...{
-                          'check': t.videoPlayback.checkVerification,
-                          'reload': t.videoPlayback.reloadVerification,
-                          if (defaultTargetPlatform == TargetPlatform.iOS &&
-                              _web?.platform is VideoBrowserVerificationWindow)
-                            'verificationWindow':
-                                t.videoPlayback.verificationWindow,
-                          'help': t.videoPlayback.verificationHelp,
-                        },
-                        'tools': t.videoCommunity.preferences,
-                        if (officialWebsite != null)
-                          'officialWebsite': t.sourceShell.openOfficialWebsite,
-                        if (_diagnosticToolsEnabled)
-                          'diagnostics': t.videoPlayback.pageAnalysis,
-                        'exit': t.sourceShell.exitPlugin,
-                        if (_diagnosticToolsEnabled &&
-                            _web?.platform is VideoBrowserInspection)
-                          'inspection': _inspectionEnabled
-                              ? t.videoPlayback.disableBrowserInspection
-                              : t.videoPlayback.enableBrowserInspection,
-                      },
-                      optionIcons: const {
-                        'officialWebsite': (
-                          icon: Icons.open_in_browser_outlined,
-                          symbol: 'safari',
-                        ),
-                        'exit': (
-                          icon: Icons.exit_to_app,
-                          symbol: 'rectangle.portrait.and.arrow.right',
-                        ),
-                        'native': (
-                          icon: Icons.grid_view_rounded,
-                          symbol: 'square.grid.2x2',
-                        ),
-                        'website': (
-                          icon: Icons.language_rounded,
-                          symbol: 'safari',
-                        ),
-                        'tools': (
-                          icon: Icons.settings_outlined,
-                          symbol: 'gearshape',
-                        ),
-                        'personal': (
-                          icon: Icons.history_rounded,
-                          symbol: 'clock.arrow.circlepath',
-                        ),
-                        'diagnostics': (
-                          icon: Icons.analytics_outlined,
-                          symbol: 'waveform.path.ecg',
-                        ),
-                        'inspection': (
-                          icon: Icons.bug_report_outlined,
-                          symbol: 'ladybug',
-                        ),
-                        'check': (
-                          icon: Icons.verified_user_outlined,
-                          symbol: 'checkmark.shield',
-                        ),
-                        'reload': (
-                          icon: Icons.refresh_rounded,
-                          symbol: 'arrow.clockwise',
-                        ),
-                        'verificationWindow': (
-                          icon: Icons.open_in_new_rounded,
-                          symbol: 'arrow.up.right.square',
-                        ),
-                        'help': (
-                          icon: Icons.help_outline_rounded,
-                          symbol: 'questionmark.circle',
-                        ),
-                      },
-                      onSelected: (value) {
-                        _dismissCatalogMenu();
-                        if (requiredBrowser &&
-                            const {'native', 'website'}.contains(value)) {
-                          return;
-                        }
-                        unawaited(switch (value) {
-                          'personal' => Future<void>.sync(_showPersonal),
-                          'tools' =>
-                            _verificationVisible
-                                ? _openSettings()
-                                : _showTools(),
-                          'officialWebsite' =>
-                            officialWebsite == null
-                                ? Future<void>.value()
-                                : openSourceOfficialWebsite(
-                                    context,
-                                    officialWebsite,
-                                  ),
-                          'check' => _onLoaded(_requestedUrl),
-                          'reload' => _reloadVerification(),
-                          'verificationWindow' => _openVerificationWindow(),
-                          'help' => _showVerificationHelp(),
-                          'diagnostics' => _showPageAnalysis(),
-                          'exit' => _exitSource(),
-                          'inspection' => _toggleBrowserInspection(),
-                          'native' => _chooseDisplayMode(false),
-                          'website' => _chooseDisplayMode(true),
-                          _ => Future<void>.value(),
-                        });
-                      },
-                    ),
-                  ],
-                ),
                 body: Stack(
                   children: [
                     Positioned.fill(
@@ -4934,7 +6501,12 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                             !_verificationVisible &&
                                 (!_websiteVisible || _busy || _siteLoadFailed),
                         child: VideoSiteBrowser(
+                          visible:
+                              _websiteVisible ||
+                              _verificationVisible && !_usesVerificationWindow,
                           home: widget.homeUrl,
+                          source: widget.source,
+                          networkContext: _networkContext?.token,
                           externalAuthenticationEntries:
                               _externalAuthenticationEntries,
                           onExternalAuthentication: (entry) =>
@@ -4958,8 +6530,11 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                             ),
                             onWebViewCreated: (controller) {
                               _web = controller;
+                              _registerDownloadRetry();
                               unawaited(_initializeCatalog());
                             },
+                            onWebContentProcessDidTerminate: (_) =>
+                                _browserProcessTerminated(),
                             onLoadStart: (_, url) {
                               if (!mounted ||
                                   _refreshCompleter != null ||
@@ -4967,13 +6542,34 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                                 return;
                               }
                               final uri = Uri.tryParse(url?.toString() ?? '');
-                              _challengeResponseUrl = null;
+                              if (_browserNeedsRecovery &&
+                                  !videoSiteDocumentMatches(
+                                    _requestedUrl,
+                                    uri,
+                                  )) {
+                                return;
+                              }
+                              _clearDocumentFailureEvidence();
                               _browserDiagnostics.document('load-start', uri);
                               if (!_isFirstParty(uri)) return;
                               // A real main-document navigation invalidates
                               // the open menu even when verification stays
                               // visible. Read-only observation does not.
                               _dismissCatalogMenu();
+                              if (!_websiteVisible &&
+                                  !_verificationVisible &&
+                                  !_busy &&
+                                  !_siteLoadFailed &&
+                                  videoSiteDocumentMatches(
+                                    _requestedUrl,
+                                    uri,
+                                  )) {
+                                // WebKit can restart the current document after
+                                // suspension. Keep native content while probing
+                                // its replacement; a real challenge still owns
+                                // the commit/state verification path below.
+                                _refreshingCatalog = true;
+                              }
                               _documentLoading = true;
                               _awaitingCommit = true;
                               _adoptWebsiteNavigation(uri);
@@ -4985,7 +6581,11 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                               }
                               if (_verificationVisible) return;
                               _startLoadWatchdog(uri);
-                              setState(() => _busy = !_refreshingCatalog);
+                              setState(() {
+                                _busy = !_refreshingCatalog;
+                                _siteLoadFailed = false;
+                                _message = null;
+                              });
                             },
                             onPageCommitVisible: (_, url) {
                               final uri = Uri.tryParse(url?.toString() ?? '');
@@ -5004,6 +6604,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                                 _requestedUrl,
                                 uri,
                               )) {
+                                // A provisional callback can outlive an
+                                // evicted process. Only the current commit
+                                // can satisfy pending browser recovery.
+                                _browserNeedsRecovery = false;
                                 _awaitingCommit = false;
                               }
                               _browserDiagnostics.document(
@@ -5105,7 +6709,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                                 nativeFailure ?? error.type.toString(),
                                 main: request.isForMainFrame == true,
                               );
-                              if (request.isForMainFrame == true &&
+                              if (!_browserNeedsRecovery &&
+                                  request.isForMainFrame == true &&
                                   videoSiteDocumentMatches(
                                     _requestedUrl,
                                     Uri.tryParse(request.url.toString()),
@@ -5205,52 +6810,18 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                             enabled: !_websiteVisible && !_verificationVisible,
                             child: Material(
                               color: Theme.of(context).colorScheme.surface,
-                              child: _personalVisible
-                                  ? VideoLibraryView(
-                                      showActions: true,
-                                      revision: _personalRevision,
-                                      source: widget.source,
-                                      siteHost: widget.homeUrl.host,
-                                      onOpenVideo: (uri) {
-                                        _returnToPersonal = true;
-                                        unawaited(_load(uri));
-                                      },
-                                      onOpenAccount: () {
-                                        final tab = widget.tabs
-                                            .where(
-                                              (tab) => tab.mode == 'account',
-                                            )
-                                            .firstOrNull;
-                                        if (tab != null) {
-                                          unawaited(_openSiteAccount(tab));
-                                        }
-                                      },
-                                      onPlaybackSettings: () => unawaited(
-                                        Navigator.of(context).push<void>(
-                                          videoPageRoute(
-                                            builder: (_) =>
-                                                const VideoPlaybackSettingsPage(),
-                                          ),
-                                        ),
-                                      ),
-                                      onSourceSettings: () =>
-                                          unawaited(_openSettings()),
-                                      onAccountSync: _account == null
-                                          ? null
-                                          : () => unawaited(_openAccountSync()),
-                                    )
-                                  : Column(
-                                      children: [
-                                        if ((_categories.isNotEmpty ||
-                                                widget.searchFilters != null) &&
-                                            const {
-                                              '/',
-                                              '/search',
-                                            }.contains(_requestedUrl.path))
-                                          _categoryBar(),
-                                        Expanded(child: _catalogBody()),
-                                      ],
-                                    ),
+                              child: Column(
+                                children: [
+                                  if ((_categories.isNotEmpty ||
+                                          widget.searchFilters != null) &&
+                                      const {
+                                        '/',
+                                        '/search',
+                                      }.contains(_requestedUrl.path))
+                                    _categoryBar(),
+                                  Expanded(child: _catalogBody()),
+                                ],
+                              ),
                             ),
                           ),
                         ),
@@ -5352,6 +6923,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                 ),
                 bottomNavigationBar:
                     widget.tabs.isEmpty ||
+                        _inPersonalLibrary ||
+                        _personalVisible ||
                         _websiteVisible ||
                         _verificationVisible
                     ? null

@@ -17,12 +17,22 @@ _GlobalSettingState _$GlobalSettingStateFromJson(
   seedColor: json['seedColor'] == null
       ? const Color(0xFFEF5350)
       : const ColorConverter().fromJson((json['seedColor'] as num).toInt()),
+  switchStyle:
+      $enumDecodeNullable(
+        _$BreezeSwitchStyleEnumMap,
+        json['switchStyle'],
+        unknownValue: BreezeSwitchStyle.classic,
+      ) ??
+      BreezeSwitchStyle.classic,
   themeInitState: (json['themeInitState'] as num?)?.toInt() ?? 0,
   locale: json['locale'] == null
       ? const Locale('zh', 'CN')
       : const LocaleConverter().fromJson(json['locale'] as String),
   localeFollowsSystem: json['localeFollowsSystem'] as bool? ?? true,
   welcomePageNum: (json['welcomePageNum'] as num?)?.toInt() ?? 0,
+  mainNavigationSlots: json['mainNavigationSlots'] == null
+      ? ''
+      : normalizeMainNavigationSlots(json['mainNavigationSlots']),
   syncSetting: json['syncSetting'] == null
       ? const SyncSettingState()
       : SyncSettingState.fromJson(json['syncSetting'] as Map<String, dynamic>),
@@ -44,6 +54,11 @@ _GlobalSettingState _$GlobalSettingStateFromJson(
   backPressExitEnabled: json['backPressExitEnabled'] as bool? ?? false,
   updateAccelerate: json['updateAccelerate'] as bool? ?? true,
   retryDownloadUntilSuccess: json['retryDownloadUntilSuccess'] as bool? ?? true,
+  videoDownloadConcurrency:
+      (json['videoDownloadConcurrency'] as num?)?.toInt() ?? 1,
+  downloadWifiOnly: json['downloadWifiOnly'] as bool? ?? false,
+  downloadCompletionNotice:
+      json['downloadCompletionNotice'] as String? ?? 'work',
   oldPageRollbackEnabled: json['oldPageRollbackEnabled'] as bool? ?? false,
   cloudFavoritePreferred: json['cloudFavoritePreferred'] as bool? ?? false,
   autoFollowOnCollect: json['autoFollowOnCollect'] as bool? ?? false,
@@ -100,10 +115,12 @@ Map<String, dynamic> _$GlobalSettingStateToJson(_GlobalSettingState instance) =>
       'themeMode': _$ThemeModeEnumMap[instance.themeMode]!,
       'isAMOLED': instance.isAMOLED,
       'seedColor': const ColorConverter().toJson(instance.seedColor),
+      'switchStyle': _$BreezeSwitchStyleEnumMap[instance.switchStyle]!,
       'themeInitState': instance.themeInitState,
       'locale': const LocaleConverter().toJson(instance.locale),
       'localeFollowsSystem': instance.localeFollowsSystem,
       'welcomePageNum': instance.welcomePageNum,
+      'mainNavigationSlots': instance.mainNavigationSlots,
       'syncSetting': instance.syncSetting.toJson(),
       'maskedKeywords': instance.maskedKeywords,
       'socks5ProxyEnabled': instance.socks5ProxyEnabled,
@@ -119,6 +136,9 @@ Map<String, dynamic> _$GlobalSettingStateToJson(_GlobalSettingState instance) =>
       'backPressExitEnabled': instance.backPressExitEnabled,
       'updateAccelerate': instance.updateAccelerate,
       'retryDownloadUntilSuccess': instance.retryDownloadUntilSuccess,
+      'videoDownloadConcurrency': instance.videoDownloadConcurrency,
+      'downloadWifiOnly': instance.downloadWifiOnly,
+      'downloadCompletionNotice': instance.downloadCompletionNotice,
       'oldPageRollbackEnabled': instance.oldPageRollbackEnabled,
       'cloudFavoritePreferred': instance.cloudFavoritePreferred,
       'autoFollowOnCollect': instance.autoFollowOnCollect,
@@ -147,6 +167,17 @@ const _$ThemeModeEnumMap = {
   ThemeMode.dark: 'dark',
 };
 
+const _$BreezeSwitchStyleEnumMap = {
+  BreezeSwitchStyle.classic: 'classic',
+  BreezeSwitchStyle.symbols: 'symbols',
+  BreezeSwitchStyle.ring: 'ring',
+  BreezeSwitchStyle.relief: 'relief',
+  BreezeSwitchStyle.pixel: 'pixel',
+  BreezeSwitchStyle.thumb: 'thumb',
+  BreezeSwitchStyle.power: 'power',
+  BreezeSwitchStyle.spark: 'spark',
+};
+
 const _$ChineseConvertModeEnumMap = {
   ChineseConvertMode.off: 'off',
   ChineseConvertMode.simplified: 'simplified',
@@ -155,7 +186,7 @@ const _$ChineseConvertModeEnumMap = {
 
 _CacheSettingState _$CacheSettingStateFromJson(Map<String, dynamic> json) =>
     _CacheSettingState(
-      autoCleanCache: json['autoCleanCache'] as bool? ?? true,
+      autoCleanCache: json['autoCleanCache'] as bool? ?? false,
       cacheSizeLimit: (json['cacheSizeLimit'] as num?)?.toInt() ?? 1073741824,
     );
 
@@ -237,6 +268,8 @@ Map<String, dynamic> _$S3SettingStateToJson(_S3SettingState instance) =>
 
 _SyncSettingState _$SyncSettingStateFromJson(Map<String, dynamic> json) =>
     _SyncSettingState(
+      legacyCompatibilityEnabled:
+          json['legacyCompatibilityEnabled'] as bool? ?? false,
       syncServiceType:
           $enumDecodeNullable(
             _$SyncServiceTypeEnumMap,
@@ -260,6 +293,7 @@ _SyncSettingState _$SyncSettingStateFromJson(Map<String, dynamic> json) =>
 
 Map<String, dynamic> _$SyncSettingStateToJson(_SyncSettingState instance) =>
     <String, dynamic>{
+      'legacyCompatibilityEnabled': instance.legacyCompatibilityEnabled,
       'syncServiceType': _$SyncServiceTypeEnumMap[instance.syncServiceType]!,
       'webdavSetting': instance.webdavSetting.toJson(),
       's3Setting': instance.s3Setting.toJson(),
@@ -323,6 +357,7 @@ _ReadSettingState _$ReadSettingStateFromJson(Map<String, dynamic> json) =>
       volumeKeyPageTurnDistancePercent:
           (json['volumeKeyPageTurnDistancePercent'] as num?)?.toInt() ?? 72,
       doubleTapZoom: json['doubleTapZoom'] as bool? ?? false,
+      doubleTapZoomAnimation: json['doubleTapZoomAnimation'] as bool? ?? false,
       doubleTapOpenMenu: json['doubleTapOpenMenu'] as bool? ?? false,
       pageInfoShowPage: json['pageInfoShowPage'] as bool? ?? true,
       pageInfoShowNetwork: json['pageInfoShowNetwork'] as bool? ?? true,
@@ -379,6 +414,7 @@ Map<String, dynamic> _$ReadSettingStateToJson(
   'volumeKeyPageTurn': instance.volumeKeyPageTurn,
   'volumeKeyPageTurnDistancePercent': instance.volumeKeyPageTurnDistancePercent,
   'doubleTapZoom': instance.doubleTapZoom,
+  'doubleTapZoomAnimation': instance.doubleTapZoomAnimation,
   'doubleTapOpenMenu': instance.doubleTapOpenMenu,
   'pageInfoShowPage': instance.pageInfoShowPage,
   'pageInfoShowNetwork': instance.pageInfoShowNetwork,

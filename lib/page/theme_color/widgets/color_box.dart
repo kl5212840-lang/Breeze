@@ -35,7 +35,10 @@ class ColorThemeItem extends StatelessWidget {
                   color: colorInfo.color,
                   borderRadius: BorderRadius.circular(8), // 圆角
                   border: currentColor == colorInfo.color
-                      ? Border.all(color: Colors.black, width: 2) // 选中状态
+                      ? Border.all(
+                          color: context.theme.colorScheme.onSurface,
+                          width: 2,
+                        ) // 选中状态
                       : null,
                 ),
               ),

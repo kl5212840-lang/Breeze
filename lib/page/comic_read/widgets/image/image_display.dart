@@ -15,6 +15,9 @@ class ImageDisplay extends StatefulWidget {
   final int pageSlotIndex;
   final int sizeCacheIndex;
   final Alignment imageAlignment;
+  final FilterQuality filterQuality;
+  final void Function(Object error)? onDecodeError;
+  final VoidCallback? onFirstFrame;
 
   const ImageDisplay({
     super.key,
@@ -23,6 +26,9 @@ class ImageDisplay extends StatefulWidget {
     required this.pageSlotIndex,
     required this.sizeCacheIndex,
     this.imageAlignment = Alignment.center,
+    this.filterQuality = FilterQuality.medium,
+    this.onDecodeError,
+    this.onFirstFrame,
   });
 
   @override
@@ -38,6 +44,8 @@ class _ImageDisplayState extends State<ImageDisplay> {
   double? _rawHeight;
   bool _einkDelayFinished = true;
   bool _wasRowActive = false;
+  bool _reportedDecodeError = false;
+  bool _reportedFirstFrame = false;
 
   bool get isColumn => widget.isColumn;
 
@@ -55,6 +63,8 @@ class _ImageDisplayState extends State<ImageDisplay> {
     if (widget.isColumn != oldWidget.isColumn ||
         widget.imagePath != oldWidget.imagePath) {
       _stopListening();
+      _reportedDecodeError = false;
+      _reportedFirstFrame = false;
       _rawWidth = null;
       _rawHeight = null;
       _resolveImageMeta();
@@ -100,26 +110,41 @@ class _ImageDisplayState extends State<ImageDisplay> {
 
     final newListener = ImageStreamListener(
       (ImageInfo imageInfo, bool synchronousCall) {
-        if (!mounted) return;
+        try {
+          if (!mounted) return;
 
-        _rawWidth = imageInfo.image.width.toDouble();
-        _rawHeight = imageInfo.image.height.toDouble();
+          _rawWidth = imageInfo.image.width.toDouble();
+          _rawHeight = imageInfo.image.height.toDouble();
 
-        if (context.mounted) {
-          final renderBox = context.findRenderObject() as RenderBox?;
-          if (renderBox != null && renderBox.hasSize) {
-            _updateCubitSize(renderBox.size.width);
+          if (context.mounted) {
+            final renderBox = context.findRenderObject() as RenderBox?;
+            if (renderBox != null && renderBox.hasSize) {
+              _updateCubitSize(renderBox.size.width);
+            }
           }
+        } finally {
+          imageInfo.dispose();
         }
       },
       onError: (exception, stackTrace) {
         logger.e('Failed to resolve image size: $exception');
+        _reportDecodeError(exception);
       },
     );
 
     _imageStream = newStream;
     _imageListener = newListener;
     newStream.addListener(newListener);
+  }
+
+  void _reportDecodeError(Object error) {
+    if (!mounted || _reportedDecodeError) return;
+    _reportedDecodeError = true;
+    final failedPath = widget.imagePath;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && widget.imagePath == failedPath)
+        widget.onDecodeError?.call(error);
+    });
   }
 
   void _updateCubitSize(double actualWidth) {
@@ -222,10 +247,15 @@ class _ImageDisplayState extends State<ImageDisplay> {
           alignment: widget.imageAlignment,
           child: Image.file(
             File(widget.imagePath),
+            filterQuality: widget.filterQuality,
             width: width,
             fit: isColumn ? BoxFit.fill : BoxFit.contain,
             alignment: widget.imageAlignment,
             gaplessPlayback: true,
+            errorBuilder: (_, error, _) {
+              _reportDecodeError(error);
+              return loadingPlaceholder();
+            },
             frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
               if (wasSynchronouslyLoaded || frame != null) {
                 if (!isColumn &&
@@ -233,6 +263,12 @@ class _ImageDisplayState extends State<ImageDisplay> {
                     isActiveRowImage &&
                     !_einkDelayFinished) {
                   return Container(width: width, color: Colors.white);
+                }
+                if (!_reportedFirstFrame && widget.onFirstFrame != null) {
+                  _reportedFirstFrame = true;
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) widget.onFirstFrame?.call();
+                  });
                 }
                 return child;
               }

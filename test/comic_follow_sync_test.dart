@@ -58,6 +58,25 @@ UnifiedComicHistory _history(String uniqueKey, int order) {
 
 void main() {
   group('resolveFollowSyncFromDetail（进详情即确认）', () {
+    test('the shorter detail acknowledges only what it displayed', () {
+      final follow = _follow(
+        last: 10,
+        detected: 12,
+        hasUpdate: true,
+      ).copyWith(detectedChapterTitle: 'Twelfth');
+      final updated = resolveFollowSyncFromDetail(
+        follow: follow,
+        onlineChapterCount: 11,
+        onlineLatestTitle: 'Eleventh',
+        now: DateTime.utc(2026, 1, 2),
+      )!;
+      expect(updated.lastChapterCount, 11);
+      expect(updated.detectedChapterCount, 12);
+      expect(updated.detectedChapterTitle, 'Twelfth');
+      expect(updated.hasUpdate, isTrue);
+      expect(updated.updateTime, follow.updateTime);
+    });
+
     test('在线数没变大时返回 null，下载快照偏小不会写坏基线', () {
       final follow = _follow(last: 10, detected: 12, hasUpdate: true);
       expect(
@@ -133,6 +152,16 @@ void main() {
   });
 
   group('未读口径', () {
+    test('章节编号不能当作已读话数', () {
+      final follow = _follow(last: 1, detected: 2, hasUpdate: true);
+      final state = ComicFollowState(
+        items: [follow],
+        histories: {'src:1': _history('src:1', 100)},
+      );
+      expect(state.hasUnreadUpdate(follow), isTrue);
+      expect(state.unreadChapterCount(follow), 1);
+    });
+
     test('顶部按部数、卡片按话数：1 部有更新、该部 2 话未读', () {
       final f1 = _follow(
         uniqueKey: 'src:1',
@@ -153,9 +182,7 @@ void main() {
     });
 
     test('无未读时部数为 0', () {
-      final state = ComicFollowState(
-        items: [_follow(last: 5, detected: 5)],
-      );
+      final state = ComicFollowState(items: [_follow(last: 5, detected: 5)]);
       expect(state.updateCount, 0);
     });
   });

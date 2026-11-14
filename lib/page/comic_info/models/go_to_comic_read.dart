@@ -2,15 +2,12 @@ import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/cubit/string_select.dart';
-import 'package:zephyr/main.dart';
-import 'package:zephyr/object_box/model.dart';
-import 'package:zephyr/object_box/objectbox.g.dart';
 import 'package:zephyr/page/comic_info/method/get_plugin_detail.dart';
 import 'package:zephyr/page/download/adapters/download_chapter_adapter.dart';
 import 'package:zephyr/page/download/adapters/download_chapter_matcher.dart';
 import 'package:zephyr/page/download/models/download_chapter.dart';
-import 'package:zephyr/page/download/models/unified_comic_download.dart';
-import 'package:zephyr/service/download/download_task_repository.dart';
+import 'package:zephyr/page/comic_read/method/get_local_info.dart';
+import 'package:zephyr/service/reader/reader_history_service.dart';
 import 'package:zephyr/page/comic_read/type/chapter_extern.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/config/router/router.gr.dart' show ComicReadRoute;
@@ -22,62 +19,26 @@ void goToComicRead(
   String comicId,
   ComicEntryType type,
   dynamic allInfo,
-  String from,
-) {
+  String from, {
+  ReaderHistoryService? historyService,
+}) {
   final isDownload =
       type == ComicEntryType.download ||
       type == ComicEntryType.historyAndDownload;
-  final historyForChapter = objectbox.unifiedHistoryBox
-      .query(UnifiedComicHistory_.uniqueKey.equals('$from:$comicId'))
-      .build()
-      .findFirst();
-  final chapter = _resolveChapter(allInfo, from, historyForChapter);
-
-  // 在线入口统一查库：目标章节已下载则直接读本地，不再看来源 type。
-  dynamic readInfo = allInfo;
-  var readIsDownload = isDownload;
-  var readComicId = '';
-  DownloadChapter? readChapter = chapter;
-  var readEpsCount = 0;
-  if (!isDownload && chapter != null) {
-    const repository = DownloadTaskRepository();
-    final local =
-        repository.findDownloadedChapter(
-          from: from,
-          comicId: comicId,
-          chapterKey: chapter.id,
-        ) ??
-        repository.findDownloadedChapter(
-          from: from,
-          comicId: comicId,
-          chapterKey: chapter.effectiveRequestId,
-        );
-    final record = local == null
-        ? null
-        : repository.findDownloadRecord(from, comicId);
-    if (local != null && record != null) {
-      readInfo = record;
-      readIsDownload = true;
-      readComicId = record.comicId;
-      readChapter = local;
-      readEpsCount = resolveStoredDownloadChapters(record).length;
-    }
-  }
-  if (!readIsDownload) {
-    readEpsCount = resolveReadEpsCount(allInfo, from, isDownload: false);
-    readComicId = resolveReadComicId(allInfo, from, isDownload: false);
-  } else if (readInfo == allInfo) {
-    readEpsCount = resolveReadEpsCount(allInfo, from, isDownload: true);
-    readComicId = resolveReadComicId(allInfo, from, isDownload: true);
-  }
-  final hasHistory = context.read<StringSelectCubit>().state.isNotEmpty;
+  final historyForChapter = (historyService ?? ReaderHistoryService.instance)
+      .currentResumePosition(source: from, comicId: comicId);
+  final chapters = resolveReaderChapters(allInfo, from, offline: isDownload);
+  final readChapter = _resolveChapter(chapters, historyForChapter);
+  final readComicId = resolveReadComicId(allInfo, from, isDownload: isDownload);
+  final readEpsCount = chapters.length;
+  final hasHistory = historyForChapter != null;
 
   final typeVal = hasHistory
-      ? (readIsDownload
+      ? (isDownload
             ? ComicEntryType.historyAndDownload
             : ComicEntryType.history)
-      : (readIsDownload ? ComicEntryType.download : ComicEntryType.normal);
-  final orderVal = readChapter?.order ?? _resolveInitialOrder(readInfo, from);
+      : (isDownload ? ComicEntryType.download : ComicEntryType.normal);
+  final orderVal = readChapter?.order ?? 1;
 
   context.pushRoute(
     ComicReadRoute(
@@ -93,18 +54,16 @@ void goToComicRead(
       epsNumber: readEpsCount,
       from: from,
       type: typeVal,
-      comicInfo: readInfo,
+      comicInfo: allInfo,
       stringSelectCubit: context.read<StringSelectCubit>(),
     ),
   );
 }
 
 DownloadChapter? _resolveChapter(
-  dynamic allInfo,
-  String from,
-  UnifiedComicHistory? history,
+  List<UnifiedComicChapterRef> chapterRefs,
+  ReaderResumePosition? history,
 ) {
-  final chapterRefs = resolveUnifiedComicChapters(allInfo, from);
   if (chapterRefs.isEmpty) {
     return null;
   }
@@ -139,12 +98,4 @@ DownloadChapter? _resolveChapter(
   }
 
   return chapters.first;
-}
-
-int _resolveInitialOrder(dynamic allInfo, String from) {
-  final chapters = resolveUnifiedComicChapters(allInfo, from);
-  if (chapters.isEmpty) {
-    return 1;
-  }
-  return chapters.first.order;
 }

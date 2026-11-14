@@ -1,3 +1,4 @@
+import 'package:zephyr/network/sync/sync_direction.dart';
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
@@ -9,13 +10,28 @@ import 'package:uuid/uuid.dart';
 import 'package:zephyr/config/global/global.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/sync/sync_device_id.dart';
+import 'package:zephyr/network/sync/sync_plugin_participation.dart';
+import 'package:zephyr/network/sync/sync_payload_compatibility.dart';
+import 'package:zephyr/network/sync/sync_archive_context.dart';
+import 'package:zephyr/network/sync/sync_archive_adapter.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
 import 'package:zephyr/src/rust/api/simple.dart';
+import 'package:zephyr/service/backup_security/backup_security.dart';
+import 'package:zephyr/service/comic_follow/comic_follow_merge.dart';
+import 'package:zephyr/service/local_plugin_installation_state.dart';
 
 const String syncDataVersion = 'v1';
 
 enum _VectorRelation { equal, leftDominates, rightDominates, conflict }
+
+class ComicSyncCodec {
+  const ComicSyncCodec({
+    this.encode = ComicSyncCore.encodeEncryptedPayload,
+    this.decode = ComicSyncCore.decodeEncryptedPayload,
+  });
+  final Future<List<int>> Function(List<int>) encode, decode;
+}
 
 abstract class ComicSyncRemoteAdapter {
   Future<void> testConnection();
@@ -40,7 +56,7 @@ abstract class ComicSyncRemoteAdapter {
 }
 
 class ComicSyncCore {
-  static String get syncRemoteRootName => '${appName}_$syncVersion';
+  static String get syncRemoteRootName => SyncArchiveContext.currentRoot;
 
   static String get legacyDataRootName => appName;
 
@@ -122,7 +138,7 @@ class ComicSyncCore {
     return md5.convert(data).toString();
   }
 
-  static Future<List<int>> buildCompressedPayload() async {
+  static Map<String, dynamic> captureData() {
     final favorites = objectbox.unifiedFavoriteBox.getAll();
     favorites.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
@@ -154,26 +170,95 @@ class ComicSyncCore {
 
     final data = {
       'version': syncDataVersion,
-      'favorites': favorites.map((e) => _stripLocalId(e.toJson())).toList(),
-      'histories': histories.map((e) => _stripLocalId(e.toJson())).toList(),
-      'follows': follows.map((e) => _stripLocalId(e.toJson())).toList(),
+      'favorites': favorites.map(_archiveComicRecord).toList(),
+      'histories': histories.map(_archiveComicRecord).toList(),
+      'follows': follows.map(_archiveComicRecord).toList(),
       'folders': folders.map((e) => _stripLocalId(e.toJson())).toList(),
       'links': links.map((e) => _stripLocalId(e.toJson())).toList(),
-      'readPreferences': readPreferences
-          .map((e) => _stripLocalId(e.toJson()))
-          .toList(),
+      'readPreferences': readPreferences.map(_archiveComicRecord).toList(),
     };
 
-    final raw = utf8.encode(jsonEncode(data));
-    return encodeEncryptedPayload(raw);
+    return data;
   }
 
+  static Future<List<int>> buildCompressedPayload({
+    ComicSyncCodec codec = const ComicSyncCodec(),
+  }) => codec.encode(utf8.encode(jsonEncode(captureData())));
+
   static Future<Map<String, dynamic>> decodeCompressedPayload(
-    List<int> encryptedCompressedBytes,
-  ) async {
-    final raw = await decodeEncryptedPayload(encryptedCompressedBytes);
+    List<int> encryptedCompressedBytes, {
+    ComicSyncCodec codec = const ComicSyncCodec(),
+  }) async {
+    final raw = await codec.decode(encryptedCompressedBytes);
     final jsonString = utf8.decode(raw);
-    return jsonDecode(jsonString) as Map<String, dynamic>;
+    final data = jsonDecode(jsonString) as Map<String, dynamic>;
+    validatePayload(data);
+    return data;
+  }
+
+  static void validatePayload(Map<String, dynamic> data) {
+    SyncPayloadCompatibility.version(data, 'version', {
+      'v1',
+    }, legacyMissing: true);
+    SyncPayloadCompatibility.keys(data, {
+      'version',
+      'favorites',
+      'histories',
+      'follows',
+      'folders',
+      'links',
+      'readPreferences',
+    });
+    void rows(
+      String name,
+      Map<String, dynamic> Function(Map<String, dynamic>) normalize, {
+      Set<int>? supportedSchemas,
+      Set<String> legacyKeys = const {},
+    }) {
+      if (data[name] == null) return;
+      if (data[name] is! List) throw const SyncCompatibilityException();
+      for (final raw in data[name] as List) {
+        if (raw is! Map<String, dynamic> ||
+            (supportedSchemas != null &&
+                !supportedSchemas.contains(raw['schemaVersion']))) {
+          throw const SyncCompatibilityException();
+        }
+        try {
+          SyncPayloadCompatibility.keys(raw, {
+            ...normalize(raw).keys,
+            ...legacyKeys,
+          });
+        } catch (_) {
+          throw const SyncCompatibilityException();
+        }
+      }
+    }
+
+    // The shipped collection/history writers and v1-to-v2 migration use v2.
+    // This is the entity format, independent of the outer archive version.
+    rows(
+      'favorites',
+      (row) => UnifiedComicFavorite.fromJson(row).toJson(),
+      supportedSchemas: {1, 2},
+    );
+    rows(
+      'histories',
+      (row) => UnifiedComicHistory.fromJson(row).toJson(),
+      supportedSchemas: {1, 2},
+    );
+    rows(
+      'follows',
+      (row) => ComicFollow.fromJson(row).toJson(),
+      supportedSchemas: {1},
+    );
+    rows('folders', (row) => ComicFolder.fromJson(row).toJson());
+    rows('links', (row) => ComicLink.fromJson(row).toJson());
+    rows(
+      'readPreferences',
+      (row) => ComicReadPreference.fromJson(row).toJson(),
+      // The model converts the shipped single-column format into overridesJson.
+      legacyKeys: {'readMode'},
+    );
   }
 
   static Future<List<int>> encodeEncryptedPayload(List<int> raw) async {
@@ -185,6 +270,10 @@ class ComicSyncCore {
   static Future<List<int>> decodeEncryptedPayload(
     List<int> encryptedCompressedBytes,
   ) async {
+    if (BackupProtectionService.isProtectedBytes(encryptedCompressedBytes)) {
+      BackupProtectionService.readProfileFromBytes(encryptedCompressedBytes);
+      throw const BackupProtectionException('backup_locked');
+    }
     final compressed = _decryptBytes(encryptedCompressedBytes);
     final raw = await decompressExtreme(data: compressed);
     return raw;
@@ -192,10 +281,58 @@ class ComicSyncCore {
 
   static int mergeUnifiedDataInIsolate(Store store, Map<String, dynamic> arg) {
     syncDeviceId = arg['_deviceId'] as String;
-    return mergeUnifiedData(store, arg['_data'] as Map<String, dynamic>);
+    return mergeUnifiedData(
+      store,
+      arg['_data'] as Map<String, dynamic>,
+      excludedSources: Set<String>.from(
+        arg['_excludedSources'] as List? ?? const [],
+      ),
+      preferenceDirection: SyncDirection.values.byName(
+        arg['_preferenceDirection'] as String? ?? 'merge',
+      ),
+      participatingSources: arg['_participatingSources'] == null
+          ? null
+          : Set<String>.from(arg['_participatingSources'] as List),
+    );
   }
 
-  static int mergeUnifiedData(Store store, Map<String, dynamic> data) {
+  static String mergeUnifiedDataProjectionInIsolate(
+    Store store,
+    Map<String, dynamic> arg,
+  ) {
+    syncDeviceId = arg['_deviceId'] as String;
+    final projection = <String, dynamic>{};
+    mergeUnifiedData(
+      store,
+      arg['_data'] as Map<String, dynamic>,
+      excludedSources: Set<String>.from(
+        arg['_excludedSources'] as List? ?? const [],
+      ),
+      preferenceDirection: SyncDirection.values.byName(
+        arg['_preferenceDirection'] as String? ?? 'merge',
+      ),
+      participatingSources: arg['_participatingSources'] == null
+          ? null
+          : Set<String>.from(arg['_participatingSources'] as List),
+      cloudProjection: projection,
+    );
+    return jsonEncode(projection);
+  }
+
+  static int mergeUnifiedData(
+    Store store,
+    Map<String, dynamic> data, {
+    Set<String>? excludedSources,
+    Set<String>? participatingSources,
+    Map<String, dynamic>? cloudProjection,
+    SyncDirection preferenceDirection = SyncDirection.merge,
+  }) {
+    excludedSources ??= participatingSources == null
+        ? LocalPluginInstallationState.instance.excludedSources(
+            PluginDataScope.records,
+          )
+        : <String>{};
+    validatePayload(data);
     final favoriteBox = store.box<UnifiedComicFavorite>();
     final historyBox = store.box<UnifiedComicHistory>();
     final followBox = store.box<ComicFollow>();
@@ -209,25 +346,45 @@ class ComicSyncCore {
     var localFolders = folderBox.getAll();
     var localLinks = linkBox.getAll();
     final localReadPreferences = readPreferenceBox.getAll();
+    if (participatingSources != null) {
+      excludedSources = {
+        ...excludedSources,
+        ...comicPayloadSources(data).difference(participatingSources),
+        ...localFavorites
+            .map((row) => row.source)
+            .where((source) => !participatingSources.contains(source)),
+        ...localHistories
+            .map((row) => row.source)
+            .where((source) => !participatingSources.contains(source)),
+        ...localFollows
+            .map((row) => row.source)
+            .where((source) => !participatingSources.contains(source)),
+        ...localReadPreferences
+            .map((row) => row.source)
+            .where((source) => !participatingSources.contains(source)),
+      };
+    }
 
-    final cloudFavorites = _parseJsonList(
-      data['favorites'],
-    ).map(UnifiedComicFavorite.fromJson).toList();
-    final cloudHistories = _parseJsonList(
-      data['histories'],
-    ).map(UnifiedComicHistory.fromJson).toList();
-    final cloudFollows = _parseJsonList(
-      data['follows'],
-    ).map(ComicFollow.fromJson).toList();
+    final favoriteRows = _parseJsonList(data['favorites']);
+    final historyRows = _parseJsonList(data['histories']);
+    final followRows = _parseJsonList(data['follows']);
+    final preferenceRows = _parseJsonList(data['readPreferences']);
+    final cloudFavorites = favoriteRows
+        .map(UnifiedComicFavorite.fromJson)
+        .toList();
+    final cloudHistories = historyRows
+        .map(UnifiedComicHistory.fromJson)
+        .toList();
+    final cloudFollows = followRows.map(ComicFollow.fromJson).toList();
     var cloudFolders = _parseJsonList(
       data['folders'],
     ).map(ComicFolder.fromJson).toList();
     var cloudLinks = _parseJsonList(
       data['links'],
     ).map(ComicLink.fromJson).toList();
-    final cloudReadPreferences = _parseJsonList(
-      data['readPreferences'],
-    ).map(ComicReadPreference.fromJson).toList();
+    final cloudReadPreferences = preferenceRows
+        .map(ComicReadPreference.fromJson)
+        .toList();
 
     // 旧数据可能没有 syncId，先兜底补一遍，确保后续按 syncId 合并能正常进行。
     for (final folder in [...localFolders, ...cloudFolders]) {
@@ -236,31 +393,39 @@ class ComicSyncCore {
       }
     }
 
-    final mergedFavorites = _mergeByUniqueKey(
+    final mergedFavorites = mergeByUniqueKey(
       localFavorites,
       cloudFavorites,
       keyOf: (item) => item.uniqueKey,
       updatedAtOf: (item) => item.updatedAt,
     );
-    final mergedHistories = _mergeByUniqueKey(
+    final mergedHistories = mergeByUniqueKey(
       localHistories,
       cloudHistories,
       keyOf: (item) => item.uniqueKey,
       updatedAtOf: (item) => item.updatedAt,
     );
-    final mergedFollows = _mergeByUniqueKey(
+    final mergedFollows = mergeByUniqueKey(
       localFollows,
       cloudFollows,
       keyOf: (item) => item.uniqueKey,
       updatedAtOf: (item) => item.updatedAt,
+      reconcile: mergeComicFollowRecord,
     );
     // 单本阅读偏好：unix 时间戳更大的保留，相等保留本地。
-    final mergedReadPreferences = _mergeByUniqueKey(
-      localReadPreferences,
-      cloudReadPreferences,
-      keyOf: (item) => item.uniqueKey,
-      updatedAtOf: (item) => item.updatedAt,
-    );
+    final mergedReadPreferences = preferenceDirection == SyncDirection.merge
+        ? mergeByUniqueKey(
+            localReadPreferences,
+            cloudReadPreferences,
+            keyOf: (item) => item.uniqueKey,
+            updatedAtOf: (item) => item.updatedAt,
+          )
+        : preferenceDirection == SyncDirection.restore
+        ? <String, ComicReadPreference>{
+            for (final row in localReadPreferences) row.uniqueKey: row,
+            for (final row in cloudReadPreferences) row.uniqueKey: row,
+          }.values.toList()
+        : List<ComicReadPreference>.of(localReadPreferences);
     var mergedFolders = _mergeByVersionVector<ComicFolder>(
       localFolders,
       cloudFolders,
@@ -349,6 +514,96 @@ class ComicSyncCore {
       item.id = 0;
     }
 
+    mergedFavorites.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    mergedHistories.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    mergedFollows.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    mergedReadPreferences.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    cloudProjection?.addAll({
+      'version': syncDataVersion,
+      'favorites': _projectArchiveRecords(
+        mergedFavorites,
+        cloudFavorites,
+        favoriteRows,
+      ),
+      'histories': _projectArchiveRecords(
+        mergedHistories,
+        cloudHistories,
+        historyRows,
+      ),
+      'follows': _projectArchiveRecords(
+        mergedFollows,
+        cloudFollows,
+        followRows,
+      ),
+      'readPreferences': _projectArchiveRecords(
+        preferenceDirection == SyncDirection.recordsOnly ||
+                preferenceDirection == SyncDirection.restore
+            ? cloudReadPreferences
+            : preferenceDirection == SyncDirection.upload
+            ? <String, ComicReadPreference>{
+                for (final row in cloudReadPreferences) row.uniqueKey: row,
+                for (final row in mergedReadPreferences) row.uniqueKey: row,
+              }.values
+            : mergedReadPreferences,
+        cloudReadPreferences,
+        preferenceRows,
+      ),
+      'folders': mergedFolders
+          .where((row) => row.typeData != 'download')
+          .map((row) => _stripLocalId(row.toJson()))
+          .toList(),
+      'links': mergedLinks
+          .where((row) => row.typeData != 'download')
+          .map((row) => _stripLocalId(row.toJson()))
+          .toList(),
+    });
+    if (participatingSources != null && cloudProjection != null) {
+      final projected = projectPluginComicData(
+        cloudProjection,
+        data,
+        participatingSources,
+      );
+      cloudProjection
+        ..clear()
+        ..addAll(projected);
+    }
+    final blockedKeys = <String>{
+      for (final row in mergedFavorites)
+        if (excludedSources.contains(row.source)) row.uniqueKey,
+      for (final row in mergedHistories)
+        if (excludedSources.contains(row.source)) row.uniqueKey,
+      for (final row in mergedFollows)
+        if (excludedSources.contains(row.source)) row.uniqueKey,
+      for (final row in mergedReadPreferences)
+        if (excludedSources.contains(row.source)) row.uniqueKey,
+    };
+    final visibleFavorites = [
+      ...mergedFavorites.where((row) => !excludedSources!.contains(row.source)),
+      ...localFavorites.where((row) => excludedSources!.contains(row.source)),
+    ];
+    final visibleHistories = [
+      ...mergedHistories.where((row) => !excludedSources!.contains(row.source)),
+      ...localHistories.where((row) => excludedSources!.contains(row.source)),
+    ];
+    final visibleFollows = [
+      ...mergedFollows.where((row) => !excludedSources!.contains(row.source)),
+      ...localFollows.where((row) => excludedSources!.contains(row.source)),
+    ];
+    final visibleReadPreferences = [
+      ...mergedReadPreferences.where(
+        (row) => !excludedSources!.contains(row.source),
+      ),
+      ...localReadPreferences.where(
+        (row) => excludedSources!.contains(row.source),
+      ),
+    ];
+    bool blockedLink(ComicLink row) =>
+        row.typeData != 'download' && blockedKeys.contains(row.comicUniqueKey);
+    mergedLinks = [
+      ...mergedLinks.where((row) => !blockedLink(row)),
+      ...localLinks.where(blockedLink),
+    ];
+
     favoriteBox.removeAll();
     historyBox.removeAll();
     followBox.removeAll();
@@ -356,17 +611,17 @@ class ComicSyncCore {
     linkBox.removeAll();
     readPreferenceBox.removeAll();
 
-    if (mergedFavorites.isNotEmpty) {
-      favoriteBox.putMany(mergedFavorites);
+    if (visibleFavorites.isNotEmpty) {
+      favoriteBox.putMany(visibleFavorites);
     }
-    if (mergedHistories.isNotEmpty) {
-      historyBox.putMany(mergedHistories);
+    if (visibleHistories.isNotEmpty) {
+      historyBox.putMany(visibleHistories);
     }
-    if (mergedFollows.isNotEmpty) {
-      followBox.putMany(mergedFollows);
+    if (visibleFollows.isNotEmpty) {
+      followBox.putMany(visibleFollows);
     }
-    if (mergedReadPreferences.isNotEmpty) {
-      readPreferenceBox.putMany(mergedReadPreferences);
+    if (visibleReadPreferences.isNotEmpty) {
+      readPreferenceBox.putMany(visibleReadPreferences);
     }
     if (mergedFolders.isNotEmpty) {
       folderBox.putMany(mergedFolders);
@@ -427,19 +682,23 @@ class ComicSyncCore {
         .toList();
   }
 
-  static List<T> _mergeByUniqueKey<T>(
+  /// Used by cloud and file merges. Equal timestamps retain the local row.
+  static List<T> mergeByUniqueKey<T>(
     List<T> local,
-    List<T> cloud, {
+    Iterable<T> incoming, {
     required String Function(T item) keyOf,
     required DateTime Function(T item) updatedAtOf,
+    T Function(T local, T incoming)? reconcile,
   }) {
     final merged = <String, T>{for (final item in local) keyOf(item): item};
-    for (final cloudItem in cloud) {
-      final key = keyOf(cloudItem);
+    for (final incomingItem in incoming) {
+      final key = keyOf(incomingItem);
       final localItem = merged[key];
-      if (localItem == null ||
-          updatedAtOf(cloudItem).isAfter(updatedAtOf(localItem))) {
-        merged[key] = cloudItem;
+      if (localItem != null && reconcile != null) {
+        merged[key] = reconcile(localItem, incomingItem);
+      } else if (localItem == null ||
+          updatedAtOf(incomingItem).isAfter(updatedAtOf(localItem))) {
+        merged[key] = incomingItem;
       }
     }
     return merged.values.toList();
@@ -1129,15 +1388,135 @@ class ComicSyncCore {
     return json;
   }
 
+  static Map<String, dynamic> _archiveComicRecord(Object record) {
+    final (json, dates) = switch (record) {
+      UnifiedComicFavorite row => (
+        row.toJson(),
+        {'createdAt': row.createdAt, 'updatedAt': row.updatedAt},
+      ),
+      UnifiedComicHistory row => (
+        row.toJson(),
+        {
+          'createdAt': row.createdAt,
+          'lastReadAt': row.lastReadAt,
+          'updatedAt': row.updatedAt,
+        },
+      ),
+      ComicFollow row => (
+        row.toJson(),
+        {
+          'createdAt': row.createdAt,
+          'updateTime': row.updateTime,
+          'updatedAt': row.updatedAt,
+        },
+      ),
+      ComicReadPreference row => (row.toJson(), {'updatedAt': row.updatedAt}),
+      _ => throw ArgumentError.value(
+        record,
+        'record',
+        'Expected a comic record',
+      ),
+    };
+    return _stripLocalId(json)..addAll({
+      for (final entry in dates.entries)
+        entry.key: entry.value.toUtc().toIso8601String(),
+    });
+  }
+
+  static List<Map<String, dynamic>> _projectArchiveRecords<T extends Object>(
+    Iterable<T> records,
+    List<T> remoteRecords,
+    List<Map<String, dynamic>> remoteRows,
+  ) {
+    final remoteByKey = {
+      for (var i = 0; i < remoteRows.length; i++)
+        remoteRows[i]['uniqueKey']: (
+          record: remoteRecords[i],
+          row: remoteRows[i],
+        ),
+    };
+    return records.map((record) {
+      final next = _archiveComicRecord(record);
+      final previous = remoteByKey[next['uniqueKey']];
+      // Offset-less legacy dates cannot recover the original device timezone.
+      // Preserve their spelling when publishing an otherwise unchanged record.
+      if (previous != null &&
+          (identical(record, previous.record) ||
+              const MapEquality<String, dynamic>().equals(
+                next,
+                _archiveComicRecord(previous.record),
+              ))) {
+        for (final field in [
+          'createdAt',
+          'lastReadAt',
+          'updateTime',
+          'updatedAt',
+        ]) {
+          if (previous.row.containsKey(field))
+            next[field] = previous.row[field];
+        }
+      }
+      return next;
+    }).toList();
+  }
+
   static final RegExp _comicDataRegex = RegExp(r'^comic_(\d+)\.bin$');
   static final RegExp _settingsDataRegex = RegExp(r'^settings_(\d+)\.bin$');
 }
 
-Future<void> runComicSync(ComicSyncRemoteAdapter adapter) async {
+Future<void> preflightComicSync(
+  ComicSyncRemoteAdapter adapter, {
+  ComicSyncCodec codec = const ComicSyncCodec(),
+}) async {
+  await readComicArchiveData(adapter, codec: codec);
+}
+
+Future<Map<String, dynamic>?> readComicArchiveData(
+  ComicSyncRemoteAdapter adapter, {
+  ComicSyncCodec codec = const ComicSyncCodec(),
+}) async {
+  await LocalPluginInstallationState.instance.load();
+  final files = (await adapter.listRemoteDataFiles())
+      .where(ComicSyncCore.isSyncRootPath)
+      .toList();
+  final digest = await adapter.downloadRemoteMd5();
+  final remote = await _readCommittedComicSnapshot(adapter, files, digest);
+  if (remote == null) return null;
+  return ComicSyncCore.decodeCompressedPayload(remote.bytes, codec: codec);
+}
+
+Future<void> runComicSync(
+  ComicSyncRemoteAdapter adapter, {
+  ComicSyncCodec codec = const ComicSyncCodec(),
+  SyncPluginParticipation? participation,
+  SyncDirection preferenceDirection = SyncDirection.merge,
+  void Function(Set<String> ids)? onRetiredFolders,
+}) async {
+  participation ??= await SyncPluginParticipation.capture();
+  participation.check();
+  await prepareScopedSyncArchive(adapter);
   await adapter.testConnection();
   await adapter.ensureRemoteReady();
+  await preflightComicSync(adapter, codec: codec);
+  await LocalPluginInstallationState.instance.load();
+  final lifecycle = _ComicRecordCaptureGuard();
 
-  final localPayload = await ComicSyncCore.buildCompressedPayload();
+  final localPayload = await codec.encode(
+    utf8.encode(
+      jsonEncode(
+        projectPluginComicData(
+          {
+            ...ComicSyncCore.captureData(),
+            if (preferenceDirection == SyncDirection.recordsOnly ||
+                preferenceDirection == SyncDirection.restore)
+              'readPreferences': <dynamic>[],
+          },
+          const {},
+          participation.sources,
+        ),
+      ),
+    ),
+  );
   final localMd5 = ComicSyncCore.calculateMd5(localPayload);
 
   final allRemoteFiles = await adapter.listRemoteDataFiles();
@@ -1145,6 +1524,8 @@ Future<void> runComicSync(ComicSyncRemoteAdapter adapter) async {
       .where(ComicSyncCore.isLegacyRemotePath)
       .toList();
   if (legacyFiles.isNotEmpty) {
+    participation.check();
+    lifecycle.check();
     await adapter.deleteRemoteFiles(legacyFiles);
   }
 
@@ -1164,78 +1545,159 @@ Future<void> runComicSync(ComicSyncRemoteAdapter adapter) async {
       allSyncRootFiles: allRemoteFiles,
       keepComicPath:
           '${ComicSyncCore.syncRemoteRootName}/${ComicSyncCore.buildComicDataFileName()}',
+      beforeDelete: () {
+        participation!.check();
+        lifecycle.check();
+      },
     );
     return;
   }
 
-  final remoteData = await _selectLatestRemoteComicData(
+  final remoteData = await _readCommittedComicSnapshot(
     adapter,
     syncRootFiles,
     remoteMd5,
   );
 
+  Map<String, dynamic>? cloudProjection;
   if (remoteData != null) {
     final cloudData = await ComicSyncCore.decodeCompressedPayload(
       remoteData.bytes,
+      codec: codec,
     );
+    participation.check();
+    lifecycle.check();
+    final knownFolderIds = <String>{
+      for (final folder in objectbox.comicFolderBox.getAll())
+        if (folder.syncId.isNotEmpty) folder.syncId,
+      for (final raw in (cloudData['folders'] as List? ?? const []))
+        if (raw is Map &&
+            raw['syncId'] is String &&
+            (raw['syncId'] as String).isNotEmpty)
+          raw['syncId'] as String,
+    };
     final mergeArg = <String, dynamic>{
       '_data': cloudData,
+      '_preferenceDirection': preferenceDirection.name,
       '_deviceId': syncDeviceId,
+      '_participatingSources': participation.sources.toList(),
+      '_excludedSources': <String>[],
     };
-    final count = await objectbox.store
-        .runInTransactionAsync<int, Map<String, dynamic>>(
+    final projection = await objectbox.store
+        .runInTransactionAsync<String, Map<String, dynamic>>(
           TxMode.write,
-          ComicSyncCore.mergeUnifiedDataInIsolate,
+          ComicSyncCore.mergeUnifiedDataProjectionInIsolate,
           mergeArg,
         );
-    logger.d(
-      '[sync][comic] decision=apply_remote remoteFile=${remoteData.path} mergedCount=$count',
+    cloudProjection = Map<String, dynamic>.from(jsonDecode(projection) as Map);
+    knownFolderIds.removeAll(
+      objectbox.comicFolderBox.getAll().map((folder) => folder.syncId),
     );
+    if (knownFolderIds.isNotEmpty) onRetiredFolders?.call(knownFolderIds);
   }
 
-  final currentPayload = await ComicSyncCore.buildCompressedPayload();
+  final currentPayload = cloudProjection == null
+      ? await codec.encode(
+          utf8.encode(
+            jsonEncode(
+              projectPluginComicData(
+                {
+                  ...ComicSyncCore.captureData(),
+                  if (preferenceDirection == SyncDirection.recordsOnly ||
+                      preferenceDirection == SyncDirection.restore)
+                    'readPreferences': <dynamic>[],
+                },
+                const {},
+                participation.sources,
+              ),
+            ),
+          ),
+        )
+      : await codec.encode(utf8.encode(jsonEncode(cloudProjection)));
   final currentMd5 = ComicSyncCore.calculateMd5(currentPayload);
   if (currentMd5 == remoteMd5 && remoteData != null) {
     logger.d('[sync][comic] decision=skip_upload reason=post_merge_md5_equal');
     return;
   }
 
-  final uploadFile = ComicSyncCore.buildComicDataFileName();
-  final keepComicPath = '${ComicSyncCore.syncRemoteRootName}/$uploadFile';
-  await adapter.uploadRemoteFile(uploadFile, currentPayload);
-  await adapter.uploadRemoteMd5(currentMd5);
+  final uploadFile = await _uploadComicPayload(
+    adapter,
+    currentPayload,
+    currentMd5,
+    beforeWrite: () {
+      participation!.check();
+      lifecycle.check();
+    },
+  );
   logger.d('[sync][comic] decision=upload file=$uploadFile md5=$currentMd5');
 
   await _cleanupRemoteComicFiles(
     adapter,
     allSyncRootFiles: await adapter.listRemoteDataFiles(),
-    keepComicPath: keepComicPath,
+    keepComicPath: '${ComicSyncCore.syncRemoteRootName}/$uploadFile',
+    beforeDelete: () {
+      participation!.check();
+      lifecycle.check();
+    },
   );
 }
 
 /// 手动上传：以本机漫画数据为准，直接覆盖云端（不做合并）。
-Future<void> uploadComicData(ComicSyncRemoteAdapter adapter) async {
+Future<void> uploadComicData(
+  ComicSyncRemoteAdapter adapter, {
+  ComicSyncCodec codec = const ComicSyncCodec(),
+  SyncPluginParticipation? participation,
+}) async {
+  participation ??= await SyncPluginParticipation.capture();
+  final lifecycle = _ComicRecordCaptureGuard();
+  await prepareScopedSyncArchive(adapter);
   await adapter.testConnection();
   await adapter.ensureRemoteReady();
-
-  final localPayload = await ComicSyncCore.buildCompressedPayload();
+  // Retain unsupported-format protection before selecting participating rows.
+  final remote = await readComicArchiveData(adapter, codec: codec);
+  participation.check();
+  final localPayload = await codec.encode(
+    utf8.encode(
+      jsonEncode(
+        projectPluginComicData(
+          ComicSyncCore.captureData(),
+          remote ?? const {},
+          participation.sources,
+        ),
+      ),
+    ),
+  );
   final localMd5 = ComicSyncCore.calculateMd5(localPayload);
-  final uploadFile = ComicSyncCore.buildComicDataFileName();
-  await adapter.uploadRemoteFile(uploadFile, localPayload);
-  await adapter.uploadRemoteMd5(localMd5);
-  logger.d('[sync][comic] manual_upload file=$uploadFile md5=$localMd5');
-
+  final uploadFile = await _uploadComicPayload(
+    adapter,
+    localPayload,
+    localMd5,
+    beforeWrite: () {
+      participation!.check();
+      lifecycle.check();
+    },
+  );
   await _cleanupRemoteComicFiles(
     adapter,
     allSyncRootFiles: await adapter.listRemoteDataFiles(),
     keepComicPath: '${ComicSyncCore.syncRemoteRootName}/$uploadFile',
+    beforeDelete: () {
+      participation!.check();
+      lifecycle.check();
+    },
   );
 }
 
 /// 手动下载：把云端漫画数据合并到本机（不主动回传）。
 ///
-/// 返回 false 表示云端还没有可用的漫画数据。
-Future<bool> downloadComicData(ComicSyncRemoteAdapter adapter) async {
+/// 返回 false 表示云端尚未创建漫画归档。
+Future<bool> downloadComicData(
+  ComicSyncRemoteAdapter adapter, {
+  ComicSyncCodec codec = const ComicSyncCodec(),
+  SyncPluginParticipation? participation,
+}) async {
+  participation ??= await SyncPluginParticipation.capture();
+  await prepareScopedSyncArchive(adapter);
   await adapter.testConnection();
   await adapter.ensureRemoteReady();
 
@@ -1244,7 +1706,7 @@ Future<bool> downloadComicData(ComicSyncRemoteAdapter adapter) async {
       .where(ComicSyncCore.isSyncRootPath)
       .toList();
   final remoteMd5 = await adapter.downloadRemoteMd5();
-  final remoteData = await _selectLatestRemoteComicData(
+  final remoteData = await _readCommittedComicSnapshot(
     adapter,
     syncRootFiles,
     remoteMd5,
@@ -1256,11 +1718,15 @@ Future<bool> downloadComicData(ComicSyncRemoteAdapter adapter) async {
 
   final cloudData = await ComicSyncCore.decodeCompressedPayload(
     remoteData.bytes,
+    codec: codec,
   );
   final mergeArg = <String, dynamic>{
     '_data': cloudData,
     '_deviceId': syncDeviceId,
+    '_participatingSources': participation.sources.toList(),
+    '_excludedSources': <String>[],
   };
+  participation.check();
   await objectbox.store.runInTransactionAsync<int, Map<String, dynamic>>(
     TxMode.write,
     ComicSyncCore.mergeUnifiedDataInIsolate,
@@ -1270,10 +1736,35 @@ Future<bool> downloadComicData(ComicSyncRemoteAdapter adapter) async {
   return true;
 }
 
+Future<String> _uploadComicPayload(
+  ComicSyncRemoteAdapter adapter,
+  List<int> bytes,
+  String digest, {
+  required void Function() beforeWrite,
+}) async {
+  final occupied = {
+    for (final path in await adapter.listRemoteDataFiles())
+      if (ComicSyncCore.isSyncRootPath(path))
+        ComicSyncCore.extractFileName(path),
+  };
+  var timestamp = DateTime.now().millisecondsSinceEpoch;
+  var file = ComicSyncCore.buildComicDataFileName(timestamp);
+  // An occupied path may still be referenced by the committed digest.
+  while (occupied.contains(file)) {
+    file = ComicSyncCore.buildComicDataFileName(++timestamp);
+  }
+  beforeWrite();
+  await adapter.uploadRemoteFile(file, bytes);
+  beforeWrite();
+  await adapter.uploadRemoteMd5(digest);
+  return file;
+}
+
 Future<void> _cleanupRemoteComicFiles(
   ComicSyncRemoteAdapter adapter, {
   required List<String> allSyncRootFiles,
   required String keepComicPath,
+  void Function()? beforeDelete,
 }) async {
   final syncRootFiles = allSyncRootFiles
       .where(ComicSyncCore.isSyncRootPath)
@@ -1290,6 +1781,16 @@ Future<void> _cleanupRemoteComicFiles(
     ComicSyncCore.normalizeRemotePathNoLeadingSlash(keepComicPath),
     '${ComicSyncCore.syncRemoteRootName}/${ComicSyncCore.comicMd5FileName}',
   };
+  if (sortedComic.length > 3) {
+    final active = await _selectLatestRemoteComicData(
+      adapter,
+      syncRootFiles,
+      await adapter.downloadRemoteMd5(),
+    );
+    // Without the verified commit target, an older file may still be active.
+    if (active == null) return;
+    keep.add(ComicSyncCore.normalizeRemotePathNoLeadingSlash(active.path));
+  }
 
   for (var i = 0; i < sortedComic.length; i++) {
     if (i < 3) {
@@ -1304,8 +1805,58 @@ Future<void> _cleanupRemoteComicFiles(
   }).toList();
 
   if (stale.isNotEmpty) {
+    beforeDelete?.call();
     await adapter.deleteRemoteFiles(stale);
   }
+}
+
+class _ComicRecordCaptureGuard {
+  _ComicRecordCaptureGuard()
+    : epochs = {
+        for (final source
+            in LocalPluginInstallationState.instance.excludedSources(
+              PluginDataScope.records,
+            ))
+          source: LocalPluginInstallationState.instance.installationEpoch(
+            source,
+          ),
+      };
+  final Map<String, int> epochs;
+  void check() {
+    final state = LocalPluginInstallationState.instance;
+    final excluded = state.excludedSources(PluginDataScope.records);
+    if (excluded.length != epochs.length ||
+        excluded.any((source) => !epochs.containsKey(source)) ||
+        epochs.entries.any(
+          (entry) =>
+              state.installationEpoch(entry.key) != entry.value ||
+              state.isInstalling(entry.key),
+        )) {
+      throw const PluginLifecycleChanged();
+    }
+  }
+}
+
+Future<_RemoteFileData?> _readCommittedComicSnapshot(
+  ComicSyncRemoteAdapter adapter,
+  List<String> remotePaths,
+  String remoteMd5,
+) async {
+  if (remoteMd5.isEmpty &&
+      !remotePaths.any((path) {
+        final name = ComicSyncCore.extractFileName(path);
+        return name == ComicSyncCore.comicMd5FileName ||
+            ComicSyncCore.isComicDataFileName(name);
+      })) {
+    return null;
+  }
+  final remote = await _selectLatestRemoteComicData(
+    adapter,
+    remotePaths,
+    remoteMd5,
+  );
+  if (remote == null) throw const SyncCompatibilityException();
+  return remote;
 }
 
 Future<_RemoteFileData?> _selectLatestRemoteComicData(

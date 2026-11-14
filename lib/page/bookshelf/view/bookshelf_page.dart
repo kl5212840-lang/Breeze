@@ -1,15 +1,39 @@
+import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/widgets/breeze_navigation_bar.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
+import 'package:zephyr/network/sync/portable_preferences.dart';
+import 'package:zephyr/page/search/widget/search_keyboard.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
+import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
+import 'dart:async';
+import 'dart:ui' show SemanticsRole;
+
 import 'package:auto_route/auto_route.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show listEquals, mapEquals;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/cubit/plugin_registry_cubit.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/main.dart';
+import 'package:zephyr/object_box/model.dart';
+import 'package:zephyr/object_box/objectbox.g.dart';
 import 'package:zephyr/page/bookshelf/bookshelf.dart';
+import 'package:zephyr/page/bookshelf/service/video_bookshelf_index.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_scope_controls.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_actions_scope.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_header_slots.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_selection_toolbar.dart';
+import 'package:zephyr/page/bookshelf/service/bookshelf_source_preferences.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_source_manager.dart';
+import 'package:zephyr/page/bookshelf/widgets/video_bookshelf_pane.dart';
 import 'package:zephyr/page/search/widget/search_input_dialog.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
-import 'package:zephyr/util/context/context_extensions.dart';
 import 'package:zephyr/util/debouncer.dart';
+import 'package:zephyr/widgets/collection_cover_privacy.dart';
 
 @RoutePage()
 class BookshelfPage extends StatelessWidget {
@@ -17,680 +41,1038 @@ class BookshelfPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bookshelfSetting = context
-        .read<GlobalSettingCubit>()
-        .state
-        .bookshelfSetting;
-    return MultiBlocProvider(
-      providers: [
-        BlocProvider<BookshelfSearchCubit>(
-          create: (context) => BookshelfSearchCubit(
-            favorite: SearchStatusState(
-              sort: bookshelfSetting.rememberFavoriteSort
-                  ? bookshelfSetting.favoriteSort
-                  : 'dd',
-            ),
-            history: SearchStatusState(
-              sort: bookshelfSetting.rememberHistorySort
-                  ? bookshelfSetting.historySort
-                  : 'dd',
-            ),
-            download: SearchStatusState(
-              sort: bookshelfSetting.rememberDownloadSort
-                  ? bookshelfSetting.downloadSort
-                  : 'dd',
-            ),
-          ),
+    final setting = context.read<GlobalSettingCubit>().state.bookshelfSetting;
+    return BlocProvider(
+      create: (_) => BookshelfSearchCubit(
+        favorite: SearchStatusState(
+          sort: setting.rememberFavoriteSort ? setting.favoriteSort : 'dd',
         ),
-      ],
-      child: _BookshelfPageContent(
-        initialIndex: bookshelfSetting.homePageIndex,
+        history: SearchStatusState(
+          sort: setting.rememberHistorySort ? setting.historySort : 'dd',
+        ),
       ),
+      child: _BookshelfPageContent(initialIndex: setting.homePageIndex),
     );
   }
 }
 
 class _BookshelfPageContent extends StatefulWidget {
   const _BookshelfPageContent({required this.initialIndex});
-
   final int initialIndex;
-
   @override
   State<_BookshelfPageContent> createState() => _BookshelfPageContentState();
 }
 
-class _BookshelfPageContentState extends State<_BookshelfPageContent>
-    with SingleTickerProviderStateMixin {
-  late final List<String> _labels = [
-    t.bookshelf.favorite,
-    t.bookshelf.history,
-    t.bookshelf.download,
-  ];
-
+class _BookshelfPageContentState extends State<_BookshelfPageContent> {
+  static const _mediaKey = 'breeze.bookshelf.media.v1';
+  static const _videoSortKey = 'breeze.bookshelf.video.sorts.v2';
+  static const _legacyVideoSortKey = 'breeze.bookshelf.video.sorts.v1';
+  static const _recordModes = [ShelfPageMode.favorite, ShelfPageMode.history];
   late int _currentIndex;
-  late final TabController _tabController;
-  final List<int> _refreshSignals = [0, 0, 0];
-  final FocusNode _searchFocusNode = FocusNode();
-  // 关键词防抖：短时间内连续输入只保留最后一次，停顿后才真正写入过滤；
-  // 回车提交走 onSubmitted 立即生效，不经过这里。
+  int? _pendingHomeSection;
+  late final _comicPages = PageController(
+    initialPage: _currentIndex,
+    keepPage: false,
+  );
+  late final _videoPages = PageController(
+    initialPage: _currentIndex,
+    keepPage: false,
+  );
+  bool _syncingRecordPanes = false;
+  final _videoSearch = BookshelfSearchCubit();
+  final _videoSortTouched = <ShelfPageMode>{};
+  final _keywordScopes = <(bool, ShelfPageMode), KeywordSearchScope>{};
+  KeywordSearchScope _keywordScope(bool video, ShelfPageMode mode) =>
+      _keywordScopes[(video, mode)] ?? KeywordSearchScope.all;
+  final _comicRefresh = [0, 0, 0];
+  final _comicSelecting = [false, false, false],
+      _videoSelecting = [false, false, false];
+  final _searchFocusNode = FocusNode();
+  final _header = BookshelfHeaderController();
   final _keywordDebouncer = Debouncer(milliseconds: 500);
-  List<String> _lastAvailableSources = const <String>[];
-  bool _isSearchExpanded = false;
+  (BookshelfSearchCubit, ShelfPageMode, String)? _pendingKeyword;
+  Map<String, String> _comicSources = {}, _videoSources = {};
+  Set<String>? _comicRecordSources;
+  late final StreamSubscription<List<Type>> _comicRecordsWatch;
+  bool _comicSourcesUpdateScheduled = false;
+  final _sourcePreferenceStore = BookshelfSourcePreferenceStore();
+  final _sourcePreferences = {
+    for (final medium in const [
+      BookshelfSourceMedium.comic,
+      BookshelfSourceMedium.video,
+    ])
+      medium: BookshelfSourcePreferences(),
+  };
+  bool _sourcePreferencesReady = false, _sourceManagerOpen = false;
+  bool _sourcePreferencesFailed = false, _sourceInventoryFailed = false;
+  bool get _sourceControlsReady => _sourcePreferencesReady && !_sourcesLoading;
+  bool _showVideos = false,
+      _mediaReady = false,
+      _mediaTouched = false,
+      _sourcesLoading = true,
+      _isSearchExpanded = false;
+  int _sourceEpoch = 0, _preferencesEpoch = 0;
+  BookshelfSearchCubit get _comicSearch => context.read<BookshelfSearchCubit>();
+  BookshelfSearchCubit get _activeSearch =>
+      _showVideos ? _videoSearch : _comicSearch;
+  bool get _scopeLocked =>
+      _sourceManagerOpen ||
+      (_showVideos ? _videoSelecting : _comicSelecting)[_currentIndex];
+  bool get _showReturnToTop =>
+      !_isSearchExpanded && !_searchFocusNode.hasFocus && !_scopeLocked;
+  BookshelfSourceMedium get _sourceMedium =>
+      _showVideos ? BookshelfSourceMedium.video : BookshelfSourceMedium.comic;
+  ShelfPageMode get _mode => ShelfPageMode.values[_currentIndex];
 
   @override
   void initState() {
     super.initState();
-    _currentIndex = widget.initialIndex.clamp(0, _labels.length - 1);
-    _tabController = TabController(
-      initialIndex: _currentIndex,
-      length: _labels.length,
-      vsync: this,
-    )..addListener(_handleTabControllerChanged);
-    _syncSourcesFromRegistry(context.read<PluginRegistryCubit>().state);
+    PortablePreferences.changes.addListener(_portableRestored);
+    // Downloads have one home in the bottom navigation. Old saved index 2
+    // must not silently select a different bookshelf category.
+    _currentIndex = widget.initialIndex == 1 ? 1 : 0;
+    VideoBookshelfIndex.changes.addListener(_loadSources);
+    _comicRecordsWatch = objectbox.store.entityChanges.listen(
+      _comicRecordsChanged,
+    );
+    _searchFocusNode.addListener(_searchFocusChanged);
+    unawaited(_restorePreferences());
+    unawaited(_loadSources());
   }
 
   @override
   void dispose() {
-    _tabController
-      ..removeListener(_handleTabControllerChanged)
+    _sourceEpoch++;
+    PortablePreferences.changes.removeListener(_portableRestored);
+    VideoBookshelfIndex.changes.removeListener(_loadSources);
+    unawaited(_comicRecordsWatch.cancel());
+    _comicPages.dispose();
+    _videoPages.dispose();
+    _header.dispose();
+    _searchFocusNode
+      ..removeListener(_searchFocusChanged)
       ..dispose();
-    _searchFocusNode.dispose();
     _keywordDebouncer.cancel();
+    unawaited(_videoSearch.close());
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final isDesktop = MediaQuery.sizeOf(context).width >= 600;
-
-    return BlocListener<PluginRegistryCubit, Map<String, PluginRuntimeState>>(
-      listenWhen: (previous, current) =>
-          _pluginAvailabilityRevision(previous) !=
-          _pluginAvailabilityRevision(current),
-      listener: (context, pluginStates) {
-        _syncSourcesFromRegistry(pluginStates);
-        _triggerRefreshAll();
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          titleSpacing: isDesktop ? 16 : 8,
-          title: isDesktop ? _buildDesktopHeader() : _buildMobileHeader(),
-        ),
-        body: TabBarView(
-          controller: _tabController,
-          children: [
-            FolderShelfPage(
-              mode: ShelfPageMode.favorite,
-              refreshSignal: _refreshSignals[0],
-              isActive: _currentIndex == 0,
-            ),
-            FolderShelfPage(
-              mode: ShelfPageMode.history,
-              refreshSignal: _refreshSignals[1],
-              isActive: _currentIndex == 1,
-            ),
-            FolderShelfPage(
-              mode: ShelfPageMode.download,
-              refreshSignal: _refreshSignals[2],
-              isActive: _currentIndex == 2,
-            ),
-          ],
-        ),
-      ),
-    );
+  void _portableRestored() {
+    if (mounted) unawaited(_restorePreferences());
   }
 
-  Widget _buildDesktopHeader() {
-    return Row(
-      children: [
-        _buildSleekTabs(),
-        const SizedBox(width: 24),
-        Expanded(
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.start,
-            children: [
-              Flexible(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 400),
-                  child: _buildShelfSearchField(autoExpand: false),
-                ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                tooltip: t.bookshelf.filter,
-                icon: const Icon(Icons.tune),
-                onPressed: _openFilter,
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
+  Future<void> _restorePreferences() async {
+    final epoch = ++_preferencesEpoch;
+    if (_sourcePreferencesFailed) {
+      setState(() => _sourcePreferencesFailed = false);
+    }
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted || epoch != _preferencesEpoch) return;
+      var sorts = prefs.getStringList(_videoSortKey);
+      final old = prefs.getStringList(_legacyVideoSortKey);
+      if (sorts == null && old != null && old.length == 3) {
+        final setting = context
+            .read<GlobalSettingCubit>()
+            .state
+            .bookshelfSetting;
+        sorts = [
+          if (setting.rememberFavoriteSort && old[0] == 'da') 'da' else 'dd',
+          if (setting.rememberHistorySort && old[1] == 'da') 'da' else 'dd',
+        ];
+        // Read the shared legacy flags once. New video choices are independent
+        // of the comic flags, including the first comic sort after upgrade.
+        await prefs.setStringList(_videoSortKey, sorts);
+        if (!mounted || epoch != _preferencesEpoch) return;
+      }
+      if (sorts != null && sorts.length == _recordModes.length) {
+        for (final mode in _recordModes) {
+          if (!_videoSortTouched.contains(mode)) {
+            _videoSearch.setSort(mode, sorts[mode.index] == 'da' ? 'da' : 'dd');
+          }
+        }
+      }
+      if (!_mediaTouched || !_mediaReady) {
+        setState(() {
+          if (!_mediaTouched) {
+            final showVideos = prefs.getString(_mediaKey) == 'video';
+            if (showVideos != _showVideos) {
+              _header.changePane();
+              _showVideos = showVideos;
+            }
+          }
+          _mediaReady = true;
+        });
+      }
+      const media = [BookshelfSourceMedium.comic, BookshelfSourceMedium.video];
+      final sourcePreferences = await Future.wait([
+        for (final medium in media) _sourcePreferenceStore.read(medium),
+      ]);
+      if (!mounted || epoch != _preferencesEpoch) return;
+      setState(() {
+        for (final medium in media) {
+          _sourcePreferences[medium] = sourcePreferences[medium.index];
+          _clearHiddenSourceScopes(medium, sourcePreferences[medium.index]);
+        }
+        _sourcePreferencesReady = true;
+      });
+    } catch (_) {
+      if (mounted && epoch == _preferencesEpoch) {
+        setState(() {
+          _mediaReady = true;
+          _sourcePreferencesFailed = !_sourcePreferencesReady;
+        });
+      }
+    }
   }
 
-  /// 展开移动端搜索栏。挂载的 SearchQueryField 自带 autoExpand，
-  /// 首帧后自动展开浮层并聚焦，键盘随之弹出。
-  void _expandSearch() {
-    if (_isSearchExpanded) {
+  Future<void> _loadSources() async {
+    final epoch = ++_sourceEpoch;
+    if (_sourceInventoryFailed) {
+      setState(() => _sourceInventoryFailed = false);
+    }
+    try {
+      final videos = await VideoBookshelfIndex.recordSourceNames();
+      if (!mounted || epoch != _sourceEpoch) return;
+      _updateSourceNames(videos, finishedLoading: true);
+    } catch (_) {
+      if (mounted && epoch == _sourceEpoch && _sourcesLoading) {
+        setState(() => _sourceInventoryFailed = true);
+      }
+    }
+  }
+
+  void _comicRecordsChanged(List<Type> types) {
+    if (!types.contains(UnifiedComicFavorite) &&
+        !types.contains(UnifiedComicHistory) &&
+        !types.contains(UnifiedComicDownload)) {
       return;
     }
-    setState(() => _isSearchExpanded = true);
-  }
-
-  /// 退出搜索：先收起键盘；若有关键词则清空并刷新列表，再收起搜索栏。
-  /// 与浮层输入框内的 ×（清空但保持展开，方便继续输入）语义区分开。
-  void _exitSearch() {
-    _keywordDebouncer.cancel();
-    _searchFocusNode.unfocus();
-    if (_currentSearchState().keyword.isNotEmpty) {
-      _setKeyword('');
-      _triggerRefresh(goTop: true);
-    }
-    if (_isSearchExpanded) {
-      setState(() => _isSearchExpanded = false);
-    }
-  }
-
-  /// 展开态打开筛选：弹窗会抢走焦点，关闭后若还在搜索态则恢复聚焦，键盘回来接着输。
-  Future<void> _openFilterFromSearch() async {
-    await _openFilter();
-    if (mounted && _isSearchExpanded) {
-      _searchFocusNode.requestFocus();
-    }
-  }
-
-  Widget _buildMobileHeader() {
-    if (_isSearchExpanded) {
-      return Row(
-        children: [
-          IconButton(
-            tooltip: t.common.back,
-            icon: const Icon(Icons.arrow_back),
-            onPressed: _exitSearch,
-          ),
-          Expanded(child: _buildShelfSearchField(autoExpand: true)),
-          IconButton(
-            tooltip: t.bookshelf.filter,
-            icon: const Icon(Icons.tune),
-            onPressed: _openFilterFromSearch,
-          ),
-        ],
-      );
-    }
-
-    return Row(
-      children: [
-        _buildSleekTabs(),
-        const Spacer(),
-        IconButton(icon: const Icon(Icons.search), onPressed: _expandSearch),
-        IconButton(
-          tooltip: t.bookshelf.filter,
-          icon: const Icon(Icons.tune),
-          onPressed: _openFilter,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSleekTabs() {
-    return Container(
-      decoration: BoxDecoration(
-        color: context.theme.colorScheme.surfaceContainerHighest.withValues(
-          alpha: 0.5,
-        ),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      padding: const EdgeInsets.all(4),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: List.generate(_labels.length, (index) {
-          final isSelected = _currentIndex == index;
-          return GestureDetector(
-            onTap: () => _onTabChanged(index),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOutCubic,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-              decoration: BoxDecoration(
-                color: isSelected
-                    ? context.theme.colorScheme.surface
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: isSelected
-                    ? [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.05),
-                          blurRadius: 4,
-                          offset: const Offset(0, 1),
-                        ),
-                      ]
-                    : [],
-              ),
-              child: Text(
-                _labels[index],
-                style: TextStyle(
-                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
-                  fontSize: 14,
-                  color: isSelected
-                      ? context.textColor
-                      : context.textColor.withValues(alpha: 0.6),
-                ),
-              ),
-            ),
-          );
-        }),
-      ),
-    );
-  }
-
-  /// 关键词防抖写入。mode 在调用时快照，避免防抖期间切 tab 把词写到别的 tab。
-  void _setKeywordDebounced(ShelfPageMode mode, String keyword) {
-    _keywordDebouncer.run(() {
-      if (!mounted) {
-        return;
-      }
-      final cubit = context.read<BookshelfSearchCubit>();
-      if (cubit.state.stateOf(mode).keyword == keyword) {
-        return;
-      }
-      cubit.setKeyword(mode, keyword);
+    _comicRecordSources = null;
+    if (_comicSourcesUpdateScheduled) return;
+    _comicSourcesUpdateScheduled = true;
+    scheduleMicrotask(() {
+      _comicSourcesUpdateScheduled = false;
+      if (mounted && !_sourcesLoading) _updateSourceNames(_videoSources);
     });
   }
 
-  /// 书架搜索框：复用搜索页的 SearchQueryField（浮层展开、多行展示、回车即搜）。
-  /// 非空输入经 500ms 防抖写入 cubit（列表按 keyword 做 BlocBuilder 实时过滤）；
-  /// 清空（删到空/点 ×）是明确的单次操作，立即生效；
-  /// 回车提交立即生效、保持浮层展开并回到顶部，方便继续改词。桌面端常驻显示（autoExpand 关），
-  /// 移动端在展开时挂载（autoExpand 开，首帧自动聚焦弹键盘）。
-  Widget _buildShelfSearchField({required bool autoExpand}) {
-    return BlocBuilder<BookshelfSearchCubit, BookshelfSearchState>(
-      buildWhen: (prev, curr) =>
-          prev.stateOf(_currentMode()).keyword !=
-          curr.stateOf(_currentMode()).keyword,
+  void _updateSourceNames(
+    Map<String, String> videos, {
+    bool finishedLoading = false,
+  }) {
+    final comics = <String, String>{};
+    for (final plugin in PluginRegistryService.I.sortPlugins(
+      context.read<PluginRegistryCubit>().state.values.where(
+        (p) => !p.isDeleted,
+      ),
+    )) {
+      if (!videos.containsKey(plugin.uuid)) {
+        comics[plugin.uuid] = _sourceTitle(plugin.uuid);
+      }
+    }
+    // Local records remain reachable when their plugin is disabled or removed.
+    for (final source in _comicRecordSources ??= _readComicRecordSources()) {
+      if (source.isNotEmpty) {
+        comics.putIfAbsent(source, () => _sourceTitle(source));
+      }
+    }
+    final loading = _sourcesLoading && !finishedLoading;
+    if (loading == _sourcesLoading &&
+        _sameSourceOrder(comics, _comicSources) &&
+        _sameSourceOrder(videos, _videoSources)) {
+      return;
+    }
+    setState(() {
+      _comicSources = comics;
+      _videoSources = videos;
+      _sourcesLoading = loading;
+    });
+  }
+
+  bool _sameSourceOrder(Map<String, String> left, Map<String, String> right) =>
+      mapEquals(left, right) &&
+      listEquals(left.keys.toList(), right.keys.toList());
+
+  Set<String> _readComicRecordSources() => {
+    ..._readDistinctSources(
+      objectbox.unifiedFavoriteBox
+          .query(UnifiedComicFavorite_.deleted.equals(false))
+          .build(),
+      UnifiedComicFavorite_.source,
+    ),
+    ..._readDistinctSources(
+      objectbox.unifiedHistoryBox
+          .query(UnifiedComicHistory_.deleted.equals(false))
+          .build(),
+      UnifiedComicHistory_.source,
+    ),
+    ..._readDistinctSources(
+      objectbox.unifiedDownloadBox
+          .query(UnifiedComicDownload_.deleted.equals(false))
+          .build(),
+      UnifiedComicDownload_.source,
+    ),
+  };
+
+  List<String> _readDistinctSources<T>(
+    Query<T> query,
+    QueryStringProperty<T> source,
+  ) {
+    try {
+      final property = query.property(source);
+      try {
+        property
+          ..caseSensitive = true
+          ..distinct = true;
+        return property.find();
+      } finally {
+        property.close();
+      }
+    } finally {
+      query.close();
+    }
+  }
+
+  void _searchFocusChanged() {
+    if (mounted) setState(() {});
+  }
+
+  String _sourceTitle(String id) {
+    final name =
+        PluginRegistryService.I
+            .getCachedPluginInfo(id)?['name']
+            ?.toString()
+            .trim() ??
+        '';
+    final title = name.isEmpty ? id : name;
+    return PluginRegistryService.I.getByUuid(id)?.isDeleted == false
+        ? title
+        : '$title · ${t.pluginLifecycle.notInstalled}';
+  }
+
+  Map<String, String> _allLabelSources(BookshelfSourceMedium medium) {
+    final values = {
+      ...(medium == BookshelfSourceMedium.video
+          ? _videoSources
+          : _comicSources),
+    };
+    final cubit = medium == BookshelfSourceMedium.video
+        ? _videoSearch
+        : _comicSearch;
+    for (final mode in ShelfPageMode.values) {
+      for (final id in cubit.state.stateOf(mode).sources) {
+        values.putIfAbsent(id, () => _sourceTitle(id));
+      }
+    }
+    return values;
+  }
+
+  void _clearHiddenSourceScopes(
+    BookshelfSourceMedium medium,
+    BookshelfSourcePreferences preferences,
+  ) {
+    final cubit = medium == BookshelfSourceMedium.video
+        ? _videoSearch
+        : _comicSearch;
+    for (final mode in ShelfPageMode.values) {
+      if (cubit.state.stateOf(mode).sources.any(preferences.hidden.contains)) {
+        cubit.setSources(mode, []);
+        if (medium == BookshelfSourceMedium.comic) _comicRefresh[mode.index]++;
+      }
+    }
+  }
+
+  Future<void> _manageSources() async {
+    if (!mounted || _scopeLocked || !_sourceControlsReady) return;
+    _flushPendingKeyword();
+    _searchFocusNode.unfocus();
+    final medium = _sourceMedium;
+    setState(() => _sourceManagerOpen = true);
+    try {
+      await showBookshelfSourceManager(
+        context: context,
+        sources: _allLabelSources(medium),
+        useDisplayNames: true,
+        initial: _sourcePreferences[medium]!,
+        onSave: (next) async {
+          await _sourcePreferenceStore.save(medium, next);
+          if (!mounted) return;
+          setState(() {
+            _sourcePreferences[medium] = next;
+            _clearHiddenSourceScopes(medium, next);
+          });
+        },
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _sourceManagerOpen = false);
+        _applyPendingHomeSection();
+      }
+    }
+  }
+
+  void _selectMedia(String media) {
+    if (_scopeLocked || _showVideos == (media == 'video')) return;
+    _flushPendingKeyword();
+    _searchFocusNode.unfocus();
+    setState(() {
+      _header.changePane();
+      _showVideos = media == 'video';
+      _mediaTouched = true;
+      _isSearchExpanded = false;
+    });
+    _syncRecordPanes();
+    unawaited(
+      SharedPreferences.getInstance().then(
+        (p) => p.setString(_mediaKey, media),
+      ),
+    );
+  }
+
+  void _selectRecords(int index) {
+    if (_currentIndex == index) return;
+    _flushPendingKeyword();
+    _searchFocusNode.unfocus();
+    setState(() {
+      _header.changePane();
+      _currentIndex = index;
+    });
+    _syncRecordPanes();
+  }
+
+  PageController _recordsController(bool video) =>
+      video ? _videoPages : _comicPages;
+
+  void _syncRecordPanes() {
+    // Taps change the data scope in place. Only a horizontal gesture moves
+    // the visible PageView, and both retained media panes share its scope.
+    _syncingRecordPanes = true;
+    try {
+      for (final pages in [_comicPages, _videoPages]) {
+        if (pages.hasClients &&
+            (pages.page != _currentIndex ||
+                pages.position.isScrollingNotifier.value)) {
+          pages.jumpToPage(_currentIndex);
+        }
+      }
+    } finally {
+      _syncingRecordPanes = false;
+    }
+  }
+
+  void _selectionChanged(bool video, int index, bool selecting) {
+    if (!mounted) return;
+    final values = video ? _videoSelecting : _comicSelecting;
+    if (values[index] == selecting) return;
+    if (selecting) {
+      _flushPendingKeyword();
+      _searchFocusNode.unfocus();
+    }
+    setState(() => values[index] = selecting);
+    if (!selecting) _applyPendingHomeSection();
+  }
+
+  void _applyPendingHomeSection() {
+    final index = _pendingHomeSection;
+    if (index == null || _scopeLocked || _isSearchExpanded) return;
+    _pendingHomeSection = null;
+    _selectRecords(index);
+  }
+
+  Widget _recordViewport({
+    required bool video,
+    required List<Widget> children,
+  }) => NotificationListener<ScrollEndNotification>(
+    onNotification: (notification) {
+      final metrics = notification.metrics;
+      if (notification.depth == 0 &&
+          _showVideos == video &&
+          !_syncingRecordPanes &&
+          metrics is PageMetrics) {
+        final page = metrics.page;
+        if (page != null) _selectRecords(page.round());
+      }
+      return false;
+    },
+    child: PageView(
+      controller: _recordsController(video),
+      physics: _scopeLocked
+          ? const NeverScrollableScrollPhysics()
+          : const ClampingScrollPhysics(),
+      children: [
+        for (final child in children)
+          Semantics(role: SemanticsRole.tabPanel, child: child),
+      ],
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) =>
+      BlocListener<GlobalSettingCubit, GlobalSettingState>(
+        listenWhen: (before, after) =>
+            before.bookshelfSetting.homePageIndex !=
+            after.bookshelfSetting.homePageIndex,
+        listener: (_, state) {
+          _pendingHomeSection = state.bookshelfSetting.homePageIndex == 1
+              ? 1
+              : 0;
+          _applyPendingHomeSection();
+        },
+        child: _mediaReady
+            ? _buildContent(context)
+            : const Scaffold(body: Center(child: BookshelfLoadingView())),
+      );
+
+  Widget _buildContent(
+    BuildContext context,
+  ) => BlocListener<PluginRegistryCubit, Map<String, PluginRuntimeState>>(
+    listener: (_, _) {
+      unawaited(_loadSources());
+      _refreshAll();
+    },
+    child: Scaffold(
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        titleSpacing: CollectionToolbarMetrics.sourceContentInset,
+        scrolledUnderElevation: 0,
+        toolbarHeight: _headerHeight(context),
+        title: _buildHeader(),
+      ),
+      body: Column(
+        children: [
+          _buildMediaRow(),
+          _buildScopeRow(),
+          Expanded(
+            child: _withActions(
+              IndexedStack(
+                index: _showVideos ? 1 : 0,
+                children: [
+                  BlocProvider.value(
+                    value: _comicSearch,
+                    child: _recordViewport(
+                      video: false,
+                      children: [
+                        for (final mode in _recordModes)
+                          FolderShelfPage(
+                            key: ValueKey('comic-shelf.${mode.name}'),
+                            mode: mode,
+                            keywordScope: _keywordScope(false, mode),
+                            sourceNames: _comicSources,
+                            refreshSignal: _comicRefresh[mode.index],
+                            isActive:
+                                !_showVideos && _currentIndex == mode.index,
+                            showReturnToTop: _showReturnToTop,
+                            onSelectionChanged: (value) =>
+                                _selectionChanged(false, mode.index, value),
+                          ),
+                      ],
+                    ),
+                  ),
+                  BlocProvider.value(
+                    value: _videoSearch,
+                    child:
+                        BlocBuilder<BookshelfSearchCubit, BookshelfSearchState>(
+                          builder: (context, searches) => _recordViewport(
+                            video: true,
+                            children: [
+                              for (final mode in _recordModes)
+                                VideoBookshelfPane(
+                                  key: ValueKey('video-shelf.${mode.name}'),
+                                  mode: mode,
+                                  keywordScope: _keywordScope(true, mode),
+                                  search: searches.stateOf(mode),
+                                  isActive:
+                                      _showVideos &&
+                                      _currentIndex == mode.index,
+                                  showReturnToTop: _showReturnToTop,
+                                  onSelectionChanged: (value) =>
+                                      _selectionChanged(
+                                        true,
+                                        mode.index,
+                                        value,
+                                      ),
+                                ),
+                            ],
+                          ),
+                        ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _shelfSelector({
+    Key? key,
+    required Map<String, String> options,
+    required String selected,
+    required ValueChanged<String> onSelected,
+  }) => !AppInterfaceStyleScope.usesSystem(context)
+      ? BreezeSectionSelector(
+          key: key,
+          options: options,
+          selected: selected,
+          enabled: !_scopeLocked,
+          onSelected: onSelected,
+        )
+      : VideoControlAppearance(
+          systemControls: usesNativeSourceChrome(context),
+          child: NativeVideoSegmentedControl(
+            key: key,
+            options: options,
+            selected: selected,
+            enabled: !_scopeLocked,
+            onSelected: _scopeLocked ? null : onSelected,
+          ),
+        );
+
+  Widget _buildScopeRow() {
+    final sourceFailed = _sourceInventoryFailed || _sourcePreferencesFailed;
+    final options = {
+      ShelfPageMode.favorite.name: t.bookshelf.favorite,
+      ShelfPageMode.history.name: t.bookshelf.history,
+    };
+    final records = _shelfSelector(
+      key: const ValueKey('bookshelf.records'),
+      options: options,
+      selected: _mode.name,
+      onSelected: (value) {
+        if (!mounted || _scopeLocked) return;
+        _pendingHomeSection = null;
+        _selectRecords(ShelfPageMode.values.byName(value).index);
+      },
+    );
+    final sources = BlocBuilder<BookshelfSearchCubit, BookshelfSearchState>(
+      bloc: _activeSearch,
       builder: (context, state) {
-        return SearchQueryField(
-          // 按 tab 区分 element：切 tab 时重建，保证各 tab 关键词独立，
-          // 且展开中的浮层不会串词。
-          key: ValueKey('shelf_search_$_currentIndex'),
-          query: state.stateOf(_currentMode()).keyword,
-          autoExpand: autoExpand,
-          focusNode: _searchFocusNode,
-          closeOnSubmit: false,
-          hintText: t.bookshelf.searchList,
-          semanticLabel: t.bookshelf.searchList,
-          onChanged: (keyword) {
-            if (keyword.isEmpty) {
-              // 清空是明确的单次操作，立即生效，不走防抖。
-              _keywordDebouncer.cancel();
-              if (_currentSearchState().keyword.isNotEmpty) {
-                _setKeyword('');
-                _triggerRefresh(goTop: true);
-              }
-              return;
-            }
-            _setKeywordDebounced(_currentMode(), keyword);
-          },
-          onSubmitted: (keyword) {
-            _keywordDebouncer.cancel();
-            _setKeyword(keyword.trim());
-            _triggerRefresh(goTop: true);
-          },
+        final medium = _sourceMedium, mode = _mode, cubit = _activeSearch;
+        return VideoControlAppearance(
+          systemControls: usesNativeSourceChrome(context),
+          child: BookshelfSourceNavigation(
+            horizontalInset: CollectionToolbarMetrics.sourceContentInset,
+            showManage: true,
+            classicChips: true,
+            sources: _sourceControlsReady
+                ? _sourcePreferences[medium]!.arrange(_allLabelSources(medium))
+                : const {},
+            hidden: _sourcePreferences[medium]!.hidden,
+            selected: state.stateOf(mode).sources,
+            loading:
+                (_sourcesLoading && !_sourceInventoryFailed) ||
+                (!_sourcePreferencesReady && !_sourcePreferencesFailed),
+            onManage: _scopeLocked || !_sourceControlsReady
+                ? null
+                : () {
+                    if (!mounted || _scopeLocked || _sourceMedium != medium) {
+                      return;
+                    }
+                    _manageSources();
+                  },
+            onChanged: _scopeLocked || !_sourceControlsReady
+                ? null
+                : (sources) {
+                    if (!mounted ||
+                        _scopeLocked ||
+                        !_sourceControlsReady ||
+                        _sourceMedium != medium ||
+                        _mode != mode ||
+                        cubit.isClosed) {
+                      return;
+                    }
+                    cubit.setSources(mode, sources);
+                    _refreshFor(medium == BookshelfSourceMedium.video, mode);
+                  },
+            statusAction: sourceFailed
+                ? SourceChromeIconButton(
+                    key: const ValueKey('bookshelf.sources.retry'),
+                    icon: Icons.refresh,
+                    symbol: 'arrow.clockwise',
+                    tooltip: t.common.retry,
+                    onPressed: () {
+                      if (_sourceInventoryFailed) unawaited(_loadSources());
+                      if (_sourcePreferencesFailed) {
+                        unawaited(_restorePreferences());
+                      }
+                    },
+                  )
+                : null,
+          ),
+        );
+      },
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final recordWidth = NativeVideoSegmentedControl.minimumHorizontalWidth(
+          context,
+          options.values,
+        ).ceilToDouble();
+        // Keep room for a complete source label, the scroll gutter and the
+        // management button. At larger type sizes the switch gets its own row.
+        final minimumSources =
+            MediaQuery.textScalerOf(context).scale(60) +
+            2 * CollectionToolbarMetrics.actionExtent +
+            (sourceFailed ? CollectionToolbarMetrics.actionExtent : 0);
+        const leadingPadding = CollectionToolbarMetrics.sourceContentInset;
+        final fits =
+            recordWidth + minimumSources + leadingPadding <=
+            constraints.maxWidth;
+        return Column(
+          children: [
+            if (fits)
+              Row(
+                children: [
+                  const SizedBox(width: leadingPadding),
+                  SizedBox(width: recordWidth, child: records),
+                  Expanded(child: sources),
+                ],
+              )
+            else ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: leadingPadding),
+                child: Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: SizedBox(
+                    width: recordWidth.clamp(
+                      0,
+                      (constraints.maxWidth - 2 * leadingPadding).clamp(
+                        0.0,
+                        double.infinity,
+                      ),
+                    ),
+                    child: records,
+                  ),
+                ),
+              ),
+              sources,
+            ],
+            const Padding(
+              padding: EdgeInsets.fromLTRB(
+                leadingPadding,
+                2,
+                leadingPadding,
+                0,
+              ),
+              child: Divider(height: 1),
+            ),
+          ],
         );
       },
     );
   }
 
-  void _onTabChanged(int index) {
-    if (index == _currentIndex) return;
-    _tabController.animateTo(index);
-  }
-
-  void _handleTabControllerChanged() {
-    if (!mounted || _currentIndex == _tabController.index) {
-      return;
-    }
-    setState(() {
-      _currentIndex = _tabController.index;
-    });
-  }
-
-  ShelfPageMode _currentMode() {
-    return switch (_currentIndex) {
-      0 => ShelfPageMode.favorite,
-      1 => ShelfPageMode.history,
-      2 => ShelfPageMode.download,
-      _ => ShelfPageMode.favorite,
-    };
-  }
-
-  void _maybePersistSort(ShelfPageMode mode, String sort) {
-    final cubit = context.read<GlobalSettingCubit>();
-    final setting = cubit.state.bookshelfSetting;
-    final shouldPersist = switch (mode) {
-      ShelfPageMode.favorite => setting.rememberFavoriteSort,
-      ShelfPageMode.history => setting.rememberHistorySort,
-      ShelfPageMode.download => setting.rememberDownloadSort,
-    };
-    if (!shouldPersist) return;
-    cubit.updateBookshelfSetting(
-      (current) => switch (mode) {
-        ShelfPageMode.favorite => current.copyWith(favoriteSort: sort),
-        ShelfPageMode.history => current.copyWith(historySort: sort),
-        ShelfPageMode.download => current.copyWith(downloadSort: sort),
+  Widget _buildHeader() {
+    const extent = CollectionToolbarMetrics.actionExtent;
+    return ListenableBuilder(
+      key: const ValueKey('bookshelf.main-header'),
+      listenable: _header,
+      child: _isSearchExpanded ? _searchField() : null,
+      builder: (context, field) {
+        final slots = _header.slots;
+        final theme = Theme.of(context);
+        final subtitle = slots?.subtitle ?? '';
+        return Row(
+          children: [
+            Expanded(child: field ?? _buildHeading(context, theme, subtitle)),
+            BlocSelector<BookshelfSearchCubit, BookshelfSearchState, String>(
+              bloc: _activeSearch,
+              selector: (state) => state.stateOf(_mode).keyword,
+              builder: (context, query) => Badge(
+                isLabelVisible: !_isSearchExpanded && query.isNotEmpty,
+                child: SourceChromeIconButton(
+                  key: const ValueKey('bookshelf.search'),
+                  icon: _isSearchExpanded ? Icons.close_rounded : Icons.search,
+                  symbol: _isSearchExpanded ? 'xmark' : 'magnifyingglass',
+                  tooltip: _isSearchExpanded
+                      ? t.common.close
+                      : query.isEmpty
+                      ? t.bookshelf.searchList
+                      : '${t.bookshelf.searchList} · $query',
+                  onPressed: _scopeLocked
+                      ? null
+                      : _isSearchExpanded
+                      ? _exitSearch
+                      : _openSearch,
+                ),
+              ),
+            ),
+            const CollectionCoverPrivacyButton(
+              key: ValueKey('bookshelf.cover-privacy'),
+              emphasizeProtected: true,
+            ),
+            SizedBox.square(
+              dimension: extent,
+              child: _scopeLocked || slots?.more == null
+                  ? null
+                  : KeyedSubtree(
+                      // A menu must retire when its scope changes. Otherwise
+                      // a late choice could act on the new pane or directory.
+                      key: ValueKey((_header.generation, slots?.identity)),
+                      child: slots!.more!,
+                    ),
+            ),
+          ],
+        );
       },
     );
   }
 
-  SearchStatusState _currentSearchState() {
-    final cubit = context.read<BookshelfSearchCubit>();
-    return cubit.state.stateOf(_currentMode());
+  double _headerHeight(BuildContext context) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final title = scaler.scale(24) * 1.34;
+    return (title + (scaler.scale(14) > 20 ? scaler.scale(12) * 1.4 : 0)).clamp(
+      60.0,
+      double.infinity,
+    );
   }
 
-  void _setKeyword(String keyword) {
-    context.read<BookshelfSearchCubit>().setKeyword(_currentMode(), keyword);
-  }
-
-  void _triggerRefresh({bool goTop = false}) {
-    setState(() {
-      _refreshSignals[_currentIndex] = _refreshSignals[_currentIndex] + 1;
-    });
-  }
-
-  void _triggerRefreshAll() {
-    if (!mounted) {
-      return;
+  Widget _buildHeading(BuildContext context, ThemeData theme, String subtitle) {
+    final title = Text(
+      t.bookshelf.title,
+      style: theme.textTheme.headlineSmall,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+    if (subtitle.isEmpty) return title;
+    final count = Text(
+      subtitle,
+      style: theme.textTheme.bodySmall?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant,
+      ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+    if (MediaQuery.textScalerOf(context).scale(14) > 20) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [title, count],
+      );
     }
+    return Row(
+      children: [
+        Flexible(child: title),
+        const SizedBox(width: 8),
+        Flexible(child: count),
+      ],
+    );
+  }
+
+  Widget _buildMediaRow() {
+    final media = _shelfSelector(
+      key: const ValueKey('bookshelf.media'),
+      options: {
+        'comic': t.bookshelf.mediaComics,
+        'video': t.bookshelf.mediaVideos,
+      },
+      selected: _showVideos ? 'video' : 'comic',
+      onSelected: _selectMedia,
+    );
+    return ListenableBuilder(
+      key: const ValueKey('bookshelf.media-row'),
+      listenable: _header,
+      child: media,
+      builder: (context, selector) {
+        const extent = CollectionToolbarMetrics.actionExtent;
+        final slots = _header.slots;
+        return BookshelfSelectionHeader(
+          regular: Padding(
+            padding: const EdgeInsetsDirectional.symmetric(
+              horizontal: CollectionToolbarMetrics.sourceContentInset,
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Row(
+                children: [
+                  Expanded(child: selector!),
+                  const SizedBox(width: 4),
+                  if (slots == null)
+                    const SizedBox(width: 2 * extent)
+                  else
+                    for (final control in slots.controls)
+                      SizedBox(width: extent, child: control),
+                ],
+              ),
+            ),
+          ),
+          selection: slots?.selection,
+        );
+      },
+    );
+  }
+
+  void _openSearch() {
+    setState(() => _isSearchExpanded = true);
+    requestSearchKeyboard(
+      _searchFocusNode,
+      isCurrent: () =>
+          mounted &&
+          _isSearchExpanded &&
+          !_scopeLocked &&
+          ModalRoute.of(context)?.isCurrent != false,
+    );
+  }
+
+  Widget _searchScopeMenu() {
+    final video = _showVideos, mode = _mode;
+    return IgnorePointer(
+      ignoring: _scopeLocked,
+      child: KeywordScopeMenu(
+        compact: true,
+        scope: _keywordScope(video, mode),
+        onChanged: (scope) {
+          if (_scopeLocked || _showVideos != video || _mode != mode) return;
+          _flushPendingKeyword();
+          setState(() => _keywordScopes[(video, mode)] = scope);
+        },
+      ),
+    );
+  }
+
+  Widget _withActions(Widget child) =>
+      BlocBuilder<BookshelfSearchCubit, BookshelfSearchState>(
+        bloc: _activeSearch,
+        builder: (context, state) {
+          final mode = _mode, cubit = _activeSearch, video = _showVideos;
+          final medium = _sourceMedium;
+          final generation = _header.generation;
+          bool stillCurrent() =>
+              mounted &&
+              !_scopeLocked &&
+              _header.isCurrent(generation) &&
+              _mode == mode &&
+              _showVideos == video &&
+              identical(_activeSearch, cubit) &&
+              !cubit.isClosed;
+          return BookshelfActionsScope(
+            mode: mode,
+            video: video,
+            header: _header,
+            headerGeneration: generation,
+            canUseHeader: stillCurrent,
+            sort: state.stateOf(mode).sort,
+            onSort: _scopeLocked
+                ? null
+                : (value) {
+                    if (!stillCurrent()) return;
+                    cubit.setSort(mode, value);
+                    _persistSort(video, mode, value);
+                    _refreshFor(video, mode);
+                  },
+            onManageSources: _scopeLocked || !_sourceControlsReady
+                ? null
+                : () {
+                    if (!stillCurrent() || _sourceMedium != medium) return;
+                    _manageSources();
+                  },
+            child: child,
+          );
+        },
+      );
+
+  Widget _searchField() =>
+      BlocBuilder<BookshelfSearchCubit, BookshelfSearchState>(
+        bloc: _activeSearch,
+        builder: (context, state) {
+          final mode = _mode, cubit = _activeSearch, video = _showVideos;
+          return IgnorePointer(
+            ignoring: _scopeLocked,
+            child: SearchQueryField(
+              key: ValueKey('shelf-search.$_showVideos.${mode.name}'),
+              query: state.stateOf(mode).keyword,
+              inline: true,
+              focusNode: _searchFocusNode,
+              leadingControlWidth: KeywordScopeMenu.leadingWidth(context),
+              leadingControl: _searchScopeMenu(),
+              closeOnSubmit: false,
+              hintText: t.bookshelf.searchList,
+              semanticLabel: t.bookshelf.searchList,
+              onChanged: (value) {
+                _keywordDebouncer.cancel();
+                _pendingKeyword = null;
+                if (value.isEmpty) {
+                  cubit.setKeyword(mode, '');
+                  _refreshFor(video, mode);
+                } else {
+                  _pendingKeyword = (cubit, mode, value);
+                  _keywordDebouncer.run(() {
+                    if (mounted) _flushPendingKeyword();
+                  });
+                }
+              },
+              onSubmitted: (value) {
+                _keywordDebouncer.cancel();
+                _pendingKeyword = null;
+                cubit.setKeyword(mode, value.trim());
+                _refreshFor(video, mode);
+              },
+            ),
+          );
+        },
+      );
+
+  void _exitSearch() {
+    _flushPendingKeyword();
+    _searchFocusNode.unfocus();
+    setState(() => _isSearchExpanded = false);
+    _applyPendingHomeSection();
+  }
+
+  void _flushPendingKeyword() {
+    _keywordDebouncer.cancel();
+    final pending = _pendingKeyword;
+    _pendingKeyword = null;
+    if (pending != null && !pending.$1.isClosed) {
+      pending.$1.setKeyword(pending.$2, pending.$3);
+      // The comic host reads its query on explicit refresh. Keep the captured
+      // medium/mode: a tab or media switch may flush the previous editor.
+      _refreshFor(identical(pending.$1, _videoSearch), pending.$2);
+    }
+  }
+
+  void _refreshFor(bool video, ShelfPageMode mode) {
+    // Video panes observe their scoped search value directly.
+    if (!video) setState(() => _comicRefresh[mode.index]++);
+  }
+
+  void _refreshAll() {
+    if (!mounted) return;
     setState(() {
-      for (var i = 0; i < _refreshSignals.length; i++) {
-        _refreshSignals[i] = _refreshSignals[i] + 1;
+      for (var i = 0; i < 3; i++) {
+        _comicRefresh[i]++;
       }
     });
   }
 
-  Future<void> _openFilter() async {
-    final searchCubit = context.read<BookshelfSearchCubit>();
-    final currentMode = _currentMode();
-    final current = searchCubit.state.stateOf(currentMode);
-    final sourceOptions = _buildFilterSourceOptions();
-    final availableSources = sourceOptions
-        .map((source) => source.pluginId)
-        .toList();
-
-    if (availableSources.isEmpty && currentMode != ShelfPageMode.favorite) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(t.bookshelf.noFilterSource)));
+  void _persistSort(bool video, ShelfPageMode mode, String sort) {
+    if (video) {
+      _videoSortTouched.add(mode);
+      final savedSorts = [
+        for (final m in _recordModes) _videoSearch.state.stateOf(m).sort,
+      ];
+      unawaited(
+        SharedPreferences.getInstance().then(
+          (p) => p.setStringList(_videoSortKey, savedSorts),
+        ),
+      );
       return;
     }
-
-    var selectedSources = current.sources
-        .where(availableSources.contains)
-        .toSet();
-    if (selectedSources.isEmpty) {
-      selectedSources = availableSources.toSet();
-    }
-
-    final result = await showDialog<_BookshelfFilterResult>(
-      context: context,
-      builder: (_) => _BookshelfFilterDialog(
-        mode: currentMode,
-        initialSort: switch (currentMode) {
-          (ShelfPageMode.favorite || ShelfPageMode.download)
-              when current.sort == 'vd' || current.sort == 'va' =>
-            current.sort,
-          _ when current.sort == 'da' => 'da',
-          _ => 'dd',
-        },
-        initialSources: selectedSources,
-        availableSources: availableSources,
-        sourceOptions: sourceOptions,
-      ),
-    );
-
-    if (result == null) return;
-
-    searchCubit.setSort(currentMode, result.sort);
-    _maybePersistSort(currentMode, result.sort);
-
-    final nextSources = result.sources.toList();
-    searchCubit.setSources(currentMode, nextSources);
-    _triggerRefresh(goTop: true);
-  }
-
-  List<_FilterSourceOption> _buildFilterSourceOptions() {
-    final pluginStates = context.read<PluginRegistryCubit>().state;
-    final sourceOptions = PluginRegistryService.I.sortPlugins(
-      pluginStates.values.where(
-        (plugin) => plugin.isEnabled && !plugin.isDeleted,
-      ),
-    );
-    return sourceOptions
-        .map(
-          (plugin) => _FilterSourceOption(
-            pluginId: plugin.uuid,
-            title: _sourceTitle(plugin.uuid),
-          ),
-        )
-        .toList();
-  }
-
-  String _sourceTitle(String pluginId) {
-    final info = PluginRegistryService.I.getCachedPluginInfo(pluginId);
-    final name = info?['name']?.toString().trim() ?? '';
-    return name.isNotEmpty ? name : pluginId;
-  }
-
-  void _syncSourcesFromRegistry(Map<String, PluginRuntimeState> pluginStates) {
-    final available =
-        pluginStates.values
-            .where((plugin) => plugin.isEnabled && !plugin.isDeleted)
-            .map((plugin) => plugin.uuid)
-            .toList()
-          ..sort();
-
-    if (listEquals(_lastAvailableSources, available)) {
-      return;
-    }
-    final addedSources = available
-        .where((item) => !_lastAvailableSources.contains(item))
-        .toList();
-    _lastAvailableSources = List<String>.from(available);
-
-    context.read<BookshelfSearchCubit>().syncSources(
-      available,
-      autoSelect: addedSources,
+    final cubit = context.read<GlobalSettingCubit>();
+    cubit.updateBookshelfSetting(
+      (s) => switch (mode) {
+        ShelfPageMode.favorite => s.copyWith(
+          favoriteSort: sort,
+          rememberFavoriteSort: true,
+        ),
+        ShelfPageMode.history => s.copyWith(
+          historySort: sort,
+          rememberHistorySort: true,
+        ),
+        ShelfPageMode.download => s,
+      },
     );
   }
-
-  String _pluginAvailabilityRevision(
-    Map<String, PluginRuntimeState> pluginStates,
-  ) {
-    final entries =
-        pluginStates.entries
-            .map(
-              (entry) =>
-                  '${entry.key}:${entry.value.isEnabled ? 1 : 0}:${entry.value.isDeleted ? 1 : 0}',
-            )
-            .toList()
-          ..sort();
-    return entries.join('|');
-  }
-}
-
-class _BookshelfFilterDialog extends StatefulWidget {
-  const _BookshelfFilterDialog({
-    required this.mode,
-    required this.initialSort,
-    required this.initialSources,
-    required this.availableSources,
-    required this.sourceOptions,
-  });
-
-  final ShelfPageMode mode;
-  final String initialSort;
-  final Set<String> initialSources;
-  final List<String> availableSources;
-  final List<_FilterSourceOption> sourceOptions;
-
-  @override
-  State<_BookshelfFilterDialog> createState() => _BookshelfFilterDialogState();
-}
-
-class _BookshelfFilterDialogState extends State<_BookshelfFilterDialog> {
-  late String _selectedSort;
-  late Set<String> _selectedSources;
-
-  bool get _isFavoriteMode => widget.mode == ShelfPageMode.favorite;
-  bool get _isDownloadMode => widget.mode == ShelfPageMode.download;
-
-  @override
-  void initState() {
-    super.initState();
-    _selectedSort = widget.initialSort;
-    _selectedSources = Set<String>.from(widget.initialSources);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(t.bookshelf.filter),
-      content: SizedBox(
-        width: 420,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildSortSection(context),
-              const SizedBox(height: 16),
-              _buildSourceSection(context),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(t.common.cancel),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(
-            _BookshelfFilterResult(
-              sort: _selectedSort,
-              sources: _selectedSources,
-            ),
-          ),
-          child: Text(t.common.apply),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSortSection(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(t.bookshelf.sort, style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            ChoiceChip(
-              showCheckmark: false,
-              label: Text(t.bookshelf.sortDesc),
-              selected: _selectedSort == 'dd',
-              onSelected: (_) => setState(() => _selectedSort = 'dd'),
-            ),
-            ChoiceChip(
-              showCheckmark: false,
-              label: Text(t.bookshelf.sortAsc),
-              selected: _selectedSort == 'da',
-              onSelected: (_) => setState(() => _selectedSort = 'da'),
-            ),
-            if (_isFavoriteMode || _isDownloadMode) ...[
-              ChoiceChip(
-                showCheckmark: false,
-                label: Text(t.bookshelf.viewSortDesc),
-                selected: _selectedSort == 'vd',
-                onSelected: (_) => setState(() => _selectedSort = 'vd'),
-              ),
-              ChoiceChip(
-                showCheckmark: false,
-                label: Text(t.bookshelf.viewSortAsc),
-                selected: _selectedSort == 'va',
-                onSelected: (_) => setState(() => _selectedSort = 'va'),
-              ),
-            ],
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSourceSection(BuildContext context) {
-    final isAllSelected =
-        _selectedSources.length == widget.availableSources.length;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text(
-              t.bookshelf.source,
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            const SizedBox(width: 8),
-            TextButton(
-              onPressed: () => setState(() {
-                if (isAllSelected) {
-                  _selectedSources.clear();
-                } else {
-                  _selectedSources = widget.availableSources.toSet();
-                }
-              }),
-              child: Text(
-                isAllSelected ? t.bookshelf.deselectAll : t.common.selectAll,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final source in widget.sourceOptions)
-              FilterChip(
-                showCheckmark: false,
-                label: Text(source.title),
-                selected: _selectedSources.contains(source.pluginId),
-                onSelected: (selected) => setState(() {
-                  if (selected) {
-                    _selectedSources.add(source.pluginId);
-                  } else {
-                    _selectedSources.remove(source.pluginId);
-                  }
-                }),
-              ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _BookshelfFilterResult {
-  _BookshelfFilterResult({required this.sort, required Set<String> sources})
-    : sources = Set<String>.from(sources);
-
-  final String sort;
-  final Set<String> sources;
-}
-
-class _FilterSourceOption {
-  const _FilterSourceOption({required this.pluginId, required this.title});
-
-  final String pluginId;
-  final String title;
 }

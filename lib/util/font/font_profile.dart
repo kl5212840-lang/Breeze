@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:material_ui/material_ui.dart';
@@ -38,10 +39,27 @@ class FontProfileController extends ChangeNotifier {
   SharedPreferences? _prefs;
   Map<int, String> _paths = const {};
   Map<int, String> _families = const {};
+  int _nextFileId = 0;
+  Future<void>? _pendingWrite;
+
+  Future<T> _serial<T>(Future<T> Function() operation) async {
+    final previous = _pendingWrite;
+    final completion = Completer<void>();
+    _pendingWrite = completion.future;
+    try {
+      if (previous != null) await previous;
+      return await operation();
+    } finally {
+      completion.complete();
+      if (identical(_pendingWrite, completion.future)) _pendingWrite = null;
+    }
+  }
 
   Map<int, String> get paths => _paths;
 
-  Future<void> init() async {
+  Future<void> init() => _serial(_init);
+
+  Future<void> _init() async {
     _prefs ??= await SharedPreferences.getInstance();
     final nextPaths = <int, String>{};
     final nextFamilies = <int, String>{};
@@ -64,7 +82,10 @@ class FontProfileController extends ChangeNotifier {
     return _families[normalized] ?? _families[400] ?? '';
   }
 
-  Future<bool> setPath(int weight, String path) async {
+  Future<bool> setPath(int weight, String path) =>
+      _serial(() => _setPath(weight, path));
+
+  Future<bool> _setPath(int weight, String path) async {
     _prefs ??= await SharedPreferences.getInstance();
     final normalizedPath = path.trim();
     final nextPaths = Map<int, String>.from(_paths);
@@ -75,7 +96,9 @@ class FontProfileController extends ChangeNotifier {
     if (normalizedPath.isEmpty) {
       nextPaths.remove(weight);
       nextFamilies.remove(weight);
-      await _prefs!.remove(key);
+      if (!await _prefs!.remove(key)) {
+        throw StateError('Font preference removal failed');
+      }
       await _deleteIfManaged(previousPath);
       _paths = nextPaths;
       _families = nextFamilies;
@@ -92,7 +115,16 @@ class FontProfileController extends ChangeNotifier {
 
     nextPaths[weight] = storedPath;
     nextFamilies[weight] = family;
-    await _prefs!.setString(key, storedPath);
+    try {
+      if (!await _prefs!.setString(key, storedPath)) {
+        throw StateError('Font preference save failed');
+      }
+    } catch (_) {
+      await _deleteIfManaged(storedPath);
+      // SharedPreferences updates its cache before the platform confirms a write.
+      await _prefs!.reload();
+      rethrow;
+    }
     if (previousPath != null && previousPath != storedPath) {
       await _deleteIfManaged(previousPath);
     }
@@ -102,11 +134,15 @@ class FontProfileController extends ChangeNotifier {
     return true;
   }
 
-  Future<void> clearAll() async {
+  Future<void> clearAll() => _serial(_clearAll);
+
+  Future<void> _clearAll() async {
     _prefs ??= await SharedPreferences.getInstance();
     final managedPaths = _paths.values.toList(growable: false);
     for (final key in _fontSettingKeys.values) {
-      await _prefs!.remove(key);
+      if (!await _prefs!.remove(key)) {
+        throw StateError('Font preference removal failed');
+      }
     }
     _paths = {};
     _families = {};
@@ -178,7 +214,10 @@ class FontProfileController extends ChangeNotifier {
 
     final originalName = p.basename(sourcePath);
     final sanitizedName = originalName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-    final targetPath = p.join(fontsDir.path, 'w${weight}_$sanitizedName');
+    final targetPath = p.join(
+      fontsDir.path,
+      'w${weight}_${DateTime.now().microsecondsSinceEpoch}_${_nextFileId++}_$sanitizedName',
+    );
     final sourceFile = File(sourcePath);
     final targetFile = File(targetPath);
 

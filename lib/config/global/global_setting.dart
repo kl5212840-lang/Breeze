@@ -1,12 +1,20 @@
 // 全局设置
 
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:zephyr/config/global/color_theme_types.dart';
 import 'package:zephyr/i18n/i18n_helper.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/i18n/system_locale_service.dart';
 import 'package:zephyr/main.dart';
+import 'package:zephyr/page/navigation/legacy_navigation_settings.dart';
+import 'package:zephyr/page/navigation/main_navigation_layout.dart';
+import 'package:zephyr/page/video/video_download.dart' show VideoSystemDownload;
+import 'package:zephyr/service/download/download_admission.dart';
 import 'package:zephyr/util/json/converter.dart';
 
 part 'global_setting.freezed.dart';
@@ -21,6 +29,17 @@ enum ReaderBackgroundMode { auto, black, white, grey }
 enum ReaderTapPageTurnMode { fullScreen, leftHand, rightHand }
 
 enum SyncServiceType { none, webdav, s3 }
+
+enum BreezeSwitchStyle {
+  classic,
+  symbols,
+  ring,
+  relief,
+  pixel,
+  thumb,
+  power,
+  spark,
+}
 
 /// 代理协议类型。
 enum ProxyType { http, socks5 }
@@ -126,10 +145,16 @@ abstract class GlobalSettingState with _$GlobalSettingState {
     @Default(ThemeMode.system) ThemeMode themeMode,
     @Default(true) bool isAMOLED,
     @ColorConverter() @Default(Color(0xFFEF5350)) Color seedColor,
+    @JsonKey(unknownEnumValue: BreezeSwitchStyle.classic)
+    @Default(BreezeSwitchStyle.classic)
+    BreezeSwitchStyle switchStyle,
     @Default(0) int themeInitState,
     @LocaleConverter() @Default(Locale('zh', 'CN')) Locale locale,
     @Default(true) bool localeFollowsSystem,
     @Default(0) int welcomePageNum,
+    @JsonKey(fromJson: normalizeMainNavigationSlots)
+    @Default('')
+    String mainNavigationSlots,
     @Default(SyncSettingState()) SyncSettingState syncSetting,
     @Default([]) List<String> maskedKeywords,
     @Default(true) bool socks5ProxyEnabled,
@@ -145,6 +170,9 @@ abstract class GlobalSettingState with _$GlobalSettingState {
     @Default(false) bool backPressExitEnabled,
     @Default(true) bool updateAccelerate,
     @Default(true) bool retryDownloadUntilSuccess,
+    @Default(1) int videoDownloadConcurrency,
+    @Default(false) bool downloadWifiOnly,
+    @Default('work') String downloadCompletionNotice,
     @Default(false) bool oldPageRollbackEnabled,
     @Default(false) bool cloudFavoritePreferred,
     @Default(false) bool autoFollowOnCollect,
@@ -167,13 +195,25 @@ abstract class GlobalSettingState with _$GlobalSettingState {
   }) = _GlobalSettingState;
 
   factory GlobalSettingState.fromJson(Map<String, dynamic> json) =>
-      _$GlobalSettingStateFromJson(json);
+      _$GlobalSettingStateFromJson(normalizeLegacyNavigationJson(json));
+}
+
+GlobalSettingState _normalizeLegacyNavigationState(GlobalSettingState value) {
+  if (!value.oldPageRollbackEnabled) return value;
+  final normalized = normalizeLegacyNavigationJson({
+    'oldPageRollbackEnabled': true,
+    'welcomePageNum': value.welcomePageNum,
+  });
+  return value.copyWith(
+    oldPageRollbackEnabled: false,
+    welcomePageNum: normalized['welcomePageNum'] as int,
+  );
 }
 
 @freezed
 abstract class CacheSettingState with _$CacheSettingState {
   const factory CacheSettingState({
-    @Default(true) bool autoCleanCache,
+    @Default(false) bool autoCleanCache,
     @Default(1073741824) int cacheSizeLimit,
   }) = _CacheSettingState;
 
@@ -245,6 +285,7 @@ abstract class S3SettingState with _$S3SettingState {
 @freezed
 abstract class SyncSettingState with _$SyncSettingState {
   const factory SyncSettingState({
+    @Default(false) bool legacyCompatibilityEnabled,
     @Default(SyncServiceType.none) SyncServiceType syncServiceType,
     @Default(WebDavSettingState()) WebDavSettingState webdavSetting,
     @Default(S3SettingState()) S3SettingState s3Setting,
@@ -292,6 +333,7 @@ abstract class ReadSettingState with _$ReadSettingState {
     @Default(true) bool volumeKeyPageTurn,
     @Default(72) int volumeKeyPageTurnDistancePercent,
     @Default(false) bool doubleTapZoom,
+    @Default(false) bool doubleTapZoomAnimation,
     @Default(false) bool doubleTapOpenMenu,
     @Default(true) bool pageInfoShowPage,
     @Default(true) bool pageInfoShowNetwork,
@@ -377,9 +419,26 @@ class GlobalSettingCubit extends Cubit<GlobalSettingState> {
   static const _defaults = GlobalSettingState();
   // colorThemeList[6].color 是动态的，不能在 const 中，单独处理
   late final Color _defaultSeedColor = colorThemeList[6].color;
+  int _displayLocaleRequest = 0;
 
   Future<void> initBox() async {
-    final persisted = objectbox.userSettingBox.get(1)!.globalSetting;
+    final user = objectbox.userSettingBox.get(1)!;
+    final persisted = user.globalSetting;
+    final raw = user.globalSettingData;
+    if (raw != null &&
+        raw.isNotEmpty &&
+        (jsonDecode(raw) as Map)['oldPageRollbackEnabled'] == true) {
+      user.globalSetting = persisted;
+      objectbox.userSettingBox.put(user);
+    }
+    _syncRuntimeFlags(persisted);
+    emit(persisted);
+  }
+
+  /// Publish a committed file restore without persisting it a second time.
+  void refreshAfterBackupImport() {
+    final persisted = objectbox.userSettingBox.get(1)?.globalSetting;
+    if (isClosed || persisted == null) return;
     _syncRuntimeFlags(persisted);
     emit(persisted);
   }
@@ -417,10 +476,13 @@ class GlobalSettingCubit extends Cubit<GlobalSettingState> {
   void updateCacheSetting(
     CacheSettingState Function(CacheSettingState current) updates,
   ) {
-    updateState(
-      (current) =>
-          current.copyWith(cacheSetting: updates(current.cacheSetting)),
-    );
+    updateState((current) {
+      final next = updates(current.cacheSetting);
+      return current.copyWith(
+        cacheSetting: next,
+        needCleanCache: next.autoCleanCache && current.needCleanCache,
+      );
+    });
   }
 
   void updateBookshelfSetting(
@@ -447,22 +509,39 @@ class GlobalSettingCubit extends Cubit<GlobalSettingState> {
   /// 如果 [locale] 无法匹配到已支持的语言，则回退到英文。
   Future<void> setLocale(Locale locale, {bool followsSystem = false}) async {
     final appLocale = I18nHelper.toAppLocale(locale) ?? AppLocale.enUs;
-
-    await LocaleSettings.setLocale(appLocale);
-    I18nHelper.setRustErrorLanguage(appLocale);
-
     updateState(
       (current) => current.copyWith(
         locale: I18nHelper.toFlutterLocale(appLocale),
         localeFollowsSystem: followsSystem,
       ),
     );
+    await _applyDisplayLocale(appLocale);
   }
 
   /// 根据系统 locale 设置应用语言。
   /// 无法匹配时由 [setLocale] 自动回退到英文。
   Future<void> setSystemLocale(Locale systemLocale) async {
     await setLocale(systemLocale, followsSystem: true);
+  }
+
+  /// Resolves saved preferences and OS language changes locally. An OS change
+  /// does not modify the saved language preference or its sync timestamp.
+  Future<void> refreshDisplayLocale({Locale? systemLocale}) {
+    final effective = state.localeFollowsSystem
+        ? systemLocale ?? SystemLocaleService.preferredLocale
+        : state.locale;
+    return _applyDisplayLocale(
+      I18nHelper.toAppLocale(effective) ?? AppLocale.enUs,
+    );
+  }
+
+  Future<void> _applyDisplayLocale(AppLocale locale) async {
+    final request = ++_displayLocaleRequest;
+    if (LocaleSettings.currentLocale == locale) return;
+    await LocaleSettings.instance.loadLocale(locale);
+    if (isClosed || request != _displayLocaleRequest) return;
+    I18nHelper.setRustErrorLanguage(locale);
+    LocaleSettings.setLocaleSync(locale);
   }
 
   void updateWebDavSetting(
@@ -486,10 +565,13 @@ class GlobalSettingCubit extends Cubit<GlobalSettingState> {
   }
 
   void _persistAndEmit(GlobalSettingState newState) {
-    final normalizedState = _preserveCompatibleVersion(newState, state);
-    _syncRuntimeFlags(normalizedState);
+    final normalizedState = _preserveCompatibleVersion(
+      _normalizeLegacyNavigationState(newState),
+      state,
+    );
     if (_withoutSettingsSyncTime(normalizedState) ==
         _withoutSettingsSyncTime(state)) {
+      _syncRuntimeFlags(state);
       return;
     }
 
@@ -500,18 +582,31 @@ class GlobalSettingCubit extends Cubit<GlobalSettingState> {
       ),
     );
     _updateDataBase(persistedState);
+    _syncRuntimeFlags(persistedState);
     emit(persistedState);
   }
 
   void applySyncedState(GlobalSettingState value) {
-    final normalized = _preserveCompatibleVersion(value, state);
-    _syncRuntimeFlags(normalized);
+    final normalized = _preserveCompatibleVersion(
+      _normalizeLegacyNavigationState(value),
+      state,
+    );
     _updateDataBase(normalized);
+    _syncRuntimeFlags(normalized);
     emit(normalized);
   }
 
   void _syncRuntimeFlags(GlobalSettingState value) {
     eInkInstantRoutes = value.eInkSetting.shouldRemoveRouteTransition;
+    DownloadAdmission.instance.setWifiOnly(
+      defaultTargetPlatform == TargetPlatform.iOS && value.downloadWifiOnly,
+    );
+    if (defaultTargetPlatform == TargetPlatform.iOS &&
+        value.videoDownloadConcurrency.clamp(1, 3) !=
+            state.videoDownloadConcurrency.clamp(1, 3)) {
+      // Waiting transfers read the committed limit when they wake.
+      VideoSystemDownload.notifyConcurrencyChanged();
+    }
   }
 
   GlobalSettingState _preserveCompatibleVersion(

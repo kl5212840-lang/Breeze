@@ -115,6 +115,7 @@ Map<String, dynamic> _buildHistoryRaw(UnifiedComicHistory comic) {
       metadata: comic.metadata,
       updatedAt: comic.updatedAt,
     ),
+    'lastReadAt': comic.lastReadAt.toIso8601String(),
     'chapterId': comic.chapterId,
     'chapterTitle': comic.chapterTitle,
     'chapterOrder': comic.chapterOrder,

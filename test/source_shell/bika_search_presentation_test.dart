@@ -1,6 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/main.dart' show objectbox;
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
@@ -15,6 +16,7 @@ import 'package:zephyr/widgets/comic_entry/models/models.dart';
 import '../test_helper.dart';
 
 void main() {
+  setUp(() => SharedPreferences.setMockInitialValues({}));
   test('pagination hides contradictory totals from older plugins', () {
     expect(
       trustworthyTotalPages(
@@ -59,6 +61,25 @@ void main() {
     },
   );
 
+  test(
+    'replacement failure retries the failed filters rather than the last successful query',
+    () {
+      const old = SearchEvent(searchStates: SearchStates(searchKeyword: 'old'));
+      const failed = SearchState(
+        status: SearchStatus.failure,
+        searchEvent: SearchEvent(
+          page: 3,
+          searchStates: SearchStates(
+            searchKeyword: 'new',
+            pluginExtern: {'sortBy': 2},
+          ),
+        ),
+      );
+      final retry = searchRetryEvent(old, failed, SearchStatus.initial);
+      expect(retry, failed.searchEvent);
+    },
+  );
+
   setUpAll(() async {
     await TestObjectBoxHelper.setUpTestObjectBox();
     objectbox.userSettingBox.put(UserSetting());
@@ -77,6 +98,7 @@ void main() {
       ),
     );
     final searchBloc = SearchBloc();
+    addTearDown(searchBloc.close);
     await tester.pumpWidget(
       MultiBlocProvider(
         providers: [
@@ -101,12 +123,9 @@ void main() {
     expect(searchCubit.state.pluginExtern['blockedCategories'], ['短篇']);
     expect(find.textContaining('已屏蔽'), findsOneWidget);
 
-    await tester.tap(find.byTooltip('清除屏蔽 (1)'));
+    await tester.tap(find.byKey(const ValueKey('source-list.clear-blocked')));
     await tester.pump();
-    expect(
-      searchCubit.state.pluginExtern.containsKey('blockedCategories'),
-      isFalse,
-    );
+    expect(searchCubit.state.pluginExtern['blockedCategories'], isEmpty);
 
     await tester.tap(find.byKey(const ValueKey('category-短篇')));
     await tester.pump();
@@ -116,7 +135,6 @@ void main() {
     expect(searchCubit.state.pluginExtern['blockedCategories'], isEmpty);
     await tester.pumpWidget(const SizedBox.shrink());
     await searchCubit.close();
-    await searchBloc.close();
   });
 
   testWidgets('detail row shows available metadata on phone width', (

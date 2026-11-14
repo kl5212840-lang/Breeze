@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:zephyr/widgets/picture_bloc/picture_recovery_region.dart';
 import 'dart:io';
 
 import 'package:auto_route/auto_route.dart';
@@ -161,36 +163,58 @@ class _ComicPreviewTile extends StatelessWidget {
       extern: item.extern,
     );
     return BlocProvider(
-      create: (_) => PictureBloc()..add(GetPicture(pictureInfo)),
+      key: ValueKey(pictureInfo),
+      create: (_) =>
+          PictureBloc(initiallyActive: false)..add(GetPicture(pictureInfo)),
       child: BlocBuilder<PictureBloc, PictureLoadState>(
         builder: (context, state) {
-          switch (state.status) {
-            case PictureLoadStatus.initial:
-              return _tileBackground(
-                context,
-                const CircularProgressIndicator(),
-              );
-            case PictureLoadStatus.success:
-              return InkWell(
-                onTap: () => context.pushRoute(
-                  FullRouteImageRoute(imagePath: state.imagePath!),
-                ),
-                child: _tileBackground(
-                  context,
-                  Image.file(
-                    File(state.imagePath!),
-                    fit: BoxFit.contain,
-                    cacheWidth: 360,
-                  ),
-                ),
-              );
-            case PictureLoadStatus.failure:
-              return InkWell(
-                onTap: () =>
-                    context.read<PictureBloc>().add(GetPicture(pictureInfo)),
-                child: _tileBackground(context, const Icon(Icons.refresh)),
-              );
-          }
+          return PictureRecoveryRegion(
+            bloc: context.read<PictureBloc>(),
+            child: Builder(
+              builder: (context) {
+                switch (state.status) {
+                  case PictureLoadStatus.initial:
+                    return _tileBackground(
+                      context,
+                      const CircularProgressIndicator(),
+                    );
+                  case PictureLoadStatus.success:
+                    return InkWell(
+                      onTap: () => context.pushRoute(
+                        FullRouteImageRoute(imagePath: state.imagePath!),
+                      ),
+                      child: _tileBackground(
+                        context,
+                        Image.file(
+                          File(state.imagePath!),
+                          fit: BoxFit.contain,
+                          cacheWidth: 360,
+                          errorBuilder: (_, error, _) {
+                            unawaited(
+                              context.read<PictureBloc>().reportDecodeFailure(
+                                error,
+                                imagePath: state.imagePath,
+                              ),
+                            );
+                            return const SizedBox.shrink();
+                          },
+                        ),
+                      ),
+                    );
+                  case PictureLoadStatus.failure:
+                    return InkWell(
+                      onTap: () => context.read<PictureBloc>().add(
+                        GetPicture(pictureInfo),
+                      ),
+                      child: _tileBackground(
+                        context,
+                        const Icon(Icons.refresh),
+                      ),
+                    );
+                }
+              },
+            ),
+          );
         },
       ),
     );

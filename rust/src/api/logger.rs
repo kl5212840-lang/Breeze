@@ -34,10 +34,10 @@ where
 
         let resolved_file = {
             let path = std::path::Path::new(raw_file);
-            if path.is_absolute() {
-                path.to_path_buf()
-            } else {
+            if cfg!(debug_assertions) && path.is_relative() {
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)
+            } else {
+                path.to_path_buf()
             }
         };
 

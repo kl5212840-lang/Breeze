@@ -14,7 +14,7 @@ part of 'search_cubit.dart';
 T _$identity<T>(T value) => value;
 
 /// @nodoc
-mixin _$SearchStates {
+mixin _$SearchStates implements DiagnosticableTreeMixin {
 
  String get from; String get searchKeyword; int get sortBy; Map<String, dynamic> get pluginExtern; Map<String, bool> get aggregateSources;
 /// Create a copy of SearchStates
@@ -26,6 +26,13 @@ $SearchStatesCopyWith<SearchStates> get copyWith => _$SearchStatesCopyWithImpl<S
   /// Serializes this SearchStates to a JSON map.
   Map<String, dynamic> toJson();
 
+@override
+void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+  final _this = this as SearchStates;
+  properties
+    ..add(DiagnosticsProperty('type', 'SearchStates'))
+    ..add(DiagnosticsProperty('from', _this.from))..add(DiagnosticsProperty('searchKeyword', _this.searchKeyword))..add(DiagnosticsProperty('sortBy', _this.sortBy))..add(DiagnosticsProperty('pluginExtern', _this.pluginExtern))..add(DiagnosticsProperty('aggregateSources', _this.aggregateSources));
+}
 
 @override
 bool operator ==(Object other) {
@@ -41,7 +48,7 @@ int get hashCode {
 }
 
 @override
-String toString() {
+String toString({ DiagnosticLevel minLevel = DiagnosticLevel.info }) {
   final _this = this as SearchStates;
   return 'SearchStates(from: ${_this.from}, searchKeyword: ${_this.searchKeyword}, sortBy: ${_this.sortBy}, pluginExtern: ${_this.pluginExtern}, aggregateSources: ${_this.aggregateSources})';
 }
@@ -218,7 +225,7 @@ return $default(_that.from,_that.searchKeyword,_that.sortBy,_that.pluginExtern,_
 /// @nodoc
 @JsonSerializable()
 
-class _SearchStates implements SearchStates {
+class _SearchStates with DiagnosticableTreeMixin implements SearchStates {
   const _SearchStates({this.from = '', this.searchKeyword = "", this.sortBy = 1,  Map<String, dynamic> pluginExtern = const <String, dynamic>{},  Map<String, bool> aggregateSources = const <String, bool>{}}): _pluginExtern = pluginExtern,_aggregateSources = aggregateSources;
   factory _SearchStates.fromJson(Map<String, dynamic> json) => _$SearchStatesFromJson(json);
 
@@ -250,6 +257,12 @@ _$SearchStatesCopyWith<_SearchStates> get copyWith => __$SearchStatesCopyWithImp
 Map<String, dynamic> toJson() {
   return _$SearchStatesToJson(this, );
 }
+@override
+void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    properties
+    ..add(DiagnosticsProperty('type', 'SearchStates'))
+    ..add(DiagnosticsProperty('from', from))..add(DiagnosticsProperty('searchKeyword', searchKeyword))..add(DiagnosticsProperty('sortBy', sortBy))..add(DiagnosticsProperty('pluginExtern', pluginExtern))..add(DiagnosticsProperty('aggregateSources', aggregateSources));
+}
 
 @override
 bool operator ==(Object other) {
@@ -263,7 +276,7 @@ int get hashCode {
 }
 
 @override
-String toString() {
+String toString({ DiagnosticLevel minLevel = DiagnosticLevel.info }) {
     return 'SearchStates(from: $from, searchKeyword: $searchKeyword, sortBy: $sortBy, pluginExtern: $pluginExtern, aggregateSources: $aggregateSources)';
 }
 

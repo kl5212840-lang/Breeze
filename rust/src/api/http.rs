@@ -29,7 +29,7 @@ pub struct HttpClientOptions {
     /// 覆盖本次客户端使用的 HTTP 代理（例如 `http://127.0.0.1:7890`）。
     /// 设置后优先于全局代理配置。
     pub http_proxy: Option<String>,
-    /// 覆盖全局 TLS 校验；`None` 时跟随全局配置。
+    /// `None` 沿用全局；显式 `false` 要求证书校验和全程 HTTPS。
     pub danger_accept_invalid_certs: Option<bool>,
     pub user_agent: Option<String>,
 }
@@ -320,6 +320,7 @@ fn create_reqwest_client(options: &HttpClientOptions) -> Result<ClientWithMiddle
         &config,
         BuildHttpClientOptions {
             no_proxy: options.no_proxy.unwrap_or(false),
+            https_only: options.danger_accept_invalid_certs == Some(false),
             timeout: Some(Duration::from_millis(options.timeout_ms.unwrap_or(30_000))),
             connect_timeout: Some(Duration::from_millis(
                 options.connect_timeout_ms.unwrap_or(15_000),
@@ -365,6 +366,39 @@ fn flatten_headers(headers: &HeaderMap) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn distribution_rejects_plain_http_without_disabling_legacy_sources() {
+        use tokio::io::AsyncReadExt;
+        use tokio::net::TcpListener;
+
+        let server = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", server.local_addr().unwrap());
+        let serve = tokio::spawn(async move {
+            let (mut stream, _) = server.accept().await.unwrap();
+            let mut request = [0; 1024];
+            assert!(stream.read(&mut request).await.unwrap() > 0);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK")
+                .await
+                .unwrap();
+        });
+        let config = HttpClientOptions {
+            no_proxy: Some(true),
+            timeout_ms: Some(2_000),
+            ..Default::default()
+        };
+        let distribution = HttpClient::create(Some(HttpClientOptions {
+            danger_accept_invalid_certs: Some(false),
+            ..config.clone()
+        }))
+        .unwrap();
+        assert!(distribution.fetch(url.clone(), None).await.is_err());
+
+        let legacy = HttpClient::create(Some(config)).unwrap();
+        assert_eq!(legacy.fetch(url, None).await.unwrap().body, b"OK");
+        serve.await.unwrap();
+    }
 
     #[tokio::test]
     async fn fetch_example_com() {

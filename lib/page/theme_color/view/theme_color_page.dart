@@ -4,44 +4,36 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/config/global/color_theme_types.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/config/global/global_setting.dart';
-import 'package:zephyr/main.dart';
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/theme_color/theme_color.dart';
 
 @RoutePage()
-class ThemeColorPage extends StatefulWidget {
+class ThemeColorPage extends StatelessWidget {
   const ThemeColorPage({super.key});
 
   @override
-  State<ThemeColorPage> createState() => _ThemeColorPageState();
-}
-
-class _ThemeColorPageState extends State<ThemeColorPage> {
-  late Color _currentColor;
-
-  @override
-  void initState() {
-    super.initState();
-    _currentColor = objectbox.userSettingBox.get(1)!.globalSetting.seedColor;
-  }
-
-  @override
   Widget build(BuildContext context) {
+    final currentColor = context.select<GlobalSettingCubit, Color>(
+      (cubit) => cubit.state.seedColor,
+    );
+    void setThemeColor(Color color) {
+      final cubit = context.read<GlobalSettingCubit>();
+      if (cubit.state.seedColor == color) return;
+      cubit.updateState((current) => current.copyWith(seedColor: color));
+    }
+
     return Scaffold(
-      appBar: AppBar(title: Text(t.settings.themeColor)),
+      appBar: AppBar(
+        leading: const SourceBackButton(),
+        title: Text(t.settings.themeColor),
+      ),
       body: SingleChildScrollView(
         child: Column(
           children: [
             // 颜色选择器
             ColorPickerPage(
-              currentColor: _currentColor,
-              onColorChanged: (color) {
-                // 更新本地 UI 状态
-                setState(() {
-                  _currentColor = color;
-                });
-                // 更新全局 Cubit 状态
-                _setThemeColor(color);
-              },
+              currentColor: currentColor,
+              onColorChanged: setThemeColor,
             ),
             // 颜色块网格
             Padding(
@@ -52,12 +44,10 @@ class _ThemeColorPageState extends State<ThemeColorPage> {
                 children: colorThemeList.map((colorInfo) {
                   return ColorThemeItem(
                     colorInfo: colorInfo,
-                    currentColor: _currentColor,
+                    currentColor: currentColor,
                     onColorSelected: (color) {
-                      setState(() {
-                        _currentColor = color;
-                      });
-                      _setThemeColor(color);
+                      FocusScope.of(context).unfocus();
+                      setThemeColor(color);
                     },
                   );
                 }).toList(),
@@ -66,12 +56,6 @@ class _ThemeColorPageState extends State<ThemeColorPage> {
           ],
         ),
       ),
-    );
-  }
-
-  void _setThemeColor(Color color) {
-    context.read<GlobalSettingCubit>().updateState(
-      (current) => current.copyWith(seedColor: color),
     );
   }
 }

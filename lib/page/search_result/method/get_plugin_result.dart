@@ -4,6 +4,8 @@ import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/page/search_result/models/bloc_state.dart';
 import 'package:zephyr/page/search_result/models/comic_number.dart';
 import 'package:zephyr/page/search_result/models/unified_plugin_search.dart';
+import 'package:zephyr/page/source_shell/source_experience_preferences.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 
 int trustworthyTotalPages(UnifiedPluginSearchPaging paging) {
   if (!paging.hasReachedMax && paging.pages <= paging.page) return 0;
@@ -12,18 +14,38 @@ int trustworthyTotalPages(UnifiedPluginSearchPaging paging) {
 
 Future<BlocState> getPluginSearchResult(
   SearchEvent event,
-  BlocState blocState,
-) async {
+  BlocState blocState, {
+  String? taskGroupKey,
+  bool notifyUnauthorized = true,
+  Map<String, dynamic>? externOverride,
+  void Function(UnifiedPluginSearchPaging)? onPaging,
+}) async {
   final pluginId = event.searchStates.from.trim();
   if (pluginId.isEmpty) {
     throw StateError('search source is empty');
   }
-  final extern = Map<String, dynamic>.from(event.searchStates.pluginExtern);
+  final extern = Map<String, dynamic>.from(
+    externOverride ?? event.searchStates.pluginExtern,
+  );
+  final requestExtern = keywordSearchRequestExtern(
+    pluginId,
+    extern,
+    keyword: event.searchStates.searchKeyword,
+  );
   final response = await callUnifiedComicPlugin(
     pluginId: pluginId,
     fnPath: 'searchComic',
     core: {'keyword': event.searchStates.searchKeyword, 'page': event.page},
-    extern: extern,
+    // Page exclusions are a host view preference. Older Bika scripts save this
+    // parameter as source settings, so keep it out of the transport entirely.
+    // The script still applies its own settings; the host applies page extras.
+    extern: isBikaExperienceSource(pluginId)
+        ? (requestExtern
+            ..remove('blockedCategories')
+            ..remove('settingsBlockedCategories'))
+        : requestExtern,
+    taskGroupKey: taskGroupKey,
+    notifyUnauthorized: notifyUnauthorized,
   );
   final parsed = UnifiedPluginSearchResponse.fromMap(response);
 
@@ -43,9 +65,13 @@ Future<BlocState> getPluginSearchResult(
   blocState.pluginExtern = {
     ...extern,
     ...parsed.extern,
-    if (extern.containsKey('blockedCategories'))
-      'blockedCategories': extern['blockedCategories'],
+    if (extern.containsKey(keywordSearchScopeKey))
+      keywordSearchScopeKey: extern[keywordSearchScopeKey],
+    if (isBikaExperienceSource(pluginId) ||
+        extern.containsKey('blockedCategories'))
+      'blockedCategories': extern['blockedCategories'] ?? const <String>[],
   };
+  onPaging?.call(parsed.paging);
   return blocState;
 }
 

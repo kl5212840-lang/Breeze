@@ -1,15 +1,25 @@
+import 'package:zephyr/plugin/utils/plugin_catalog_merge.dart';
 import 'package:zephyr/util/json/json_value.dart';
 
 class CloudPluginItem {
-  const CloudPluginItem({required this.repo, required this.manifest});
+  const CloudPluginItem({
+    required this.repo,
+    required this.manifest,
+    this.formalRelease,
+  });
 
   final String repo;
   final CloudPluginManifest manifest;
+  final FormalPluginRelease? formalRelease;
 
-  factory CloudPluginItem.fromJson(Map<String, dynamic> json) {
+  factory CloudPluginItem.fromJson(
+    Map<String, dynamic> json, {
+    FormalPluginRelease? formalRelease,
+  }) {
     return CloudPluginItem(
       repo: json['repo']?.toString().trim() ?? '',
       manifest: CloudPluginManifest.fromJson(asJsonMap(json['manifest'])),
+      formalRelease: formalRelease,
     );
   }
 
@@ -45,7 +55,8 @@ class CloudPluginManifest {
     required this.updateUrl,
     required this.npmName,
     required this.githubRepository,
-    this.releaseMetadata = const {},
+    this.compatibilityMetadata = const {},
+    this.scriptSha256 = '',
   });
 
   final String name;
@@ -57,12 +68,8 @@ class CloudPluginManifest {
   final String updateUrl;
   final String npmName;
   final String githubRepository;
-  final Map<String, dynamic> releaseMetadata;
-  Map<String, dynamic> get releaseInfo => {
-    ...releaseMetadata,
-    'uuid': uuid,
-    'version': version,
-  };
+  final Map<String, dynamic> compatibilityMetadata;
+  final String scriptSha256;
 
   factory CloudPluginManifest.fromJson(Map<String, dynamic> json) {
     return CloudPluginManifest(
@@ -76,7 +83,14 @@ class CloudPluginManifest {
       npmName: json['npmName']?.toString() ?? '',
       githubRepository:
           json['breeze-plugin-github-repository']?.toString().trim() ?? '',
-      releaseMetadata: Map<String, dynamic>.unmodifiable(json),
+      scriptSha256: json['scriptSha256']?.toString() ?? '',
+      compatibilityMetadata: Map.unmodifiable({
+        'uuid': json['uuid'],
+        'name': json['name'],
+        'version': json['version'],
+        if (json.containsKey('requirements'))
+          'requirements': json['requirements'],
+      }),
     );
   }
 

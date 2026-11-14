@@ -13,8 +13,9 @@ use tokio::sync::mpsc as tokio_mpsc;
 use tokio::sync::{OnceCell, oneshot};
 
 use crate::web_runtime::{
-    WebRuntimeOptions, install_host_bindings, native_buffer_take_raw, polyfill_script,
-    timer_drop_evented, timer_start_kind_evented,
+    HttpClientConfig, RuntimeHttpClient, WebRuntimeOptions, current_http_client_config,
+    install_host_bindings_with_http, native_buffer_take_raw, polyfill_script, timer_drop_evented,
+    timer_start_kind_evented,
 };
 
 const BUNDLE_DISPATCHER_JS: &str = r#"(async () => {
@@ -239,6 +240,7 @@ pub struct HostRuntime {
     worker_signal_tx: Option<tokio_mpsc::UnboundedSender<WorkerSignal>>,
     cache_scope_id: String,
     options: WebRuntimeOptions,
+    http: Arc<RuntimeHttpClient>,
 }
 
 #[derive(Debug, Clone)]
@@ -253,6 +255,7 @@ pub struct AsyncHostRuntime {
     runtime_id: u64,
     cache_scope_id: String,
     options: WebRuntimeOptions,
+    http: Arc<RuntimeHttpClient>,
     tx: tokio_mpsc::UnboundedSender<WorkerSignal>,
     tokio_handle: tokio::runtime::Handle,
     states: Arc<Mutex<HashMap<u64, TaskState>>>,
@@ -265,6 +268,8 @@ pub struct AsyncHostRuntime {
 pub struct AsyncHostRuntimeBuilder {
     cache_scope_id: String,
     options: WebRuntimeOptions,
+    http_config: Option<HttpClientConfig>,
+    network_proxy: Option<String>,
 }
 
 impl AsyncHostRuntimeBuilder {
@@ -272,6 +277,8 @@ impl AsyncHostRuntimeBuilder {
         Self {
             cache_scope_id: cache_scope_id.into(),
             options: WebRuntimeOptions::default(),
+            http_config: None,
+            network_proxy: None,
         }
     }
 
@@ -286,7 +293,22 @@ impl AsyncHostRuntimeBuilder {
     }
 
     pub fn build(self) -> Result<AsyncHostRuntime, String> {
-        AsyncHostRuntime::build_inner(self.cache_scope_id, self.options)
+        let config = self
+            .http_config
+            .unwrap_or_else(current_http_client_config)
+            .with_network_proxy(self.network_proxy.as_deref())
+            .map_err(|e| e.to_string())?;
+        AsyncHostRuntime::build_inner(self.cache_scope_id, self.options, config)
+    }
+
+    pub fn http_config(mut self, config: HttpClientConfig) -> Self {
+        self.http_config = Some(config);
+        self
+    }
+
+    pub fn network_proxy(mut self, proxy: impl Into<String>) -> Self {
+        self.network_proxy = Some(proxy.into());
+        self
     }
 }
 
@@ -414,6 +436,7 @@ impl HostRuntime {
         runtime: &AsyncRuntime,
         cache_scope_id: &str,
         options: WebRuntimeOptions,
+        http: Arc<RuntimeHttpClient>,
     ) -> Result<AsyncContext, String> {
         let context = AsyncContext::full(runtime)
             .await
@@ -421,7 +444,7 @@ impl HostRuntime {
         let polyfill = polyfill_script(options);
         context
             .with(|ctx| {
-                install_host_bindings(&ctx, cache_scope_id, options)?;
+                install_host_bindings_with_http(&ctx, cache_scope_id, options, http)?;
                 ctx.eval::<(), _>(polyfill.as_str())?;
                 Ok::<(), rquickjs::Error>(())
             })
@@ -434,16 +457,28 @@ impl HostRuntime {
         cache_scope_id: String,
         options: WebRuntimeOptions,
     ) -> Result<Self, String> {
+        let http = Arc::new(
+            RuntimeHttpClient::new(current_http_client_config()).map_err(|e| e.to_string())?,
+        );
+        Self::new_with_http_async(cache_scope_id, options, http).await
+    }
+
+    async fn new_with_http_async(
+        cache_scope_id: String,
+        options: WebRuntimeOptions,
+        http: Arc<RuntimeHttpClient>,
+    ) -> Result<Self, String> {
         if options.fs && !cfg!(feature = "host-fs") {
             return Err(crate::tr!("current-build-does-not-enable-the-host-fs-cargo").to_string());
         }
-        crate::web_runtime::set_worker_http_config(crate::web_runtime::current_http_client_config());
         let runtime = AsyncRuntime::new()
             .map_err(|e| crate::tr!("failed-to-initialize-asyncruntime", e = e))?;
         Self::install_promise_rejection_tracker(&runtime).await;
-        let context = Self::init_context(&runtime, &cache_scope_id, options).await?;
+        let context =
+            Self::init_context(&runtime, &cache_scope_id, options, Arc::clone(&http)).await?;
 
         Ok(Self {
+            http,
             runtime,
             context,
             once_contexts: Vec::new(),
@@ -526,8 +561,13 @@ impl HostRuntime {
         max_contexts: usize,
     ) -> Result<(), String> {
         while self.once_contexts.len() < max_contexts {
-            let context =
-                Self::init_context(&self.runtime, &self.cache_scope_id, self.options).await?;
+            let context = Self::init_context(
+                &self.runtime,
+                &self.cache_scope_id,
+                self.options,
+                Arc::clone(&self.http),
+            )
+            .await?;
             let slot_index = self.once_contexts.len();
             context
                 .with(|ctx| {
@@ -817,11 +857,18 @@ impl AsyncHostRuntime {
         Self::builder(cache_scope_id).with_options(options).build()
     }
 
-    fn build_inner(cache_scope_id: String, options: WebRuntimeOptions) -> Result<Self, String> {
+    fn build_inner(
+        cache_scope_id: String,
+        options: WebRuntimeOptions,
+        http_config: HttpClientConfig,
+    ) -> Result<Self, String> {
         if options.fs && !cfg!(feature = "host-fs") {
             return Err(crate::tr!("current-build-does-not-enable-the-host-fs-cargo").to_string());
         }
         let cache_scope_id_for_worker = cache_scope_id.clone();
+        let http =
+            Arc::new(RuntimeHttpClient::new(http_config.clone()).map_err(|e| e.to_string())?);
+        let http_for_worker = Arc::clone(&http);
         let options_for_worker = options;
         let (tx, mut rx) = tokio_mpsc::unbounded_channel::<WorkerSignal>();
         let tx_for_worker = tx.clone();
@@ -854,9 +901,10 @@ impl AsyncHostRuntime {
             let _ = handle_tx.send(rt.handle().clone());
 
             rt.block_on(async move {
-                let mut host = match HostRuntime::new_with_options_async(
+                let mut host = match HostRuntime::new_with_http_async(
                     cache_scope_id_for_worker,
                     options_for_worker,
+                    http_for_worker,
                 )
                 .await
                 {
@@ -926,6 +974,7 @@ impl AsyncHostRuntime {
                 runtime_id,
                 cache_scope_id,
                 options,
+                http,
                 tx,
                 tokio_handle,
                 states,
@@ -1068,6 +1117,20 @@ impl AsyncHostRuntime {
 
     pub fn options(&self) -> WebRuntimeOptions {
         self.options
+    }
+
+    pub fn http_config(&self) -> &HttpClientConfig {
+        &self.http.config
+    }
+
+    /// Drain bounded host-only observations from this runtime's actual HTTP client.
+    pub fn drain_observed_http_domains(&self) -> Vec<String> {
+        self.http.drain_observed_domains()
+    }
+
+    /// Host-side bundle downloads use the same immutable route and pool as JS.
+    pub fn http_client(&self) -> &reqwest_middleware::ClientWithMiddleware {
+        &self.http.client
     }
 
     pub fn tokio_handle(&self) -> &tokio::runtime::Handle {

@@ -47,6 +47,7 @@ class _PageCountWidgetState extends State<PageCountWidget> {
     _initBattery();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       _updateTime();
       _startTimer();
     });
@@ -63,14 +64,12 @@ class _PageCountWidgetState extends State<PageCountWidget> {
   void _initBattery() async {
     try {
       final level = await _battery.batteryLevel;
-      if (mounted) {
-        setState(() => _batteryLevel = level);
-      }
+      if (!mounted) return;
+      setState(() => _batteryLevel = level);
 
       final state = await _battery.batteryState;
-      if (mounted) {
-        setState(() => _batteryState = state);
-      }
+      if (!mounted) return;
+      setState(() => _batteryState = state);
 
       _batteryStateSubscription = _battery.onBatteryStateChanged.listen((
         state,
@@ -99,17 +98,18 @@ class _PageCountWidgetState extends State<PageCountWidget> {
   void _initConnectivity() async {
     try {
       final connectivity = Connectivity();
-      final results = await connectivity.checkConnectivity();
-      if (results.isNotEmpty) {
-        _updateConnectivityResult(results);
-      }
+      var receivedEvent = false;
       _connectivitySubscription = connectivity.onConnectivityChanged.listen((
         results,
       ) {
-        if (mounted && results.isNotEmpty) {
-          _updateConnectivityResult(results);
-        }
-      });
+        if (results.isEmpty) return;
+        receivedEvent = true;
+        _updateConnectivityResult(results);
+      }, onError: (Object _) {});
+      final results = await connectivity.checkConnectivity();
+      if (!receivedEvent && results.isNotEmpty) {
+        _updateConnectivityResult(results);
+      }
     } catch (_) {}
   }
 

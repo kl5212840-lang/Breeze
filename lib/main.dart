@@ -1,4 +1,18 @@
+import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/widgets/breeze_control_colors.dart';
+import 'package:zephyr/widgets/breeze_theme_colors.dart';
+import 'package:zephyr/widgets/system_accent_availability.dart';
+import 'package:zephyr/widgets/touch_hover_intent.dart';
+import 'package:zephyr/widgets/native_view_occlusion.dart';
+import 'package:zephyr/util/diagnostics/native_composition_log.dart';
+import 'package:zephyr/util/diagnostics/native_composition_capture.dart';
+import 'package:zephyr/widgets/collection_cover_settings.dart';
+import 'package:zephyr/widgets/user_image_editor.dart';
+import 'package:zephyr/page/video/video_page_route.dart';
+import 'package:zephyr/page/video/video_playback_preferences.dart';
 import 'dart:async';
+import 'package:zephyr/network/source_network_policy.dart';
+import 'package:zephyr/network/development_proxy_probe.dart';
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
@@ -17,6 +31,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_socks_proxy/socks_proxy.dart';
 import 'package:logger/logger.dart';
+import 'package:zephyr/util/log_forwarding_controller.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:window_manager/window_manager.dart';
@@ -27,10 +42,12 @@ import 'package:zephyr/config/router/router.dart';
 import 'package:zephyr/cubit/comic_read_preference_cubit.dart';
 import 'package:zephyr/cubit/plugin_registry_cubit.dart';
 import 'package:zephyr/i18n/i18n_helper.dart';
+import 'package:zephyr/i18n/app_locale_binding.dart';
 import 'package:zephyr/i18n/strings.g.dart';
-import 'package:zephyr/i18n/system_locale_service.dart';
 import 'package:zephyr/network/http/wind_http.dart';
 import 'package:zephyr/network/sync/sync_device_id.dart';
+import 'package:zephyr/network/sync/sync_service.dart'
+    show recoverStartupCloudArchive;
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/object_box/object_box.dart';
 import 'package:zephyr/page/comic_follow/cubit/comic_follow_cubit.dart';
@@ -38,22 +55,34 @@ import 'package:zephyr/platform/desktop/native_window.dart';
 import 'package:zephyr/platform/desktop/system_tray.dart';
 import 'package:zephyr/platform/desktop/window_logic.dart';
 import 'package:zephyr/platform/eink/eink_device.dart';
+import 'package:zephyr/service/download/download_chapter_removal_recovery.dart';
 import 'package:zephyr/service/reader/reader_desktop_fullscreen_service.dart';
 import 'package:zephyr/service/startup_database_snapshot_service.dart';
 import 'package:zephyr/src/rust/api/qjs.dart';
+import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart'
+    show setQjsBaseErrorStack;
 import 'package:zephyr/src/rust/api/simple.dart';
 import 'package:zephyr/src/rust/api/system.dart' as rust_system;
 import 'package:zephyr/util/debouncer.dart';
 import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/util/font/font_profile.dart';
-import 'package:zephyr/util/get_path.dart';
-import 'package:zephyr/util/manage_cache.dart';
 import 'package:zephyr/util/rust_loader.dart';
 import 'package:zephyr/widgets/desktop/custom_title_bar.dart';
 import 'package:zephyr/widgets/desktop/intent.dart';
+import 'package:zephyr/widgets/collection_cover_privacy.dart';
+import 'package:zephyr/service/local_appearance_images.dart';
+import 'package:zephyr/service/local_import_recovery.dart';
+import 'package:zephyr/service/backup_security/private_backup_workspace.dart';
 
 export 'package:zephyr/network/http/wind_http.dart'
     show WindHttp, FetchResponse, fetch, fetchDirect;
+
+final _nativeCompositionCapture = NativeCompositionCapture(
+  enabled:
+      kDebugMode &&
+      const bool.fromEnvironment('BREEZE_NATIVE_COMPOSITION_DIAGNOSTICS'),
+  isIOS: !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS,
+);
 
 ObjectBox? _objectbox;
 ObjectBox get objectbox => _objectbox!;
@@ -64,11 +93,35 @@ final appRouter = AppRouter();
 // 全局事件总线实例
 EventBus eventBus = EventBus();
 
+String _remoteLogAddress = '';
+final logForwarding = LogForwardingController(
+  configureRust: (address) {
+    setLogHttpForward(url: address);
+    setQjsBaseErrorStack(enabled: kDebugMode || address.isNotEmpty);
+  },
+  configureDart: (address) => _remoteLogAddress = address,
+);
+
 var logger = Logger(
   printer: TersePrettyPrinter(),
-  // filter: MyAlwaysLogFilter(),
-  // output: RemoteOutput(),
+  filter: _ForwardingLogFilter(),
+  output: MultiOutput([ConsoleOutput(), _OptionalRemoteOutput()]),
 );
+
+class _ForwardingLogFilter extends LogFilter {
+  final _development = DevelopmentFilter();
+  @override
+  bool shouldLog(LogEvent event) =>
+      _remoteLogAddress.isNotEmpty || _development.shouldLog(event);
+}
+
+class _OptionalRemoteOutput extends LogOutput {
+  @override
+  void output(OutputEvent event) {
+    final address = _remoteLogAddress;
+    if (address.isNotEmpty) RemoteOutput(address).output(event);
+  }
+}
 
 List<String> cfIpList = [];
 
@@ -77,6 +130,26 @@ final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 /// 直接复用路由自己的 Navigator key：MaterialApp.router 会自建 Navigator，
 /// 传进来的独立 GlobalKey 不会被挂上，只有这个 key 拿得到当前 overlay。
 final navigatorKey = appRouter.navigatorKey;
+bool _localAppearanceImagesBound = false;
+
+Future<void> _initializeCollectionAppearance() async {
+  final privacy = CollectionCoverPrivacyController.instance;
+  await privacy.ensureLoaded();
+  final images = LocalAppearanceImages.instance;
+  void updateCover() =>
+      privacy.localImagePath.value = images.paths.value['collection-cover'];
+  if (!_localAppearanceImagesBound) {
+    images.paths.addListener(updateCover);
+    _localAppearanceImagesBound = true;
+  }
+  try {
+    await images.load();
+  } catch (_) {
+    // A missing/unreadable local image falls back to protected rendering.
+    // This optional appearance asset must not block application startup.
+  }
+  updateCover();
+}
 
 class AppScrollBehavior extends MaterialScrollBehavior {
   const AppScrollBehavior();
@@ -121,9 +194,6 @@ class MyAlwaysLogFilter extends LogFilter {
 Future<void> main(List<String> args) async {
   // 1. 基础初始化
   WidgetsFlutterBinding.ensureInitialized();
-
-  // 先生成本地同步设备 ID，后续文件夹/链接的版本向量会使用它
-  await ensureSyncDeviceId();
 
   // desktop_webview_linux 必需的标题栏子进程入口
   // 不添加会导致 Linux 下 WebView 窗口关闭时 segfault 崩溃
@@ -243,8 +313,8 @@ Future<(GlobalSettingCubit, PluginRegistryCubit)> _initServices() async {
   // 初始化rust
   await initRustLib();
 
-  // 初始化 i18n：先设置默认中文，待 GlobalSettingCubit 加载后再根据用户设置或系统语言切换。
-  LocaleSettings.setLocale(AppLocale.enUs);
+  // 先完成默认语言的加载，再应用已保存的语言偏好。
+  await LocaleSettings.setLocale(AppLocale.enUs);
   I18nHelper.setRustErrorLanguage(AppLocale.enUs);
 
   // 初始化工作线程
@@ -255,12 +325,19 @@ Future<(GlobalSettingCubit, PluginRegistryCubit)> _initServices() async {
 
   enableRustLog(enabled: kDebugMode);
 
+  String? developmentProxy;
   if (kDebugMode) {
-    setQjsErrorStackEnabled(enabled: true);
-    // 配置http代理，方便开发测试
-    await _tryApplyHttpProxyFromEnv();
+    setQjsBaseErrorStack(enabled: true);
+    // Transport-parity checks can omit the development-only proxy without
+    // changing the user's saved routing preferences or the local env asset.
+    if (const bool.fromEnvironment(
+      'BREEZE_DEVELOPMENT_PROXY',
+      defaultValue: true,
+    )) {
+      developmentProxy = await _tryApplyHttpProxyFromEnv();
+    }
   } else {
-    setQjsErrorStackEnabled(enabled: false);
+    setQjsBaseErrorStack(enabled: false);
   }
 
   // 初始化前台任务
@@ -294,32 +371,44 @@ Future<(GlobalSettingCubit, PluginRegistryCubit)> _initServices() async {
   }
 
   objectbox = await ObjectBox.create();
+  await _recoverInterruptedImport();
+  try {
+    if (!await DownloadChapterRemovalRecovery.recover()) {
+      logger.w('Download chapter removal recovery deferred');
+    }
+  } catch (_) {
+    logger.w('Download chapter removal recovery deferred');
+  }
+  await ensureSyncDeviceId();
+  try {
+    await cleanupInterruptedPrivateBackupWork();
+  } catch (_) {
+    logger.w('Private backup cleanup deferred');
+  }
   final setting = objectbox.userSettingBox.get(1);
   if (setting == null) {
     objectbox.userSettingBox.put(UserSetting());
+  } else if (!await recoverStartupCloudArchive(setting.globalSetting)) {
+    logger.w('Cloud archive recovery deferred');
   }
 
   final globalSettingCubit = GlobalSettingCubit();
   await globalSettingCubit.initBox();
+  SourceNetworkPolicies.initialize(
+    () => globalSettingCubit.state.proxySetting,
+    developmentProxy: developmentProxy,
+  );
   setHttpRequestsBlocked(
     blocked: globalSettingCubit.state.blockRustHttpRequests,
   );
 
-  // 根据用户设置或系统语言初始化应用语言
-  if (globalSettingCubit.state.localeFollowsSystem) {
-    final systemInfo = await SystemLocaleService.getInfo();
-    await globalSettingCubit.setSystemLocale(systemInfo.locale);
-  } else {
-    await globalSettingCubit.setLocale(globalSettingCubit.state.locale);
-  }
+  await globalSettingCubit.refreshDisplayLocale();
 
   await FontProfileController.instance.init();
+  await VideoPlaybackPreferences.read();
+  await _initializeCollectionAppearance();
 
   final pluginRegistryCubit = PluginRegistryCubit();
-
-  if (globalSettingCubit.state.needCleanCache) {
-    await clearCache(await getCachePath());
-  }
 
   final proxySetting = globalSettingCubit.state.proxySetting;
   if (proxySetting.enabled && proxySetting.address.trim().isNotEmpty) {
@@ -343,16 +432,11 @@ Future<(GlobalSettingCubit, PluginRegistryCubit)> _initServices() async {
   // 设置日志转发（包含flutter和qjs的日志）
   final logAddress = globalSettingCubit.state.logAddress;
 
-  if (logAddress.isNotEmpty) {
-    if (!kDebugMode) {
-      logger = Logger(
-        printer: TersePrettyPrinter(),
-        filter: MyAlwaysLogFilter(),
-        output: RemoteOutput(logAddress),
-      );
-    }
-    setLogHttpForward(url: logAddress);
-    setQjsErrorStackEnabled(enabled: true);
+  try {
+    await logForwarding.apply(logAddress);
+  } catch (_) {
+    // Do not include an endpoint or potentially private native error details.
+    logger.w('Log forwarding could not be configured');
   }
 
   // 关掉缓存定时清理(rust端)
@@ -368,14 +452,80 @@ Future<(GlobalSettingCubit, PluginRegistryCubit)> _initServices() async {
   return (globalSettingCubit, pluginRegistryCubit);
 }
 
-Future<void> _tryApplyHttpProxyFromEnv() async {
-  if (!kDebugMode) return;
+Future<void> _recoverInterruptedImport() async {
+  while (true) {
+    try {
+      await recoverPendingBackupImport();
+      return;
+    } on LocalImportRecoveryFailed {
+      final retry = Completer<void>();
+      // These recovery frames run before the saved app theme is available.
+      final darkTheme = Platform.isIOS
+          ? ThemeData.dark().copyWith(
+              scaffoldBackgroundColor: const Color(0xff181818),
+            )
+          : null;
+      runApp(
+        MaterialApp(
+          darkTheme: darkTheme,
+          home: Scaffold(
+            body: SafeArea(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 480),
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.restore, size: 40),
+                        const SizedBox(height: 20),
+                        Text(
+                          t.backupSecurity.startupTitle,
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          t.backupSecurity.startupHint,
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 24),
+                        FilledButton(
+                          onPressed: () {
+                            if (!retry.isCompleted) retry.complete();
+                          },
+                          child: Text(t.backupSecurity.startupRetry),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await retry.future;
+      runApp(
+        MaterialApp(
+          darkTheme: darkTheme,
+          home: const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          ),
+        ),
+      );
+    }
+  }
+}
+
+Future<String?> _tryApplyHttpProxyFromEnv() async {
+  if (!kDebugMode) return null;
 
   const debugProxy = String.fromEnvironment('SIM_PROXY_URL');
   final rawProxy = debugProxy.trim().isNotEmpty
       ? debugProxy.trim()
       : await _readProxyFromEnvAsset();
-  if (rawProxy == null || rawProxy.isEmpty) return;
+  if (rawProxy == null || rawProxy.isEmpty) return null;
 
   final proxyUrl =
       rawProxy.startsWith('http://') || rawProxy.startsWith('https://')
@@ -383,9 +533,11 @@ Future<void> _tryApplyHttpProxyFromEnv() async {
       : 'http://$rawProxy';
 
   final reachable = await _probeProxyWithTimeout(proxyUrl);
-  if (!reachable) return;
+  if (!reachable) return null;
 
   setHttpProxy(proxy: proxyUrl);
+  SocksProxy.initProxy(proxy: 'PROXY ${_stripProxyScheme(proxyUrl)}');
+  return proxyUrl;
 }
 
 /// 去掉代理地址的协议前缀，得到 `host:port`，供 Dart 侧 HttpClient 使用。
@@ -417,17 +569,15 @@ Future<String?> _readProxyFromEnvAsset() async {
 }
 
 Future<bool> _probeProxyWithTimeout(String proxyUrl) async {
-  try {
+  return probeDevelopmentProxy((target) async {
     final response = await WindHttp(
       httpProxy: proxyUrl,
       connectTimeout: const Duration(seconds: 3),
       receiveTimeout: const Duration(seconds: 3),
       followRedirects: false,
-    ).fetch('http://www.gstatic.com/generate_204');
-    return response.status >= 200 && response.status < 500;
-  } catch (_) {
-    return false;
-  }
+    ).fetch(target.toString());
+    return response.status;
+  });
 }
 
 Future<void> addArchitectureTagsToSentry() async {
@@ -617,16 +767,16 @@ class _MyAppState extends State<MyApp>
           return StatefulBuilder(
             builder: (context, setDialogState) {
               return AlertDialog(
-                title: const Text('提示'),
+                title: Text(t.common.info),
                 content: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text('隐藏到托盘或关闭程序'),
+                    Text(t.dialog.hideOrClose),
                     const SizedBox(height: 8),
                     CheckboxListTile(
                       contentPadding: EdgeInsets.zero,
                       controlAffinity: ListTileControlAffinity.leading,
-                      title: const Text('记住我的选择'),
+                      title: Text(t.dialog.rememberChoice),
                       value: rememberChoice,
                       onChanged: (value) {
                         setDialogState(() {
@@ -638,13 +788,13 @@ class _MyAppState extends State<MyApp>
                 ),
                 actions: [
                   TextButton(
-                    child: const Text('取消'),
+                    child: Text(t.common.cancel),
                     onPressed: () {
                       Navigator.of(context).pop();
                     },
                   ),
                   TextButton(
-                    child: const Text('关闭'),
+                    child: Text(t.common.close),
                     onPressed: () async {
                       Navigator.of(context).pop();
                       if (rememberChoice) {
@@ -656,7 +806,7 @@ class _MyAppState extends State<MyApp>
                     },
                   ),
                   TextButton(
-                    child: const Text('隐藏'),
+                    child: Text(t.settings.desktopCloseHide),
                     onPressed: () async {
                       Navigator.of(context).pop();
                       if (rememberChoice) {
@@ -715,32 +865,24 @@ class _MyAppState extends State<MyApp>
 
           return DynamicColorBuilder(
             builder: (ColorScheme? lightDynamic, ColorScheme? darkDynamic) {
+              final systemAccentAvailable =
+                  lightDynamic != null && darkDynamic != null;
               ColorScheme lightColorScheme;
               ColorScheme darkColorScheme;
 
-              if (globalSettingState.dynamicColor == true) {
-                lightColorScheme =
-                    lightDynamic ??
-                    ColorScheme.fromSeed(
-                      seedColor: globalSettingState.seedColor,
-                      brightness: Brightness.light,
-                    );
-                darkColorScheme =
-                    darkDynamic ??
-                    ColorScheme.fromSeed(
-                      seedColor: globalSettingState.seedColor,
-                      brightness: Brightness.dark,
-                    );
+              if (globalSettingState.dynamicColor && systemAccentAvailable) {
+                lightColorScheme = BreezeThemeColors.fromSystem(lightDynamic);
+                darkColorScheme = BreezeThemeColors.fromSystem(darkDynamic);
               } else {
                 final primary = globalSettingState.seedColor;
 
-                lightColorScheme = ColorScheme.fromSeed(
-                  seedColor: primary,
-                  brightness: Brightness.light,
+                lightColorScheme = BreezeThemeColors.fromSeed(
+                  primary,
+                  Brightness.light,
                 );
-                darkColorScheme = ColorScheme.fromSeed(
-                  seedColor: primary,
-                  brightness: Brightness.dark,
+                darkColorScheme = BreezeThemeColors.fromSeed(
+                  primary,
+                  Brightness.dark,
                 );
               }
 
@@ -764,7 +906,76 @@ class _MyAppState extends State<MyApp>
 
               return MaterialApp.router(
                 routerConfig: appRouter.config(
-                  navigatorObservers: () => [AutoRouteObserver()],
+                  navigatorObservers: () => [
+                    AutoRouteObserver(),
+                    NativeCompositionObserver(
+                      geometryBasedOcclusion: true,
+                      candidateOpaqueDestinations: const {
+                        'PluginSettingsRoute',
+                        'SourceShellRoute',
+                        'breeze.video.local',
+                        'breeze.source.saved-accounts',
+                        'breeze.video.source-settings',
+                        userImageEditorRouteName,
+                        collectionCoverSettingsRouteName,
+                        bikaVideoDetailRouteName,
+                        omoVideoDetailRouteName,
+                      },
+                      diagnosticBudget: 256,
+                      diagnostics:
+                          kDebugMode &&
+                              const bool.fromEnvironment(
+                                'BREEZE_NATIVE_COMPOSITION_DIAGNOSTICS',
+                              )
+                          ? (sample) {
+                              _nativeCompositionCapture.observe(sample);
+                              if (sample['event'] == 'native-scene-audit' &&
+                                  !const bool.fromEnvironment(
+                                    'BREEZE_NATIVE_COMPOSITION_SCENE_LOGS',
+                                  )) {
+                                return;
+                              }
+                              for (final line
+                                  in nativeCompositionDiagnosticLines(sample)) {
+                                debugPrint(line);
+                              }
+                            }
+                          : null,
+                      candidateRoutes: const {
+                        'breeze.source.saved-accounts': {'LoginRoute'},
+                        'breeze.video.source-settings': {'PluginSettingsRoute'},
+                        'NavigationBar': {'PluginSettingsRoute', 'SearchRoute'},
+                        'PluginSettingsRoute': {
+                          'breeze.routing.rules',
+                          'breeze.video.playback-settings',
+                          'breeze.source.saved-accounts',
+                          'GlobalSettingRoute',
+                        },
+                        'SourceShellRoute': {
+                          // Cloud favorites push this root page; in-place
+                          // profile records use a different navigation host.
+                          'ComicListRoute',
+                          'SourceSettingsHubRoute',
+                          'PluginSettingsRoute',
+                          'breeze.source.saved-accounts',
+                          bikaVideoDetailRouteName,
+                          omoVideoDetailRouteName,
+                        },
+                        bikaVideoDetailRouteName: {bikaVideoDetailRouteName},
+                        omoVideoDetailRouteName: {omoVideoDetailRouteName},
+                        apiVideoLibraryRouteName: {
+                          'SourceSettingsHubRoute',
+                          'PluginSettingsRoute',
+                        },
+                        'SourceSettingsHubRoute': {
+                          'PluginSettingsRoute',
+                          'GlobalSettingRoute',
+                          'SyncSettingRoute',
+                        },
+                        'GlobalSettingRoute': {'AppearanceSettingRoute'},
+                      },
+                    ),
+                  ],
                 ),
                 scrollBehavior: const AppScrollBehavior(),
                 builder: (context, child) {
@@ -797,7 +1008,7 @@ class _MyAppState extends State<MyApp>
                         appRouter.maybePop();
                       }
                     },
-                    child: content,
+                    child: TouchHoverIntentScope(child: content),
                   );
 
                   if (Platform.isWindows ||
@@ -820,8 +1031,18 @@ class _MyAppState extends State<MyApp>
                   }
                   // 第三方依赖仍有 legacy Material widget，需要这个桥接层提供旧主题
                   // 与本地化上下文；待依赖迁移后可移除。
-                  // ignore: deprecated_member_use
-                  return MaterialUiCompatibilityBridge(child: content);
+                  return SystemAccentAvailability(
+                    available: systemAccentAvailable,
+                    child: AppLocaleBinding(
+                      child: AppInterfaceStyleScope(
+                        style: VideoPlaybackPreferences.interfaceStyle,
+                        child: BreezeControlTheme(
+                          // ignore: deprecated_member_use
+                          child: MaterialUiCompatibilityBridge(child: content),
+                        ),
+                      ),
+                    ),
+                  );
                 },
                 locale: TranslationProvider.of(context).flutterLocale,
                 title: appName,
@@ -837,13 +1058,13 @@ class _MyAppState extends State<MyApp>
                   primaryColor: lightColorScheme.primary,
                   colorScheme: lightColorScheme,
                   scaffoldBackgroundColor: lightColorScheme.surface,
-                  cardColor: lightColorScheme.surfaceContainer,
+                  cardColor: lightColorScheme.surfaceContainerLow,
                   chipTheme: ChipThemeData(
                     backgroundColor: lightColorScheme.surface,
                   ),
                   canvasColor: lightColorScheme.surfaceContainer,
                   dialogTheme: DialogThemeData(
-                    backgroundColor: lightColorScheme.surfaceContainer,
+                    backgroundColor: lightColorScheme.surfaceBright,
                   ),
                   textTheme: withConfiguredFonts(ThemeData.light().textTheme),
                   primaryTextTheme: withConfiguredFonts(
@@ -857,6 +1078,12 @@ class _MyAppState extends State<MyApp>
                   scaffoldBackgroundColor: globalSettingState.isAMOLED
                       ? Colors.black
                       : darkColorScheme.surface,
+                  primaryColor: darkColorScheme.primary,
+                  cardColor: darkColorScheme.surfaceContainerLow,
+                  canvasColor: darkColorScheme.surfaceContainer,
+                  dialogTheme: DialogThemeData(
+                    backgroundColor: darkColorScheme.surfaceBright,
+                  ),
                   tabBarTheme: const TabBarThemeData(
                     dividerColor: Colors.transparent,
                   ),

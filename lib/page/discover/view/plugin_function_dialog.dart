@@ -1,3 +1,5 @@
+import 'package:zephyr/page/source_shell/source_loading_indicator.dart';
+import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/page/discover/view/discover_scheme_renderer.dart';
@@ -23,7 +25,10 @@ class PluginFunctionDialog extends StatelessWidget {
   final double dialogWidth;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      SourceExperienceBoundary(source: from, builder: _buildSourcePage);
+
+  Widget _buildSourcePage(BuildContext context) {
     return BlocProvider(
       create: (_) =>
           PluginFunctionCubit()..load(from: from, functionId: functionId),
@@ -80,7 +85,7 @@ class PluginFunctionDialog extends StatelessWidget {
               width: dialogWidth,
               height: 320,
               child: state.loading
-                  ? const Center(child: CircularProgressIndicator())
+                  ? Center(child: SourceLoadingIndicator(source: from))
                   : renderer.buildPage(
                       context,
                       from: from,

@@ -49,6 +49,43 @@ void main() {
     );
   });
 
+  test(
+    'download destination uses a stable code and preserves old More values',
+    () {
+      for (final old in [false, true]) {
+        expect(
+          storedWelcomePageValue(
+            WelcomePageDestination.downloads,
+            oldPageRollbackEnabled: old,
+          ),
+          13,
+        );
+        expect(
+          resolveWelcomePageDestination(13, oldPageRollbackEnabled: old),
+          WelcomePageDestination.downloads,
+        );
+        expect(
+          welcomePageTabIndex(
+            WelcomePageDestination.downloads,
+            oldPageRollbackEnabled: old,
+          ),
+          old ? 4 : 2,
+        );
+        expect(
+          resolveWelcomePageDestination(12, oldPageRollbackEnabled: old),
+          WelcomePageDestination.more,
+        );
+        expect(
+          resolveWelcomePageDestination(
+            old ? 4 : 2,
+            oldPageRollbackEnabled: old,
+          ),
+          WelcomePageDestination.more,
+        );
+      }
+    },
+  );
+
   test('old rollback tab order is not changed', () {
     expect(
       resolveWelcomePageDestination(0, oldPageRollbackEnabled: true),

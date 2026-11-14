@@ -29,8 +29,17 @@ class _ReaderSettingsPerComicTab extends StatelessWidget {
       perComic: true,
       child: _SettingsTabContent(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Text(
+                t.reader.perComicReadModeSubtitle,
+                style: context.theme.textTheme.bodySmall?.copyWith(
+                  color: context.theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
             _ReadModeSection(
               changePageIndex: changePageIndex,
               onLandscapeChanged: onLandscapeChanged,

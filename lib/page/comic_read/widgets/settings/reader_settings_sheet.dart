@@ -7,10 +7,12 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/cubit/comic_read_preference_cubit.dart';
 import 'package:zephyr/i18n/strings.g.dart';
-import 'package:zephyr/main.dart';
 import 'package:zephyr/util/context/context_extensions.dart';
 import 'package:zephyr/util/debouncer.dart';
-import 'package:zephyr/widgets/fluent_dropdown.dart';
+import 'package:zephyr/page/setting/common/setting_ui.dart';
+import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/widgets/breeze_control_colors.dart';
+import 'package:zephyr/widgets/breeze_switch.dart';
 
 part 'reader_settings_gesture_tab.dart';
 part 'reader_settings_info_tab.dart';
@@ -127,37 +129,57 @@ class _ReaderSettingsCard extends StatelessWidget {
         source.trim().isNotEmpty && comicId.trim().isNotEmpty;
     final tabLength = perComicAvailable ? 4 : 3;
 
+    final breeze = !AppInterfaceStyleScope.usesSystem(context);
+    final nativeChoices =
+        !breeze && !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
     return Material(
-      color: colorScheme.surface.withValues(alpha: 0.96),
-      elevation: 16,
-      shadowColor: Colors.black.withValues(alpha: 0.24),
+      color: breeze ? colorScheme.surfaceContainerLow : colorScheme.surface,
+      surfaceTintColor: Colors.transparent,
+      elevation: breeze ? 8 : 16,
+      shadowColor: colorScheme.shadow.withValues(alpha: 0.24),
       borderRadius: BorderRadius.circular(24),
-      clipBehavior: Clip.antiAlias,
+      // Rounded paint is enough here. A native choice must not inherit the
+      // card's curved clip when Flutter slices overlays during transitions.
+      clipBehavior: nativeChoices ? Clip.none : Clip.antiAlias,
       child: DefaultTabController(
         length: tabLength,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _ReaderSettingsHeader(showPerComicTab: perComicAvailable),
-            const SizedBox(height: 8),
+            const Divider(height: 1),
             Expanded(
               child: TabBarView(
                 children: [
-                  _ReaderSettingsReadTab(
-                    changePageIndex: changePageIndex,
-                    onLandscapeChanged: onLandscapeChanged,
-                    source: source,
-                    comicId: comicId,
-                  ),
-                  _ReaderSettingsGestureTab(isAndroidPhone: isAndroidPhone),
-                  const _ReaderSettingsInfoTab(),
-                  if (perComicAvailable)
-                    _ReaderSettingsPerComicTab(
+                  _SettingsTabVisibility(
+                    index: 0,
+                    child: _ReaderSettingsReadTab(
                       changePageIndex: changePageIndex,
                       onLandscapeChanged: onLandscapeChanged,
                       source: source,
                       comicId: comicId,
+                    ),
+                  ),
+                  _SettingsTabVisibility(
+                    index: 1,
+                    child: _ReaderSettingsGestureTab(
                       isAndroidPhone: isAndroidPhone,
+                    ),
+                  ),
+                  const _SettingsTabVisibility(
+                    index: 2,
+                    child: _ReaderSettingsInfoTab(),
+                  ),
+                  if (perComicAvailable)
+                    _SettingsTabVisibility(
+                      index: 3,
+                      child: _ReaderSettingsPerComicTab(
+                        changePageIndex: changePageIndex,
+                        onLandscapeChanged: onLandscapeChanged,
+                        source: source,
+                        comicId: comicId,
+                        isAndroidPhone: isAndroidPhone,
+                      ),
                     ),
                 ],
               ),
@@ -184,34 +206,97 @@ class _ReaderSettingsHeader extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => Navigator.of(context).maybePop(),
-            child: Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: colorScheme.outlineVariant,
-                  borderRadius: BorderRadius.circular(999),
+          Semantics(
+            button: true,
+            label: t.common.close,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => Navigator.of(context).maybePop(),
+              child: SizedBox(
+                height: 44,
+                child: Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: colorScheme.outlineVariant,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
-          TabBar(
-            dividerColor: Colors.transparent,
-            labelStyle: context.theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-            tabs: [
-              Tab(text: t.reader.settings),
-              Tab(text: t.reader.gesture),
-              Tab(text: t.reader.infoBar),
-              if (showPerComicTab) Tab(text: t.reader.perComicThisComic),
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final labels = [
+                t.reader.settings,
+                t.reader.gesture,
+                t.reader.infoBar,
+                if (showPerComicTab) t.reader.perComicThisComic,
+              ];
+              final style = context.theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              );
+              var widestLabel = 0.0;
+              for (final label in labels) {
+                final painter = TextPainter(
+                  text: TextSpan(text: label, style: style),
+                  textDirection: Directionality.of(context),
+                  locale: Localizations.localeOf(context),
+                  textScaler: MediaQuery.textScalerOf(context),
+                )..layout();
+                if (painter.width > widestLabel) widestLabel = painter.width;
+                painter.dispose();
+              }
+              // Fixed tabs get equal slots. A short label cannot give unused
+              // space to the longest label.
+              const minimumPadding = 8.0;
+              const preferredPadding = 16.0;
+              final availablePadding =
+                  (constraints.maxWidth / labels.length - widestLabel.ceil()) /
+                  2;
+              final scroll = availablePadding < minimumPadding;
+              final labelPadding = EdgeInsets.symmetric(
+                horizontal: scroll
+                    ? preferredPadding
+                    : availablePadding.clamp(minimumPadding, preferredPadding),
+              );
+              return TabBar(
+                dividerColor: Colors.transparent,
+                labelStyle: style,
+                unselectedLabelStyle: style?.copyWith(
+                  fontWeight: FontWeight.w500,
+                ),
+                labelColor: colorScheme.primary,
+                unselectedLabelColor: colorScheme.onSurfaceVariant,
+                labelPadding: labelPadding,
+                isScrollable: scroll,
+                tabAlignment: scroll ? TabAlignment.start : TabAlignment.fill,
+                tabs: [for (final label in labels) Tab(text: label)],
+              );
+            },
           ),
         ],
       ),
+    );
+  }
+}
+
+/// PageView may keep adjacent pages alive. Explicit TickerMode lets the shared
+/// disclosure reset when a tab is left, as it already does for covered routes.
+class _SettingsTabVisibility extends StatelessWidget {
+  const _SettingsTabVisibility({required this.index, required this.child});
+  final int index;
+  final Widget child;
+  @override
+  Widget build(BuildContext context) {
+    final controller = DefaultTabController.of(context);
+    return AnimatedBuilder(
+      animation: controller,
+      child: child,
+      builder: (context, child) =>
+          TickerMode(enabled: controller.index == index, child: child!),
     );
   }
 }
@@ -223,25 +308,7 @@ class _SettingsNoticeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = context.theme.colorScheme;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: colorScheme.secondaryContainer.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.6),
-        ),
-      ),
-      child: Text(
-        text,
-        style: context.theme.textTheme.bodySmall?.copyWith(
-          color: colorScheme.onSecondaryContainer,
-        ),
-      ),
-    );
+    return SettingNote(text, padding: EdgeInsets.zero);
   }
 }
 
@@ -253,7 +320,7 @@ class _SettingsTabContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
       child: child,
     );
   }
@@ -285,13 +352,16 @@ extension EffectiveReadSettingX on BuildContext {
 
   /// 按编辑目标写入：本漫→patch（只含变化 key），全局→全局设置。
   Future<Set<String>> updateEffectiveReadSetting(
-    ReadSettingState effective,
     ReadSettingState Function(ReadSettingState current) fn,
   ) {
+    final global = read<GlobalSettingCubit>();
     if (isEditingPerComic) {
-      return read<ComicReadPreferenceCubit>().updateField(effective, fn);
+      return read<ComicReadPreferenceCubit>().updateField(
+        global.state.readSetting,
+        fn,
+      );
     }
-    read<GlobalSettingCubit>().updateReadSetting(fn);
+    global.updateReadSetting(fn);
     return Future.value(const <String>{});
   }
 }
@@ -318,36 +388,87 @@ class _SettingsSection extends StatelessWidget {
 
   /// 标题行右侧动作（如本漫 tab 阅读模式旁的“跟随全局”）。
   final Widget? trailing;
+  final Map<String, String> details;
 
   const _SettingsSection({
     required this.title,
     required this.children,
     this.trailing,
+    this.details = const {},
   });
+
+  bool _isRow(Widget child) =>
+      child is _SettingsSwitchTile ||
+      child is _SettingsDropdownTile ||
+      child is _SettingsSliderCard;
 
   @override
   Widget build(BuildContext context) {
+    final theme = context.theme;
+    final colors = theme.colorScheme;
+    final breeze = !AppInterfaceStyleScope.usesSystem(context);
+
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                title,
-                style: context.theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              Expanded(
+                child: Semantics(
+                  header: true,
+                  child: Text(
+                    title,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
               ),
-            ),
-            ...?trailing != null ? [trailing!] : null,
-          ],
+              ?trailing,
+            ],
+          ),
         ),
-        const SizedBox(height: 10),
-        for (int i = 0; i < children.length; i++) ...[
-          children[i],
-          if (i != children.length - 1) const SizedBox(height: 10),
-        ],
+        const SizedBox(height: 8),
+        Material(
+          color: breeze
+              ? colors.surfaceContainerLowest
+              : colors.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var index = 0; index < children.length; index++) ...[
+                  if (_isRow(children[index]))
+                    children[index]
+                  else
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 6,
+                      ),
+                      child: children[index],
+                    ),
+                  if (index < children.length - 1 &&
+                      _isRow(children[index]) &&
+                      _isRow(children[index + 1]))
+                    Divider(
+                      height: 1,
+                      thickness: 1,
+                      indent: 16,
+                      endIndent: 16,
+                      color: colors.outlineVariant.withValues(alpha: .55),
+                    ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        if (details.isNotEmpty)
+          SettingDetailsNotes(sectionTitle: title, details: details),
       ],
     );
   }
@@ -367,27 +488,34 @@ class _SettingsChoiceChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.theme.colorScheme;
+    final breeze = !AppInterfaceStyleScope.usesSystem(context);
 
     return ChoiceChip(
       label: Text(title),
       selected: selected,
       showCheckmark: false,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      visualDensity: VisualDensity.compact,
-      backgroundColor: colorScheme.surfaceContainerHighest.withValues(
-        alpha: 0.45,
-      ),
-      selectedColor: colorScheme.primaryContainer.withValues(alpha: 0.92),
-      side: BorderSide(
-        color: selected
-            ? colorScheme.primary
-            : colorScheme.outlineVariant.withValues(alpha: 0.7),
-        width: selected ? 1.4 : 1,
-      ),
+      materialTapTargetSize: MaterialTapTargetSize.padded,
+      visualDensity: VisualDensity.standard,
+      backgroundColor: breeze
+          ? BreezeControlColors.tool(colorScheme)
+          : colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+      selectedColor: breeze
+          ? colorScheme.surfaceContainerHighest
+          : colorScheme.primaryContainer.withValues(alpha: 0.92),
+      side: breeze && !selected && !MediaQuery.highContrastOf(context)
+          ? BorderSide.none
+          : BorderSide(
+              color: selected
+                  ? colorScheme.primary
+                  : breeze
+                  ? colorScheme.outline
+                  : colorScheme.outlineVariant.withValues(alpha: 0.7),
+              width: selected ? 1.4 : 1,
+            ),
       labelStyle: context.theme.textTheme.bodyMedium?.copyWith(
         fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
         color: selected
-            ? colorScheme.onPrimaryContainer
+            ? (breeze ? colorScheme.primary : colorScheme.onPrimaryContainer)
             : colorScheme.onSurface,
       ),
       onSelected: (_) => onTap(),
@@ -396,12 +524,6 @@ class _SettingsChoiceChip extends StatelessWidget {
 }
 
 class _SettingsSwitchTile extends StatelessWidget {
-  static const WidgetStateProperty<Icon> _thumbIcon =
-      WidgetStateProperty<Icon>.fromMap(<WidgetStatesConstraint, Icon>{
-        WidgetState.selected: Icon(Icons.check),
-        WidgetState.any: Icon(Icons.close),
-      });
-
   final String title;
   final String subtitle;
   final bool value;
@@ -409,54 +531,47 @@ class _SettingsSwitchTile extends StatelessWidget {
 
   const _SettingsSwitchTile({
     required this.title,
-    required this.subtitle,
+    this.subtitle = '',
     required this.value,
     required this.onChanged,
   });
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = context.theme.colorScheme;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.7),
-        ),
-      ),
-      child: ListTile(
-        dense: true,
-        visualDensity: VisualDensity.compact,
-        contentPadding: const EdgeInsets.only(left: 12, right: 8),
-        title: Text(title),
-        subtitle: Text(
-          subtitle,
-          style: context.theme.textTheme.bodySmall?.copyWith(
-            color: colorScheme.onSurfaceVariant,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ListTile(
+          minTileHeight: 44,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+          title: Text(title),
+          onTap: () => onChanged(!value),
+          trailing: BreezeSwitch(
+            Switch.adaptive(
+              thumbIcon: settingSwitchThumbIcon(context),
+              value: value,
+              onChanged: onChanged,
+            ),
           ),
         ),
-        trailing: Switch.adaptive(
-          thumbIcon: _thumbIcon,
-          value: value,
-          onChanged: onChanged,
-        ),
-      ),
+        if (subtitle.trim().isNotEmpty)
+          SettingNote(
+            subtitle,
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+          ),
+      ],
     );
   }
 }
 
 class _SettingsDropdownTile extends StatelessWidget {
   final String title;
-  final String subtitle;
   final int value;
   final List<int> values;
   final ValueChanged<int> onChanged;
 
   const _SettingsDropdownTile({
     required this.title,
-    required this.subtitle,
     required this.value,
     required this.values,
     required this.onChanged,
@@ -464,34 +579,11 @@ class _SettingsDropdownTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = context.theme.colorScheme;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.7),
-        ),
-      ),
-      child: ListTile(
-        dense: true,
-        visualDensity: VisualDensity.compact,
-        contentPadding: const EdgeInsets.only(left: 12, right: 8),
-        title: Text(title),
-        subtitle: Text(
-          subtitle,
-          style: context.theme.textTheme.bodySmall?.copyWith(
-            color: colorScheme.onSurfaceVariant,
-          ),
-        ),
-        trailing: FluentDropdown<int>(
-          value: value,
-          displayValue: value.toString(),
-          items: {for (final option in values) option: option.toString()},
-          onChanged: onChanged,
-        ),
-      ),
+    return SettingChoiceTile<int>(
+      title: title,
+      value: value,
+      items: {for (final option in values) option: option.toString()},
+      onChanged: onChanged,
     );
   }
 }
@@ -520,25 +612,18 @@ class _SettingsSliderCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = context.theme.colorScheme;
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest.withValues(
-          alpha: enabled ? 0.45 : 0.28,
-        ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.7),
-        ),
-      ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 4,
             children: [
               Text(title, style: context.theme.textTheme.bodyMedium),
-              const Spacer(),
               Text(
                 '$value $suffix',
                 style: context.theme.textTheme.bodyMedium?.copyWith(

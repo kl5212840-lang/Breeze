@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/widgets/breeze_switch.dart';
 
 Future<Map<String, bool>?> showSourceSelectDialog(
   BuildContext context, {
@@ -14,25 +15,41 @@ Future<Map<String, bool>?> showSourceSelectDialog(
         builder: (context, setState) {
           return AlertDialog(
             title: Text(t.search.selectSource),
+            contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
             content: SizedBox(
               width: 320,
-              child: Wrap(
-                alignment: WrapAlignment.start,
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final source in sourceOptions)
-                    FilterChip(
-                      showCheckmark: false,
-                      label: Text(source.title),
-                      selected: next[source.pluginId] ?? true,
-                      onSelected: (selected) {
-                        setState(() {
-                          next[source.pluginId] = selected;
-                        });
-                      },
-                    ),
-                ],
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: (MediaQuery.sizeOf(context).height * .52).clamp(
+                    120.0,
+                    440.0,
+                  ),
+                ),
+                child: ListView.separated(
+                  key: const ValueKey('search-source-options'),
+                  primary: false,
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  itemCount: sourceOptions.length,
+                  separatorBuilder: (context, _) => Divider(
+                    height: 1,
+                    thickness: .5,
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
+                  itemBuilder: (context, index) {
+                    final source = sourceOptions[index];
+                    return BreezeSwitchListTile(
+                      SwitchListTile.adaptive(
+                        key: ValueKey('search-source.${source.pluginId}'),
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(source.title),
+                        value: next[source.pluginId] ?? true,
+                        onChanged: (selected) =>
+                            setState(() => next[source.pluginId] = selected),
+                      ),
+                    );
+                  },
+                ),
               ),
             ),
             actions: [

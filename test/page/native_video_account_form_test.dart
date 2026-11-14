@@ -25,6 +25,7 @@ Widget account({
   bool readback = false,
   double scale = 1,
   Brightness brightness = Brightness.light,
+  VoidCallback? onWebsite,
 }) => MaterialApp(
   theme: ThemeData(brightness: brightness),
   builder: (context, child) => MediaQuery(
@@ -38,7 +39,7 @@ Widget account({
       read: read,
       submit: submit,
       onRefresh: () {},
-      onWebsite: () {},
+      onWebsite: onWebsite ?? () {},
       revision: revision,
       readback: readback,
     ),
@@ -46,6 +47,28 @@ Widget account({
 );
 
 void main() {
+  testWidgets('avatar without a usable site form names the website fallback', (
+    tester,
+  ) async {
+    var webOpens = 0;
+    await tester.pumpWidget(
+      account(
+        read: () async => fixture,
+        submit: (operation, _) async =>
+            throw StateError('Unexpected write: $operation'),
+        onWebsite: () => webOpens++,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(t.sourceShell.changeAvatar), findsNothing);
+    final link = find.text(t.sourceProfile.openWebsiteAccount);
+    expect(link, findsOneWidget);
+    await tester.ensureVisible(link);
+    await tester.tap(link);
+    await tester.pumpAndSettle();
+    expect(webOpens, 1);
+  });
+
   testWidgets(
     'profile submits once and confirms only an independent matching read',
     (tester) async {
@@ -372,4 +395,60 @@ void main() {
     expect(calls, 1);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+  testWidgets(
+    'explicit old credential rejection preserves password draft for a deliberate retry',
+    (tester) async {
+      var calls = 0;
+      await tester.pumpWidget(
+        account(
+          read: () async => fixture,
+          submit: (operation, values) async {
+            expect(operation, 'password');
+            calls++;
+            throw StateError('Invalid credentials');
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      Finder field(String label) => find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.decoration?.labelText == label,
+      );
+      for (final (label, value) in [
+        (t.videoSiteAccount.oldPassword, 'old-synthetic-password'),
+        (t.videoSiteAccount.newPassword, 'new-synthetic-password'),
+        (t.videoSiteAccount.confirmPassword, 'new-synthetic-password'),
+      ]) {
+        await tester.ensureVisible(field(label));
+        await tester.enterText(field(label), value);
+      }
+      final change = find.widgetWithText(
+        OutlinedButton,
+        t.videoSiteAccount.changePassword,
+      );
+      await tester.ensureVisible(change);
+      await tester.tap(change);
+      await tester.pump();
+      expect(calls, 1);
+      expect(
+        tester
+            .widget<TextField>(field(t.videoSiteAccount.oldPassword))
+            .controller!
+            .text,
+        'old-synthetic-password',
+      );
+      expect(
+        tester
+            .widget<TextField>(field(t.videoSiteAccount.newPassword))
+            .controller!
+            .text,
+        'new-synthetic-password',
+      );
+      expect(tester.widget<OutlinedButton>(change).onPressed, isNotNull);
+      await tester.tap(change);
+      await tester.pump();
+      expect(calls, 2);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 }

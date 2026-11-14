@@ -167,10 +167,33 @@ void main() {
         await tester.tap(find.byType(SourceListViewToggle));
         await tester.pumpAndSettle();
         expect(find.text(t.comicList.viewSaveFailed), findsOneWidget);
+        expect(find.byTooltip(t.comicList.switchToList), findsOneWidget);
         expect(SourceListPreferences.changes.value, before);
         expect(await SourceListPreferences.read('failure'), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
       },
     );
   }
+
+  testWidgets('a failed save cannot report into a later visit to the same source', (
+    tester,
+  ) async {
+    final store = _ControlledStore()
+      ..writeGate = Completer<void>()
+      ..reject = true;
+    SharedPreferencesStorePlatform.instance = store;
+    await tester.pumpWidget(_surface('visit'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(SourceListViewToggle));
+    await tester.pump();
+    await tester.pumpWidget(_surface('other', detailedByDefault: true));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(_surface('visit', detailedByDefault: true));
+    await tester.pump();
+    store.writeGate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.byTooltip(t.comicList.switchToGrid), findsOneWidget);
+    expect(find.text(t.comicList.viewSaveFailed), findsNothing);
+    expect(await SourceListPreferences.read('visit'), isNull);
+  });
 }

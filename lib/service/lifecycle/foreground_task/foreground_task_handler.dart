@@ -60,13 +60,6 @@ class MyTaskHandler extends TaskHandler {
   @override
   void onNotificationPressed() {}
 
-  @override
-  void onNotificationDismissed() {
-    // 前台服务通知一般为 ongoing，正常无法划掉；
-    // 若系统边界情况下触发，仅在有下载时取消下载（主 Isolate 侧无任务则空操作）
-    _sendCancelToMain();
-  }
-
   void _sendCancelToMain() {
     FlutterForegroundTask.sendDataToMain(const {'action': 'cancel_download'});
   }

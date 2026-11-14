@@ -1,87 +1,88 @@
-import 'dart:io';
-
+import 'package:zephyr/page/video/video_personal_snapshot_store.dart';
+import 'package:zephyr/page/comic_list/cubit/jm_collection_snapshots.dart';
+import 'package:zephyr/service/temporary_data_cache.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:path/path.dart' as p;
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/util/get_path.dart';
+import 'package:zephyr/service/cache_workspace_guard.dart';
+import 'package:zephyr/service/source_image_cache_store.dart';
+import 'package:zephyr/src/rust/api/simple.dart';
+
+bool shouldCleanCacheOnStartup(GlobalSettingState state, int measuredBytes) {
+  final cache = state.cacheSetting;
+  final limit = cache.cacheSizeLimit > 0 ? cache.cacheSizeLimit : 1073741824;
+  return cache.autoCleanCache && measuredBytes >= limit;
+}
+
+SourceImageCacheStore _imageCache(String cachePath, {String? source}) {
+  final sources = source == null
+      ? objectbox.pluginInfoBox.getAll().map((plugin) => plugin.uuid.trim())
+      : [source.trim()];
+  return SourceImageCacheStore(
+    root: cachePath,
+    sourceSegments: sources
+        .where((source) => source.isNotEmpty)
+        .map((source) => encodePath(path: source)),
+  );
+}
+
+/// Count only image partitions whose source identity is known. Workspace and
+/// unclassified caches are intentionally neither measured nor removed.
+Future<int> imageCacheSize(String cachePath, {String? source}) =>
+    _imageCache(cachePath, source: source).sizeBytes();
 
 Future<void> manageCacheSize(BuildContext context) async {
   if (!context.mounted) return;
-  final settinCubit = context.read<GlobalSettingCubit>();
-  final currentState = settinCubit.state;
-
-  if (!currentState.cacheSetting.autoCleanCache) {
-    logger.d('Auto clean cache disabled, skipping.');
-    return;
+  final cubit = context.read<GlobalSettingCubit>();
+  // Older builds deferred cleanup with this flag. The current startup always
+  // measures the actual image cache before taking action.
+  if (cubit.state.needCleanCache) {
+    cubit.updateState((state) => state.copyWith(needCleanCache: false));
   }
-
-  final String cachePath = await getCachePath();
-  int totalSize = 0;
-
+  if (!cubit.state.cacheSetting.autoCleanCache) return;
   try {
-    final directory = Directory(cachePath);
-    if (!await directory.exists()) return;
+    final images = _imageCache(await getCachePath());
+    final bytes = await images.sizeBytes();
+    if (!context.mounted || !shouldCleanCacheOnStartup(cubit.state, bytes)) {
+      return;
+    }
+    await CacheWorkspaceGuard.clear(() async {
+      if (context.mounted && shouldCleanCacheOnStartup(cubit.state, bytes)) {
+        await images.clear();
+      }
+    });
+  } catch (error, stack) {
+    logger.w(
+      'Startup image cache cleanup deferred',
+      error: error,
+      stackTrace: stack,
+    );
+  }
+}
 
-    final List<FileSystemEntity> entities = directory.listSync(recursive: true);
-
-    for (var entity in entities) {
-      final bool isSentryFile = entity.path
-          .split(Platform.pathSeparator)
-          .contains('sentry');
-
-      if (entity is File && !isSentryFile) {
-        try {
-          totalSize += await entity.length();
-        } on FileSystemException {
-          continue;
+Future<void> clearCache(String cachePath, {String? source}) =>
+    CacheWorkspaceGuard.clear(() async {
+      try {
+        // Even a mistaken caller cannot turn this entry into download/file
+        // cleanup. The source partition lives only under the platform cache.
+        if (!p.equals(
+          p.absolute(cachePath),
+          p.absolute(await getCachePath()),
+        )) {
+          throw const CacheCleanupFailed();
         }
+        if (source != null && source.trim().isEmpty) {
+          throw const CacheCleanupFailed();
+        }
+        await _imageCache(cachePath, source: source).clear();
+        TemporaryDataCaches.clear(source: source);
+        await VideoPersonalSnapshotStore.clearDisk(source: source);
+        await JmCollectionSnapshots.instance.clearDisk(source: source);
+        logger.d('Reloadable image cache cleared.');
+      } catch (_) {
+        throw const CacheCleanupFailed();
       }
-    }
-  } catch (e) {
-    logger.e('Error calculating cache size: $e');
-  }
-
-  if (!context.mounted) return;
-
-  final maxSize = currentState.cacheSetting.cacheSizeLimit;
-  if (totalSize >= maxSize) {
-    logger.d(
-      'Cache size exceeded ${maxSize / (1024 * 1024)} MB, clearing cache...',
-    );
-    settinCubit.updateState(
-      (current) => current.copyWith(needCleanCache: true),
-    );
-  } else {
-    logger.d(
-      'Current cache size (excluding Sentry): ${totalSize / (1024 * 1024)} MB',
-    );
-    settinCubit.updateState(
-      (current) => current.copyWith(needCleanCache: false),
-    );
-  }
-}
-
-Future<void> clearCache(String cachePath) async {
-  try {
-    final directory = Directory(cachePath);
-    if (!await directory.exists()) return;
-
-    // 2. 清理时不能直接 delete(recursive: true)，否则 sentry 文件夹也会被删
-    // 我们需要遍历并删除非 sentry 的内容
-    final List<FileSystemEntity> entities = directory.listSync(
-      recursive: false,
-    );
-
-    for (var entity in entities) {
-      final String name = entity.path.split(Platform.pathSeparator).last;
-      if (name != 'sentry') {
-        // 删除文件或文件夹（递归）
-        await entity.delete(recursive: true);
-      }
-    }
-    logger.d('Cache cleared successfully (Sentry folder preserved).');
-  } catch (e) {
-    logger.e('Error clearing cache: $e');
-  }
-}
+    });

@@ -6,16 +6,15 @@ import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart';
 import 'package:zephyr/page/comic_read/type/chapter_extern.dart';
 import 'package:zephyr/page/download/adapters/download_chapter_adapter.dart';
 import 'package:zephyr/page/download/models/download_chapter.dart';
-import 'package:zephyr/page/download/models/unified_comic_download.dart';
 import 'package:zephyr/page/comic_info/cubit/episode_download_status_cubit.dart';
 import 'package:zephyr/page/comic_info/cubit/episode_selection_cubit.dart';
 import 'package:zephyr/page/comic_info/widgets/episode_download_controller.dart';
-import 'package:zephyr/service/download/download_task_repository.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/context/context_extensions.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/service/reader/comic_chapter_reading_progress.dart';
 
 import 'package:zephyr/config/router/router.gr.dart';
 
@@ -44,6 +43,7 @@ class EpButtonWidget extends StatelessWidget {
   final EpisodeDownloadController controller;
   final dynamic allInfo;
   final int epsLength;
+  final int? legacyReadPage;
 
   /// 组内总数：分组显示时行号按组内 1..N 编排（null 时回退 [epsLength]，
   /// 即今天的扁平行为）。阅读器用的总章节数仍走 [epsLength]。
@@ -68,6 +68,7 @@ class EpButtonWidget extends StatelessWidget {
     required this.controller,
     required this.allInfo,
     required this.epsLength,
+    this.legacyReadPage,
     this.displayTotal,
     required this.type,
     required this.comicId,
@@ -94,7 +95,7 @@ class EpButtonWidget extends StatelessWidget {
         : _cachedConvertForDisplay(rawTitle);
     final episodeLabel = t.comicInfo.episodeLabel(index: displayNumber);
 
-    // RepaintBoundary 把进度圈动画隔离在行内；选中态只听 selectionCubit，
+    // RepaintBoundary 把进度动画隔离在行内；选中态只听 selectionCubit，
     // 下载进度 tick 不会重建标题/背景整行。
     return RepaintBoundary(
       child: BlocBuilder<EpisodeSelectionCubit, int>(
@@ -110,7 +111,6 @@ class EpButtonWidget extends StatelessWidget {
               width: double.infinity,
               height: fixedHeight,
               margin: EdgeInsets.zero,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               decoration: BoxDecoration(
                 color: selected
                     ? colorScheme.primaryContainer.withValues(alpha: 0.35)
@@ -123,47 +123,75 @@ class EpButtonWidget extends StatelessWidget {
                       )
                     : null,
               ),
-              child: Row(
+              child: Stack(
                 children: [
-                  if (selectionMode)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 12),
-                      child: Icon(
-                        selected
-                            ? Icons.check_circle
-                            : Icons.radio_button_unchecked,
-                        color: selected
-                            ? colorScheme.primary
-                            : context.textColor.withValues(alpha: 0.5),
-                        size: 20,
+                  Padding(
+                    padding: const EdgeInsets.only(
+                      left: 14,
+                      right: 6,
+                      top: 6,
+                      bottom: 6,
+                    ),
+                    child: Row(
+                      children: [
+                        if (selectionMode)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 12),
+                            child: Icon(
+                              selected
+                                  ? Icons.check_circle
+                                  : Icons.radio_button_unchecked,
+                              color: selected
+                                  ? colorScheme.primary
+                                  : context.textColor.withValues(alpha: 0.5),
+                              size: 20,
+                            ),
+                          ),
+                        Text(
+                          episodeLabel,
+                          style: context.theme.textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: context.theme.colorScheme.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: context.theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
+                              color: context.textColor,
+                            ),
+                          ),
+                        ),
+                        _EpisodeReadingStatus(
+                          source: from,
+                          comicId: comicId,
+                          chapterId: chapter.id,
+                          legacyPage: legacyReadPage,
+                        ),
+                        _EpisodeTrailing(
+                          controller: controller,
+                          chapter: chapter,
+                          downloadAllowed: downloadAllowed,
+                          onAction: onAction,
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (downloadAllowed)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: EpisodeDownloadProgress(
+                        controller: controller,
+                        chapter: chapter,
                       ),
                     ),
-                  Text(
-                    episodeLabel,
-                    style: context.theme.textTheme.bodyMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      color: context.theme.colorScheme.primary,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: context.theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 15,
-                        color: context.textColor,
-                      ),
-                    ),
-                  ),
-                  _EpisodeTrailing(
-                    controller: controller,
-                    chapter: chapter,
-                    downloadAllowed: downloadAllowed,
-                    onAction: onAction,
-                  ),
                 ],
               ),
             ),
@@ -175,47 +203,12 @@ class EpButtonWidget extends StatelessWidget {
 
   void _openRead(BuildContext context) {
     final chapter = const DownloadChapterAdapter().fromEp(doc);
-    // 在线入口统一查库：该章已下载则直接读本地，不再看来源 type。
-    if (type == ComicEntryType.normal || type == ComicEntryType.history) {
-      final local = const DownloadTaskRepository().findDownloadedChapter(
-        from: from,
-        comicId: comicId,
-        chapterKey: chapter.id,
-      );
-      final record = local == null
-          ? null
-          : const DownloadTaskRepository().findDownloadRecord(from, comicId);
-      if (local != null && record != null) {
-        context.pushRoute(
-          ComicReadRoute(
-            comicInfo: record,
-            comicId: record.comicId,
-            type: type == ComicEntryType.history
-                ? ComicEntryType.historyAndDownload
-                : ComicEntryType.download,
-            order: local.order,
-            chapterId: local.id,
-            requestId: local.effectiveRequestId,
-            storageChapterId: local.storageId ?? '',
-            logicalKey: local.id,
-            chapterExtern: ChapterExtern.from(local.extern),
-            epsNumber: resolveStoredDownloadChapters(record).length,
-            from: from,
-            stringSelectCubit: context.read<StringSelectCubit>(),
-          ),
-        );
-        return;
-      }
-    }
-    final resolvedType = type == ComicEntryType.history
-        ? ComicEntryType.normal
-        : type;
     final chapterExtern = Map<String, dynamic>.from(doc.extern);
     context.pushRoute(
       ComicReadRoute(
         comicInfo: allInfo,
         comicId: comicId,
-        type: resolvedType,
+        type: type,
         order: chapter.order,
         chapterId: chapter.id,
         requestId: chapter.effectiveRequestId,
@@ -237,8 +230,103 @@ class EpButtonWidget extends StatelessWidget {
   }
 }
 
-/// 章节行右侧下载角标：独立监听下载状态，进度 tick 时只重建
-/// 这个 32x32 槽位，不重建整行标题/背景。
+/// 真实任务进度只重绘当前章，覆盖在行内底边，不改变行高或滚动位置。
+class EpisodeDownloadProgress extends StatelessWidget {
+  const EpisodeDownloadProgress({
+    super.key,
+    required this.controller,
+    required this.chapter,
+  });
+
+  final EpisodeDownloadController controller;
+  final DownloadChapter chapter;
+
+  @override
+  Widget build(BuildContext context) =>
+      BlocSelector<
+        EpisodeDownloadStatusCubit,
+        EpisodeDownloadStatusState,
+        (ChapterDownloadStatus, double?)
+      >(
+        bloc: controller.statusCubit,
+        selector: (state) =>
+            (state.statusOf(chapter), state.progressOf(chapter)),
+        builder: (context, selected) {
+          final status = selected.$1;
+          if (status != ChapterDownloadStatus.downloading &&
+              status != ChapterDownloadStatus.downloaded) {
+            return const SizedBox.shrink();
+          }
+          final progress = status == ChapterDownloadStatus.downloaded
+              ? 1.0
+              : selected.$2;
+          return ClipRRect(
+            borderRadius: const BorderRadius.vertical(
+              bottom: Radius.circular(8),
+            ),
+            child: TickerMode(
+              enabled: !MediaQuery.disableAnimationsOf(context),
+              child: LinearProgressIndicator(
+                key: ValueKey('chapter-progress:${chapter.id}'),
+                value: progress,
+                minHeight: 3,
+                backgroundColor: Colors.transparent,
+                color: context.theme.colorScheme.primary,
+                semanticsLabel: status == ChapterDownloadStatus.downloaded
+                    ? t.download.completed
+                    : t.download.downloading,
+              ),
+            ),
+          );
+        },
+      );
+}
+
+class _EpisodeReadingStatus extends StatelessWidget {
+  const _EpisodeReadingStatus({
+    required this.source,
+    required this.comicId,
+    required this.chapterId,
+    required this.legacyPage,
+  });
+
+  final String source, comicId, chapterId;
+  final int? legacyPage;
+
+  @override
+  Widget build(BuildContext context) {
+    final reading = ComicChapterReadingProgress.instance;
+    return ListenableBuilder(
+      listenable: reading.changes,
+      builder: (context, _) {
+        final progress = reading.lookup(source, comicId, [chapterId]);
+        final page = progress?.pageIndex ?? legacyPage;
+        if (page == null || page < 1) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsetsDirectional.only(start: 12, end: 16),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.sizeOf(context).width * .28,
+            ),
+            child: Text(
+              progress?.completed == true
+                  ? t.comicInfo.chapterReadComplete
+                  : t.comicInfo.readProgressPage(page: page),
+              style: context.theme.textTheme.bodySmall?.copyWith(
+                color: context.theme.colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.end,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// 右侧动作按任务状态更新，保留至少44pt触控区。
 class _EpisodeTrailing extends StatelessWidget {
   const _EpisodeTrailing({
     required this.controller,
@@ -258,16 +346,15 @@ class _EpisodeTrailing extends StatelessWidget {
       // 不允许下载时显示静态按钮，无需订阅，点击后由 onAction 弹出禁用原因。
       return _slot(context, const Icon(Icons.download_outlined, size: 20));
     }
-    // 只订阅自己这一章的 (status, progress)：别的章节进度变化时不重建。
+    // 进度由行底部单独监听；动作图标不随每次进度更新重建。
     return BlocSelector<
       EpisodeDownloadStatusCubit,
       EpisodeDownloadStatusState,
-      (ChapterDownloadStatus, double?)
+      ChapterDownloadStatus
     >(
       bloc: controller.statusCubit,
-      selector: (state) => (state.statusOf(chapter), state.progressOf(chapter)),
-      builder: (context, selected) {
-        final status = selected.$1;
+      selector: (state) => state.statusOf(chapter),
+      builder: (context, status) {
         switch (status) {
           case ChapterDownloadStatus.notDownloaded:
             return _slot(
@@ -279,22 +366,18 @@ class _EpisodeTrailing extends StatelessWidget {
           case ChapterDownloadStatus.downloading:
             return _slot(
               context,
-              SizedBox.square(
-                dimension: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  value: selected.$2,
-                ),
-              ),
+              const Icon(Icons.close, size: 20),
+              label: t.download.cancelTask,
             );
           case ChapterDownloadStatus.failed:
             return _slot(
               context,
               Icon(
-                Icons.error_outline,
+                Icons.refresh,
                 size: 20,
                 color: context.theme.colorScheme.error,
               ),
+              label: t.common.retry,
             );
           case ChapterDownloadStatus.downloaded:
             return _slot(
@@ -310,13 +393,16 @@ class _EpisodeTrailing extends StatelessWidget {
     );
   }
 
-  // 行内容高度只有 32（56-上下 padding），IconButton 默认最小 40 会被纵向
-  // 挤压，里面的进度圈会被压成椭圆。这里统一用 32x32 正方形槽位，保证不变形。
-  Widget _slot(BuildContext context, Widget child) {
-    return InkWell(
-      onTap: onAction,
-      borderRadius: BorderRadius.circular(16),
-      child: SizedBox.square(dimension: 32, child: Center(child: child)),
+  Widget _slot(BuildContext context, Widget child, {String? label}) {
+    return Semantics(
+      label: label,
+      button: true,
+      child: InkWell(
+        key: ValueKey('chapter-download-action:${chapter.id}'),
+        onTap: onAction,
+        borderRadius: BorderRadius.circular(22),
+        child: SizedBox.square(dimension: 44, child: Center(child: child)),
+      ),
     );
   }
 }

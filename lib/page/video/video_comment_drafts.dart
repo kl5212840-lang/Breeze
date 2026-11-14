@@ -1,4 +1,9 @@
-typedef VideoCommentDraft = ({String text, bool unconfirmed});
+class VideoCommentDraft {
+  const VideoCommentDraft({required this.text, this.unconfirmed = false});
+
+  final String text;
+  final bool unconfirmed;
+}
 
 /// User input held only in this source session. Never persisted or synced.
 class VideoCommentDraftStore {
@@ -12,16 +17,29 @@ class VideoCommentDraftStore {
   }
 
   VideoCommentDraft read(String key) =>
-      _entries[key] ?? (text: '', unconfirmed: false);
+      _entries[key] ?? const VideoCommentDraft(text: '');
 
-  void write(String key, String text, {bool unconfirmed = false}) {
+  VideoCommentDraft write(String key, String text, {bool unconfirmed = false}) {
     _entries.remove(key);
-    if (text.isEmpty) return;
-    if (_entries.length >= 24) _entries.remove(_entries.keys.first);
-    _entries[key] = (
+    final draft = VideoCommentDraft(
       text: text.length > 5000 ? text.substring(0, 5000) : text,
       unconfirmed: unconfirmed,
     );
+    if (text.isNotEmpty) {
+      if (_entries.length >= 24) _entries.remove(_entries.keys.first);
+      _entries[key] = draft;
+    }
+    return draft;
+  }
+
+  void settleSubmission(
+    String key,
+    VideoCommentDraft draft, {
+    required bool posted,
+  }) {
+    if (identical(_entries[key], draft)) {
+      write(key, posted ? '' : draft.text);
+    }
   }
 
   void clear() {

@@ -1,5 +1,4 @@
 import 'package:material_ui/material_ui.dart';
-import 'package:zephyr/util/debouncer.dart';
 
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_info.dart';
@@ -10,8 +9,8 @@ SliverGridDelegate buildComicSimplifyEntryGridDelegate({
   double crossAxisSpacing = 15,
   double childAspectRatio = 0.75,
 }) {
-  return SliverGridDelegateWithMaxCrossAxisExtent(
-    maxCrossAxisExtent: isTabletWithOutContext() ? 200.0 : 150.0,
+  return SliverGridDelegateWithFixedCrossAxisCount(
+    crossAxisCount: 3,
     mainAxisSpacing: mainAxisSpacing,
     crossAxisSpacing: crossAxisSpacing,
     childAspectRatio: childAspectRatio,

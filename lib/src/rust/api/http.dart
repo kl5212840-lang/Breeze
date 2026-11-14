@@ -151,7 +151,7 @@ class HttpClientOptions {
   /// 设置后优先于全局代理配置。
   final String? httpProxy;
 
-  /// 覆盖全局 TLS 校验；`None` 时跟随全局配置。
+  /// `None` 沿用全局；显式 `false` 要求证书校验和全程 HTTPS。
   final bool? dangerAcceptInvalidCerts;
   final String? userAgent;
 

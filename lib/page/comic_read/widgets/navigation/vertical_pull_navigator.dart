@@ -1,5 +1,6 @@
 import 'package:easy_refresh/easy_refresh.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/cubit/comic_read_preference_cubit.dart';
 import 'package:zephyr/i18n/strings.g.dart';
@@ -30,10 +31,16 @@ class VerticalPullNavigator extends StatelessWidget {
     final foregroundColor = readSetting.resolveReaderForegroundColor(
       brightness,
     );
+    final clampEdges = context.select<GlobalSettingCubit, bool>(
+      (cubit) => cubit.state.eInkSetting.shouldRemoveScrollBounce,
+    );
     final textStyle = TextStyle(color: foregroundColor);
     final iconTheme = IconThemeData(color: foregroundColor);
 
+    // EasyRefresh clamping keeps its indicator/drag accounting while holding
+    // the content at the edge; replacing its physics would break chapter pulls.
     final activeHeader = ClassicHeader(
+      clamping: clampEdges,
       dragText: t.reader.pullDownToPrevChapter,
       armedText: t.reader.releaseToJumpPrevChapter,
       readyText: t.reader.releaseToLoadPrevChapter,
@@ -50,6 +57,7 @@ class VerticalPullNavigator extends StatelessWidget {
     );
 
     final activeFooter = ClassicFooter(
+      clamping: clampEdges,
       dragText: t.reader.pullUpToNextChapter,
       armedText: t.reader.releaseToJumpNextChapter,
       readyText: t.reader.releaseToLoadNextChapter,
@@ -74,13 +82,13 @@ class VerticalPullNavigator extends StatelessWidget {
       onRefresh: havePrev ? onPrev : null,
       onLoad: haveNext ? onNext : null,
 
-      notRefreshHeader: const NotRefreshHeader(
-        clamping: false,
+      notRefreshHeader: NotRefreshHeader(
+        clamping: clampEdges,
         hitOver: true,
         position: IndicatorPosition.locator,
       ),
-      notLoadFooter: const NotLoadFooter(
-        clamping: false,
+      notLoadFooter: NotLoadFooter(
+        clamping: clampEdges,
         hitOver: true,
         position: IndicatorPosition.locator,
       ),

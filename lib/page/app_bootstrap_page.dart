@@ -9,6 +9,7 @@ import 'package:zephyr/cubit/string_select.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/object_box/migration/compatible.dart';
+import 'package:zephyr/page/video/video_download.dart';
 import 'package:zephyr/plugin/bridge/dart_tools_bridge.dart';
 import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/plugin/plugin_cloud_update_service.dart';
@@ -88,6 +89,7 @@ class _AppBootstrapViewState extends State<AppBootstrapView> {
 
     updateStatus(t.appBootstrap.initializing);
     await PluginRegistryService.I.init();
+    VideoSystemDownload.startHlsRecovery();
     await PluginRegistryService.I.warmupPluginInfos();
     PluginCloudUpdateService.I.scheduleSilentCloudUpdate(
       delay: const Duration(minutes: 1),

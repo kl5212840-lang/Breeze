@@ -1,4 +1,5 @@
-import 'package:zephyr/widgets/comic_simplify_entry/selection_badge.dart';
+import 'package:zephyr/widgets/plugin_installation_guard.dart';
+import 'package:zephyr/widgets/collection_selection_mark.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
@@ -6,14 +7,17 @@ import 'package:uuid/uuid.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/type/pipe.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/widgets/collection_press_feedback.dart';
 
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/http/picture/picture.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
+import 'package:zephyr/service/reader/reader_history_service.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_info.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/cover.dart';
+import 'package:zephyr/widgets/comic_simplify_entry/jm_cover_like_badge.dart';
 
 const double kComicCardBorderRadius = 5.0;
 
@@ -58,6 +62,15 @@ class ComicFixedSizeHorizontalList extends StatelessWidget {
           if (info.title == "无数据") {
             return const SizedBox.shrink();
           }
+          final cover = _buildCover(
+            context,
+            info,
+            itemWidth,
+            itemHeight,
+            useRandomImageKey
+                ? ValueKey('cover-${const Uuid().v4()}')
+                : ValueKey('cover-${info.from}:${info.id}:${info.path}'),
+          );
 
           return Padding(
             padding: EdgeInsets.only(right: spacing),
@@ -71,21 +84,7 @@ class ComicFixedSizeHorizontalList extends StatelessWidget {
                     ? Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          CoverWidget(
-                            key: useRandomImageKey
-                                ? ValueKey('cover-${const Uuid().v4()}')
-                                : ValueKey(
-                                    'cover-${info.from}:${info.id}:${info.path}',
-                                  ),
-                            fileServer: info.fileServer,
-                            path: info.path,
-                            id: info.id,
-                            pictureType: info.pictureType,
-                            from: info.from,
-                            roundedCorner: roundedCorner,
-                            width: itemWidth,
-                            height: itemHeight,
-                          ),
+                          cover,
                           const SizedBox(height: 5),
                           Text(
                             info.title.let(convertChineseForDisplay),
@@ -95,16 +94,7 @@ class ComicFixedSizeHorizontalList extends StatelessWidget {
                           ),
                         ],
                       )
-                    : _buildCoverWithTitle(
-                        info,
-                        itemWidth,
-                        itemHeight,
-                        useRandomImageKey
-                            ? ValueKey('cover-${const Uuid().v4()}')
-                            : ValueKey(
-                                'cover-${info.from}:${info.id}:${info.path}',
-                              ),
-                      ),
+                    : cover,
               ),
             ),
           );
@@ -113,79 +103,98 @@ class ComicFixedSizeHorizontalList extends StatelessWidget {
     );
   }
 
-  Widget _buildCoverWithTitle(
+  Widget _buildCover(
+    BuildContext context,
     ComicSimplifyEntryInfo info,
     double width,
     double height,
     Key coverKey,
   ) {
     final circular = roundedCorner ? kComicCardBorderRadius : 0.0;
-    return Stack(
+    final likeCounts = JmCoverLikeScope.maybeOf(context, info.from);
+    final image = CoverWidget(
+      key: coverKey,
+      fileServer: info.fileServer,
+      path: info.path,
+      id: info.id,
+      pictureType: info.pictureType,
+      from: info.from,
+      roundedCorner: roundedCorner,
+      width: width,
+      height: height,
+    );
+    if (titleBelow && likeCounts == null) return image;
+    final cover = Stack(
       children: [
-        // 1. 底层封面图
-        CoverWidget(
-          key: coverKey,
-          fileServer: info.fileServer,
-          path: info.path,
-          id: info.id,
-          pictureType: info.pictureType,
-          from: info.from,
-          roundedCorner: roundedCorner,
-          width: width,
-          height: height,
-        ),
-
-        // 2. 顶部阴影与标题
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  Colors.transparent,
-                  Colors.black.withValues(alpha: 0.7),
-                ],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                stops: const [0.0, 0.7],
+        image,
+        if (!titleBelow)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Colors.transparent,
+                    Colors.black.withValues(alpha: 0.7),
+                  ],
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  stops: const [0.0, 0.7],
+                ),
+                borderRadius: BorderRadius.only(
+                  bottomLeft: Radius.circular(circular),
+                  bottomRight: Radius.circular(circular),
+                ),
               ),
-              borderRadius: BorderRadius.only(
-                bottomLeft: Radius.circular(circular),
-                bottomRight: Radius.circular(circular),
+              padding: const EdgeInsets.fromLTRB(5.0, 20.0, 5.0, 5.0),
+              child: Text(
+                info.title.let(convertChineseForDisplay),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12.0,
+                  fontWeight: FontWeight.w500,
+                  shadows: [
+                    Shadow(
+                      offset: const Offset(0, 1),
+                      blurRadius: 2,
+                      color: Colors.black.withValues(alpha: 0.5),
+                    ),
+                  ],
+                ),
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.start,
               ),
-            ),
-            padding: const EdgeInsets.fromLTRB(5.0, 20.0, 5.0, 5.0),
-            child: Text(
-              info.title.let(convertChineseForDisplay),
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 12.0,
-                fontWeight: FontWeight.w500,
-                shadows: [
-                  Shadow(
-                    offset: const Offset(0, 1),
-                    blurRadius: 2,
-                    color: Colors.black.withValues(alpha: 0.5),
-                  ),
-                ],
-              ),
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.start,
             ),
           ),
-        ),
+        if (likeCounts != null)
+          PositionedDirectional(
+            top: JmCoverLikeBadge.inset,
+            start: JmCoverLikeBadge.inset,
+            end: JmCoverLikeBadge.inset,
+            child: JmCoverLikeBadge(counts: likeCounts, comicId: info.id),
+          ),
       ],
     );
+    return likeCounts == null
+        ? cover
+        : JmCoverLikeVisibility(comicId: info.id, child: cover);
   }
 
   // 点击跳转逻辑 (需要把当前的 info 传进来)
-  void _navigateToComicInfo(BuildContext context, ComicSimplifyEntryInfo info) {
+  Future<void> _navigateToComicInfo(
+    BuildContext context,
+    ComicSimplifyEntryInfo info,
+  ) async {
     final pluginId = (info.source.trim().isNotEmpty ? info.source : info.from)
         .trim();
-    if (pluginId.isEmpty) return;
+    if (pluginId.isEmpty ||
+        !await ensurePluginInstalled(context, pluginId) ||
+        !context.mounted) {
+      return;
+    }
     context.pushRoute(
       ComicInfoRoute(
         comicId: info.id,
@@ -215,6 +224,9 @@ class ComicSimplifyEntry extends StatelessWidget {
   final bool roundedCorner;
   final String? collectionTargetId;
   final String? collectionTargetName;
+  final Widget? caption;
+  final double coverAspectRatio;
+  final bool horizontal;
 
   const ComicSimplifyEntry({
     super.key,
@@ -231,6 +243,9 @@ class ComicSimplifyEntry extends StatelessWidget {
     this.roundedCorner = true,
     this.collectionTargetId,
     this.collectionTargetName,
+    this.caption,
+    this.coverAspectRatio = 0.75,
+    this.horizontal = false,
   });
 
   @override
@@ -238,39 +253,90 @@ class ComicSimplifyEntry extends StatelessWidget {
     if (info.title == "无数据") {
       return const SizedBox.shrink();
     }
+    final title = caption == null
+        ? watchChineseDisplayConverter(context)(info.title)
+        : null;
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final height = width / 0.75;
+        final width = horizontal ? 80.0 : constraints.maxWidth;
+        final height = width / coverAspectRatio;
 
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () {
-            final onTapHandler = onTapOverride;
-            if (onTapHandler != null) {
-              onTapHandler(info);
-              return;
-            }
-            _navigateToComicInfo(context);
-          },
-          onLongPressStart: (details) {
-            final onLongPressHandler = onLongPressOverride;
-            if (onLongPressHandler != null) {
-              onLongPressHandler(info, details);
-              return;
-            }
-            if (type != ComicEntryType.normal) {
-              _showDeleteDialog(context);
-            }
-          },
-          onSecondaryTapDown: (details) {
-            onSecondaryTapDown?.call(info, details);
-          },
-          child: SizedBox(
-            width: width,
-            height: height,
-            child: _buildCoverWithTitle(context, width, height),
+        return Semantics(
+          selected: selectionMode ? isSelected : null,
+          child: CollectionPressFeedback(
+            enabled:
+                onLongPressOverride != null || type != ComicEntryType.normal,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                final onTapHandler = onTapOverride;
+                if (onTapHandler != null) {
+                  onTapHandler(info);
+                  return;
+                }
+                _navigateToComicInfo(context);
+              },
+              onLongPressStart: (details) {
+                final onLongPressHandler = onLongPressOverride;
+                if (onLongPressHandler != null) {
+                  onLongPressHandler(info, details);
+                  return;
+                }
+                if (type != ComicEntryType.normal) {
+                  _showDeleteDialog(context);
+                }
+              },
+              onSecondaryTapDown: (details) {
+                onSecondaryTapDown?.call(info, details);
+              },
+              child: caption == null
+                  ? SizedBox(
+                      width: width,
+                      height: height,
+                      child: _buildCoverWithTitle(
+                        context,
+                        width,
+                        height,
+                        title,
+                      ),
+                    )
+                  : horizontal
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: width,
+                          height: height,
+                          child: _buildCoverWithTitle(
+                            context,
+                            width,
+                            height,
+                            title,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(child: caption!),
+                      ],
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: width,
+                          height: height,
+                          child: _buildCoverWithTitle(
+                            context,
+                            width,
+                            height,
+                            title,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        caption!,
+                      ],
+                    ),
+            ),
           ),
         );
       },
@@ -281,23 +347,18 @@ class ComicSimplifyEntry extends StatelessWidget {
     BuildContext context,
     double width,
     double height,
+    String? title,
   ) {
     final circular = roundedCorner ? kComicCardBorderRadius : 0.0;
-    final primary = Theme.of(context).colorScheme.primary;
-    return ClipRRect(
+    final likeCounts = JmCoverLikeScope.maybeOf(context, info.from);
+    final cover = ClipRRect(
       borderRadius: BorderRadius.circular(circular),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        foregroundDecoration: BoxDecoration(
-          border: Border.all(
-            color: isSelected && selectionMode ? primary : Colors.transparent,
-            width: 4,
-          ),
-          borderRadius: BorderRadius.circular(circular),
-        ),
-        child: Stack(
-          children: [
-            CoverWidget(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          CollectionSelectionTint(
+            selected: selectionMode && isSelected,
+            child: CoverWidget(
               fileServer: info.fileServer,
               path: info.path,
               id: info.id,
@@ -307,6 +368,8 @@ class ComicSimplifyEntry extends StatelessWidget {
               width: width,
               height: height,
             ),
+          ),
+          if (title != null)
             Positioned(
               left: 0,
               right: 0,
@@ -329,7 +392,7 @@ class ComicSimplifyEntry extends StatelessWidget {
                 ),
                 padding: const EdgeInsets.fromLTRB(5.0, 20.0, 5.0, 5.0),
                 child: Text(
-                  info.title.let(convertChineseForDisplay),
+                  title,
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 12.0,
@@ -349,45 +412,42 @@ class ComicSimplifyEntry extends StatelessWidget {
                 ),
               ),
             ),
-            Positioned(
-              top: 8,
-              right: 8,
-              child: ComicSelectionBadge(
-                visible: selectionMode,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 160),
-                  width: 30,
-                  height: 30,
-                  decoration: BoxDecoration(
-                    color: isSelected ? primary : Colors.white,
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 2.5),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black87,
-                        blurRadius: 6,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Icon(
-                    isSelected ? Icons.check : Icons.radio_button_unchecked,
-                    color: isSelected ? Colors.white : Colors.black54,
-                    size: 20,
-                  ),
-                ),
-              ),
+          if (likeCounts != null)
+            PositionedDirectional(
+              top: JmCoverLikeBadge.inset,
+              start: JmCoverLikeBadge.inset,
+              end: selectionMode
+                  ? CollectionSelectionMark.inset +
+                        CollectionSelectionMark.size +
+                        JmCoverLikeBadge.inset
+                  : JmCoverLikeBadge.inset,
+              child: JmCoverLikeBadge(counts: likeCounts, comicId: info.id),
             ),
-          ],
-        ),
+          PositionedDirectional(
+            top: CollectionSelectionMark.inset,
+            end: CollectionSelectionMark.inset,
+            child: CollectionSelectionMark(
+              visible: selectionMode,
+              selected: isSelected,
+            ),
+          ),
+        ],
       ),
     );
+    return likeCounts == null
+        ? cover
+        : JmCoverLikeVisibility(comicId: info.id, child: cover);
   }
 
-  void _navigateToComicInfo(BuildContext context) {
+  Future<void> _navigateToComicInfo(BuildContext context) async {
     final pluginId = (info.source.trim().isNotEmpty ? info.source : info.from)
         .trim();
     if (pluginId.isEmpty) return;
+    if (type != ComicEntryType.download &&
+        !await ensurePluginInstalled(context, pluginId)) {
+      return;
+    }
+    if (!context.mounted) return;
     context.pushRoute(
       ComicInfoRoute(
         comicId: info.id,
@@ -482,9 +542,7 @@ class ComicSimplifyEntry extends StatelessWidget {
         .findFirst();
 
     if (temp != null) {
-      temp.deleted = true;
-      temp.updatedAt = DateTime.now().toUtc();
-      objectbox.unifiedHistoryBox.put(temp);
+      await ReaderHistoryService.instance.deleteHistoryRecord(temp);
     }
   }
 

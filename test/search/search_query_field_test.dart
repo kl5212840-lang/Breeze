@@ -12,6 +12,66 @@ import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 /// didChangeDependencies 对无 RouterScope 的裸 pump 做了容错，
 /// 所以这里不需要搭整页路由，直接 pump 输入框即可。
 void main() {
+  testWidgets('a normal rebuild preserves composing text and a hand tap reopens a hidden keyboard', (tester) async {
+    final focus = FocusNode(); addTearDown(focus.dispose);
+    late StateSetter rebuild;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: StatefulBuilder(
+      builder: (context, setState) {
+        rebuild = setState;
+        return SearchQueryField(query: '', focusNode: focus, inline: true,
+          autoExpand: true, closeOnSubmit: false);
+      },
+    ))));
+    await tester.pumpAndSettle();
+    const composing = TextEditingValue(text: 'pin', selection: TextSelection.collapsed(offset: 3),
+      composing: TextRange(start: 0, end: 3));
+    tester.testTextInput.updateEditingValue(composing);
+    await tester.pump();
+    tester.testTextInput.hide();
+    rebuild(() {});
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isFalse);
+    expect(tester.widget<TextField>(find.byType(TextField)).controller!.value, composing);
+    await tester.tap(find.byType(TextField));
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isTrue);
+    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, 'pin');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+  testWidgets(
+    'dedicated search edits in place with stable icon and clear slots',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Padding(
+              padding: const EdgeInsets.all(16),
+              child: SearchQueryField(
+                query: '',
+                inline: true,
+                autoExpand: true,
+                hintText: 'Search',
+                onSubmitted: (_) {},
+              ),
+            ),
+          ),
+        ),
+      );
+      final initial = tester.getRect(find.byType(TextField));
+      await tester.pumpAndSettle();
+      expect(tester.getRect(find.byType(TextField)), initial);
+      final editable = tester.getRect(find.byType(EditableText));
+      await tester.enterText(find.byType(TextField), 'query');
+      await tester.pumpAndSettle();
+      expect(tester.getRect(find.byType(EditableText)), editable);
+      expect(find.byType(TweenAnimationBuilder<double>), findsNothing);
+      await tester.tap(find.byTooltip(t.common.clear));
+      await tester.pumpAndSettle();
+      expect(tester.getRect(find.byType(EditableText)), editable);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('keeps the expanded search field usable near the right edge', (
     tester,
   ) async {

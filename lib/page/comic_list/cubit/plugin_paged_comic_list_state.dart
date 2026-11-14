@@ -19,6 +19,7 @@ abstract class PluginPagedComicListState with _$PluginPagedComicListState {
     @Default(<UnifiedComicListItem>[]) List<UnifiedComicListItem> list,
     @Default(false) bool hasReachedMax,
     @Default(1) int page,
+    int? knownTotal,
     @Default('') String result,
   }) = _PluginPagedComicListState;
 }
