@@ -317,4 +317,45 @@ class ManagedVideoDownloadsTest {
         assertNull(downloads.status(identity))
         assertTrue(File(root, "breeze-video-staging").list().orEmpty().isEmpty())
     }
+
+    @Test fun foregroundStartsThreeDifferentWritersAndCancelsOnlyTheSelectedOne() {
+        val root = temp.newFolder()
+        val worker = Queue()
+        val owner = Queue()
+        var launches = 0
+        val foreground = VideoDownloadForeground { launches++; true }
+        val downloads = ManagedVideoDownloads(root, worker, { owner.execute(it) }, { 4000L }, foreground)
+        val tasks = listOf('a', 'c', 'e').map {
+            identity.copy(key = it.toString().repeat(64), resourceId = it.toString().repeat(64))
+        }
+        val receivers = tasks.mapIndexed { index, _ -> Receiver("engine-$index") }
+        var connections = 0
+        for ((task, receiver) in tasks.zip(receivers)) {
+            downloads.start(task, receiver.subscription, media, referer, emptyMap()) {
+                connections++
+                Response(it, body = bytes)
+            }
+        }
+        assertEquals(1, launches)
+        val fourth = Receiver("fourth")
+        downloads.start(identity, fourth.subscription, media, referer, emptyMap()) { Response(it, body = bytes) }
+        assertEquals(listOf("busy"), fourth.results)
+        val host = ForegroundHost()
+        val token = foreground.notice!!.token
+        assertTrue(foreground.bind(host, token))
+        foreground.cancel(token)
+        assertTrue(foreground.notice!!.token != token)
+        assertEquals(0, host.stops)
+
+        worker.drain()
+        owner.drain()
+
+        assertEquals(2, connections)
+        assertEquals(listOf("cancelled"), receivers.first().results)
+        for (receiver in receivers.drop(1)) {
+            assertEquals("staged", (receiver.results.single() as Map<*, *>)["status"])
+        }
+        assertEquals(1, host.stops)
+        assertFalse(downloads.busy)
+    }
 }

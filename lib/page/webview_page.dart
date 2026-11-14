@@ -157,6 +157,23 @@ class _WebViewPageState extends State<WebViewPage> {
     }
   }
 
+  Future<void> _handleAndroidBrowserBack() async {
+    final controller = _controller;
+    if (controller == null) return;
+    if (_isFullscreen) {
+      // Android WebView exposes fullscreen state but no Flutter exit command.
+      // Ask the document to exit fullscreen and preserve browser history.
+      await controller
+          .evaluateJavascript(
+            source:
+                'if (document.fullscreenElement) document.exitFullscreen();',
+          )
+          .catchError((Object _) => null);
+    } else if (_canGoBack) {
+      await controller.goBack().catchError((Object _) {});
+    }
+  }
+
   Future<void> _loadSiteUrl(Uri url) async {
     final controller = _controller;
     if (controller == null) return;
@@ -841,11 +858,17 @@ class _WebViewPageState extends State<WebViewPage> {
           ? _siteNavigationBar(context, navigation)
           : null,
     );
-    if (navigation == null || Platform.isLinux) return page;
+    final android = Platform.isAndroid;
+    if (Platform.isLinux || navigation == null && !android) return page;
     return PopScope(
-      canPop: _exitRequested || !_canGoBack,
+      canPop: _exitRequested || (!_canGoBack && !(android && _isFullscreen)),
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _canGoBack && !_exitRequested) _controller?.goBack();
+        if (didPop || _exitRequested) return;
+        if (android) {
+          unawaited(_handleAndroidBrowserBack());
+        } else if (_canGoBack) {
+          _controller?.goBack();
+        }
       },
       child: page,
     );

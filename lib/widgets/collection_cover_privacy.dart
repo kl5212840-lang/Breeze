@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -131,46 +132,20 @@ class CollectionCoverPrivacy extends StatelessWidget {
     required this.child,
     this.enabled = true,
     this.fit = BoxFit.cover,
+    this.image,
+    this.mosaicPlaceholder,
   });
   final BoxFit fit;
+  final ImageProvider? image;
+  final Widget? mosaicPlaceholder;
   final Widget child;
   final bool enabled;
 
-  static Float64List _scale(double value) => Float64List.fromList([
-    value,
-    0,
-    0,
-    0,
-    0,
-    value,
-    0,
-    0,
-    0,
-    0,
-    1,
-    0,
-    0,
-    0,
-    0,
-    1,
-  ]);
-  ui.ImageFilter _filter(CollectionCoverStyle style) =>
-      style == CollectionCoverStyle.mosaic
-      ? ui.ImageFilter.compose(
-          outer: ui.ImageFilter.matrix(
-            _scale(24),
-            filterQuality: FilterQuality.none,
-          ),
-          inner: ui.ImageFilter.matrix(
-            _scale(1 / 24),
-            filterQuality: FilterQuality.low,
-          ),
-        )
-      : ui.ImageFilter.blur(
-          sigmaX: style == CollectionCoverStyle.glass ? 30 : 24,
-          sigmaY: style == CollectionCoverStyle.glass ? 30 : 24,
-          tileMode: TileMode.clamp,
-        );
+  ui.ImageFilter _filter(CollectionCoverStyle style) => ui.ImageFilter.blur(
+    sigmaX: style == CollectionCoverStyle.glass ? 30 : 24,
+    sigmaY: style == CollectionCoverStyle.glass ? 30 : 24,
+    tileMode: TileMode.clamp,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -195,6 +170,7 @@ class CollectionCoverPrivacy extends StatelessWidget {
                 style == CollectionCoverStyle.custom &&
                 path != null &&
                 path.isNotEmpty;
+            final mosaic = protected && style == CollectionCoverStyle.mosaic;
             return ClipRect(
               child: Stack(
                 fit: StackFit.passthrough,
@@ -202,10 +178,10 @@ class CollectionCoverPrivacy extends StatelessWidget {
                   // Keep the original loading and in layout. Opaque artwork
                   // covers it even if decoding fails, so its paint can stop.
                   Opacity(
-                    opacity: hasArtwork ? 0 : 1,
+                    opacity: hasArtwork || mosaic ? 0 : 1,
                     alwaysIncludeSemantics: true,
                     child: ImageFiltered(
-                      enabled: protected && !hasArtwork,
+                      enabled: protected && !hasArtwork && !mosaic,
                       imageFilter: _filter(style),
                       child: image!,
                     ),
@@ -214,6 +190,12 @@ class CollectionCoverPrivacy extends StatelessWidget {
                     child: IgnorePointer(
                       child: hasArtwork
                           ? _ReplacementCover(path: path)
+                          : mosaic
+                          ? _MosaicCover(
+                              image: this.image,
+                              fit: fit,
+                              placeholder: mosaicPlaceholder,
+                            )
                           : protected && style == CollectionCoverStyle.glass
                           ? ColoredBox(
                               color:
@@ -233,6 +215,118 @@ class CollectionCoverPrivacy extends StatelessWidget {
       },
     );
   }
+}
+
+/// Render an actual tiny image and magnify its pixels. Reciprocal transform
+/// filters can be combined by the renderer before sampling the source.
+class _MosaicCover extends StatefulWidget {
+  const _MosaicCover({
+    required this.image,
+    required this.fit,
+    required this.placeholder,
+  });
+  final ImageProvider? image;
+  final BoxFit fit;
+  final Widget? placeholder;
+
+  @override
+  State<_MosaicCover> createState() => _MosaicCoverState();
+}
+
+class _MosaicCoverState extends State<_MosaicCover> {
+  late final ImageStreamListener _listener = ImageStreamListener(
+    _sourceReady,
+    onError: (_, _) {},
+  );
+  ImageStream? _source;
+  ui.Image? _pixels;
+  var _revision = 0;
+  bool _sampled = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _resolve();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MosaicCover oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.image != oldWidget.image) _resolve();
+  }
+
+  void _resolve() {
+    // Use the original provider and cache key, including its resize/network
+    // policy. Never fetch a second URL or put a mosaic into the source cache.
+    final next = widget.image?.resolve(createLocalImageConfiguration(context));
+    if (next?.key == _source?.key) return;
+    _revision++;
+    _source?.removeListener(_listener);
+    _pixels?.dispose();
+    _pixels = null;
+    _sampled = false;
+    _source = next;
+    next?.addListener(_listener);
+  }
+
+  Future<void> _sourceReady(ImageInfo info, bool synchronous) async {
+    if (_sampled) {
+      info.dispose();
+      return;
+    }
+    _sampled = true;
+    final revision = _revision;
+    ui.Image? pixels;
+    try {
+      final source = info.image;
+      const maxBlocks = 6;
+      final ratio = maxBlocks / math.max(source.width, source.height);
+      final width = (source.width * ratio).round().clamp(1, maxBlocks);
+      final height = (source.height * ratio).round().clamp(1, maxBlocks);
+      final recorder = ui.PictureRecorder();
+      ui.Canvas(recorder).drawImageRect(
+        source,
+        Rect.fromLTWH(0, 0, source.width.toDouble(), source.height.toDouble()),
+        Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+        ui.Paint()..filterQuality = FilterQuality.medium,
+      );
+      final picture = recorder.endRecording();
+      try {
+        pixels = await picture.toImage(width, height);
+      } finally {
+        picture.dispose();
+      }
+    } catch (_) {
+      // Missing or unsupported images keep the opaque placeholder.
+    } finally {
+      info.dispose();
+    }
+    if (!mounted || revision != _revision) {
+      pixels?.dispose();
+      return;
+    }
+    if (pixels != null) setState(() => _pixels = pixels);
+  }
+
+  @override
+  void dispose() {
+    _revision++;
+    _source?.removeListener(_listener);
+    _pixels?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+    color: Theme.of(context).colorScheme.surfaceContainerHigh,
+    child: _pixels == null && widget.placeholder != null
+        ? widget.placeholder!
+        : RawImage(
+            image: _pixels,
+            fit: widget.fit,
+            filterQuality: FilterQuality.none,
+          ),
+  );
 }
 
 class _ReplacementCover extends StatelessWidget {

@@ -114,6 +114,7 @@ class VideoSelectionPanel extends StatelessWidget {
         return NativeMaterialSurface(
           systemStyle: VideoControlAppearance.usesSystem(context),
           readableContent: true,
+          androidGlass: true,
           radius: floating
               ? 24
               : side

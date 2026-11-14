@@ -1078,8 +1078,8 @@ class Translations$settings$zh_CN {
 	/// zh-CN: '同步插件'
 	String get syncPlugins => '同步插件';
 
-	/// zh-CN: '插件偏好、已保存账号和图片；登录可能需验证。'
-	String get syncPluginsSubtitle => '插件偏好、已保存账号和图片；登录可能需验证。';
+	/// zh-CN: '恢复云端插件及其偏好、账号和图片。登录可能需验证。'
+	String get syncPluginsSubtitle => '恢复云端插件及其偏好、账号和图片。登录可能需验证。';
 
 	/// zh-CN: '手动同步'
 	String get manualSyncSection => '手动同步';
@@ -6703,6 +6703,9 @@ class Translations$download$zh_CN {
 	/// zh-CN: '关闭下载面板或离开此页，下载会继续。'
 	String get helpContinue => '关闭下载面板或离开此页，下载会继续。';
 
+	/// zh-CN: '下载可在 Breeze 内继续。锁屏或切换应用后暂停，返回 Breeze 后自动继续。'
+	String get helpContinueIos => '下载可在 Breeze 内继续。锁屏或切换应用后暂停，返回 Breeze 后自动继续。';
+
 	/// zh-CN: '导出下载副本'
 	String get exportFiles => '导出下载副本';
 
@@ -6885,6 +6888,9 @@ class Translations$download$zh_CN {
 
 	/// zh-CN: '关闭此面板后仍会继续下载，可在下载中心查看。'
 	String get videoForegroundNote => '关闭此面板后仍会继续下载，可在下载中心查看。';
+
+	/// zh-CN: '关闭面板后可在下载中心查看。锁屏或切换应用后暂停，返回 Breeze 后自动继续。'
+	String get videoForegroundNoteIos => '关闭面板后可在下载中心查看。锁屏或切换应用后暂停，返回 Breeze 后自动继续。';
 
 	/// zh-CN: '下载记录未能保存，下次打开应用时可能无法显示。'
 	String get videoRecordFailed => '下载记录未能保存，下次打开应用时可能无法显示。';
@@ -10549,7 +10555,7 @@ extension on Translations {
 			'settings.syncSettings' => '同步设置',
 			'settings.syncSettingsSubtitle' => '同步外观、阅读和书架设置',
 			'settings.syncPlugins' => '同步插件',
-			'settings.syncPluginsSubtitle' => '插件偏好、已保存账号和图片；登录可能需验证。',
+			'settings.syncPluginsSubtitle' => '恢复云端插件及其偏好、账号和图片。登录可能需验证。',
 			'settings.manualSyncSection' => '手动同步',
 			'settings.uploadToCloud' => '上传到云端',
 			'settings.uploadToCloudSubtitle' => '保存记录、插件、设置和已保存的账号资料',
@@ -12441,6 +12447,7 @@ extension on Translations {
 			'download.helpHls' => 'iOS 的 HLS 离线包仅能在 Breeze 内播放，暂不支持导出。',
 			'download.helpDelete' => '删除本地下载前会要求确认，不会删除源站作品。',
 			'download.helpContinue' => '关闭下载面板或离开此页，下载会继续。',
+			'download.helpContinueIos' => '下载可在 Breeze 内继续。锁屏或切换应用后暂停，返回 Breeze 后自动继续。',
 			'download.exportFiles' => '导出下载副本',
 			'download.exportCopySaved' => '副本已保存',
 			'download.exportBusy' => '文件正在使用，稍后可以再次导出。',
@@ -12502,6 +12509,7 @@ extension on Translations {
 			'download.videoCancelled' => '已取消',
 			'download.videoInterrupted' => '下载已中断，请打开影片页面重新下载',
 			'download.videoForegroundNote' => '关闭此面板后仍会继续下载，可在下载中心查看。',
+			'download.videoForegroundNoteIos' => '关闭面板后可在下载中心查看。锁屏或切换应用后暂停，返回 Breeze 后自动继续。',
 			'download.videoRecordFailed' => '下载记录未能保存，下次打开应用时可能无法显示。',
 			'download.inProgress' => '进行中',
 			'download.incomplete' => '未完成',
@@ -12803,10 +12811,10 @@ extension on Translations {
 			'videoSearch.clearRecent' => '清空最近搜索',
 			'videoSearch.removeRecent' => '删除这条搜索',
 			'videoSearch.localOnly' => '仅保存在本机',
-			'videoSearch.hint' => '搜索视频或作者',
-			'videoSearch.clearQuery' => '清除关键词',
 			_ => null,
 		} ?? switch (path) {
+			'videoSearch.hint' => '搜索视频或作者',
+			'videoSearch.clearQuery' => '清除关键词',
 			'videoSearch.submit' => '搜索',
 			'videoSearch.cancel' => '取消搜索',
 			'videoSearch.recentFailed' => '最近搜索暂不可用，仍可继续搜索。',
@@ -13317,10 +13325,10 @@ extension on Translations {
 			'pluginLifecycle.purge' => '彻底删除资料',
 			'pluginLifecycle.purgeHint' => '清理此插件的本机资料，下载文件可另选。',
 			'pluginLifecycle.purgeTitle' => '删除此插件的资料？',
-			'pluginLifecycle.purgeConfirm' => '将清理所列资料，无法直接撤销。',
-			'pluginLifecycle.clearTarget' => '云端资料',
 			_ => null,
 		} ?? switch (path) {
+			'pluginLifecycle.purgeConfirm' => '将清理所列资料，无法直接撤销。',
+			'pluginLifecycle.clearTarget' => '云端资料',
 			'pluginLifecycle.localOnly' => '仅清理本机',
 			'pluginLifecycle.localOnlyHint' => '云端资料保留，此设备不会自动导回。',
 			'pluginLifecycle.cloudAlso' => '同时从 Breeze 云端删除',

@@ -150,24 +150,28 @@ class _CoverWidgetState extends State<CoverWidget> {
               final colors = Theme.of(context).colorScheme;
               // The replacement artwork belongs to privacy, so it must be
               // present before the original cover path resolves on remount.
-              Widget surface(Widget pixels, {Widget? feedback}) =>
-                  PictureRecoveryRegion(
-                    bloc: _bloc,
-                    child: ColoredBox(
-                      color: colors.surfaceContainerHigh,
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          CollectionCoverPrivacy(
-                            enabled: widget.pictureType != PictureType.user,
-                            fit: fit,
-                            child: pixels,
-                          ),
-                          ?feedback,
-                        ],
+              Widget surface(
+                Widget pixels, {
+                Widget? feedback,
+                ImageProvider? image,
+              }) => PictureRecoveryRegion(
+                bloc: _bloc,
+                child: ColoredBox(
+                  color: colors.surfaceContainerHigh,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      CollectionCoverPrivacy(
+                        enabled: widget.pictureType != PictureType.user,
+                        fit: fit,
+                        image: image,
+                        child: pixels,
                       ),
-                    ),
-                  );
+                      ?feedback,
+                    ],
+                  ),
+                ),
+              );
 
               switch (state.status) {
                 case PictureLoadStatus.initial:
@@ -235,6 +239,7 @@ class _CoverWidgetState extends State<CoverWidget> {
                         ),
                       ),
                     ),
+                    image: image,
                   );
                 case PictureLoadStatus.failure:
                   if (widget.pictureType == PictureType.category) {

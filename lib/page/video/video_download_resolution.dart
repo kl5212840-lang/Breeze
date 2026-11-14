@@ -4,6 +4,11 @@ class VideoResolutionCancelled implements Exception {
   const VideoResolutionCancelled();
 }
 
+class VideoDownloadResolutionFailure implements Exception {
+  const VideoDownloadResolutionFailure(this.reason);
+  final String reason;
+}
+
 /// One parsing attempt. A source gate can retire early only after the exact
 /// browser/runtime owner acknowledges cancellation, never from a UI flag.
 class VideoDownloadResolutionOwner {

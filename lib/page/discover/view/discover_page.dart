@@ -305,6 +305,8 @@ class _DiscoverViewState extends State<_DiscoverView> {
                   plugins[index],
                   state,
                   grid: false,
+                  first: index == 0,
+                  last: index == plugins.length - 1,
                 ),
               ),
             if (plugins.isNotEmpty)
@@ -322,6 +324,8 @@ class _DiscoverViewState extends State<_DiscoverView> {
     PluginRuntimeState plugin,
     DiscoverState state, {
     required bool grid,
+    bool first = false,
+    bool last = false,
   }) {
     final cubit = context.read<DiscoverCubit>();
     final infoState =
@@ -413,6 +417,32 @@ class _DiscoverViewState extends State<_DiscoverView> {
       onAction: onAction,
     );
     final colors = Theme.of(context).colorScheme;
+    if (AppInterfaceStyleScope.usesAndroidSystem(context)) {
+      const corner = Radius.circular(16);
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Material(
+          color: colors.surfaceContainerLow,
+          borderRadius: BorderRadius.vertical(
+            top: first ? corner : Radius.zero,
+            bottom: last ? corner : Radius.zero,
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              card,
+              if (!last)
+                Divider(
+                  height: 1,
+                  indent: 12,
+                  endIndent: 12,
+                  color: colors.outlineVariant.withValues(alpha: .45),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
     if (!AppInterfaceStyleScope.usesSystem(context)) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -503,6 +533,8 @@ class _DiscoverViewState extends State<_DiscoverView> {
   }
 
   Widget _buildSectionHeader(BuildContext context, String title) {
+    final android = AppInterfaceStyleScope.usesAndroidSystem(context);
+    final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 4, 16, 8),
       child: Row(
@@ -520,7 +552,37 @@ class _DiscoverViewState extends State<_DiscoverView> {
           ),
           SizedBox(
             width: 168,
-            child: !AppInterfaceStyleScope.usesSystem(context)
+            child: android
+                ? SegmentedButton<_DiscoverLayout>(
+                    segments: [
+                      ButtonSegment(
+                        value: _DiscoverLayout.list,
+                        label: Text(t.discover.listLayout),
+                      ),
+                      ButtonSegment(
+                        value: _DiscoverLayout.grid,
+                        label: Text(t.discover.gridLayout),
+                      ),
+                    ],
+                    selected: {_layout},
+                    style: ButtonStyle(
+                      backgroundColor: WidgetStateProperty.resolveWith(
+                        (states) => states.contains(WidgetState.selected)
+                            ? colors.primaryContainer
+                            : Colors.transparent,
+                      ),
+                      foregroundColor: WidgetStateProperty.resolveWith(
+                        (states) => states.contains(WidgetState.selected)
+                            ? colors.onPrimaryContainer
+                            : colors.onSurfaceVariant,
+                      ),
+                      side: WidgetStatePropertyAll(
+                        BorderSide(color: colors.outline),
+                      ),
+                    ),
+                    onSelectionChanged: (value) => _setLayout(value.single),
+                  )
+                : !AppInterfaceStyleScope.usesSystem(context)
                 ? BreezeSectionSelector(
                     options: {
                       'list': t.discover.listLayout,

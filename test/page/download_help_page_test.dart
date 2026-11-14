@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -73,7 +74,9 @@ void main() {
             t.download.helpExport,
             t.download.helpHls,
             t.download.helpDelete,
-            t.download.helpContinue,
+            defaultTargetPlatform == TargetPlatform.iOS
+                ? t.download.helpContinueIos
+                : t.download.helpContinue,
           ]) {
             expect(find.textContaining(text), findsOneWidget);
           }

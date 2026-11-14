@@ -129,4 +129,58 @@ void main() {
       );
     },
   );
+
+  test('Android uses the newest compatible APK from the fork', () {
+    const fork = breezeReleaseRepository;
+    final fixture =
+        jsonDecode(
+              File('update-tag-version/latest-release.json').readAsStringSync(),
+            )
+            as Map<String, dynamic>;
+    final asset =
+        (fixture['assets'] as List<dynamic>).first as Map<String, dynamic>;
+    Map<String, dynamic> release(
+      String version,
+      String filename, {
+      String repo = fork,
+    }) {
+      return {
+        ...fixture,
+        'tag_name': version,
+        'html_url': 'https://github.com/$repo/releases/tag/$version',
+        'assets': [
+          {
+            ...asset,
+            'name': filename,
+            'browser_download_url':
+                'https://github.com/$repo/releases/download/$version/$filename',
+          },
+        ],
+      };
+    }
+
+    final ios = release('v3.0.38', 'Breeze-iOS-v3.0.38.ipa');
+    final earlier = release('v3.0.37', 'Breeze-Android-v3.0.37-arm64-v8a.apk');
+    final wrongChannel = release(
+      'v3.0.39',
+      'Breeze-Android-v3.0.39-arm64-v8a.apk',
+      repo: 'deretame/Breeze',
+    );
+    final x86 = release('v3.0.39', 'Breeze-Android-v3.0.39-x86_64.apk');
+    expect(
+      AppUpdateRelease.latestAndroid(
+        [wrongChannel, x86, ios, earlier],
+        ['arm64-v8a'],
+      )?.tagName,
+      'v3.0.37',
+    );
+    final android = release('v3.0.38', 'Breeze-Android-v3.0.38-arm64-v8a.apk');
+    expect(
+      AppUpdateRelease.latestAndroid(
+        [earlier, android],
+        ['arm64-v8a'],
+      )?.tagName,
+      'v3.0.38',
+    );
+  });
 }

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:zephyr/main.dart';
+import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
 import 'package:zephyr/network/sync/plugin_config_merge.dart';
 import 'package:zephyr/network/sync/plugin_portable_scope.dart';
@@ -9,13 +10,17 @@ import 'package:zephyr/network/sync/portable_preferences.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/service/local_plugin_installation_state.dart';
 
-/// Device installation is the only participation decision. Disabled plugins
-/// remain installed. This snapshot creates no persisted sync preference.
+/// Installed sources participate even when disabled. Manual cloud restore can
+/// also stage new installations before applying their associated data.
 class SyncPluginParticipation {
-  SyncPluginParticipation._(Set<String> sources, this._fingerprint)
-    : sources = Set.unmodifiable(sources);
+  SyncPluginParticipation._(
+    Set<String> sources,
+    this._fingerprint, [
+    this._restoring = const {},
+  ]) : sources = Set.unmodifiable(sources);
   final Set<String> sources;
-  final String _fingerprint;
+  final Set<String> _restoring;
+  String _fingerprint;
 
   static Set<String> _uuids({bool liveOnly = false}) {
     // Property queries avoid materializing installed CJS bundles on each guard.
@@ -34,10 +39,11 @@ class SyncPluginParticipation {
     }
   }
 
-  static String _currentFingerprint() {
+  static String _currentFingerprint([Set<String> restoring = const {}]) {
     final local = LocalPluginInstallationState.instance;
     final live = _uuids(liveOnly: true);
-    final keys = {..._uuids(), ...local.removedUuids}.toList()..sort();
+    final keys = {..._uuids(), ...local.removedUuids, ...restoring}.toList()
+      ..sort();
     return jsonEncode([
       for (final key in keys)
         [
@@ -59,8 +65,26 @@ class SyncPluginParticipation {
     }, _currentFingerprint());
   }
 
+  SyncPluginParticipation includingCloudInstallations(List<PluginInfo> rows) {
+    check();
+    final restoring = Set<String>.unmodifiable(rows.map((row) => row.uuid));
+    return SyncPluginParticipation._(
+      {...sources, ...restoring},
+      _currentFingerprint(restoring),
+      restoring,
+    );
+  }
+
+  void commitCloudInstallations(List<PluginInfo> rows) {
+    check();
+    objectbox.store.runInTransaction(TxMode.write, () {
+      objectbox.pluginInfoBox.putMany(rows, mode: PutMode.insert);
+    });
+    _fingerprint = _currentFingerprint(_restoring);
+  }
+
   void check() {
-    if (_currentFingerprint() != _fingerprint ||
+    if (_currentFingerprint(_restoring) != _fingerprint ||
         sources.any(LocalPluginInstallationState.instance.isInstalling)) {
       throw const PluginLifecycleChanged();
     }

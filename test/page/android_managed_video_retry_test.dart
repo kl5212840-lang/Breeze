@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/object_box/model.dart';
+import 'package:zephyr/network/source_network_policy.dart';
 import 'package:zephyr/page/video/android_managed_video_attempt.dart';
 import 'package:zephyr/page/video/video_download.dart';
 import 'package:zephyr/page/video/video_download_retry.dart';
@@ -230,28 +231,60 @@ void main() {
     },
   );
 
-  test('an account change changes the ephemeral attachment scope', () async {
-    const source = '7579e175-56d8-4430-8efe-1578294e7b75';
-    await PluginRegistryService.I.upsert(
-      PluginInfo(
-        uuid: source,
-        version: 'fixture',
-        originScript: '',
-        insertedAt: DateTime.utc(2026),
-        updatedAt: DateTime.utc(2026),
-        isEnabled: true,
-        isDeleted: false,
-        debug: false,
-        lastLoadSuccess: true,
-      ),
-    );
-    replaceActivePluginAccount(source, {'auth.token': 'test-token-a'});
-    final first = AndroidManagedVideoAttempt.scopeFor(source);
-    expect(first, matches(RegExp(r'^[a-f0-9]{64}$')));
-    expect(AndroidManagedVideoAttempt.scopeFor(source), first);
-    replaceActivePluginAccount(source, {'auth.token': 'test-token-b'});
-    final next = AndroidManagedVideoAttempt.scopeFor(source);
-    expect(next, matches(RegExp(r'^[a-f0-9]{64}$')));
-    expect(next, isNot(first));
-  });
+  test(
+    'account and route changes change the ephemeral attachment scope',
+    () async {
+      const source = '7579e175-56d8-4430-8efe-1578294e7b75';
+      await PluginRegistryService.I.upsert(
+        PluginInfo(
+          uuid: source,
+          version: 'fixture',
+          originScript: '',
+          insertedAt: DateTime.utc(2026),
+          updatedAt: DateTime.utc(2026),
+          isEnabled: true,
+          isDeleted: false,
+          debug: false,
+          lastLoadSuccess: true,
+        ),
+      );
+      replaceActivePluginAccount(source, {'auth.token': 'test-token-a'});
+      final first = AndroidManagedVideoAttempt.scopeFor(source);
+      expect(first, matches(RegExp(r'^[a-f0-9]{64}$')));
+      expect(AndroidManagedVideoAttempt.scopeFor(source), first);
+      const proxy = 'http://proxy-one.test:8080';
+      await SourceNetworkPolicies.save(
+        source,
+        const SourceNetworkPreference(
+          mode: SourceNetworkMode.proxy,
+          address: proxy,
+        ),
+      );
+      final managed = VideoLocalResources.identity(source, watch, quality);
+      final attempt = (await AndroidManagedVideoAttempt.interrupted({
+        'status': 'interrupted',
+        'key': 'route-scope',
+        'attempt': 1,
+        'source': source,
+        'url': watch.toString(),
+        'quality': quality,
+        'resourceId': managed,
+      }))!;
+      expect(
+        attempt.scope,
+        AndroidManagedVideoAttempt.scopeFor(source, proxy: proxy),
+      );
+      expect(attempt.scope, isNot(first));
+      expect(attempt.matchesCurrentScope(proxy), isTrue);
+      expect(
+        attempt.matchesCurrentScope('http://proxy-two.test:8080'),
+        isFalse,
+      );
+      replaceActivePluginAccount(source, {'auth.token': 'test-token-b'});
+      final next = AndroidManagedVideoAttempt.scopeFor(source);
+      expect(next, matches(RegExp(r'^[a-f0-9]{64}$')));
+      expect(next, isNot(first));
+      expect(attempt.matchesCurrentScope(proxy), isFalse);
+    },
+  );
 }

@@ -1,6 +1,8 @@
 import 'package:zephyr/widgets/native_view_occlusion.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_navigation_bar.dart';
+import 'package:zephyr/widgets/breeze_control_colors.dart';
+import 'package:zephyr/widgets/breeze_theme_colors.dart';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -53,6 +55,10 @@ class VideoNativeNavigation extends StatefulWidget {
   final List<String?> badgeValues;
   final int currentIndex;
   final ValueChanged<int>? onTap;
+
+  static double androidContentHeightOf(BuildContext context) =>
+      68 + (MediaQuery.textScalerOf(context).scale(12) - 12).clamp(0, 48);
+
   @override
   State<VideoNativeNavigation> createState() => _VideoNativeNavigationState();
 }
@@ -112,6 +118,69 @@ class _VideoNativeNavigationState extends State<VideoNativeNavigation> {
             ),
         ],
         onSelected: (index) => widget.onTap?.call(index),
+      );
+    }
+    if (AppInterfaceStyleScope.usesAndroidSystem(context)) {
+      final theme = Theme.of(context);
+      final colors = theme.colorScheme;
+      final surface = BreezeControlColors.navigationSurface(theme);
+      final selection = BreezeControlColors.navigation(
+        colors,
+        backdrop: surface,
+        highContrast: MediaQuery.highContrastOf(context),
+      );
+      final selectedLabel = BreezeThemeColors.readableOn(
+        colors.primary,
+        surface,
+      );
+      final otherLabel = BreezeThemeColors.readableOn(
+        colors.onSurfaceVariant,
+        surface,
+      );
+      return NavigationBarTheme(
+        data: NavigationBarTheme.of(context).copyWith(
+          iconTheme: WidgetStateProperty.resolveWith(
+            (states) => IconThemeData(
+              size: 24,
+              color: states.contains(WidgetState.selected)
+                  ? selection.foreground
+                  : otherLabel,
+            ),
+          ),
+          labelTextStyle: WidgetStateProperty.resolveWith(
+            (states) => theme.textTheme.labelMedium?.copyWith(
+              color: states.contains(WidgetState.selected)
+                  ? selectedLabel
+                  : otherLabel,
+            ),
+          ),
+        ),
+        child: MediaQuery.removePadding(
+          context: context,
+          // The root tab host passes the full window insets to its custom bar.
+          // A bottom bar must reserve the gesture inset only.
+          removeTop: true,
+          child: NavigationBar(
+            height: VideoNativeNavigation.androidContentHeightOf(context),
+            backgroundColor: surface,
+            surfaceTintColor: Colors.transparent,
+            elevation: 0,
+            indicatorColor: selection.indicator,
+            labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+            selectedIndex: widget.currentIndex,
+            onDestinationSelected: widget.onTap,
+            destinations: [
+              for (final item in widget.items)
+                NavigationDestination(
+                  icon: item.icon,
+                  selectedIcon: item.activeIcon,
+                  label: item.label ?? '',
+                  tooltip: item.tooltip,
+                  enabled: widget.onTap != null,
+                ),
+            ],
+          ),
+        ),
       );
     }
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) {

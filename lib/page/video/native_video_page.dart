@@ -18,6 +18,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_diagnostic_preferences.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
@@ -207,6 +208,9 @@ class _NativeVideoPageState extends State<NativeVideoPage>
   final _retiredPlayers = Expando<Future<void>>();
   final _localReadLeases = Expando<ManagedVideoReadLease>();
   final _hlsReadLeases = Expando<VideoHlsPlaybackLease>();
+  final _offlineAudio = Expando<List<VideoAudioTrack>>();
+  final _offlineCaption = Expando<Uri>();
+  final _offlineTrackBusy = Expando<bool>();
   bool _relatedPageOpen = false;
   bool _auxiliaryOverlayOpen = false;
   Timer? _episodeWaitTimer;
@@ -518,6 +522,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                             key: const ValueKey('video-playlist.material'),
                             radius: 16,
                             floating: true,
+                            androidGlass: true,
                             child: ConstrainedBox(
                               constraints: BoxConstraints(
                                 minWidth:
@@ -927,6 +932,168 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       _quickSection = section;
       _lastQuickSection = section;
     });
+    final offlinePlayer = _androidOfflineHlsPlayer;
+    if (section == VideoQuickSection.playback && offlinePlayer != null) {
+      unawaited(_refreshOfflineAudio(offlinePlayer));
+    }
+  }
+
+  VideoPlayerController? get _androidOfflineHlsPlayer {
+    final player = _controller;
+    if (!widget.offlineOnly ||
+        defaultTargetPlatform != TargetPlatform.android ||
+        player == null ||
+        !player.value.isInitialized ||
+        _failed ||
+        _hlsReadLeases[player] == null) {
+      return null;
+    }
+    return player;
+  }
+
+  bool _currentOfflineHlsPlayer(VideoPlayerController player) =>
+      mounted && !_routeExited && identical(player, _androidOfflineHlsPlayer);
+
+  Future<void> _refreshOfflineAudio(VideoPlayerController player) async {
+    if (!player.isAudioTrackSupportAvailable() ||
+        _offlineTrackBusy[player] == true) {
+      return;
+    }
+    try {
+      final tracks = await player.getAudioTracks();
+      if (_currentOfflineHlsPlayer(player) &&
+          _offlineTrackBusy[player] != true) {
+        setState(() => _offlineAudio[player] = tracks);
+      }
+    } catch (_) {
+      // Video playback still works on devices without a track selector.
+    }
+  }
+
+  Future<void> _changeOfflineTrack(
+    VideoPlayerController player,
+    Future<void> Function() change,
+  ) async {
+    if (!_currentOfflineHlsPlayer(player) ||
+        _offlineTrackBusy[player] == true) {
+      return;
+    }
+    setState(() => _offlineTrackBusy[player] = true);
+    try {
+      await change();
+    } catch (_) {
+      if (_currentOfflineHlsPlayer(player)) {
+        _showActionNotice(t.videoPlayback.actionFailed);
+      }
+    } finally {
+      _offlineTrackBusy[player] = null;
+      if (_currentOfflineHlsPlayer(player)) setState(() {});
+    }
+  }
+
+  void _selectOfflineAudio(VideoPlayerController player, String id) {
+    if (_offlineAudio[player]?.any(
+          (track) => track.id == id && !track.isSelected,
+        ) !=
+        true) {
+      return;
+    }
+    unawaited(
+      _changeOfflineTrack(player, () async {
+        await player.selectAudioTrack(id);
+        if (!_currentOfflineHlsPlayer(player)) return;
+        final tracks = await player.getAudioTracks();
+        if (!_currentOfflineHlsPlayer(player)) return;
+        _offlineAudio[player] = tracks;
+        if (!tracks.any((track) => track.id == id && track.isSelected)) {
+          throw StateError('Audio track selection did not take effect');
+        }
+      }),
+    );
+  }
+
+  void _selectOfflineCaption(VideoPlayerController player, Uri? uri) {
+    if (_offlineCaption[player] == uri) return;
+    if (uri != null &&
+        _hlsReadLeases[player]?.subtitles.any(
+              (track) => track.fileUrl == uri,
+            ) !=
+            true) {
+      return;
+    }
+    unawaited(
+      _changeOfflineTrack(player, () async {
+        WebVTTCaptionFile? captions;
+        if (uri != null) {
+          final file = File.fromUri(uri);
+          if (await file.length() > 2 * 1024 * 1024) {
+            throw const FormatException('Offline captions exceed size limit');
+          }
+          captions = await compute(
+            WebVTTCaptionFile.new,
+            await file.readAsString(),
+          );
+        }
+        if (!_currentOfflineHlsPlayer(player)) return;
+        await player.setClosedCaptionFile(
+          captions == null ? null : Future.value(captions),
+        );
+        _offlineCaption[player] = uri;
+      }),
+    );
+  }
+
+  List<Widget> _offlineTrackControls() {
+    final player = _androidOfflineHlsPlayer;
+    if (player == null) return const [];
+    final audio = _offlineAudio[player] ?? const [];
+    final subtitles = _hlsReadLeases[player]?.subtitles ?? const [];
+    final chinese = Localizations.localeOf(context).languageCode == 'zh';
+    final enabled = _offlineTrackBusy[player] != true;
+    return [
+      if (audio.length > 1)
+        SettingChoiceTile<String>(
+          key: const ValueKey('video-quick.offline-audio'),
+          title: chinese ? '音轨' : 'Audio track',
+          value:
+              (audio.where((track) => track.isSelected).firstOrNull ??
+                      audio.first)
+                  .id,
+          items: {
+            for (final (index, track) in audio.indexed)
+              track.id: track.label?.trim().isNotEmpty == true
+                  ? track.label!
+                  : track.language ??
+                        '${chinese ? '音轨' : 'Audio'} ${index + 1}',
+          },
+          enabled: enabled,
+          onChanged: (id) => _selectOfflineAudio(player, id),
+        ),
+      if (subtitles.isNotEmpty)
+        SettingChoiceTile<String>(
+          key: const ValueKey('video-quick.offline-subtitles'),
+          title: chinese ? '字幕' : 'Subtitles',
+          value: _offlineCaption[player]?.toString() ?? '',
+          items: {
+            '': chinese ? '关闭' : 'Off',
+            for (final track in subtitles)
+              track.fileUrl.toString(): track.label,
+          },
+          enabled: enabled,
+          onChanged: (id) {
+            if (id.isEmpty) {
+              _selectOfflineCaption(player, null);
+            } else if (subtitles
+                    .where((track) => track.fileUrl.toString() == id)
+                    .firstOrNull
+                case final track?) {
+              _selectOfflineCaption(player, track.fileUrl);
+            }
+          },
+        ),
+      if (audio.length > 1 || subtitles.isNotEmpty)
+        const Divider(height: 16, indent: 16, endIndent: 16),
+    ];
   }
 
   void _closeQuickSettings() {
@@ -1660,6 +1827,10 @@ class _NativeVideoPageState extends State<NativeVideoPage>
               )..addListener(_onEngagementChanged));
       });
       candidate.addListener(_onPlayerChanged);
+      if (_quickSection == VideoQuickSection.playback &&
+          _currentOfflineHlsPlayer(candidate)) {
+        unawaited(_refreshOfflineAudio(candidate));
+      }
       stage = 'commit-identity';
       widget.onEpisodeChanged?.call(loaded);
       committed = true;
@@ -2185,6 +2356,10 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         _lastPlayableValue = controller.value;
       }
       setState(() => _loading = false);
+      if (_quickSection == VideoQuickSection.playback &&
+          _currentOfflineHlsPlayer(controller)) {
+        unawaited(_refreshOfflineAudio(controller));
+      }
       _scheduleControlsHide();
       widget.onMediaPrepared?.call();
     } catch (error) {
@@ -3723,6 +3898,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
             bucket: _quickStorage,
             child: VideoPlaybackQuickPanel(
               offlineOnly: widget.offlineOnly,
+              trackControls: _offlineTrackControls(),
               showSeekActions: !_fullscreen,
               floating: false,
               resourcePicker: widget.resourceLines == null
@@ -4336,6 +4512,31 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                                 Colors.black87,
                               ],
                               stops: [0, 0.4, 1],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  if (ready &&
+                      !_failed &&
+                      controller != null &&
+                      _offlineCaption[controller] != null)
+                    Positioned(
+                      left: 12,
+                      right: 12,
+                      bottom:
+                          (controlsShown ? 58 : 0) +
+                          (_fullscreen
+                              ? MediaQuery.paddingOf(context).bottom
+                              : 0),
+                      child: IgnorePointer(
+                        child: ValueListenableBuilder<VideoPlayerValue>(
+                          valueListenable: controller,
+                          builder: (context, value, _) => ClosedCaption(
+                            text: value.caption.text,
+                            textStyle: TextStyle(
+                              color: Colors.white,
+                              fontSize: _fullscreen ? 20 : 14,
                             ),
                           ),
                         ),
@@ -5425,7 +5626,9 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                     open: _quickSection != null,
                     side: constraints.maxWidth > constraints.maxHeight,
                     onDismiss: _closeQuickSettings,
-                    child: _quickSettingsOverlay(constraints),
+                    child: BackdropGroup(
+                      child: _quickSettingsOverlay(constraints),
+                    ),
                   ),
                 ],
               ),

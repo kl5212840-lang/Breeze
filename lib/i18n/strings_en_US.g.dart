@@ -466,7 +466,7 @@ class _Translations$settings$en_US extends Translations$settings$zh_CN {
 	@override String get syncSettings => 'Sync settings';
 	@override String get syncSettingsSubtitle => 'Sync appearance, reading and library settings';
 	@override String get syncPlugins => 'Sync plugins';
-	@override String get syncPluginsSubtitle => 'Plugin preferences, saved accounts and images; sign-in may need verification.';
+	@override String get syncPluginsSubtitle => 'Restore plugins, preferences, saved accounts and images. Sign-in may need verification.';
 	@override String get manualSyncSection => 'Manual sync';
 	@override String get uploadToCloud => 'Upload to cloud';
 	@override String get uploadToCloudSubtitle => 'Save records, plugins, settings and saved account details';
@@ -2528,6 +2528,7 @@ class _Translations$download$en_US extends Translations$download$zh_CN {
 	@override String get helpHls => 'On iOS, HLS offline packages play only inside Breeze and cannot currently be exported.';
 	@override String get helpDelete => 'Removing local downloads requires confirmation and does not delete the work from its source.';
 	@override String get helpContinue => 'Downloads continue when you close the download panel or leave this page.';
+	@override String get helpContinueIos => 'Downloads continue while you use Breeze. They pause when you lock the screen or switch apps, and resume when you return.';
 	@override String get exportFiles => 'Export a copy of the download';
 	@override String get exportCopySaved => 'Copy saved';
 	@override String get exportBusy => 'The file is in use. Try exporting again in a moment.';
@@ -2589,6 +2590,7 @@ class _Translations$download$en_US extends Translations$download$zh_CN {
 	@override String get videoCancelled => 'Cancelled';
 	@override String get videoInterrupted => 'Download interrupted. Open the video page to download again.';
 	@override String get videoForegroundNote => 'Downloads continue after you close this panel. View them in Downloads.';
+	@override String get videoForegroundNoteIos => 'View your tasks in Downloads. They pause when you lock the screen or switch apps, and resume when you return to Breeze.';
 	@override String get videoRecordFailed => 'The download record could not be saved and may be missing when you reopen the app.';
 	@override String get inProgress => 'In progress';
 	@override String get incomplete => 'Unfinished';
@@ -4199,7 +4201,7 @@ extension on TranslationsEnUs {
 			'settings.syncSettings' => 'Sync settings',
 			'settings.syncSettingsSubtitle' => 'Sync appearance, reading and library settings',
 			'settings.syncPlugins' => 'Sync plugins',
-			'settings.syncPluginsSubtitle' => 'Plugin preferences, saved accounts and images; sign-in may need verification.',
+			'settings.syncPluginsSubtitle' => 'Restore plugins, preferences, saved accounts and images. Sign-in may need verification.',
 			'settings.manualSyncSection' => 'Manual sync',
 			'settings.uploadToCloud' => 'Upload to cloud',
 			'settings.uploadToCloudSubtitle' => 'Save records, plugins, settings and saved account details',
@@ -6090,6 +6092,7 @@ extension on TranslationsEnUs {
 			'download.helpHls' => 'On iOS, HLS offline packages play only inside Breeze and cannot currently be exported.',
 			'download.helpDelete' => 'Removing local downloads requires confirmation and does not delete the work from its source.',
 			'download.helpContinue' => 'Downloads continue when you close the download panel or leave this page.',
+			'download.helpContinueIos' => 'Downloads continue while you use Breeze. They pause when you lock the screen or switch apps, and resume when you return.',
 			'download.exportFiles' => 'Export a copy of the download',
 			'download.exportCopySaved' => 'Copy saved',
 			'download.exportBusy' => 'The file is in use. Try exporting again in a moment.',
@@ -6151,6 +6154,7 @@ extension on TranslationsEnUs {
 			'download.videoCancelled' => 'Cancelled',
 			'download.videoInterrupted' => 'Download interrupted. Open the video page to download again.',
 			'download.videoForegroundNote' => 'Downloads continue after you close this panel. View them in Downloads.',
+			'download.videoForegroundNoteIos' => 'View your tasks in Downloads. They pause when you lock the screen or switch apps, and resume when you return to Breeze.',
 			'download.videoRecordFailed' => 'The download record could not be saved and may be missing when you reopen the app.',
 			'download.inProgress' => 'In progress',
 			'download.incomplete' => 'Unfinished',
@@ -6453,10 +6457,10 @@ extension on TranslationsEnUs {
 			'videoSearch.removeRecent' => 'Remove this search',
 			'videoSearch.localOnly' => 'Stored only on this device',
 			'videoSearch.hint' => 'Search videos or creators',
-			'videoSearch.clearQuery' => 'Clear query',
-			'videoSearch.submit' => 'Search',
 			_ => null,
 		} ?? switch (path) {
+			'videoSearch.clearQuery' => 'Clear query',
+			'videoSearch.submit' => 'Search',
 			'videoSearch.cancel' => 'Cancel search',
 			'videoSearch.recentFailed' => 'Recent searches are unavailable. You can still search.',
 			'videoSearch.historyWriteFailed' => 'Search submitted. Recent search could not be saved.',
@@ -6967,10 +6971,10 @@ extension on TranslationsEnUs {
 			'pluginLifecycle.purgeHint' => 'Clear this plugin’s data on this device. Downloaded files are optional.',
 			'pluginLifecycle.purgeTitle' => 'Delete this plugin’s data?',
 			'pluginLifecycle.purgeConfirm' => 'The listed data will be cleared. This cannot be directly undone.',
-			'pluginLifecycle.clearTarget' => 'Cloud data',
-			'pluginLifecycle.localOnly' => 'Clear this device only',
 			_ => null,
 		} ?? switch (path) {
+			'pluginLifecycle.clearTarget' => 'Cloud data',
+			'pluginLifecycle.localOnly' => 'Clear this device only',
 			'pluginLifecycle.localOnlyHint' => 'Cloud data is kept and will not be imported automatically on this device.',
 			'pluginLifecycle.cloudAlso' => 'Also delete from Breeze cloud storage',
 			'pluginLifecycle.cloudAlsoHint' => 'Deletions are included when you sync this data. Plugins on other devices stay installed.',

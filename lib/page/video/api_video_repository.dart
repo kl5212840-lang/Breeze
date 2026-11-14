@@ -1,4 +1,6 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show Size;
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:zephyr/service/temporary_data_cache.dart';
 import 'package:zephyr/page/video/omo_network.dart';
 import 'dart:async';
@@ -9,6 +11,8 @@ import 'package:zephyr/network/playback_trace.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/network/http/plugin/unified_plugin_envelope.dart';
 import 'package:zephyr/page/video/api_video_models.dart';
+import 'package:zephyr/page/video/api_video_browser.dart';
+import 'package:zephyr/page/video/video_site_access.dart';
 import 'package:zephyr/page/video/video_public_cover_store.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
 import 'package:zephyr/page/video/video_playback_identity.dart';
@@ -167,6 +171,86 @@ class ApiVideoRepository implements TemporaryDataCache {
         retainBrowserForDownloads: retainBrowserForDownloads,
         detailClock: _detailClock,
       );
+
+  bool get supportsDownloadBrowser =>
+      retainBrowserForDownloads == null ||
+      (!kIsWeb &&
+          (defaultTargetPlatform == TargetPlatform.iOS ||
+              defaultTargetPlatform == TargetPlatform.android));
+
+  Future<({ApiVideoRepository repository, Future<void> Function()? release})>
+  acquireDownloadBrowser() async {
+    final retain = retainBrowserForDownloads;
+    if (retain == null) return (repository: this, release: null);
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) {
+      return (repository: this, release: await retain());
+    }
+    if (browserRecoveryAllowed?.call() == false) {
+      throw const VideoDownloadResolutionFailure('verificationRequired');
+    }
+
+    // The visible Android platform view releases its Dart controller when the
+    // route closes. Use a separate, bounded transport that shares Android's
+    // persistent WebView cookie store and owns no account-changing UI.
+    final session = ApiVideoBrowserSession(
+      home: home,
+      paths: capabilities.browserPaths,
+      itemPrefix: capabilities.browserItemPrefix,
+      interactive: false,
+    );
+    final view = HeadlessInAppWebView(
+      initialSize: const Size(320, 480),
+      initialSettings: InAppWebViewSettings(
+        javaScriptEnabled: true,
+        domStorageEnabled: true,
+        useShouldOverrideUrlLoading: true,
+        blockNetworkImage: true,
+      ),
+      onWebViewCreated: session.created,
+      onPageCommitVisible: (web, uri) =>
+          session.committed(web, Uri.tryParse(uri?.toString() ?? '')),
+      onLoadStop: (web, uri) =>
+          session.loaded(web, Uri.tryParse(uri?.toString() ?? '')),
+      onReceivedError: (_, request, error) =>
+          session.receivedError(request, error),
+      shouldOverrideUrlLoading: (_, action) async =>
+          allowVideoSiteNavigation(
+            home,
+            Uri.tryParse(action.request.url?.toString() ?? ''),
+            isMainFrame: action.isForMainFrame,
+          )
+          ? NavigationActionPolicy.ALLOW
+          : NavigationActionPolicy.CANCEL,
+    );
+    Future<void>? startingView;
+    Future<void>? closing;
+    Future<void> release() => closing ??= Future<void>.sync(() async {
+      session.dispose();
+      final opening = startingView;
+      if (opening == null) return;
+      // The Android bridge only disposes a headless view after run() has
+      // completed. A late creation must still be cleaned up after cancellation.
+      await opening.catchError((Object _) {});
+      await view.dispose().timeout(const Duration(seconds: 5));
+    });
+    Future<void>? starting;
+    Future<Map<String, dynamic>> detail(Uri url) async {
+      final owner = VideoDownloadResolutionOwner.current;
+      owner?.check();
+      await (starting ??= () async {
+        await (startingView ??= view.run()).timeout(const Duration(seconds: 5));
+        owner?.check();
+        await session.read(home).timeout(const Duration(seconds: 35));
+      }());
+      owner?.check();
+      return session.readDetail(url);
+    }
+
+    return (
+      repository: withBrowserRead(session.read, detailReader: detail),
+      release: release,
+    );
+  }
 
   Future<Map<String, dynamic>> _request(
     String path,

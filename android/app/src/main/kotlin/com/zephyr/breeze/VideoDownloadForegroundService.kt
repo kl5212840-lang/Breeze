@@ -83,16 +83,7 @@ internal class VideoDownloadForegroundService : Service(), VideoDownloadForegrou
                 stop()
                 return START_NOT_STICKY
             }
-            if (activeToken != notice.token) {
-                releaseWakeLock()
-                wakeLock = getSystemService(PowerManager::class.java)
-                    .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Breeze:VideoDownload")
-                    .apply {
-                        setReferenceCounted(false)
-                        acquire(VideoMp4Transfer.MAX_TRANSFER_MILLIS + 60_000L)
-                    }
-                activeToken = notice.token
-            }
+            activateNotice(notice.token)
             lastUpdate = SystemClock.elapsedRealtime()
             if (!owner.bind(this, notice.token)) stop()
         } catch (_: RuntimeException) {
@@ -135,15 +126,29 @@ internal class VideoDownloadForegroundService : Service(), VideoDownloadForegrou
     }
 
     override fun update(notice: VideoDownloadForeground.Notice) {
-        if (!foreground || activeToken != notice.token) return
+        if (!foreground) return
+        val changed = activeToken != notice.token
+        if (changed) activateNotice(notice.token)
         val now = SystemClock.elapsedRealtime()
-        if (now - lastUpdate < 1000L) return
+        if (!changed && now - lastUpdate < 1000L) return
         lastUpdate = now
         try {
             notifications.notify(NOTIFICATION_ID, buildNotification(notice))
         } catch (_: RuntimeException) {
             // The system can withhold notification display without ending the transfer.
         }
+    }
+
+    private fun activateNotice(token: String) {
+        if (activeToken == token) return
+        releaseWakeLock()
+        wakeLock = getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Breeze:VideoDownload")
+            .apply {
+                setReferenceCounted(false)
+                acquire(VideoMp4Transfer.MAX_TRANSFER_MILLIS + 60_000L)
+            }
+        activeToken = token
     }
 
     private fun releaseWakeLock() {

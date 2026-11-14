@@ -36,6 +36,46 @@ void main() {
     expect(tester.takeException(), isNull);
   }, variant: TargetPlatformVariant.only(TargetPlatform.android));
 
+  testWidgets(
+    'Android glass stays in opted-in surfaces with a contrast fallback',
+    (tester) async {
+      final style = ValueNotifier('system');
+      addTearDown(style.dispose);
+      Widget view({required bool highContrast}) => MaterialApp(
+        home: AppInterfaceStyleScope(
+          style: style,
+          child: MediaQuery(
+            data: MediaQueryData(highContrast: highContrast),
+            child: const Scaffold(
+              body: Column(
+                children: [
+                  NativeMaterialSurface(
+                    androidGlass: true,
+                    child: SizedBox(width: 200, height: 120),
+                  ),
+                  NativeMaterialSurface(
+                    child: SizedBox(width: 200, height: 120),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(view(highContrast: false));
+      expect(find.byType(BackdropFilter), findsOneWidget);
+      expect(find.byType(UiKitView), findsNothing);
+      style.value = 'breeze';
+      await tester.pump();
+      expect(find.byType(BackdropFilter), findsNothing);
+      style.value = 'system';
+      await tester.pumpWidget(view(highContrast: true));
+      expect(find.byType(BackdropFilter), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
   for (final style in ['system', 'breeze']) {
     testWidgets(
       'unspecified surface follows ambient $style without a player override',

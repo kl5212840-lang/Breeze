@@ -79,26 +79,26 @@ class DownloadComicTaskCover extends StatelessWidget {
             cover != null &&
             (cover.url.trim().isNotEmpty || cover.cachePath.isNotEmpty);
         return _frame(
-          CollectionCoverPrivacy(
-            fit: fit,
-            child: CollectionCoverPrivacyScope(
-              enabled: false,
-              child: ready
-                  ? CoverWidget(
-                      fileServer: cover.url,
-                      path: cover.cachePath,
-                      id: comicId,
-                      pictureType: PictureType.cover,
-                      from: source,
-                      roundedCorner: false,
-                      fit: fit,
-                      containBackground: true,
-                      width: width,
-                      height: height,
-                    )
-                  : const Center(child: Icon(Icons.menu_book_outlined)),
-            ),
-          ),
+          ready
+              ? CoverWidget(
+                  fileServer: cover.url,
+                  path: cover.cachePath,
+                  id: comicId,
+                  pictureType: PictureType.cover,
+                  from: source,
+                  roundedCorner: false,
+                  fit: fit,
+                  containBackground: true,
+                  width: width,
+                  height: height,
+                )
+              : CollectionCoverPrivacy(
+                  fit: fit,
+                  mosaicPlaceholder: const Center(
+                    child: Icon(Icons.menu_book_outlined),
+                  ),
+                  child: const Center(child: Icon(Icons.menu_book_outlined)),
+                ),
           width: width,
           height: height,
         );
@@ -152,6 +152,8 @@ class DownloadVideoTaskCover extends StatelessWidget {
               durationText: durationText,
               child: CollectionCoverPrivacy(
                 fit: fit,
+                image: image,
+                mosaicPlaceholder: Center(child: fallback),
                 child: SoftCoverBackground(
                   image: image,
                   enabled: fit == BoxFit.contain,
@@ -184,6 +186,7 @@ class DownloadVideoTaskCover extends StatelessWidget {
               durationText: durationText,
               child: CollectionCoverPrivacy(
                 fit: fit,
+                mosaicPlaceholder: Center(child: fallback),
                 child: Center(child: fallback),
               ),
             ),

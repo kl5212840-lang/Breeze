@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_help.dart';
@@ -9,6 +10,8 @@ Future<void> openDownloadHelp(BuildContext context) => showBookshelfHelpDialog(
     t.download.helpExport,
     t.download.helpHls,
     t.download.helpDelete,
-    t.download.helpContinue,
+    !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS
+        ? t.download.helpContinueIos
+        : t.download.helpContinue,
   ].join('\n\n'),
 );

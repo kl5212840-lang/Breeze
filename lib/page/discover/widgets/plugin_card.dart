@@ -285,6 +285,7 @@ class PluginCard extends StatelessWidget {
   }) {
     final enabled = pluginState.isActive;
     final system = AppInterfaceStyleScope.usesSystem(context);
+    final android = AppInterfaceStyleScope.usesAndroidSystem(context);
     final shownEnabled = pendingEnabled ?? enabled;
     final power = context.select<GlobalSettingCubit?, bool>(
       (cubit) => cubit?.state.switchStyle == BreezeSwitchStyle.power,
@@ -347,7 +348,7 @@ class PluginCard extends StatelessWidget {
       toggled: isToggling ? shownEnabled : null,
       child: SizedBox(
         key: ValueKey('plugin-card.$pluginUuid.toggle'),
-        width: power ? VideoControlMetrics.touchExtent : 60,
+        width: !android && power ? VideoControlMetrics.touchExtent : 60,
         height: 48,
         child: AbsorbPointer(
           absorbing: isToggling,
@@ -361,17 +362,24 @@ class PluginCard extends StatelessWidget {
               curve: Curves.easeOut,
               child: TouchHoverIntent(
                 identity: pluginUuid,
-                builder: (_, hover) => BreezeSwitch(
-                  Switch.adaptive(
+                builder: (_, hover) {
+                  final control = Switch.adaptive(
                     value: shownEnabled,
-                    thumbIcon: system ? null : settingSwitchThumbIcon(context),
+                    thumbIcon: android
+                        ? const WidgetStateProperty<Icon?>.fromMap({
+                            WidgetState.selected: Icon(Icons.check_rounded),
+                            WidgetState.any: null,
+                          })
+                        : system
+                        ? null
+                        : settingSwitchThumbIcon(context),
                     overlayColor: hover.overlayColor(null),
                     onChanged: (value) {
                       if (!isToggling) onToggleEnabled(value);
                     },
-                  ),
-                  powerDiameter: actionDiameter,
-                ),
+                  );
+                  return BreezeSwitch(control, powerDiameter: actionDiameter);
+                },
               ),
             ),
           ),

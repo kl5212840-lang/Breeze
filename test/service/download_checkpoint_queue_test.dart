@@ -9,7 +9,6 @@ import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/service/download/download_admission.dart';
 import 'package:zephyr/service/download/download_queue_manager.dart';
 import 'package:zephyr/service/download/download_task_repository.dart';
-import 'package:zephyr/service/download/ios_download_continuation.dart';
 import 'package:zephyr/service/download/models/download_task_json.dart';
 
 import '../test_helper.dart';
@@ -83,72 +82,30 @@ void main() {
     },
   );
 
-  testWidgets(
-    'explicit enqueues share one iOS continuation and count queued chapters',
-    (tester) async {
-      final queue = DownloadQueueManager.instance;
-      final messenger =
-          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-      final calls = <MethodCall>[];
-      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-      messenger.setMockMethodCallHandler(IosDownloadContinuation.channel, (
-        call,
-      ) async {
-        calls.add(call);
-        return <String, Object>{
-          'accepted': (call.arguments as Map)['scope'] == 'comics',
-        };
-      });
-      try {
-        queue.addTask(payload.copyWith(stateCode: 'queued'));
-        queue.addTask(
-          payload.copyWith(
-            stateCode: 'queued',
-            chapterRef: const DownloadChapterTaskRef(logicalKey: 'chapter-2'),
-          ),
-        );
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 300));
-        expect(calls.where((call) => call.method == 'begin'), hasLength(1));
-        expect((calls.first.arguments as Map)['scope'], 'comics');
-        expect(calls.last.method, 'update');
-        expect((calls.last.arguments as Map)['total'], 2000);
-        expect((calls.last.arguments as Map)['completed'], 0);
-      } finally {
-        queue.stopWatchingTasks();
-        await tester.pump();
-        messenger.setMockMethodCallHandler(
-          IosDownloadContinuation.channel,
-          null,
-        );
-        debugDefaultTargetPlatformOverride = null;
-      }
-    },
-  );
-
-  testWidgets('native rejection leaves the comic task queued', (tester) async {
+  testWidgets('iOS comic enqueues never start a system continuation', (
+    tester,
+  ) async {
     final queue = DownloadQueueManager.instance;
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     final methods = <String>[];
-    messenger.setMockMethodCallHandler(IosDownloadContinuation.channel, (
+    const channel = MethodChannel('breeze.download.continued');
+    messenger.setMockMethodCallHandler(channel, (
       call,
     ) async {
-      expect((call.arguments as Map)['scope'], 'comics');
       methods.add(call.method);
-      return <String, Object>{'accepted': false};
+      return <String, Object>{'accepted': true};
     });
     try {
       queue.addTask(payload.copyWith(stateCode: 'queued'));
       await tester.pump();
-      expect(methods, ['begin']);
+      expect(methods, isEmpty);
       expect(repository.getAll().single.taskInfo?.stateCode, 'queued');
     } finally {
       queue.stopWatchingTasks();
-      messenger.setMockMethodCallHandler(IosDownloadContinuation.channel, null);
+      messenger.setMockMethodCallHandler(channel, null);
       debugDefaultTargetPlatformOverride = null;
     }
   });

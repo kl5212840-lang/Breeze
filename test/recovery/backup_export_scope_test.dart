@@ -77,6 +77,7 @@ void main() {
     final user = objectbox.userSettingBox.get(1)!;
     user.globalSetting = const GlobalSettingState(
       dynamicColor: false,
+      switchStyle: BreezeSwitchStyle.ring,
       locale: Locale('en'),
       localeFollowsSystem: false,
       retryDownloadUntilSuccess: false,
@@ -268,6 +269,7 @@ void main() {
           expect(global.keys, isNot(contains('proxySetting')));
           expect(global.keys, isNot(contains('appLockSetting')));
           expect(global['maskedKeywords'], ['portable-keyword']);
+          expect(global['switchStyle'], 'ring');
           expect(global['locale'], 'en');
           expect(global['localeFollowsSystem'], isFalse);
           expect(global['retryDownloadUntilSuccess'], isFalse);
@@ -291,6 +293,7 @@ void main() {
           }
           final current = objectbox.userSettingBox.get(1)!;
           current.globalSetting = current.globalSetting.copyWith(
+            switchStyle: BreezeSwitchStyle.classic,
             locale: const Locale('zh', 'CN'),
             localeFollowsSystem: true,
             eInkSetting: const EInkSettingState(
@@ -341,6 +344,7 @@ void main() {
             'KEEP_LOCAL_PROXY',
           );
           final restored = objectbox.userSettingBox.get(1)!.globalSetting;
+          expect(restored.switchStyle, BreezeSwitchStyle.ring);
           expect(restored.locale, const Locale('en'));
           expect(restored.localeFollowsSystem, isFalse);
           expect(restored.retryDownloadUntilSuccess, isFalse);
@@ -408,6 +412,7 @@ void main() {
         await databaseFile.writeAsString(jsonEncode(database));
         final current = objectbox.userSettingBox.get(1)!;
         current.globalSetting = current.globalSetting.copyWith(
+          switchStyle: BreezeSwitchStyle.classic,
           eInkSetting: const EInkSettingState(
             enabled: true,
             detectionHandled: true,
@@ -435,6 +440,8 @@ void main() {
           final stagedUser = (staged['userSetting'] as List).single as Map;
           final stagedGlobal =
               jsonDecode(stagedUser['globalSettingData'] as String) as Map;
+          // A legacy backup has no revision for this locally changed block.
+          expect(stagedGlobal['switchStyle'], 'classic');
           expect(stagedGlobal['locale'], 'en');
           expect(stagedGlobal['localeFollowsSystem'], isFalse);
           expect(
@@ -453,6 +460,7 @@ void main() {
           mode: BackupImportMode.merge,
         );
         final restored = objectbox.userSettingBox.get(1)!.globalSetting;
+        expect(restored.switchStyle, BreezeSwitchStyle.classic);
         expect(restored.locale, const Locale('en'));
         expect(restored.localeFollowsSystem, isFalse);
         expect(restored.eInkSetting.detectionHandled, isTrue);

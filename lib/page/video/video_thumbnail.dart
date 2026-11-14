@@ -235,16 +235,18 @@ class _VideoThumbnailState extends State<VideoThumbnail> {
   // The replacement file belongs to privacy, not the original image stream.
   // Keep it available while the real poster is pending, unsupported or failed;
   // Loading and fallback feedback stays outside the protected pixels.
-  Widget _surface(Widget pixels, [Widget? feedback]) => Stack(
-    fit: StackFit.expand,
-    children: [
-      CollectionCoverPrivacy(
-        fit: CollectionCoverFitScope.maybeOf(context) ?? widget.fit,
-        child: pixels,
-      ),
-      ?feedback,
-    ],
-  );
+  Widget _surface(Widget pixels, [Widget? feedback, ImageProvider? image]) =>
+      Stack(
+        fit: StackFit.expand,
+        children: [
+          CollectionCoverPrivacy(
+            fit: CollectionCoverFitScope.maybeOf(context) ?? widget.fit,
+            image: image,
+            child: pixels,
+          ),
+          ?feedback,
+        ],
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -319,6 +321,7 @@ class _VideoThumbnailState extends State<VideoThumbnail> {
                       child: image,
                     ),
                     decoded ? null : loading,
+                    decoded ? provider : null,
                   );
                 },
                 errorBuilder: (_, error, _) {

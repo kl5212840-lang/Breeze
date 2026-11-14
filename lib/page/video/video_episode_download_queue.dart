@@ -1,4 +1,3 @@
-import 'package:zephyr/page/video/video_download_continuation.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'dart:async';
 
@@ -177,12 +176,6 @@ abstract final class VideoEpisodeDownloadQueue {
     if (batch.keys.isEmpty) {
       await batch.releaseOwner();
     } else {
-      if (userInitiated) {
-        VideoSystemDownload.beginContinuedAttempts([
-          for (final key in batch.keys)
-            (key: key, attempt: batch.attempts[key]!),
-        ]);
-      }
       schedule(batch.run);
     }
     return List.unmodifiable(batch.resultKeys);
@@ -403,6 +396,10 @@ class _EpisodeDownloadBatch {
       status = VideoDownloadStatus.cancelled;
     } on _EpisodeDownloadCancelled {
       status = VideoDownloadStatus.cancelled;
+    } on VideoDownloadResolutionFailure catch (error) {
+      status = VideoDownloadStatus.failed;
+      failureReason = error.reason;
+      failureStage = 'resolution';
     } catch (_) {
       if (resolving && episodeCurrent()) failureStage = 'resolution';
       // Keep a safe terminal state, never raw parser errors/signed URLs.
@@ -422,10 +419,6 @@ class _EpisodeDownloadBatch {
         terminal: true,
       );
       VideoSystemDownload.unregisterQueuedTask(key, attempt: attempts[key]);
-      VideoDownloadContinuation.finish((
-        key: key,
-        attempt: attempts[key]!,
-      ), saved: status == VideoDownloadStatus.saved);
       permit?.release();
     }
     if (!current) await cancel();

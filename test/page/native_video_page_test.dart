@@ -23,8 +23,6 @@ import 'package:zephyr/page/video/video_watch_history.dart';
 import 'package:zephyr/page/video/video_site_access.dart';
 import 'package:zephyr/page/video/video_site_operations.dart';
 import 'package:zephyr/page/video/video_download_sheet.dart';
-import 'package:zephyr/page/video/api_video_episode_download.dart';
-import 'package:zephyr/page/video/api_video_repository.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
 
 class _FakeVideoPlatform extends VideoPlayerPlatform {
@@ -355,30 +353,6 @@ void main() {
     testWidgets(
       'resolved $format gets only its supported download entry without a declared adapter',
       (tester) async {
-        var retains = 0, batchCalls = 0;
-        final browserRepository = ApiVideoRepository(
-          source: 'browser-mp4-fixture',
-          home: Uri.parse('https://site-fixture.test'),
-          catalogFn: 'list',
-          detailFn: 'item',
-          playbackFn: 'play',
-          retainBrowserForDownloads: () async {
-            retains++;
-            throw StateError('Android has no native browser retention');
-          },
-        );
-        final plainRepository = ApiVideoRepository(
-          source: 'plain-mp4-fixture',
-          home: Uri.parse('https://site-fixture.test'),
-          catalogFn: 'list',
-          detailFn: 'item',
-          playbackFn: 'play',
-        );
-        expect(
-          ApiVideoEpisodeDownloads.supportsBatch(browserRepository),
-          isFalse,
-        );
-        expect(ApiVideoEpisodeDownloads.supportsBatch(plainRepository), isTrue);
         final session = NativePlaybackSession(
           title: 'Resolved download host',
           watchUrl: Uri.parse('https://site-fixture.test/watch?v=42'),
@@ -397,13 +371,6 @@ void main() {
             home: NativeVideoPage(
               session: session,
               downloadSourceDuration: (_) => '站点 2:03',
-              onDownloadEpisodes:
-                  ApiVideoEpisodeDownloads.supportsBatch(browserRepository)
-                  ? (_) async {
-                      batchCalls++;
-                      await browserRepository.retainBrowserForDownloads!();
-                    }
-                  : null,
             ),
           ),
         );
@@ -411,27 +378,17 @@ void main() {
           await tester.pump(const Duration(milliseconds: 100));
         }
         final entry = find.byKey(const ValueKey('video-inline.download'));
-        if (format == 'mp4') {
-          expect(entry, findsOneWidget);
-          await tester.ensureVisible(entry);
-          await tester.tap(entry);
-          await tester.pump();
-          await tester.pump(const Duration(milliseconds: 300));
-          final sheet = tester.widget<VideoDownloadSheet>(
-            find.byType(VideoDownloadSheet),
-          );
-          expect(sheet.durationMs, 120000);
-          expect(sheet.sourceDuration, '站点 2:03');
-        } else {
-          expect(entry, findsNothing);
-          expect(
-            find.byKey(const ValueKey('video-resolved-download')),
-            findsNothing,
-          );
-        }
+        expect(entry, findsOneWidget);
+        await tester.ensureVisible(entry);
+        await tester.tap(entry);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        final sheet = tester.widget<VideoDownloadSheet>(
+          find.byType(VideoDownloadSheet),
+        );
+        expect(sheet.durationMs, 120000);
+        expect(sheet.sourceDuration, '站点 2:03');
         expect(tester.takeException(), isNull);
-        expect(batchCalls, 0);
-        expect(retains, 0);
         await tester.pumpWidget(const SizedBox.shrink());
       },
       variant: TargetPlatformVariant.only(TargetPlatform.android),

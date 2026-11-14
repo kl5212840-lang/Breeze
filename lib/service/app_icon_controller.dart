@@ -5,19 +5,25 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
-/// Device-local launcher preference, read from iOS rather than synced settings.
+/// Device-local launcher preference, read from the native host.
 class AppIconController extends ChangeNotifier with WidgetsBindingObserver {
   AppIconController({
     MethodChannel channel = const MethodChannel('breeze.appearance.app_icon'),
     bool? isIOS,
+    bool? isAndroid,
   }) : _channel = channel,
        isIOS =
-           isIOS ?? (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS);
+           isIOS ?? (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS),
+       isAndroid =
+           isAndroid ??
+           (!kIsWeb && defaultTargetPlatform == TargetPlatform.android);
 
   static final instance = AppIconController();
   static const classicName = 'AppIconClassic';
   final MethodChannel _channel;
   final bool isIOS;
+  final bool isAndroid;
+  bool get _hasNativeIcon => isIOS || isAndroid;
   bool supported = false, ready = false, changing = false, failed = false;
   String iconName = '';
   // System interface appearance; not a claim about Home Screen tint/clear.
@@ -30,7 +36,7 @@ class AppIconController extends ChangeNotifier with WidgetsBindingObserver {
   int _revision = 0;
 
   Future<void> ensureLoaded() {
-    if (!isIOS || _disposed) return Future.value();
+    if (!_hasNativeIcon || _disposed) return Future.value();
     if (!_observing) {
       _observing = true;
       WidgetsBinding.instance.addObserver(this);
@@ -47,7 +53,7 @@ class AppIconController extends ChangeNotifier with WidgetsBindingObserver {
   void didChangePlatformBrightness() => _requestAppearanceRefresh();
 
   void _requestAppearanceRefresh() {
-    if (_disposed || !isIOS) return;
+    if (_disposed || !_hasNativeIcon) return;
     // Resume and platform-brightness notifications can arrive together.
     _appearanceRefresh ??= Timer(Duration.zero, () {
       _appearanceRefresh = null;
@@ -70,7 +76,7 @@ class AppIconController extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> refresh() {
-    if (!isIOS || _disposed || changing) return Future.value();
+    if (!_hasNativeIcon || _disposed || changing) return Future.value();
     return _refreshInFlight ??= _readStatus().whenComplete(() {
       _refreshInFlight = null;
       if (_refreshPending && !_disposed && !changing) {
@@ -92,7 +98,7 @@ class AppIconController extends ChangeNotifier with WidgetsBindingObserver {
     } on PlatformException {
       // Preserve the last confirmed system state.
     } on MissingPluginException {
-      // Other hosts do not expose this iOS setting.
+      // The native host can be older than the Flutter interface.
     }
   }
 

@@ -212,6 +212,9 @@ String? _formalPluginIndex(Object? value) {
       : null;
 }
 
+bool requiresFormalPluginRelease(String updateUrl) =>
+    _formalPluginIndex(updateUrl) != null;
+
 /// An installed formal CJS identifies its channel in getInfo. Keep that
 /// channel when the merged catalog falls back to a legacy or upstream entry.
 bool preservesFormalPluginChannel({
@@ -310,11 +313,27 @@ class CloudPluginCatalogSnapshot {
     }
 
     final saved = decodeCloudPluginCatalog(combined) ?? const [];
+    final bundledEntries = decodeCloudPluginCatalog(bundled) ?? const [];
+    final bundledVersions = {
+      for (final entry in bundledEntries)
+        if (FormalPluginRelease._read(entry) case final release?)
+          release.uuid: release.version,
+    };
     return CloudPluginCatalogSnapshot(
       official: saved.where((entry) => !isPersonal(entry)).toList(),
       personal: _mergeEntries(
-        decodeCloudPluginCatalog(bundled) ?? const [],
-        saved.where(isPersonal).toList(),
+        bundledEntries,
+        saved.where((entry) {
+          if (!isPersonal(entry)) return false;
+          final bundledVersion = bundledVersions[cloudPluginUuid(entry)];
+          if (bundledVersion == null ||
+              FormalPluginRelease._read(entry) != null) {
+            return true;
+          }
+          final version =
+              asJsonMap(entry['manifest'])['version']?.toString() ?? '';
+          return compareVersion(version, bundledVersion) > 0;
+        }).toList(),
       ),
     );
   }

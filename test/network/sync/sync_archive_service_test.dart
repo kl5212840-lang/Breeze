@@ -28,11 +28,13 @@ import 'package:zephyr/network/sync/sync_service.dart';
 import 'package:zephyr/network/sync/sync_failure.dart';
 import 'package:zephyr/network/sync/video_library_sync.dart';
 import 'package:zephyr/object_box/model.dart';
+import 'package:zephyr/plugin/plugin_host_compatibility.dart';
 import 'package:zephyr/page/video/api_video_models.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/page/video/video_playback_preferences.dart';
 import 'package:zephyr/page/video/video_account_credentials.dart';
 import 'package:zephyr/service/local_appearance_images.dart';
+import 'package:zephyr/service/local_plugin_installation_state.dart';
 import 'package:zephyr/service/reader/comic_chapter_reading_progress.dart';
 
 import '../../test_helper.dart';
@@ -1811,7 +1813,10 @@ void main() {
       expect(saved.data['item'], containsPair('sourceViewsKind', 'clicks'));
       expect(saved.data['item'], containsPair('sourceRating', 8.5));
       expect(saved.data['item'], containsPair('sourceRatingCount', 2));
-      expect(saved.data['item'], containsPair('sourceRatingCountConsistent', false));
+      expect(
+        saved.data['item'],
+        containsPair('sourceRatingCountConsistent', false),
+      );
       expect(server.saved(legacy: true), old);
     },
   );
@@ -2493,6 +2498,195 @@ void main() {
         expect(
           objectbox.unifiedFavoriteBox.getAll().single.uniqueKey,
           'shipped:favorite',
+        );
+      },
+    );
+  }
+
+  test(
+    'a manual upload supplies the script for a new device restore',
+    () async {
+      const source = 'local-plugin';
+      final state = _state(plugins: true);
+      _saveState(state);
+      final debugPlugin =
+          objectbox.pluginInfoBox.getAll().singleWhere(
+              (row) => row.uuid == source,
+            )
+            ..debug = true
+            ..debugUrl = 'http://127.0.0.1:8080/local-test.cjs'
+            ..lastLoadError = '/local/diagnostics/error.txt';
+      objectbox.pluginInfoBox.put(debugPlugin);
+      final server = _Server();
+      await manualUploadToCloud(
+        state: state,
+        archives: server.adapters(),
+        codecs: _codecs,
+        hooks: hooks,
+      );
+      final payload = server.active(false, 'settings');
+      final cloud =
+          (payload['pluginInfos'] as List).singleWhere(
+                (row) => row['uuid'] == source,
+              )
+              as Map;
+      expect(cloud['originScript'], 'fixture-script');
+      final plugins =
+          ((payload['blocks'] as Map)['plugins'] as Map)['data'] as Map;
+      final canonical = (plugins['pluginInfos'] as List).singleWhere(
+        (row) => row['uuid'] == source,
+      );
+      for (final row in [cloud, canonical]) {
+        expect(row['debug'], isFalse);
+        expect(row['debugUrl'], isNull);
+        expect(row['lastLoadError'], isNull);
+      }
+      expect(objectbox.pluginInfoBox.get(debugPlugin.id)!.debug, isTrue);
+      objectbox.pluginInfoBox.removeAll();
+
+      final disabled = _state();
+      _saveState(disabled);
+      await manualDownloadFromCloud(
+        state: disabled,
+        archives: server.adapters(),
+        codecs: _codecs,
+        hooks: hooks,
+      );
+      expect(objectbox.pluginInfoBox.getAll(), isEmpty);
+
+      _saveState(state);
+      await manualDownloadFromCloud(
+        state: state,
+        archives: server.adapters(),
+        codecs: _codecs,
+        hooks: hooks,
+      );
+      final restored = objectbox.pluginInfoBox.getAll().singleWhere(
+        (row) => row.uuid == source,
+      );
+      expect(restored.originScript, cloud['originScript']);
+      expect(restored.isEnabled, cloud['isEnabled']);
+    },
+  );
+
+  for (final legacy in [false, true]) {
+    test(
+      'manual cloud restore installs missing compatible plugins and their data (legacy=$legacy)',
+      () async {
+        const missing = '10000000-1000-4000-8000-000000000001';
+        const removed = '10000000-1000-4000-8000-000000000002';
+        const incompatible = '10000000-1000-4000-8000-000000000003';
+        const tombstone = '10000000-1000-4000-8000-000000000004';
+        PluginHostCompatibilityNotices.instance.takePending();
+        await LocalPluginInstallationState.instance.markRemoved(removed);
+        final state = _state(plugins: true);
+        _saveState(state);
+        final prototype = objectbox.pluginInfoBox.getAll().first.toJson()
+          ..remove('id');
+        final server = _Server()
+          ..payload(legacy, 'settings', {
+            'version': 'v1',
+            'schemaVersion': 'v2',
+            'syncTime': 10,
+            'blocks': {
+              'plugins': {
+                'updatedAt': 10,
+                'data': {
+                  'pluginInfos': [
+                    for (final id in [
+                      missing,
+                      removed,
+                      incompatible,
+                      tombstone,
+                    ])
+                      {
+                        ...prototype,
+                        'uuid': id,
+                        'isDeleted': id == tombstone,
+                        'debug': true,
+                        'debugUrl': 'http://127.0.0.1:9876/test.cjs',
+                        'getInfoJson': jsonEncode({
+                          'uuid': id,
+                          if (id == incompatible)
+                            'requirements': {
+                              'version': 1,
+                              'capabilities': {'videoLibraryProtocol': 99},
+                            },
+                        }),
+                      },
+                  ],
+                  'pluginConfigs': [
+                    for (final id in [missing, removed])
+                      {'name': id, 'config': '{"choice":"from-cloud"}'},
+                  ],
+                },
+              },
+            },
+          });
+        final bytes = Uint8List.fromList(
+          img.encodeJpg(img.Image(width: 2, height: 2)),
+        );
+        final digest = sha256.convert(bytes).toString();
+        final icon = 'plugin-icon:$missing';
+        final manifest = utf8.encode(
+          jsonEncode(
+            AppearanceSyncManifest({
+              icon: LocalAppearanceSyncRecord(
+                key: icon,
+                digest: digest,
+                size: bytes.length,
+                modifiedAt: 2,
+                deleted: false,
+              ),
+            }).toJson(),
+          ),
+        );
+        server.files[server.path(false, 'appearance_resource_$digest.bin')] =
+            bytes;
+        server.files[server.path(
+              false,
+              'appearance_${'a' * 32}_${sha256.convert(manifest)}.bin',
+            )] =
+            manifest;
+        final images = LocalAppearanceImages(
+          rootDirectory: Directory('${temporary.path}/icons'),
+        );
+        addTearDown(images.paths.dispose);
+        final comic = _comic('cloud-plugin-favorite');
+        final favorite = (comic['favorites'] as List).single as Map;
+        favorite['source'] = missing;
+        favorite['uniqueKey'] = '$missing::cloud-plugin-favorite';
+        server.payload(legacy, 'comic', comic);
+
+        for (var attempt = 0; attempt < 2; attempt++) {
+          await manualDownloadFromCloud(
+            state: state,
+            archives: server.adapters(),
+            codecs: _codecs,
+            hooks: SyncArchiveHooks(
+              recoveryDirectory: temporary,
+              appearanceImages: images,
+            ),
+          );
+          final rows = {
+            for (final row in objectbox.pluginInfoBox.getAll()) row.uuid: row,
+          };
+          expect(rows[missing]?.originScript, prototype['originScript']);
+          expect(rows[missing]?.debug, isFalse);
+          expect(rows[missing]?.debugUrl, isNull);
+          expect(rows[removed], isNull);
+          expect(rows[incompatible], isNull);
+          expect(rows[tombstone], isNull);
+          expect(
+            objectbox.pluginConfigBox.getAll().single.config,
+            '{"choice":"from-cloud"}',
+          );
+          expect(objectbox.unifiedFavoriteBox.getAll().single.source, missing);
+          expect(await File(images.paths.value[icon]!).readAsBytes(), bytes);
+        }
+        expect(
+          PluginHostCompatibilityNotices.instance.takePending().single.uuid,
+          incompatible,
         );
       },
     );

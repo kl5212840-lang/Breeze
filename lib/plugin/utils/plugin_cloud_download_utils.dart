@@ -40,17 +40,30 @@ const _bundledCatalog = 'asset/plugins/personal_catalog.json';
 
 Future<CloudPluginCatalogSnapshot> _readCloudPluginCatalogSnapshot() async {
   String? legacy;
+  CloudPluginCatalogSnapshot? cached;
   try {
     final prefs = await SharedPreferences.getInstance();
-    final snapshot = CloudPluginCatalogSnapshot.fromCacheJson(
+    cached = CloudPluginCatalogSnapshot.fromCacheJson(
       prefs.getString(_catalogCacheKey),
     );
-    if (snapshot != null) return snapshot;
+    // A versioned catalog can intentionally remove entries, even all of
+    // them. Keep that authoritative snapshot as-is.
+    if (cached?.personalVersioned == true) return cached!;
     legacy = prefs.getString(_legacyCatalogCacheKey);
   } catch (_) {}
+  final bundled = await rootBundle.loadString(_bundledCatalog);
+  if (cached != null) {
+    return CloudPluginCatalogSnapshot(
+      official: cached.official,
+      personal: CloudPluginCatalogSnapshot.fromLegacyCache(
+        combined: jsonEncode(cached.personal),
+        bundled: bundled,
+      ).personal,
+    );
+  }
   return CloudPluginCatalogSnapshot.fromLegacyCache(
     combined: legacy,
-    bundled: await rootBundle.loadString(_bundledCatalog),
+    bundled: bundled,
   );
 }
 

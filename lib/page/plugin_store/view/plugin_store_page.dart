@@ -221,6 +221,7 @@ class _PluginStorePageContentState extends State<_PluginStorePageContent> {
             children: displayPlugins
                 .map(
                   (item) => CloudPluginCard(
+                    key: ValueKey(item.manifest.uuid),
                     item: item,
                     installing: state.installing,
                     onOpenHome: _openExternalUrl,

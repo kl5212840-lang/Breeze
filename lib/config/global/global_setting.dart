@@ -599,9 +599,9 @@ class GlobalSettingCubit extends Cubit<GlobalSettingState> {
   void _syncRuntimeFlags(GlobalSettingState value) {
     eInkInstantRoutes = value.eInkSetting.shouldRemoveRouteTransition;
     DownloadAdmission.instance.setWifiOnly(
-      defaultTargetPlatform == TargetPlatform.iOS && value.downloadWifiOnly,
+      DownloadAdmission.supportsMobileControls && value.downloadWifiOnly,
     );
-    if (defaultTargetPlatform == TargetPlatform.iOS &&
+    if (DownloadAdmission.supportsMobileControls &&
         value.videoDownloadConcurrency.clamp(1, 3) !=
             state.videoDownloadConcurrency.clamp(1, 3)) {
       // Waiting transfers read the committed limit when they wake.

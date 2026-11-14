@@ -66,7 +66,7 @@ abstract final class VideoDownloadedDetails {
 
   static Future<String?> ensureLocalPoster(Map<String, dynamic> row) {
     final id = row['resourceId'];
-    if (!VideoLocalPoster.supported ||
+    if (!VideoLocalPoster.supports(row) ||
         id is! String ||
         !RegExp(r'^[a-f0-9]{64}$').hasMatch(id))
       return localPosterForResource(row);
@@ -759,7 +759,7 @@ abstract final class VideoDownloadedDetails {
         unawaited(poster);
       }
     }
-    if (frameFallback && VideoLocalPoster.supported)
+    if (frameFallback && VideoLocalPoster.supports(row))
       unawaited(ensureLocalPoster(row));
   }
 

@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -13,20 +12,24 @@ import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.net.HttpURLConnection
+import java.net.Proxy
 import java.net.URI
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Activity owns external pickers. The application process owns keyed MP4 tasks. */
 class VideoSystemActions(private val activity: Activity, messenger: BinaryMessenger) {
     companion object {
         private const val SHARE_REQUEST = 2101
         private const val EXPORT_REQUEST = 2102
+        private val posterWorker = Executors.newSingleThreadExecutor()
+        private val posterBusy = AtomicBoolean()
         private var processDownloads: ManagedVideoDownloads? = null
 
         private fun managedDownloads(context: Context): ManagedVideoDownloads =
             processDownloads ?: run {
                 val handler = Handler(Looper.getMainLooper())
-                ManagedVideoDownloads(context.cacheDir, Executors.newSingleThreadExecutor(),
+                ManagedVideoDownloads(context.cacheDir, Executors.newFixedThreadPool(VideoDownloadForeground.maxTransfers),
                     post = { action -> handler.post(action) }, clock = SystemClock::elapsedRealtime,
                     foreground = VideoDownloadForegroundService.forProcess(context))
                     .also { processDownloads = it }
@@ -64,6 +67,7 @@ class VideoSystemActions(private val activity: Activity, messenger: BinaryMessen
                 "start" -> start(args, result)
                 "status" -> result.success(managedIdentity(args)?.let(managed::status))
                 "attach" -> attach(args, result)
+                "poster" -> localPoster(args, result)
                 "export" -> exportManaged(args, result)
                 "exportArchive" -> exportArchive(args, result)
                 "cancel" -> {
@@ -145,7 +149,6 @@ class VideoSystemActions(private val activity: Activity, messenger: BinaryMessen
     }
 
     private fun start(args: Map<*, *>, result: MethodChannel.Result) {
-        if (active != null || pendingExport != null) { result.success("busy"); return }
         val id = requestId(args)
         val raw = args["url"] as? String ?: ""
         val media = videoHttps(raw)
@@ -158,6 +161,11 @@ class VideoSystemActions(private val activity: Activity, messenger: BinaryMessen
             result.success(VideoMp4Failure("invalidRequest").result()); return
         }
         if (activity.isFinishing || activity.isDestroyed) { result.success("unavailable"); return }
+        val rawProxy = args["androidProxy"]
+        val proxy = androidVideoProxy(rawProxy)
+        if (rawProxy != null && proxy == null) {
+            result.success(VideoMp4Failure("routeUnavailable").result()); return
+        }
         val managedId = args["managedId"] as? String
         val identity = managedIdentity(args)
         if (args.containsKey("managedId") && (managedId == null || !validId(managedId)) ||
@@ -166,8 +174,10 @@ class VideoSystemActions(private val activity: Activity, messenger: BinaryMessen
         }
         val listener = subscriber(id, result)
         if (identity != null && managed.attach(identity, listener)) return
-        if (managed.busy) { result.success("busy"); return }
-        val open = downloadConnection(args["wifiOnly"] == true) ?: run {
+        if (identity == null && (active != null || pendingExport != null)) {
+            result.success("busy"); return
+        }
+        val open = downloadConnection(args["wifiOnly"] == true, proxy) ?: run {
             result.success(VideoMp4Failure("waitingWifi").result()); return
         }
         if (identity != null) {
@@ -223,14 +233,11 @@ class VideoSystemActions(private val activity: Activity, messenger: BinaryMessen
         }
     }
 
-    private fun downloadConnection(wifiOnly: Boolean): ((URI) -> HttpURLConnection)? {
-        if (!wifiOnly) return { uri -> uri.toURL().openConnection() as HttpURLConnection }
+    private fun downloadConnection(wifiOnly: Boolean, proxy: Proxy?): ((URI) -> HttpURLConnection)? {
         val connectivity = activity.applicationContext.getSystemService(ConnectivityManager::class.java)
-        val network = connectivity?.activeNetwork ?: return null
-        val capabilities = connectivity.getNetworkCapabilities(network) ?: return null
-        if (!capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return null
-        // Bind all hops to the selected Wi-Fi network while the engine is detached.
-        return { uri -> network.openConnection(uri.toURL()) as HttpURLConnection }
+        return androidVideoDownloadConnection(connectivity, wifiOnly, proxy) {
+            throw VideoMp4Failure("waitingWifi")
+        }
     }
 
     private fun validId(id: String) = Regex("^[a-f0-9]{64}$").matches(id)
@@ -259,8 +266,30 @@ class VideoSystemActions(private val activity: Activity, messenger: BinaryMessen
         } catch (_: Exception) { finish(job, "failed") }
     }
 
+    private fun localPoster(args: Map<*, *>, result: MethodChannel.Result) {
+        val id = args["resourceId"] as? String
+        if (args.size != 1 || id == null || !validId(id) ||
+            !posterBusy.compareAndSet(false, true)) {
+            result.success(null)
+            return
+        }
+        posterWorker.execute {
+            val data = try {
+                val root = managedRoot()
+                val file = File(root, "$id.mp4")
+                if (file.canonicalPath == File(root.canonicalFile, "$id.mp4").path &&
+                    file.isFile && file.length() > 12) AndroidVideoPoster.extract(file) else null
+            } catch (_: Exception) {
+                null
+            } finally {
+                posterBusy.set(false)
+            }
+            main.post { result.success(data) }
+        }
+    }
+
     private fun exportManaged(args: Map<*, *>, result: MethodChannel.Result) {
-        if (active != null || pendingExport != null || managed.busy) { result.success("busy"); return }
+        if (active != null || pendingExport != null) { result.success("busy"); return }
         val id = args["resourceId"] as? String
         if (id == null || !validId(id)) { result.success("failed"); return }
         try {
@@ -276,7 +305,7 @@ class VideoSystemActions(private val activity: Activity, messenger: BinaryMessen
     }
 
     private fun exportArchive(args: Map<*, *>, result: MethodChannel.Result) {
-        if (active != null || pendingExport != null || managed.busy) { result.success("busy"); return }
+        if (active != null || pendingExport != null) { result.success("busy"); return }
         val id = args["archiveId"] as? String
         if (id == null || !id.matches(Regex("^[a-f0-9]{32}$"))) { result.success("failed"); return }
         try {

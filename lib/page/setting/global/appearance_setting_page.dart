@@ -26,6 +26,7 @@ import 'package:zephyr/widgets/collection_cover_privacy.dart';
 import 'package:zephyr/widgets/local_appearance_image_picker.dart';
 import 'package:zephyr/widgets/system_accent_availability.dart';
 import 'package:zephyr/widgets/breeze_switch.dart';
+import 'package:zephyr/widgets/app_interface_style.dart';
 
 @RoutePage()
 class AppearanceSettingPage extends StatelessWidget {
@@ -36,6 +37,8 @@ class AppearanceSettingPage extends StatelessWidget {
     final cubit = context.watch<GlobalSettingCubit>();
     final state = cubit.state;
     final systemAccentAvailable = SystemAccentAvailability.of(context);
+    final android = AppInterfaceStyleScope.usesAndroidSystem(context);
+    final chinese = Localizations.localeOf(context).languageCode == 'zh';
 
     return SettingPageShell(
       grouped: true,
@@ -44,17 +47,20 @@ class AppearanceSettingPage extends StatelessWidget {
         padding: const EdgeInsets.only(bottom: 24),
         children: [
           SettingSection(
+            title: android ? (chinese ? '界面' : 'Interface') : '',
             children: [
               _languageTile(state, cubit),
               _systemTheme(state, cubit),
               const InterfaceStyleSetting(),
               const AppIconSetting(),
-              _switchStyle(context, state.switchStyle),
-              _fontSettings(context),
+              if (!android) _switchStyle(context, state.switchStyle),
+              if (!android) _fontSettings(context),
             ],
           ),
           SettingSection(
-            title: t.settings.appearanceOptions,
+            title: android
+                ? t.settings.themeColor
+                : t.settings.appearanceOptions,
             footer: t.settings.amoledSubtitle,
             children: [
               if (systemAccentAvailable) _dynamicColor(state, cubit),
@@ -63,7 +69,9 @@ class AppearanceSettingPage extends StatelessWidget {
               _isAMOLED(state, cubit),
             ],
           ),
-          const CollectionCoverAppearanceSettings(),
+          CollectionCoverAppearanceSettings(
+            fontSettings: android ? _fontSettings(context) : null,
+          ),
         ],
       ),
     );
@@ -279,9 +287,11 @@ class CollectionCoverAppearanceSettings extends StatefulWidget {
     super.key,
     this.imageStore,
     this.privacyController,
+    this.fontSettings,
   });
   final LocalAppearanceImages? imageStore;
   final CollectionCoverPrivacyController? privacyController;
+  final Widget? fontSettings;
   @override
   State<CollectionCoverAppearanceSettings> createState() =>
       _CollectionCoverAppearanceSettingsState();
@@ -620,13 +630,18 @@ class _CollectionCoverAppearanceSettingsState
           mainAxisSize: MainAxisSize.min,
           children: [
             SettingSection(
-              title: Localizations.localeOf(context).languageCode == 'zh'
+              title: widget.fontSettings != null
+                  ? t.settings.appearanceOptions
+                  : Localizations.localeOf(context).languageCode == 'zh'
                   ? '封面显示'
                   : 'Cover display',
               footer: Localizations.localeOf(context).languageCode == 'zh'
                   ? '原封面完整显示用柔化背景补齐；自定义保护图始终填满。'
                   : 'Entire original covers use a softened image background; custom privacy artwork always fills the frame.',
-              children: const [CollectionCoverFitSetting()],
+              children: [
+                ?widget.fontSettings,
+                const CollectionCoverFitSetting(),
+              ],
             ),
             SettingSection(
               title: t.coverPrivacy.title,

@@ -32,6 +32,33 @@ void main() {
     messenger.setMockMethodCallHandler(channel, null);
   });
 
+  test('Android reads and changes the native launcher selection', () async {
+    controller.dispose();
+    controller = AppIconController(
+      channel: channel,
+      isIOS: false,
+      isAndroid: true,
+    );
+    final methods = <String>[];
+    var installedIcon = '';
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      methods.add(call.method);
+      if (call.method == 'select') installedIcon = call.arguments as String;
+      return status(installedIcon);
+    });
+    await controller.ensureLoaded();
+    expect(controller.supported, isTrue);
+    expect(controller.iconName, isEmpty);
+    expect(await controller.select(AppIconController.classicName), isTrue);
+    expect(controller.iconName, AppIconController.classicName);
+    expect(controller.preview, pixel);
+    await controller.refresh();
+    expect(controller.iconName, AppIconController.classicName);
+    expect(await controller.select(''), isTrue);
+    expect(controller.iconName, isEmpty);
+    expect(methods, ['status', 'select', 'status', 'select']);
+  });
+
   test(
     'system selection is authoritative and failed change retains confirmed icon',
     () async {

@@ -1,5 +1,4 @@
 import 'package:zephyr/plugin/plugin_registry_service.dart';
-import 'package:flutter/foundation.dart';
 import 'package:zephyr/network/source_network_policy.dart';
 import 'package:zephyr/page/video/api_video_models.dart';
 import 'package:zephyr/page/video/api_video_repository.dart';
@@ -56,11 +55,8 @@ abstract final class ApiVideoEpisodeDownloads {
     return queued ? [row['key'] as String] : const [];
   }
 
-  /// Sources resolved without a page-owned browser can queue on either media
-  /// platform. The retained WebKit document bridge is currently iOS-only.
   static bool supportsBatch(ApiVideoRepository repository) =>
-      repository.retainBrowserForDownloads == null ||
-      (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS);
+      repository.supportsDownloadBrowser;
 
   static Future<List<String>> enqueue(
     ApiVideoRepository repository,
@@ -118,7 +114,8 @@ abstract final class ApiVideoEpisodeDownloads {
         repository.source,
         item,
       ).catchError((Object _) {});
-      releaseBrowser = await repository.retainBrowserForDownloads?.call();
+      final browser = await repository.acquireDownloadBrowser();
+      releaseBrowser = browser.release;
       if (!current()) throw const PluginLifecycleChanged();
       if (SourceNetworkPolicies.supports(repository.source)) {
         lease = await SourceNetworkPolicies.acquire(repository.source);
@@ -138,7 +135,7 @@ abstract final class ApiVideoEpisodeDownloads {
         sourceDisplayName:
             '${PluginRegistryService.I.getCachedPluginInfo(repository.source)?['name'] ?? ''}',
       ).catchError((Object _) {});
-      final retained = repository.withNetwork(Future.value(network));
+      final retained = browser.repository.withNetwork(Future.value(network));
       return await VideoEpisodeDownloadQueue.enqueue(
         userInitiated: true,
         source: repository.source,

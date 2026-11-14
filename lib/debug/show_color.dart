@@ -8,9 +8,6 @@ import 'package:flutter/services.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/util/context/context_extensions.dart';
 
-const _defaultFontPath =
-    r'<local-path>';
-
 @RoutePage()
 class ShowColorPage extends StatefulWidget {
   const ShowColorPage({super.key});
@@ -158,23 +155,13 @@ class _ShowColorPageState extends State<ShowColorPage> {
               ),
             ],
             const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: [
-                FilledButton.icon(
-                  onPressed: _loading
-                      ? null
-                      : () => _loadFontFromPath(_defaultFontPath),
-                  icon: const Icon(Icons.science_outlined),
-                  label: Text(t.settings.colorPreviewLoadRecommended),
-                ),
-                OutlinedButton.icon(
-                  onPressed: _loading ? null : _pickFontFile,
-                  icon: const Icon(Icons.upload_file_outlined),
-                  label: Text(t.settings.colorPreviewSelectFont),
-                ),
-              ],
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: OutlinedButton.icon(
+                onPressed: _loading ? null : _pickFontFile,
+                icon: const Icon(Icons.upload_file_outlined),
+                label: Text(t.settings.colorPreviewSelectFont),
+              ),
             ),
             const SizedBox(height: 16),
             _buildDefaultWeightPreview(context),

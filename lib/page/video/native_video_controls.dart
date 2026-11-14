@@ -152,6 +152,8 @@ class NativeVideoMenu extends StatelessWidget {
     this.secondary = false,
     this.overArtwork = false,
     this.compactTextChoice = false,
+    this.hostTriggerBuilder,
+    this.noPageDimming = false,
   });
   final String label, tooltip, selected, symbol;
   final Map<String, String> options;
@@ -183,6 +185,8 @@ class NativeVideoMenu extends StatelessWidget {
   final Set<String> selectAfterDismissal;
   final bool selectionIndicator, secondary, overArtwork;
   final bool compactTextChoice;
+  final Widget Function(BuildContext, VoidCallback?)? hostTriggerBuilder;
+  final bool noPageDimming;
 
   bool get _usesIconMetrics =>
       icon != null && label.isEmpty && width == VideoControlMetrics.touchExtent;
@@ -197,7 +201,7 @@ class NativeVideoMenu extends StatelessWidget {
     final compact = hostPresentation || hasMetadata;
     // Grouping changes commands, not the selected platform branch. System iOS
     // uses the native compact menu; Breeze retains the shared Flutter route.
-    if (compact && !native) {
+    if (hostTriggerBuilder != null || compact && !native) {
       return _HostVideoMenu(menu: this);
     }
     if (native) {
@@ -452,6 +456,7 @@ class _HostVideoMenuState extends State<_HostVideoMenu> {
       barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
       reduced: MediaQuery.disableAnimationsOf(context),
       systemStyle: AppInterfaceStyleScope.usesSystem(context),
+      noPageDimming: menu.noPageDimming,
     );
     setState(() => _route = route);
     menu.onOpened?.call();
@@ -468,6 +473,12 @@ class _HostVideoMenuState extends State<_HostVideoMenu> {
   @override
   Widget build(BuildContext context) {
     final menu = widget.menu;
+    if (menu.hostTriggerBuilder case final builder?) {
+      return Semantics(
+        expanded: _route != null,
+        child: builder(context, menu.options.isEmpty ? null : _open),
+      );
+    }
     if (menu.icon == null && menu.label.isNotEmpty) {
       final breeze = !AppInterfaceStyleScope.usesSystem(context);
       final searchExtent = menu.compactTextChoice
@@ -645,6 +656,7 @@ class _VideoMenuRoute extends PopupRoute<String> {
     required this.barrierLabel,
     required this.reduced,
     required this.systemStyle,
+    required this.noPageDimming,
   });
   final Rect Function() anchor;
   final Map<String, String> options;
@@ -655,6 +667,7 @@ class _VideoMenuRoute extends PopupRoute<String> {
   final CapturedThemes themes;
   final bool reduced;
   final bool systemStyle;
+  final bool noPageDimming;
   (BoxConstraints, MediaQueryData)? _layoutMetrics;
 
   void _followLaidOutAnchor(BoxConstraints constraints, MediaQueryData media) {
@@ -691,8 +704,9 @@ class _VideoMenuRoute extends PopupRoute<String> {
   @override
   bool get barrierDismissible => true;
   @override
-  Color? get barrierColor =>
-      systemStyle ? Colors.black.withValues(alpha: .06) : Colors.transparent;
+  Color? get barrierColor => systemStyle && !noPageDimming
+      ? Colors.black.withValues(alpha: .06)
+      : Colors.transparent;
   @override
   Duration get transitionDuration => Duration(milliseconds: reduced ? 0 : 180);
   @override

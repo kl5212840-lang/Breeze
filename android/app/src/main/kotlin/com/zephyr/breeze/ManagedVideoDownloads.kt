@@ -6,6 +6,7 @@ import java.net.URI
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executor
 import java.util.concurrent.RejectedExecutionException
 
@@ -39,8 +40,9 @@ internal class ManagedVideoDownloads(
     private val foreground: VideoDownloadForeground? = null,
 ) {
     private val root = File(cacheDir.canonicalFile, "breeze-video-staging")
-    private var active: Job? = null
+    private val active = linkedMapOf<ManagedVideoAttempt, Job>()
     private val settled = linkedMapOf<ManagedVideoAttempt, Receipt>()
+    private val stagingReady = CompletableFuture<Unit>()
 
     private class Job(val identity: ManagedVideoAttempt, var subscriber: ManagedVideoSubscriber?) {
         val transfer = VideoMp4Transfer()
@@ -52,18 +54,27 @@ internal class ManagedVideoDownloads(
 
     init {
         worker.execute {
-            if (root.canonicalPath == root.path) {
-                val old = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
-                val stageName = Regex("^[a-f0-9]{32}\\.mp4$")
-                root.listFiles()?.filter {
-                    it.name.startsWith("breeze-managed-") && it.name.endsWith(".part") ||
-                        stageName.matches(it.name) && it.lastModified() in 1..old
-                }?.forEach { it.delete() }
+            try {
+                if (root.canonicalPath == root.path) {
+                    val old = System.currentTimeMillis() - 24 * 60 * 60 * 1000L
+                    val stageName = Regex("^[a-f0-9]{32}\\.mp4$")
+                    root.listFiles()?.filter {
+                        it.name.startsWith("breeze-managed-") && it.name.endsWith(".part") ||
+                            stageName.matches(it.name) && it.lastModified() in 1..old
+                    }?.forEach { it.delete() }
+                }
+            } catch (_: java.io.IOException) {
+                // A later request verifies the staging directory before use.
+            } finally {
+                // No worker may open a .part until startup orphan cleanup ends.
+                stagingReady.complete(Unit)
             }
         }
     }
 
-    val busy: Boolean get() = active != null
+    val busy: Boolean get() = active.isNotEmpty()
+
+    private fun owns(job: Job) = active[job.identity] === job
 
     private fun receipt(identity: ManagedVideoAttempt): Receipt? {
         val now = clock()
@@ -78,8 +89,8 @@ internal class ManagedVideoDownloads(
 
     fun status(identity: ManagedVideoAttempt): String? {
         discardDetachedScopeChange(identity)
-        val job = active
-        if (job != null && job.identity.sameTask(identity)) {
+        val job = active.values.firstOrNull { it.identity.sameTask(identity) }
+        if (job != null) {
             return if (job.identity == identity && job.subscriber == null) "active" else "busy"
         }
         if (settled.any { (stored, receipt) -> stored.sameTask(identity) && receipt.stage != null &&
@@ -91,7 +102,7 @@ internal class ManagedVideoDownloads(
 
     fun attach(identity: ManagedVideoAttempt, subscriber: ManagedVideoSubscriber): Boolean {
         discardDetachedScopeChange(identity)
-        val job = active?.takeIf { it.identity == identity }
+        val job = active[identity]
         if (job != null) {
             if (job.subscriber != null) {
                 subscriber.result("busy")
@@ -112,9 +123,10 @@ internal class ManagedVideoDownloads(
     }
 
     private fun discardDetachedScopeChange(identity: ManagedVideoAttempt) {
-        val job = active
-        if (job != null && job.subscriber == null && job.identity.sameTask(identity) &&
-            job.identity.scope != identity.scope) {
+        val job = active.values.firstOrNull {
+            it.subscriber == null && it.identity.sameTask(identity) && it.identity.scope != identity.scope
+        }
+        if (job != null) {
             job.transfer.cancel()
             finish(job, "cancelled")
         }
@@ -136,15 +148,16 @@ internal class ManagedVideoDownloads(
         open: (URI) -> HttpURLConnection,
     ) {
         if (attach(identity, subscriber)) return
-        if (busy) {
+        if (active.size >= VideoDownloadForeground.maxTransfers ||
+            active.keys.any { it.resourceId == identity.resourceId }) {
             subscriber.result("busy")
             return
         }
         val job = Job(identity, subscriber)
-        active = job
+        active[identity] = job
         progress(job, force = true)
         fun beginTransfer() {
-            if (active !== job) return
+            if (!owns(job)) return
             try {
                 worker.execute { run(job, media, referer, headers, open) }
             } catch (_: RejectedExecutionException) {
@@ -156,7 +169,7 @@ internal class ManagedVideoDownloads(
             return
         }
         job.foreground = foreground.acquire(::beginTransfer) { reason ->
-            if (active === job) {
+            if (owns(job)) {
                 job.transfer.cancel()
                 finish(job, reason?.let { VideoMp4Failure(it).result() } ?: "cancelled")
             }
@@ -174,6 +187,7 @@ internal class ManagedVideoDownloads(
         var part: File? = null
         var stage: File? = null
         try {
+            stagingReady.join()
             if (job.transfer.cancelled) return
             val temp = try {
                 check(root.canonicalPath == root.path && (root.mkdirs() || root.isDirectory))
@@ -199,7 +213,7 @@ internal class ManagedVideoDownloads(
                 throw VideoMp4Failure("storage")
             }
             post {
-                if (active !== job) {
+                if (!owns(job)) {
                     completed.delete()
                 } else {
                     progress(job, saving = true, force = true)
@@ -223,7 +237,7 @@ internal class ManagedVideoDownloads(
     }
 
     private fun progress(job: Job, saving: Boolean = false, force: Boolean = false) {
-        if (active !== job || job.transfer.cancelled || !force && job.transfer.received == 0L) return
+        if (!owns(job) || job.transfer.cancelled || !force && job.transfer.received == 0L) return
         job.foreground?.progress(job.transfer.received, job.transfer.total)
         val receiver = job.subscriber ?: return
         receiver.progress(mapOf("id" to receiver.id, "received" to job.transfer.received,
@@ -231,8 +245,8 @@ internal class ManagedVideoDownloads(
     }
 
     private fun finish(job: Job, status: Any, stage: File? = null) {
-        if (active !== job) return
-        active = null
+        if (!owns(job)) return
+        active.remove(job.identity)
         job.foreground?.close()
         job.foreground = null
         val receiver = job.subscriber
@@ -246,17 +260,15 @@ internal class ManagedVideoDownloads(
     }
 
     fun detach(owner: Any) {
-        val job = active
-        if (job?.subscriber?.owner === owner) job.subscriber = null
+        active.values.filter { it.subscriber?.owner === owner }.forEach { it.subscriber = null }
         settled.values.filter { it.owner === owner }.forEach { it.owner = null }
     }
 
     fun cancel(owner: Any, id: Any?, key: Any?, scope: Any?) {
-        val job = active ?: return
-        val receiver = job.subscriber
-        if (key != null) {
-            if (job.identity.key != key || job.identity.scope != scope) return
-        } else if (receiver == null || receiver.owner !== owner || receiver.id != id) return
+        val job = active.values.firstOrNull {
+            if (key != null) it.identity.key == key && it.identity.scope == scope
+            else it.subscriber?.let { receiver -> receiver.owner === owner && receiver.id == id } == true
+        } ?: return
         job.transfer.cancel()
         finish(job, "cancelled")
     }

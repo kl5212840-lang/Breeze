@@ -541,6 +541,8 @@ class _DownloadedLocalCover extends StatelessWidget {
                 durationText: duration,
                 child: CollectionCoverPrivacy(
                   fit: fit,
+                  image: image,
+                  mosaicPlaceholder: placeholder,
                   child: image == null
                       ? placeholder
                       : SoftCoverBackground(

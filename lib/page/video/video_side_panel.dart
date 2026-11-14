@@ -1,6 +1,9 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/page/video/video_browse_theme.dart';
 import 'package:zephyr/widgets/native_material_surface.dart';
@@ -77,6 +80,14 @@ class VideoSidePanelDepth extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fade = (width * .6).clamp(144.0, 240.0);
+    final glass =
+        !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android &&
+        VideoControlAppearance.usesSystem(context) &&
+        !MediaQuery.highContrastOf(context) &&
+        !context.select<GlobalSettingCubit?, bool>(
+          (cubit) => cubit?.state.eInkSetting.enabled ?? false,
+        );
     return Positioned(
       top: 0,
       bottom: 0,
@@ -89,10 +100,10 @@ class VideoSidePanelDepth extends StatelessWidget {
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 stops: [0, fade / (width + fade), 1],
-                colors: const [
+                colors: [
                   Colors.transparent,
-                  Color(0xD9000000),
-                  Color(0xE6000000),
+                  glass ? const Color(0x3D000000) : const Color(0xD9000000),
+                  glass ? const Color(0x70000000) : const Color(0xE6000000),
                 ],
               ),
             ),
@@ -103,8 +114,8 @@ class VideoSidePanelDepth extends StatelessWidget {
   }
 }
 
-/// UIKit material is confined to each functional block, with a matching
-/// layout and touch contract in Breeze appearance.
+/// Each functional block owns its material and keeps the movie visible in
+/// the spaces between groups.
 class VideoPanelBlock extends StatelessWidget {
   const VideoPanelBlock({super.key, required this.child});
   final Widget child;
@@ -113,6 +124,7 @@ class VideoPanelBlock extends StatelessWidget {
   Widget build(BuildContext context) => NativeMaterialSurface(
     systemStyle: VideoControlAppearance.usesSystem(context),
     readableContent: true,
+    androidGlass: true,
     radius: 14,
     child: child,
   );

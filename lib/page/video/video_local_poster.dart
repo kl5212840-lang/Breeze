@@ -8,11 +8,17 @@ import 'package:zephyr/page/video/video_local_resources.dart';
 import 'package:zephyr/page/video/video_hls_assets.dart';
 import 'package:zephyr/service/local_import_recovery.dart';
 
-/// This bridge never accepts a URL or path. Android currently has no local
-/// frame API; it keeps the ordinary source poster or play placeholder.
+/// The frame bridge accepts only a managed resource identity.
 abstract final class VideoLocalPoster {
   static bool get supported =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+      !kIsWeb &&
+      const {
+        TargetPlatform.iOS,
+        TargetPlatform.android,
+      }.contains(defaultTargetPlatform);
+  static bool supports(Map<String, dynamic> row) =>
+      supported &&
+      (row['format'] != 'hls' || defaultTargetPlatform == TargetPlatform.iOS);
   static const _mp4 = MethodChannel('breeze.video.download');
   static Future<void>? _pending;
   static String binding(Map<String, dynamic> row) => jsonEncode([
@@ -60,7 +66,7 @@ abstract final class VideoLocalPoster {
     required Future<bool> Function() begin,
     required Future<void> Function(Uint8List) consume,
   }) {
-    if (!supported) return Future.value(false);
+    if (!supports(row)) return Future.value(false);
     final previous = _pending;
     final result = () async {
       if (previous != null) await previous;

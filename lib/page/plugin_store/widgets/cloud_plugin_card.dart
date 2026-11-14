@@ -1,11 +1,12 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/plugin_store/models/cloud_plugin_item.dart';
-import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/plugin/utils/plugin_catalog_merge.dart';
 import 'package:zephyr/plugin/utils/plugin_version_utils.dart';
+import 'package:zephyr/plugin/utils/plugin_update_channel_utils.dart'
+    show parseGetInfoJson;
 import 'package:zephyr/plugin/utils/published_plugin_artifact.dart';
 import 'package:zephyr/widgets/plugin_icon.dart';
 
@@ -69,7 +70,13 @@ class CloudPluginCard extends StatelessWidget {
         ? manifest.name.trim()
         : item.repo.split('/').last.trim();
     final canReinstall =
-        isInstalled && item.formalRelease != null && onReinstall != null;
+        isInstalled &&
+        onReinstall != null &&
+        item.canReinstallFromCloud(
+          parseGetInfoJson(
+            PluginRegistryService.I.readPersistedGetInfoJson(manifest.uuid),
+          ),
+        );
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -157,40 +164,66 @@ class CloudPluginCard extends StatelessWidget {
                 onTap: installing || !canDownload ? null : onInstall,
               ),
               if (canReinstall)
-                if (installing)
-                  IconButton(
-                    onPressed: null,
-                    tooltip: t.common.more,
-                    icon: const Icon(Icons.more_horiz),
-                  )
-                else
-                  VideoControlAppearance(
-                    systemControls: usesNativeSourceChrome(context),
-                    child: NativeVideoMenu(
-                      label: '',
-                      tooltip: t.common.more,
-                      selected: '',
-                      width: 44,
-                      icon: Icons.more_horiz,
-                      symbol: 'ellipsis',
-                      hostPresentation: true,
-                      options: {'reinstall': t.pluginLifecycle.reinstall},
-                      selectAfterDismissal: const {'reinstall'},
-                      optionIcons: const {
-                        'reinstall': (
-                          icon: Icons.refresh,
-                          symbol: 'arrow.clockwise',
-                        ),
-                      },
-                      onSelected: (_) => onReinstall!(localVersion),
+                NativeVideoMenu(
+                  key: ValueKey((
+                    item.repo,
+                    manifest.version,
+                    manifest.updateUrl,
+                    manifest.npmName,
+                    manifest.scriptSha256,
+                    localVersion,
+                  )),
+                  label: '',
+                  tooltip: t.common.more,
+                  selected: '',
+                  hostPresentation: true,
+                  noPageDimming: true,
+                  options: {
+                    if (!installing) 'reinstall': t.pluginLifecycle.reinstall,
+                  },
+                  optionIcons: const {
+                    'reinstall': (
+                      icon: Icons.refresh,
+                      symbol: 'arrow.clockwise',
                     ),
+                  },
+                  selectAfterDismissal: const {'reinstall'},
+                  onSelected: (_) {
+                    if (!installing) onReinstall!(localVersion);
+                  },
+                  hostTriggerBuilder: (context, onPressed) => IconButton(
+                    onPressed: onPressed,
+                    tooltip: t.common.more,
+                    icon: const Icon(Icons.more_horiz, size: 20),
+                    style: _cloudActionStyle(context, iconOnly: true),
                   ),
+                ),
             ],
           ),
         ],
       ),
     );
   }
+}
+
+ButtonStyle _cloudActionStyle(BuildContext context, {bool iconOnly = false}) {
+  final theme = Theme.of(context);
+  return OutlinedButton.styleFrom(
+    minimumSize: const Size(44, 44),
+    alignment: Alignment.center,
+    padding: iconOnly
+        ? EdgeInsets.zero
+        : const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    backgroundColor: theme.colorScheme.surfaceContainerLow,
+    foregroundColor: theme.colorScheme.primary,
+    disabledBackgroundColor: theme.colorScheme.surfaceContainerLow,
+    disabledForegroundColor: theme.colorScheme.onSurface.withValues(alpha: .38),
+    side: iconOnly
+        ? BorderSide(color: theme.colorScheme.outline.withValues(alpha: .55))
+        : null,
+    textStyle: theme.textTheme.labelMedium,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+  );
 }
 
 /// Body actions use standard press, hover, focus and disabled feedback.
@@ -202,17 +235,9 @@ class _CloudTextAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return OutlinedButton(
       onPressed: onTap,
-      style: OutlinedButton.styleFrom(
-        minimumSize: const Size(44, 44),
-        alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        backgroundColor: theme.colorScheme.surfaceContainerLow,
-        textStyle: theme.textTheme.labelMedium,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
+      style: _cloudActionStyle(context),
       child: Text(label, textAlign: TextAlign.center),
     );
   }

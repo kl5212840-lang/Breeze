@@ -131,6 +131,7 @@ class ApiVideoBrowserSession extends ChangeNotifier {
     required this.itemPrefix,
     this.network,
     this.accountSource,
+    this.interactive = true,
     PluginAccountSyncCoordinator? accountCoordinator,
     VideoAccountCookies? Function(InAppWebViewController)? accountCookieAdapter,
   }) : _accountCoordinator =
@@ -144,6 +145,7 @@ class ApiVideoBrowserSession extends ChangeNotifier {
   final String itemPrefix;
   final Future<OmoNetworkContext?>? network;
   final String? accountSource;
+  final bool interactive;
   late final int _accountInstallation;
   final PluginAccountSyncCoordinator _accountCoordinator;
   final VideoAccountCookies? Function(InAppWebViewController)
@@ -187,7 +189,7 @@ class ApiVideoBrowserSession extends ChangeNotifier {
     }
     cancel(); // A newer query owns the one browser and invalidates old callbacks.
     final generation = ++_generation;
-    _allowVerificationPresentation = !isAutomaticReadRecovery;
+    _allowVerificationPresentation = interactive && !isAutomaticReadRecovery;
     final pending = Completer<Map<String, dynamic>>();
     _pending = pending;
     _expected = url;
@@ -201,6 +203,7 @@ class ApiVideoBrowserSession extends ChangeNotifier {
     });
     try {
       final web = await _ready.future.timeout(const Duration(seconds: 20));
+      resolutionOwner?.check();
       if (generation != _generation) return await pending.future;
       if (kDebugMode) debugPrint('ApiCatalog stage=ready');
       // A new WKWebView has no document yet. Evaluating JS before its first
@@ -240,6 +243,8 @@ class ApiVideoBrowserSession extends ChangeNotifier {
         !RegExp(r'^/anime/[a-f0-9]{16,64}\.html$').hasMatch(url.path)) {
       throw const FormatException('Unsupported public detail URL');
     }
+    final resolutionOwner = VideoDownloadResolutionOwner.current;
+    resolutionOwner?.check();
     final generation = _generation;
     if (!_firstDocumentReady.isCompleted) {
       final ready = Completer<void>();
@@ -270,6 +275,7 @@ class ApiVideoBrowserSession extends ChangeNotifier {
         current.scheme != 'https') {
       throw const FormatException('Public detail session is not ready');
     }
+    resolutionOwner?.check();
     final raw = await videoBrowserReadAsync(
       web,
       apiVideoPublicDetailScript(url, home),
@@ -278,6 +284,12 @@ class ApiVideoBrowserSession extends ChangeNotifier {
       throw const FormatException('Detail read cancelled');
     }
     final value = asJsonMap(raw is String ? jsonDecode(raw) : raw);
+    if (!interactive &&
+        value['kind'] == 'public-detail' &&
+        value['url'] == url.toString() &&
+        value['verification'] == true) {
+      throw const VideoDownloadResolutionFailure('verificationRequired');
+    }
     if (value['kind'] != 'public-detail' ||
         value['url'] != url.toString() ||
         value['verification'] == true ||
@@ -286,6 +298,31 @@ class ApiVideoBrowserSession extends ChangeNotifier {
       throw const FormatException('Public detail requires verification');
     }
     return value;
+  }
+
+  void receivedError(WebResourceRequest request, WebResourceError error) {
+    if (request.isForMainFrame != true ||
+        error.type == WebResourceErrorType.CANCELLED ||
+        !videoSiteDocumentMatches(
+          _expected,
+          Uri.tryParse(request.url.toString()),
+        )) {
+      return;
+    }
+    _trace.add(
+      'navigation_error',
+      defaultTargetPlatform == TargetPlatform.iOS
+          ? error.description
+          : '${error.type}',
+    );
+    if (!visible) {
+      cancel(
+        error: ApiVideoBrowserTransportFailure(
+          error.type.toString(),
+          error.description,
+        ),
+      );
+    }
   }
 
   void created(InAppWebViewController web) {
@@ -596,7 +633,11 @@ class ApiVideoBrowserSession extends ChangeNotifier {
       }
       if (value['verification'] == true) {
         if (!_allowVerificationPresentation) {
-          cancel(error: const FormatException('Catalog requires verification'));
+          cancel(
+            error: interactive
+                ? const FormatException('Catalog requires verification')
+                : const VideoDownloadResolutionFailure('verificationRequired'),
+          );
           return;
         }
         if (kDebugMode) debugPrint('ApiCatalog stage=verification');
@@ -683,8 +724,13 @@ class ApiVideoBrowserSession extends ChangeNotifier {
 
 /// One retained browser: revealing verification never recreates its cookie store.
 class ApiVideoBrowserHost extends StatelessWidget {
-  const ApiVideoBrowserHost({super.key, required this.session});
+  const ApiVideoBrowserHost({
+    super.key,
+    required this.session,
+    this.active = true,
+  });
   final ApiVideoBrowserSession session;
+  final bool active;
 
   @override
   Widget build(BuildContext context) => FutureBuilder<OmoNetworkContext?>(
@@ -698,114 +744,102 @@ class ApiVideoBrowserHost extends StatelessWidget {
         : _browser(context, snapshot.data),
   );
 
-  Widget _browser(
-    BuildContext context,
-    OmoNetworkContext? network,
-  ) => ListenableBuilder(
-    listenable: session,
-    builder: (context, _) => IgnorePointer(
-      ignoring: !session.visible,
-      child: ExcludeSemantics(
-        excluding: !session.visible,
-        child: Opacity(
-          opacity: session.visible ? 1 : 0,
-          child: ColoredBox(
-            color: Theme.of(context).colorScheme.surface,
-            child: SafeArea(
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      IconButton(
-                        tooltip: t.common.close,
-                        onPressed: session.cancel,
-                        icon: const Icon(Icons.close),
-                      ),
-                      Expanded(
-                        child: Text(
-                          t.videoPlayback.verificationTitle,
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(
-                                color: Theme.of(context).colorScheme.onSurface,
-                                decoration: TextDecoration.none,
+  Widget _browser(BuildContext context, OmoNetworkContext? network) =>
+      ListenableBuilder(
+        listenable: session,
+        builder: (context, _) {
+          final interceptBack =
+              active &&
+              session.visible &&
+              defaultTargetPlatform == TargetPlatform.android;
+          return PopScope(
+            canPop: !interceptBack,
+            onPopInvokedWithResult: (didPop, _) {
+              if (!didPop && interceptBack) scheduleMicrotask(session.cancel);
+            },
+            child: IgnorePointer(
+              ignoring: !session.visible,
+              child: ExcludeSemantics(
+                excluding: !session.visible,
+                child: Opacity(
+                  opacity: session.visible ? 1 : 0,
+                  child: ColoredBox(
+                    color: Theme.of(context).colorScheme.surface,
+                    child: SafeArea(
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              IconButton(
+                                tooltip: t.common.close,
+                                onPressed: session.cancel,
+                                icon: const Icon(Icons.close),
                               ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  Expanded(
-                    child: VideoSiteBrowser(
-                      home: session.home,
-                      source: session.accountSource ?? network?.source,
-                      networkContext: network?.token,
-                      configuration: InAppWebView(
-                        initialSettings: InAppWebViewSettings(
-                          javaScriptEnabled: true,
-                          domStorageEnabled: true,
-                          useHybridComposition:
-                              defaultTargetPlatform == TargetPlatform.android
-                              ? false
-                              : null,
-                          useShouldOverrideUrlLoading: true,
-                        ),
-                        onWebViewCreated: session.created,
-                        onPageCommitVisible: (web, uri) => session.committed(
-                          web,
-                          Uri.tryParse(uri?.toString() ?? ''),
-                        ),
-                        onLoadStop: (web, uri) => session.loaded(
-                          web,
-                          Uri.tryParse(uri?.toString() ?? ''),
-                        ),
-                        shouldOverrideUrlLoading: (_, action) async {
-                          final uri = Uri.tryParse(
-                            action.request.url?.toString() ?? '',
-                          );
-                          return allowVideoSiteNavigation(
-                                session.home,
-                                uri,
-                                isMainFrame: action.isForMainFrame,
-                              )
-                              ? NavigationActionPolicy.ALLOW
-                              : NavigationActionPolicy.CANCEL;
-                        },
-                        onReceivedError: (_, request, error) {
-                          if (request.isForMainFrame == true &&
-                              error.type != WebResourceErrorType.CANCELLED &&
-                              videoSiteDocumentMatches(
-                                session._expected,
-                                Uri.tryParse(request.url.toString()),
-                              )) {
-                            if (kDebugMode) {
-                              debugPrint(
-                                'ApiCatalog navigation error=${error.type}',
-                              );
-                            }
-                            session._trace.add(
-                              'navigation_error',
-                              defaultTargetPlatform == TargetPlatform.iOS
-                                  ? error.description
-                                  : '${error.type}',
-                            );
-                            if (!session.visible) {
-                              session.cancel(
-                                error: ApiVideoBrowserTransportFailure(
-                                  error.type.toString(),
-                                  error.description,
+                              Expanded(
+                                child: Text(
+                                  t.videoPlayback.verificationTitle,
+                                  style: Theme.of(context).textTheme.titleMedium
+                                      ?.copyWith(
+                                        color: Theme.of(
+                                          context,
+                                        ).colorScheme.onSurface,
+                                        decoration: TextDecoration.none,
+                                      ),
                                 ),
-                              );
-                            }
-                          }
-                        },
+                              ),
+                            ],
+                          ),
+                          Expanded(
+                            child: VideoSiteBrowser(
+                              home: session.home,
+                              source: session.accountSource ?? network?.source,
+                              networkContext: network?.token,
+                              configuration: InAppWebView(
+                                initialSettings: InAppWebViewSettings(
+                                  javaScriptEnabled: true,
+                                  domStorageEnabled: true,
+                                  useHybridComposition:
+                                      defaultTargetPlatform ==
+                                          TargetPlatform.android
+                                      ? false
+                                      : null,
+                                  useShouldOverrideUrlLoading: true,
+                                ),
+                                onWebViewCreated: session.created,
+                                onPageCommitVisible: (web, uri) =>
+                                    session.committed(
+                                      web,
+                                      Uri.tryParse(uri?.toString() ?? ''),
+                                    ),
+                                onLoadStop: (web, uri) => session.loaded(
+                                  web,
+                                  Uri.tryParse(uri?.toString() ?? ''),
+                                ),
+                                shouldOverrideUrlLoading: (_, action) async {
+                                  final uri = Uri.tryParse(
+                                    action.request.url?.toString() ?? '',
+                                  );
+                                  return allowVideoSiteNavigation(
+                                        session.home,
+                                        uri,
+                                        isMainFrame: action.isForMainFrame,
+                                      )
+                                      ? NavigationActionPolicy.ALLOW
+                                      : NavigationActionPolicy.CANCEL;
+                                },
+                                onReceivedError: (_, request, error) =>
+                                    session.receivedError(request, error),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                ],
+                ),
               ),
             ),
-          ),
-        ),
-      ),
-    ),
-  );
+          );
+        },
+      );
 }

@@ -276,7 +276,6 @@ private final class AppIconSettings {
   private var videoDownloadPresenter: VideoDownloadPresenter?
   private lazy var hlsAssetDownloadPresenter = HlsAssetDownloadPresenter()
   private lazy var backgroundFileTransfer = BackgroundFileTransfer()
-  private lazy var continuedDownloadActivity = ContinuedDownloadActivity()
   private var routingConfigExporter: RoutingConfigExporter?
   private var backupSecurity: BackupSecurityStore?
   private let appIconSettings = AppIconSettings()
@@ -288,7 +287,6 @@ private final class AppIconSettings {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
-    continuedDownloadActivity.register()
     backgroundFileTransfer.start()
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
@@ -349,7 +347,6 @@ private final class AppIconSettings {
       videoDownloadPresenter = VideoDownloadPresenter(messenger: registrar.messenger())
       hlsAssetDownloadPresenter.attach(messenger: registrar.messenger())
       backgroundFileTransfer.attach(registrar.messenger())
-      continuedDownloadActivity.attach(registrar.messenger())
       routingConfigExporter = RoutingConfigExporter(messenger: registrar.messenger())
       backupSecurity = BackupSecurityStore(messenger: registrar.messenger())
 #if DEBUG

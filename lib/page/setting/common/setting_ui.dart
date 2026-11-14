@@ -498,7 +498,11 @@ class SettingSection extends StatelessWidget {
     return (usesCupertinoSettings(context)
             ? theme.textTheme.bodySmall
             : theme.textTheme.titleSmall)
-        ?.copyWith(color: theme.colorScheme.onSurfaceVariant);
+        ?.copyWith(
+          color: AppInterfaceStyleScope.usesAndroidSystem(context)
+              ? theme.colorScheme.primary
+              : theme.colorScheme.onSurfaceVariant,
+        );
   }
 
   @override
@@ -506,7 +510,10 @@ class SettingSection extends StatelessWidget {
     if (children.isEmpty) return const SizedBox.shrink();
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final groupSurface = colors.surfaceContainerLow;
+    final android = AppInterfaceStyleScope.usesAndroidSystem(context);
+    final groupSurface = android
+        ? colors.surfaceContainerHigh
+        : colors.surfaceContainerLow;
     // Rows use ListTile's M3 leading slot. Match the separator to that title
     // gutter while leaving native controls outside any rounded clipping layer.
     final breeze = !AppInterfaceStyleScope.usesSystem(context);
@@ -610,12 +617,12 @@ class SettingSection extends StatelessWidget {
           Card(
             margin: EdgeInsets.zero,
             elevation: 0,
-            clipBehavior: Clip.none,
+            clipBehavior: android ? Clip.antiAlias : Clip.none,
             color: groupSurface,
-            surfaceTintColor: breeze ? Colors.transparent : null,
-            shape: breeze
+            surfaceTintColor: breeze || android ? Colors.transparent : null,
+            shape: breeze || android
                 ? RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(android ? 16 : 12),
                   )
                 : null,
             child: Column(

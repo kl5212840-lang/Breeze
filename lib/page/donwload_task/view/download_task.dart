@@ -3726,12 +3726,12 @@ int _comicWorkAttemptRank(DownloadTask task, DownloadTaskJson? payload) =>
     switch (payload?.stateCode) {
       'cancelled' => 5,
       'paused' => 4,
-      'failed' => 1,
+      'failed' => 3,
       'completed' when payload?.phaseCode != 'fileRemoved' => 6,
-      'queued' when payload?.phaseCode == 'waitingRetry' => 3,
+      'queued' when payload?.phaseCode == 'waitingRetry' => 2,
       _ when task.isDownloading => 0,
-      _ when task.isCompleted => 1,
-      _ => 2,
+      _ when task.isCompleted => 3,
+      _ => 1,
     };
 
 _Status _comicStatus(
@@ -3989,6 +3989,10 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
 
   void _chapterReadingChanged() {
     if (mounted && _pane == DownloadWorkPane.saved) setState(() {});
+  }
+
+  void _chapterQueueOrderChanged() {
+    if (mounted && _pane == DownloadWorkPane.active) setState(() {});
   }
 
   Future<DownloadResourceSize>? _metrics;
@@ -4639,6 +4643,9 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
         ? DownloadWorkPane.saved
         : DownloadWorkPane.active;
     _reading.changes.addListener(_chapterReadingChanged);
+    DownloadQueueManager.instance.priorityChanges.addListener(
+      _chapterQueueOrderChanged,
+    );
     unawaited(
       _reading.ensureLoaded().then<void>(
         (_) {},
@@ -4681,6 +4688,9 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
     unawaited(_watch?.cancel());
     unawaited(_historyChanges?.cancel());
     _reading.changes.removeListener(_chapterReadingChanged);
+    DownloadQueueManager.instance.priorityChanges.removeListener(
+      _chapterQueueOrderChanged,
+    );
     _savedScroll.dispose();
     _activeScroll.dispose();
     _openChapterSwipe.dispose();
@@ -4754,7 +4764,7 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
                     downloadCenterShowsComicTask(task, payload, _resource);
               }).toList(),
               orElse: () => <DownloadTask>[],
-            )..sort((a, b) => a.id.compareTo(b.id));
+            );
             final stored =
                 _resource?.chapters ??
                 const <UnifiedComicDownloadStoredChapter>[];
@@ -4777,15 +4787,18 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
               for (final task in tasks)
                 task.id: _comicWorkAttemptRank(task, payloads[task.id]),
             };
+            final queue = DownloadQueueManager.instance;
             tasks.sort((a, b) {
               final rank = ranks[a.id]!;
               final order = rank.compareTo(ranks[b.id]!);
               if (order != 0) return order;
-              if (rank == 2) {
-                final left = payloads[a.id]?.queuedAt ?? 0;
-                final right = payloads[b.id]?.queuedAt ?? 0;
-                if (left != right) return right.compareTo(left);
-                return b.id.compareTo(a.id);
+              if (rank == 1 || rank == 2) {
+                return queue.compareQueuedTasks(
+                  a,
+                  payloads[a.id],
+                  b,
+                  payloads[b.id],
+                );
               }
               return a.id.compareTo(b.id);
             });
@@ -4801,7 +4814,6 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
             final canRemove = !active.any(
               (task) => downloadComicPriority(task) == 0,
             );
-            final queue = DownloadQueueManager.instance;
             final candidates = <String, Object>{};
             final titles = <String, String>{};
             final stoppable = <String, DownloadTask>{};

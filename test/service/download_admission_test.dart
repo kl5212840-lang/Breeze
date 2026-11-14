@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/service/download/download_admission.dart';
@@ -50,6 +51,35 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(admission.networkWait, isNull);
   });
+
+  test(
+    'Android waits for an unambiguous Wi-Fi route in Wi-Fi-only mode',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      final events = StreamController<List<ConnectivityResult>>();
+      final admission = DownloadAdmission(
+        readNetwork: () async => [
+          ConnectivityResult.wifi,
+          ConnectivityResult.vpn,
+        ],
+        networkEvents: events.stream,
+      )..setWifiOnly(true);
+      addTearDown(() async {
+        admission.dispose();
+        await events.close();
+      });
+
+      await admission.start();
+      expect(admission.networkWait, DownloadNetworkWait.wifi);
+      events.add([ConnectivityResult.wifi, ConnectivityResult.mobile]);
+      await Future<void>.delayed(Duration.zero);
+      expect(admission.networkWait, DownloadNetworkWait.wifi);
+      events.add([ConnectivityResult.wifi]);
+      await Future<void>.delayed(Duration.zero);
+      expect(admission.networkWait, isNull);
+    },
+  );
 
   test('unknown storage does not act like a full volume', () async {
     int? free;

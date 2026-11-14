@@ -1,4 +1,3 @@
-import 'package:zephyr/page/video/video_download_continuation.dart';
 import 'dart:async';
 import 'package:zephyr/page/video/android_managed_video_attempt.dart';
 import 'package:zephyr/network/source_network_policy.dart';
@@ -65,6 +64,7 @@ class _Resolver {
 abstract final class VideoDownloadRetry {
   static final _resolvers = <String, List<_Resolver>>{};
   static final _work = <String, _RetryWork>{};
+  static final _refreshingAfterBackground = <String>{};
   static bool isPending(String key) =>
       _work.containsKey(key) || VideoExportRecords.isLive(key);
   static bool _terminal(Map<String, dynamic> row) => const {
@@ -146,12 +146,31 @@ abstract final class VideoDownloadRetry {
     unawaited(_resumeAfterNetwork(key, attempt, source, accountGeneration));
   }
 
+  static void refreshAfterBackground(
+    String key, {
+    required int attempt,
+    required String source,
+    required int accountGeneration,
+  }) {
+    if (!_refreshingAfterBackground.add(key)) return;
+    unawaited(
+      _resumeAfterNetwork(
+        key,
+        attempt,
+        source,
+        accountGeneration,
+        refreshAfterBackground: true,
+      ).whenComplete(() => _refreshingAfterBackground.remove(key)),
+    );
+  }
+
   static Future<void> _resumeAfterNetwork(
     String key,
     int attempt,
     String source,
-    int accountGeneration,
-  ) async {
+    int accountGeneration, {
+    bool refreshAfterBackground = false,
+  }) async {
     final cancelled = Completer<void>();
     final installation = SourceNetworkPolicies.supports(source)
         ? LocalPluginInstallationState.instance
@@ -185,7 +204,10 @@ abstract final class VideoDownloadRetry {
             (row) =>
                 row['key'] == key &&
                 row['attempt'] == attempt &&
-                DownloadNetworkWait.fromCode(row['failureReason']) != null,
+                (refreshAfterBackground
+                    ? const {401, 403}.contains(row['httpStatus'])
+                    : DownloadNetworkWait.fromCode(row['failureReason']) !=
+                          null),
           )
           .firstOrNull;
       if (row == null ||
@@ -204,7 +226,7 @@ abstract final class VideoDownloadRetry {
       if (_resolver(source, row) == null && (overlay == null || plugin == null))
         return;
       final owner = Object();
-      await retry(
+      final queued = await retry(
         row,
         fallback: overlay == null
             ? null
@@ -213,12 +235,22 @@ abstract final class VideoDownloadRetry {
         cancelResolution: () => VideoDownloadRetryHosts.cancel(source, owner),
         expectedAccountGeneration: accountGeneration,
       );
+      if (refreshAfterBackground && queued) {
+        final retriedAttempt = VideoExportRecords.currentAttempt(key);
+        if (retriedAttempt != null) {
+          await VideoSystemDownload.waitForQueuedTaskToSettle(
+            key,
+            retriedAttempt,
+          );
+        }
+      }
     } catch (_) {
       // An older, removed, or unsupported intent stays available for manual retry.
     } finally {
       installation?.changes.removeListener(installationChanged);
       await boundaries.cancel();
-      VideoExportRecords.releaseNetworkWait(key, attempt);
+      if (!refreshAfterBackground)
+        VideoExportRecords.releaseNetworkWait(key, attempt);
     }
   }
 
@@ -250,11 +282,6 @@ abstract final class VideoDownloadRetry {
     _work[key] = work;
     try {
       await work.prepare(expectedAccountGeneration: expectedAccountGeneration);
-      if (userInitiated) {
-        VideoSystemDownload.beginContinuedAttempts([
-          (key: key, attempt: work.attempt),
-        ]);
-      }
       VideoEpisodeDownloadQueue.schedule(work.run);
       return true;
     } catch (_) {
@@ -312,7 +339,7 @@ class _RetryWork {
         : null;
     await installation?.load();
     installationEpoch = installation?.installationEpoch(source);
-    final candidate = AndroidManagedVideoAttempt.interrupted(original);
+    final candidate = await AndroidManagedVideoAttempt.interrupted(original);
     final nativeStatus = await candidate?.status();
     if (nativeStatus == 'busy') {
       throw const VideoDownloadRetryFailure('unavailable');
@@ -452,9 +479,31 @@ class _RetryWork {
         owner.onCancel(_closeFallback);
       final pending = VideoEpisodeDownloadQueue.resolveSource(source, () {
         if (!current) throw const _RetryCancelled();
-        final raw = resolve(
-          Map<String, dynamic>.unmodifiable({...original, 'attempt': attempt}),
-        );
+        final request = Map<String, dynamic>.unmodifiable({
+          ...original,
+          'attempt': attempt,
+        });
+        final raw = () async {
+          try {
+            return await resolve(request);
+          } on VideoDownloadResolutionFailure catch (error) {
+            final recovery = fallback;
+            if (error.reason != 'verificationRequired' ||
+                usingFallback ||
+                recovery == null ||
+                cancelResolution == null ||
+                !current) {
+              rethrow;
+            }
+            usingFallback = true;
+            final remove = owner.onCancel(_closeFallback);
+            try {
+              return await recovery(request);
+            } finally {
+              remove();
+            }
+          }
+        }();
         unawaited(
           raw.then<void>((value) async {
             if (!current) await value.close();
@@ -537,6 +586,9 @@ class _RetryWork {
       if (status == VideoDownloadStatus.unsupported) reason = 'unsupported';
     } on VideoDownloadRetryFailure catch (error) {
       reason = error.reason;
+    } on VideoDownloadResolutionFailure catch (error) {
+      reason = error.reason;
+      failureStage = 'resolution';
     } on VideoResolutionCancelled {
       status = VideoDownloadStatus.cancelled;
     } on _RetryCancelled {
@@ -573,10 +625,6 @@ class _RetryWork {
         failureStage: failureStage,
       );
       VideoSystemDownload.unregisterQueuedTask(key, attempt: attempt);
-      VideoDownloadContinuation.finish((
-        key: key,
-        attempt: attempt,
-      ), saved: status == VideoDownloadStatus.saved);
       if (identical(VideoDownloadRetry._work[key], this))
         VideoDownloadRetry._work.remove(key);
     }

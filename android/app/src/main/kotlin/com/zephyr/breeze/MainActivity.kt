@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Debug
 import android.os.Bundle
+import android.os.StatFs
 import android.util.Log
 import android.view.KeyEvent
 import android.view.View
@@ -21,7 +22,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
-class MainActivity: FlutterFragmentActivity() {
+open class MainActivity: FlutterFragmentActivity() {
     companion object {
         private const val TAG = "ImpellerConfig"
         private const val IMPELLER_CHANNEL = "impeller_config"
@@ -49,6 +50,7 @@ class MainActivity: FlutterFragmentActivity() {
     private var pendingFilePickerResult: MethodChannel.Result? = null
     private var pendingFilePickerDestPath: String? = null
     private var videoSystemActions: VideoSystemActions? = null
+    private var androidHlsAssets: AndroidHlsAssets? = null
     private var backupSecurity: BackupSecurityStore? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -77,11 +79,23 @@ class MainActivity: FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        LauncherAppIcon.register(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         videoSystemActions?.close()
         videoSystemActions = VideoSystemActions(this, flutterEngine.dartExecutor.binaryMessenger)
+        androidHlsAssets?.close()
+        androidHlsAssets = AndroidHlsAssets(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         backupSecurity?.close()
         backupSecurity = BackupSecurityStore(this, flutterEngine.dartExecutor.binaryMessenger)
         
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "breeze.download.capacity")
+            .setMethodCallHandler { call, result ->
+                if (call.method != "availableBytes") {
+                    result.notImplemented()
+                    return@setMethodCallHandler
+                }
+                result.success(runCatching { StatFs(applicationContext.filesDir.path).availableBytes }.getOrNull())
+            }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "getMemoryInfo" -> {
@@ -274,6 +288,10 @@ class MainActivity: FlutterFragmentActivity() {
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         videoSystemActions?.close()
         videoSystemActions = null
+        androidHlsAssets?.close()
+        androidHlsAssets = null
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "breeze.download.capacity")
+            .setMethodCallHandler(null)
         super.cleanUpFlutterEngine(flutterEngine)
     }
 

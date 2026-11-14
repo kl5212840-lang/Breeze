@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 /// One application-wide choice, including routes, dialogs and plugin chrome.
@@ -16,6 +17,10 @@ class AppInterfaceStyleScope extends StatelessWidget {
       context.dependOnInheritedWidgetOfExactType<_InterfaceStyleTheme>()?.style;
   static bool usesSystem(BuildContext context) =>
       styleOf(context)?.value != 'breeze';
+  static bool usesAndroidSystem(BuildContext context) =>
+      !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.android &&
+      usesSystem(context);
 
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<String>(

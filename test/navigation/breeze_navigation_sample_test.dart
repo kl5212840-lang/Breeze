@@ -48,6 +48,99 @@ class _PageState extends State<_Page> {
 
 void main() {
   testWidgets(
+    'Android back respects tab modals and folder history before returning to Discover',
+    (tester) async {
+      final controller = PersistentTabController(initialIndex: 1);
+      addTearDown(controller.dispose);
+      var rootsReached = 0;
+      var folderOpen = false;
+      var dismissals = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: app.MainNativeTabHost(
+            controller: controller,
+            screens: [
+              const Scaffold(body: Text('Discover')),
+              StatefulBuilder(
+                builder: (context, setState) => Scaffold(
+                  body: Column(
+                    children: [
+                      Text(folderOpen ? 'Folder' : 'Bookshelf'),
+                      TextButton(
+                        onPressed: () {
+                          ModalRoute.of(context)!.addLocalHistoryEntry(
+                            LocalHistoryEntry(
+                              onRemove: () =>
+                                  setState(() => folderOpen = false),
+                            ),
+                          );
+                          setState(() => folderOpen = true);
+                        },
+                        child: const Text('Open folder'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.of(context).push<void>(
+                          MaterialPageRoute(
+                            builder: (_) => StatefulBuilder(
+                              builder: (context, setState) => PopScope(
+                                canPop: dismissals != 0,
+                                onPopInvokedWithResult: (didPop, _) {
+                                  if (!didPop) setState(() => dismissals++);
+                                },
+                                child: Scaffold(
+                                  body: Text(
+                                    dismissals == 0
+                                        ? 'Detail menu open'
+                                        : 'Detail menu closed',
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        child: const Text('Open work'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            navBarHeight: 64,
+            floatingNavigation: false,
+            navigation: const SizedBox(height: 64),
+            onAndroidRootBack: () async {
+              rootsReached++;
+              controller.jumpToTab(0);
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Open folder'));
+      await tester.pump();
+      await tester.tap(find.text('Open work'));
+      await tester.pumpAndSettle();
+      expect(find.text('Detail menu open'), findsOneWidget);
+
+      Future<void> backTo(String visible) async {
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(find.text(visible), findsOneWidget);
+      }
+
+      await backTo('Detail menu closed');
+      await backTo('Folder');
+      await backTo('Bookshelf');
+      expect(controller.index, 1);
+      expect(rootsReached, 0);
+      await backTo('Discover');
+      expect(rootsReached, 1);
+      expect(controller.index, 0);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  testWidgets(
     'style changes retain tab state, scroller and nested navigation',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);

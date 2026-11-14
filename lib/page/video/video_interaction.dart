@@ -258,6 +258,7 @@ Future<T?> showVideoTaskSheet<T>({
                               topOnly: !landscape,
                               systemStyle: appearance,
                               readableContent: true,
+                              androidGlass: true,
                               child: SafeArea(
                                 top: false,
                                 child: Column(

@@ -31,17 +31,24 @@ class BackupSecurityStore(private val activity: Activity, messenger: BinaryMesse
     init {
         channel.setMethodCallHandler { call, result ->
             if (call.method == "supported") { result.success(true); return@setMethodCallHandler }
-            if (call.method == "exportFile") {
+            val routing = call.method == "exportRoutingFile"
+            if (call.method == "exportFile" || routing) {
                 try {
                     check(export == null)
                     val path = call.argument<String>("path") ?: error("invalid")
                     val file = File(path).canonicalFile
                     require(file.isFile && file.path.startsWith(activity.cacheDir.canonicalPath + File.separator))
-                    require(file.extension in setOf("zip", "breezebackup", "breezerecovery"))
+                    if (routing) {
+                        val staging = File(activity.cacheDir, "backup-private-v1").canonicalFile
+                        require(staging.parentFile == activity.cacheDir.canonicalFile)
+                        require(file.parentFile?.parentFile == staging && file.name == "Breeze-Shadowrocket.conf")
+                    } else {
+                        require(file.extension in setOf("zip", "breezebackup", "breezerecovery"))
+                    }
                     export = Pair(file, result)
                     activity.startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                         addCategory(Intent.CATEGORY_OPENABLE)
-                        type = "application/octet-stream"
+                        type = if (routing) "text/plain" else "application/octet-stream"
                         putExtra(Intent.EXTRA_TITLE, file.name)
                     }, 3762)
                 } catch (_: Exception) { export = null; result.success("failed") }

@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
-import 'package:zephyr/service/download/ios_download_continuation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
 import 'package:zephyr/page/video/video_download.dart';
@@ -154,25 +153,13 @@ void main() {
       );
 
   test(
-    'account change after activity registration finishes the exact queued attempt',
+    'iOS queued episode waits in background and continues the same attempt',
     () async {
       final binding = TestWidgetsFlutterBinding.instance;
       final previousLifecycle = binding.lifecycleState;
-      binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-      final calls = <MethodCall>[];
-      var resolved = 0;
+      binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
       VideoSystemDownload.concurrencyLimitForTesting = () => 1;
-      messenger.setMockMethodCallHandler(IosDownloadContinuation.channel, (
-        call,
-      ) async {
-        calls.add(call);
-        if (call.method == 'begin') {
-          // The owner is registered, but the queue has not entered its runner.
-          pluginSessionWriteFence.advance(_source);
-          return {'accepted': true};
-        }
-        return true;
-      });
+      var resolved = 0;
       try {
         final keys = await VideoEpisodeDownloadQueue.enqueue(
           source: _source,
@@ -183,35 +170,26 @@ void main() {
           },
           userInitiated: true,
         );
-        await VideoEpisodeDownloadQueue.flush();
+        final before = (await VideoExportRecords.readTaskSnapshot())
+            .singleWhere((row) => row['key'] == keys.single);
         expect(resolved, 0);
         expect(native.started, isEmpty);
-        final row = (await VideoExportRecords.readTaskSnapshot()).singleWhere(
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await native.firstStarted.future.timeout(const Duration(seconds: 2));
+        native.firstResult.complete(null);
+        await VideoEpisodeDownloadQueue.flush();
+        final after = (await VideoExportRecords.readTaskSnapshot()).singleWhere(
           (row) => row['key'] == keys.single,
         );
-        expect(row['status'], 'cancelled');
-        expect(VideoSystemDownload.isQueuedTask(keys.single), isFalse);
-        expect(calls.map((call) => call.method), ['begin', 'end']);
-        final begin = calls.first.arguments as Map,
-            end = calls.last.arguments as Map;
-        expect(end, {
-          'scope': 'video',
-          'token': begin['token'],
-          'success': false,
-        });
-        final available = await VideoSystemDownload.reserve(
-          current: () => true,
-        ).timeout(const Duration(seconds: 2));
-        expect(available, isNotNull);
-        available?.release();
+        expect(after['status'], 'saved');
+        expect(after['attempt'], before['attempt']);
+        expect(resolved, 1);
+        expect(native.started, [_watch(1)]);
       } finally {
-        messenger.setMockMethodCallHandler(
-          IosDownloadContinuation.channel,
-          null,
-        );
         VideoSystemDownload.concurrencyLimitForTesting = null;
-        if (previousLifecycle != null)
+        if (previousLifecycle != null) {
           binding.handleAppLifecycleStateChanged(previousLifecycle);
+        }
       }
     },
   );

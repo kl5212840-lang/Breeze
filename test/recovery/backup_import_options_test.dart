@@ -107,7 +107,10 @@ void main() {
     }
     final future = DateTime.now().millisecondsSinceEpoch + 100000;
     final backupUser = UserSetting.fromJson(user.toJson())
-      ..globalSetting = user.globalSetting.copyWith(themeMode: ThemeMode.light)
+      ..globalSetting = user.globalSetting.copyWith(
+        themeMode: ThemeMode.light,
+        switchStyle: BreezeSwitchStyle.ring,
+      )
       ..bikaSetting = user.bikaSetting.copyWith(
         account: 'backup-bika',
         password: 'backup-bika-pass',
@@ -157,7 +160,7 @@ void main() {
         'blocks': {
           'appearance': {
             'updatedAt': future,
-            'data': {'themeMode': 'light'},
+            'data': {'themeMode': 'light', 'switchStyle': 'ring'},
           },
           'plugins': {
             'updatedAt': future,
@@ -219,6 +222,10 @@ void main() {
             expect(
               user.globalSetting.themeMode,
               settings ? ThemeMode.light : ThemeMode.dark,
+            );
+            expect(
+              user.globalSetting.switchStyle,
+              settings ? BreezeSwitchStyle.ring : BreezeSwitchStyle.classic,
             );
             expect(user.globalSetting.syncSetting.syncSettings, isFalse);
             expect(user.globalSetting.syncSetting.syncPlugins, isFalse);

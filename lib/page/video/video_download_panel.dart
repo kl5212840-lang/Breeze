@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/service/download/download_byte_amount.dart';
@@ -59,7 +60,9 @@ class VideoDownloadPanel extends StatelessWidget {
           children: [
             if (continuing)
               Text(
-                t.download.videoForegroundNote,
+                !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS
+                    ? t.download.videoForegroundNoteIos
+                    : t.download.videoForegroundNote,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             Wrap(
@@ -257,7 +260,7 @@ class VideoDownloadCurrentTasks extends StatelessWidget {
                       'cancelled' => t.download.videoCancelled,
                       'interrupted' => t.download.videoInterrupted,
                       _ => videoDownloadFailureText(
-                        row['failureReason'],
+                        row['failureReason'] ?? row['status'],
                         inWork: !allowSourceNavigation,
                         chinese:
                             Localizations.localeOf(context).languageCode ==

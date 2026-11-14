@@ -1,6 +1,5 @@
 import 'package:zephyr/network/sync/sync_task_progress.dart';
 import 'package:zephyr/service/plugin_account_sync_coordinator.dart';
-import 'package:zephyr/network/sync/sync_direction.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -21,6 +20,8 @@ import 'package:zephyr/network/sync/video_library_sync.dart';
 import 'package:zephyr/network/sync/chapter_progress_sync.dart';
 import 'package:zephyr/service/reader/comic_chapter_reading_progress.dart';
 import 'package:zephyr/object_box/objectbox.g.dart' show TxMode;
+import 'package:zephyr/object_box/model.dart' show PluginInfo;
+import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/page/comic_follow/cubit/comic_follow_cubit.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/service/local_appearance_images.dart';
@@ -109,7 +110,9 @@ Future<SyncRunResult> runArchiveSync({
   cancelled: (error) => error is AppearanceGalleryResolutionCancelled,
   action: () async {
     final scope = archives ?? SyncArchiveAdapters.fromState(state);
-    final participation = await SyncPluginParticipation.capture();
+    var participation = await SyncPluginParticipation.capture();
+    var missingPlugins = const <PluginInfo>[];
+    var installedMissingPlugins = false;
     _configure(scope, codecs);
     try {
       late Map<String, ChapterProgressArchive> chapterArchives;
@@ -119,6 +122,19 @@ Future<SyncRunResult> runArchiveSync({
         settingsCodec: codecs.settings,
         videoCodec: codecs.video,
         requireCloudBackup: direction == SyncDirection.restore,
+        onSettingsRead: (current, legacy) {
+          final local = objectbox.userSettingBox.get(1)?.globalSetting ?? state;
+          if (direction == SyncDirection.restore &&
+              local.syncSetting.syncPlugins) {
+            participation.check();
+            missingPlugins = planMissingPluginRestore(current, legacy);
+            if (missingPlugins.isNotEmpty) {
+              participation = participation.includingCloudInstallations(
+                missingPlugins,
+              );
+            }
+          }
+        },
         checkChapterProgress: () async {
           chapterArchives = await ChapterProgressSync.read(
             scope.current,
@@ -168,6 +184,10 @@ Future<SyncRunResult> runArchiveSync({
         images: hooks?.appearanceImages,
         resolveGalleryConflict: resolveGalleryConflict,
         beforePublish: () async {
+          if (missingPlugins.isNotEmpty) {
+            participation.commitCloudInstallations(missingPlugins);
+            installedMissingPlugins = true;
+          }
           syncTaskProgress.phase(SyncTaskPhase.comics);
           legacy = await _mergeLegacyArchive(
             state: objectbox.userSettingBox.get(1)?.globalSetting ?? state,
@@ -251,6 +271,12 @@ Future<SyncRunResult> runArchiveSync({
       var runtimePending =
           legacy.runtimeReloadPending || settingsRuntimePending;
       try {
+        if (installedMissingPlugins &&
+            missingPlugins.any(
+              (row) => PluginRegistryService.I.getByUuid(row.uuid) == null,
+            )) {
+          await PluginRegistryService.I.reconcileAfterExternalSync();
+        }
         await comicFollowCubit?.loadFromDatabase();
       } catch (_) {
         runtimePending = true;
@@ -260,6 +286,21 @@ Future<SyncRunResult> runArchiveSync({
         legacyArchiveImported: legacy.legacyArchiveImported,
         runtimeReloadPending: runtimePending,
       );
+    } catch (_) {
+      // A later channel can fail after the installation has committed. Keep
+      // the registry consistent so a retry can restore the remaining data.
+      if (installedMissingPlugins) {
+        try {
+          await PluginRegistryService.I.reconcileAfterExternalSync();
+        } catch (error, stack) {
+          logger.w(
+            'Could not reload restored plugins',
+            error: error,
+            stackTrace: stack,
+          );
+        }
+      }
+      rethrow;
     } finally {
       scope.current.invalidate();
     }

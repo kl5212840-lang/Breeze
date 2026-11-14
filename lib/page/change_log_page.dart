@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:convert';
 
 import 'package:auto_route/auto_route.dart';
@@ -10,6 +9,7 @@ import 'package:zephyr/page/change_log/release_history.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/network/http/wind_http.dart';
 import 'package:zephyr/network/utils/github_proxy.dart';
+import 'package:zephyr/service/update/check_update.dart';
 import 'package:zephyr/service/update/json/github_release_json.dart';
 import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
@@ -19,7 +19,7 @@ const _upstreamProxyReleasesApiUrl =
 const _upstreamGithubReleasesApiUrl =
     'https://api.github.com/repos/deretame/Breeze/releases';
 const _forkReleasesApiUrl =
-    'https://api.github.com/repos/kl5212840-lang/Breeze/releases';
+    'https://api.github.com/repos/$breezeReleaseRepository/releases';
 
 enum _ReleaseHistorySource { fork, upstream }
 
@@ -46,7 +46,7 @@ class _ChangelogPageState extends State<ChangelogPage> {
   static const int _perPage = 20; // 每次请求多少条
   bool _hasMore = true; // 是否还有更多数据
   bool _isFetching = false;
-  _ReleaseHistorySource _source = Platform.isIOS
+  _ReleaseHistorySource _source = usesBreezeReleaseChannel
       ? _ReleaseHistorySource.fork
       : _ReleaseHistorySource.upstream;
 
@@ -88,7 +88,7 @@ class _ChangelogPageState extends State<ChangelogPage> {
 
     try {
       var source = refresh
-          ? (Platform.isIOS
+          ? (usesBreezeReleaseChannel
                 ? _ReleaseHistorySource.fork
                 : _ReleaseHistorySource.upstream)
           : _source;
@@ -114,7 +114,9 @@ class _ChangelogPageState extends State<ChangelogPage> {
           requestPage = 0;
         } else {
           hasMore = fetched.length >= _perPage;
-          releases = source == _ReleaseHistorySource.upstream && Platform.isIOS
+          releases =
+              source == _ReleaseHistorySource.upstream &&
+                  usesBreezeReleaseChannel
               ? published
                     .where((item) => isUpstreamHistoryVersion(item.tagName))
                     .toList()
@@ -260,7 +262,8 @@ class _ChangelogPageState extends State<ChangelogPage> {
               release: release,
               initiallyExpanded: index == 0,
               isHistorical:
-                  Platform.isIOS && isUpstreamHistoryVersion(release.tagName),
+                  usesBreezeReleaseChannel &&
+                  isUpstreamHistoryVersion(release.tagName),
               onLinkTap: _launchUrl,
             ),
           if (!_isLoading && _isFetching && _releases.isNotEmpty)
@@ -337,7 +340,7 @@ class _ReleaseCard extends StatelessWidget {
                           ),
                           overflow: TextOverflow.ellipsis,
                         ),
-                        if (Platform.isIOS)
+                        if (usesBreezeReleaseChannel)
                           _TagChip(
                             text: isHistorical
                                 ? t.changelog.upstreamHistory

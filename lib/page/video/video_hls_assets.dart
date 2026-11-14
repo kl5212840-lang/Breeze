@@ -12,11 +12,14 @@ class HlsPortableBackupUnsupported implements Exception {
   String toString() => t.dataBackup.hlsNotPortable;
 }
 
+typedef VideoHlsSubtitle = ({String label, Uri fileUrl});
+
 /// An ephemeral native read capability. Never serialize [fileUrl] or this
 /// object into history, download metadata, settings, diagnostics or backups.
 class VideoHlsPlaybackLease {
-  VideoHlsPlaybackLease._(this.fileUrl, this._releaseArguments);
+  VideoHlsPlaybackLease._(this.fileUrl, this.subtitles, this._releaseArguments);
   final Uri fileUrl;
+  final List<VideoHlsSubtitle> subtitles;
   final Map<String, dynamic> _releaseArguments;
   Future<void>? _releasing;
 
@@ -31,12 +34,15 @@ class VideoHlsPlaybackLease {
   }();
 }
 
-/// Public metadata only. Native owns opaque system asset locations; downloaded
-/// HLS packages must remain at the location supplied by AVFoundation.
+/// Public metadata only. Native owns opaque, platform-specific HLS packages.
 abstract final class VideoHlsAssets {
   static const channel = MethodChannel('breeze.video.hls');
   static bool get supported =>
-      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+      !kIsWeb &&
+      const {
+        TargetPlatform.iOS,
+        TargetPlatform.android,
+      }.contains(defaultTargetPlatform);
 
   static String identity(String source, Uri page, String quality) {
     final canonical = videoPlaybackIdentity(page);
@@ -183,7 +189,9 @@ abstract final class VideoHlsAssets {
         uri.host.isNotEmpty ||
         uri.hasQuery ||
         uri.hasFragment ||
-        !uri.path.replaceFirst(RegExp(r'/+$'), '').endsWith('.movpkg')) {
+        (defaultTargetPlatform == TargetPlatform.android
+            ? !uri.path.endsWith('/index.m3u8')
+            : !uri.path.replaceFirst(RegExp(r'/+$'), '').endsWith('.movpkg'))) {
       if (_token(token)) {
         await channel.invokeMethod<Object?>('releasePlayback', {
           ...arguments,
@@ -192,7 +200,35 @@ abstract final class VideoHlsAssets {
       }
       throw StateError('HLS playback capability is unavailable');
     }
-    return VideoHlsPlaybackLease._(uri, {...arguments, 'leaseId': token});
+    final subtitles = <VideoHlsSubtitle>[];
+    if (defaultTargetPlatform == TargetPlatform.android &&
+        result is Map &&
+        result['subtitles'] is List) {
+      for (final entry in (result['subtitles'] as List).take(8)) {
+        if (entry is! Map ||
+            entry['name'] is! String ||
+            entry['fileURL'] is! String) {
+          continue;
+        }
+        final label = entry['name'] as String;
+        final file = Uri.tryParse(entry['fileURL'] as String);
+        if (label.trim().isEmpty ||
+            label.length > 128 ||
+            file == null ||
+            !RegExp(
+              r'^subtitle-[1-8]\.vtt$',
+            ).hasMatch(file.pathSegments.lastOrNull ?? '') ||
+            file != uri.resolve(file.pathSegments.last) ||
+            subtitles.any((track) => track.fileUrl == file)) {
+          continue;
+        }
+        subtitles.add((label: label, fileUrl: file));
+      }
+    }
+    return VideoHlsPlaybackLease._(uri, List.unmodifiable(subtitles), {
+      ...arguments,
+      'leaseId': token,
+    });
   }
 
   static Future<Map<String, dynamic>> commit(Map result) async {

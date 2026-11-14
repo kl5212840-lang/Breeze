@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/config/global/global_setting.dart';
@@ -8,6 +7,7 @@ import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/widgets/interface_symbol.dart';
 import 'package:zephyr/widgets/touch_hover_intent.dart';
 import 'package:zephyr/page/video/video_page_route.dart';
+import 'package:zephyr/service/download/download_admission.dart';
 import 'package:zephyr/widgets/breeze_switch.dart';
 
 Future<void> openDownloadSettings(BuildContext context) =>
@@ -31,7 +31,7 @@ class DownloadSettingsPage extends StatelessWidget {
               title: t.download.settings,
               child: SettingListView(
                 children: [
-                  if (defaultTargetPlatform == TargetPlatform.iOS)
+                  if (DownloadAdmission.supportsMobileControls)
                     SettingChoiceTile<int>(
                       key: const ValueKey('download-concurrency'),
                       leading: const InterfaceSymbol(
@@ -49,7 +49,7 @@ class DownloadSettingsPage extends StatelessWidget {
                             current.copyWith(videoDownloadConcurrency: value),
                       ),
                     ),
-                  if (defaultTargetPlatform == TargetPlatform.iOS)
+                  if (DownloadAdmission.supportsMobileControls)
                     _DownloadSwitchRow(
                       controlKey: const ValueKey('download-wifi-only'),
                       secondary: const InterfaceSymbol(

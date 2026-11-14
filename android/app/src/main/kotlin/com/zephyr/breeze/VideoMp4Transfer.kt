@@ -29,6 +29,7 @@ internal class VideoMp4Failure(val reason: String, val httpStatus: Int? = null) 
 internal class VideoMp4Transfer {
     companion object {
         const val MAX_TRANSFER_MILLIS = 3_600_000L
+        private const val MIN_FREE_BYTES = 32 * 1024 * 1024L
     }
 
     @Volatile var cancelled = false
@@ -110,6 +111,10 @@ internal class VideoMp4Transfer {
                     throw VideoMp4Failure("mediaRejected")
                 }
                 total = attempt.contentLengthLong
+                val free = file.usableSpace
+                if (free in 1 until MIN_FREE_BYTES || total > 0 && free > 0 && total > free - MIN_FREE_BYTES) {
+                    throw VideoMp4Failure("outOfSpace")
+                }
                 attempt.inputStream.buffered().use { input ->
                     val header = ByteArray(12)
                     var offset = 0
@@ -131,7 +136,7 @@ internal class VideoMp4Transfer {
                             try {
                                 output.write(bytes, 0, count)
                             } catch (_: IOException) {
-                                throw VideoMp4Failure("storage")
+                                throw VideoMp4Failure(if (file.usableSpace in 1 until MIN_FREE_BYTES) "outOfSpace" else "storage")
                             }
                             received += count
                         }

@@ -2,8 +2,12 @@ package com.zephyr.breeze
 
 import java.util.UUID
 
-/** Main-queue ownership for a single managed video transfer and its notification. */
+/** Main-queue ownership for managed video transfers and their foreground notification. */
 internal class VideoDownloadForeground(private val launchService: () -> Boolean) {
+    companion object {
+        const val maxTransfers = 3
+    }
+
     data class Notice(val token: String, val received: Long = 0, val total: Long = -1)
 
     interface Host {
@@ -16,56 +20,80 @@ internal class VideoDownloadForeground(private val launchService: () -> Boolean)
         internal val interrupted: (String?) -> Unit,
     ) {
         internal var notice = Notice(UUID.randomUUID().toString())
-        internal var host: Host? = null
         internal var started = false
 
-        fun launch(): Boolean = current === this && launchService()
+        fun launch(): Boolean {
+            if (leases[notice.token] !== this) return false
+            val bound = host
+            if (bound != null) {
+                begin()
+                return true
+            }
+            if (promotionPending) return true
+            promotionPending = launchService()
+            return promotionPending
+        }
+
+        internal fun begin() {
+            if (started || leases[notice.token] !== this) return
+            started = true
+            ready()
+        }
 
         fun progress(received: Long, total: Long) {
-            if (current !== this) return
+            if (leases[notice.token] !== this) return
             notice = notice.copy(received = received, total = total)
-            host?.update(notice)
+            if (this@VideoDownloadForeground.notice?.token == notice.token) host?.update(notice)
         }
 
         fun close() {
-            if (current !== this) return
-            current = null
-            host?.stop()
-            host = null
+            val wasVisible = this@VideoDownloadForeground.notice?.token == notice.token
+            if (leases.remove(notice.token) !== this) return
+            val next = this@VideoDownloadForeground.notice
+            if (next == null) {
+                val bound = host
+                host = null
+                promotionPending = false
+                bound?.stop()
+            } else if (wasVisible) {
+                host?.update(next)
+            }
         }
     }
 
-    private var current: Lease? = null
-    val notice: Notice? get() = current?.notice
+    private val leases = linkedMapOf<String, Lease>()
+    private var host: Host? = null
+    private var promotionPending = false
+    val notice: Notice? get() = leases.values.firstOrNull()?.notice
 
     fun acquire(ready: () -> Unit, interrupted: (String?) -> Unit): Lease? {
-        if (current != null) return null
+        if (leases.size >= maxTransfers) return null
         val lease = Lease(ready, interrupted)
-        current = lease
+        leases[lease.notice.token] = lease
         return lease
     }
 
     fun bind(host: Host, token: String): Boolean {
-        val lease = current?.takeIf { it.notice.token == token } ?: return false
-        lease.host = host
-        if (!lease.started) {
-            lease.started = true
-            lease.ready()
-        }
+        if (token != notice?.token) return false
+        this.host = host
+        promotionPending = false
+        leases.values.toList().forEach { it.begin() }
         return true
     }
 
     fun cancel(token: String?) {
-        current?.takeIf { it.notice.token == token }?.interrupted?.invoke(null)
+        leases[token]?.interrupted?.invoke(null)
     }
 
     fun rejected(token: String) {
-        current?.takeIf { it.notice.token == token }?.interrupted?.invoke("unavailable")
+        if (token != notice?.token) return
+        promotionPending = false
+        leases.values.toList().forEach { it.interrupted("unavailable") }
     }
 
     fun interrupted(host: Host, reason: String) {
-        val lease = current?.takeIf { it.host === host } ?: return
-        lease.host = null
-        lease.interrupted(reason)
+        if (this.host !== host) return
+        this.host = null
+        leases.values.toList().forEach { it.interrupted(reason) }
     }
 }

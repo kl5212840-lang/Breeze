@@ -1,7 +1,4 @@
-import 'package:zephyr/page/video/video_download_continuation.dart';
 import 'package:zephyr/page/video/ios_managed_video_recovery.dart';
-import 'package:zephyr/page/video/ios_managed_video_transfer.dart';
-import 'package:zephyr/service/download/ios_background_transfer.dart';
 import 'package:zephyr/page/video/video_download_failure.dart';
 import 'package:zephyr/page/video/android_managed_video_attempt.dart';
 import 'package:zephyr/config/global/global_setting.dart';
@@ -9,6 +6,7 @@ import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/page/video/omo_network.dart';
 import 'package:zephyr/page/video/video_downloaded_details.dart';
 import 'package:zephyr/network/source_network_policy.dart';
+import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/page/video/video_playback_identity.dart';
 import 'package:zephyr/page/video/video_playback_download_adapter.dart';
 import 'dart:async';
@@ -24,7 +22,6 @@ import 'package:zephyr/service/cache_workspace_guard.dart';
 import 'package:zephyr/service/local_plugin_installation_state.dart';
 import 'package:zephyr/page/video/video_hls_assets.dart';
 import 'package:zephyr/page/video/video_hls_recovery.dart';
-import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/network/sync/sync_service.dart'
     show runExclusiveStorageOperation;
 
@@ -78,7 +75,7 @@ class VideoSystemDownload {
   @visibleForTesting
   static int Function()? concurrencyLimitForTesting;
   static int get concurrencyLimit {
-    if (defaultTargetPlatform != TargetPlatform.iOS) return 1;
+    if (!DownloadAdmission.supportsMobileControls) return 1;
     try {
       return (concurrencyLimitForTesting?.call() ??
               globalSetting.videoDownloadConcurrency)
@@ -174,6 +171,7 @@ class VideoSystemDownload {
             ? next
             : _waitingDownloads.where((item) => item.current()).firstOrNull;
         if (identical(first, waiter) &&
+            admission.foregroundAllowed &&
             !admission.queuePaused &&
             networkWait == null) {
           final unreserved = _active.where((job) => job._permit == null).length;
@@ -285,7 +283,6 @@ class VideoSystemDownload {
 
   String? _job;
   String? _androidTransferKey, _androidScope;
-  IosManagedVideoTransfer? _iosTransfer;
   String? _taskKey;
   int? _taskAttempt;
   String? _failureReason;
@@ -296,32 +293,11 @@ class VideoSystemDownload {
   String? get failureReason => _failureReason;
   String? get failureStage => _failureStage;
   String? _source;
-  Completer<void>? _settled;
+  Completer<void>? _settled, _stopping;
   bool _cancelRequested = false;
   Completer<void>? _queuedCancellation;
   VideoDownloadPermit? _permit;
   MethodChannel? _transferChannel;
-
-  static void beginContinuedAttempts(Iterable<VideoDownloadAttempt> attempts) {
-    VideoDownloadContinuation.add({
-      for (final attempt in attempts)
-        if (_queuedCancels[attempt.key] case final owner?)
-          if (owner.attempt == attempt.attempt)
-            attempt: () async {
-              if (!identical(
-                    _queuedCancels[attempt.key]?.settled,
-                    owner.settled,
-                  ) ||
-                  !VideoExportRecords.isAttemptCurrent(
-                    attempt.key,
-                    attempt.attempt,
-                  ))
-                return;
-              await owner.cancel();
-              await owner.settled.future;
-            },
-    });
-  }
 
   static Future<void> cancelTask(String key, {int? expectedAttempt}) async {
     if (expectedAttempt != null &&
@@ -404,7 +380,6 @@ class VideoSystemDownload {
         durationMs: durationMs,
         sourceDuration: sourceDuration,
         replaceExisting: replaceExisting,
-        userInitiated: userInitiated,
         queuedTaskKey: queuedTaskKey,
         permit: permit,
         onMediaProgress: onMediaProgress,
@@ -427,7 +402,6 @@ class VideoSystemDownload {
     int? durationMs,
     String? sourceDuration,
     bool replaceExisting = false,
-    bool userInitiated = false,
     String? queuedTaskKey,
     VideoDownloadPermit? permit,
     ValueChanged<double>? onMediaProgress,
@@ -506,7 +480,8 @@ class VideoSystemDownload {
       () => _withRoute(
         source,
         networkContext,
-        () => _save(
+        (proxy) => _save(
+          androidProxy: proxy,
           choice: choice,
           attachment: attachment,
           headers: headers,
@@ -518,33 +493,10 @@ class VideoSystemDownload {
           replaceExisting: replaceExisting,
           queuedTaskKey: key,
           permit: slot,
-          onMediaProgress: (fraction) {
-            final attempt = queuedAttempt;
-            if (key != null && attempt != null) {
-              VideoDownloadContinuation.progress((
-                key: key,
-                attempt: attempt,
-              ), fraction);
-            }
-            onMediaProgress?.call(fraction);
-          },
+          onMediaProgress: onMediaProgress,
           video: video,
           title: title,
-          onProgress: (progress) {
-            final attempt = queuedAttempt;
-            final total = progress.total;
-            if (key != null &&
-                attempt != null &&
-                choice?.url.path.toLowerCase().endsWith('.m3u8') != true &&
-                total != null &&
-                total > 0) {
-              VideoDownloadContinuation.progress((
-                key: key,
-                attempt: attempt,
-              ), progress.received / total);
-            }
-            onProgress(progress);
-          },
+          onProgress: onProgress,
           sourceCurrent: sourceCurrent,
         ),
       ),
@@ -570,8 +522,6 @@ class VideoSystemDownload {
         admitted: (key, attempt) {
           effectiveQueuedKey = key;
           queuedAttempt = attempt;
-          if (userInitiated)
-            beginContinuedAttempts([(key: key, attempt: attempt)]);
         },
         transfer: transfer,
       );
@@ -734,11 +684,6 @@ class VideoSystemDownload {
         }
         if (key != null) {
           unregisterQueuedTask(key, attempt: attempt);
-          if (attempt != null)
-            VideoDownloadContinuation.finish((
-              key: key,
-              attempt: attempt,
-            ), saved: status == VideoDownloadStatus.saved);
         }
         if (identical(_queuedCancellation, cancelled))
           _queuedCancellation = null;
@@ -801,7 +746,9 @@ class VideoSystemDownload {
       route == null ||
       route.snapshot.proxy.isEmpty ||
       defaultTargetPlatform == TargetPlatform.iOS &&
-          context?.isNotEmpty == true;
+          context?.isNotEmpty == true ||
+      defaultTargetPlatform == TargetPlatform.android &&
+          Uri.tryParse(route.snapshot.proxy)?.scheme == 'http';
 
   static Future<bool> supportsRoute(String source, String? context) async {
     if (!SourceNetworkPolicies.supports(source)) return true;
@@ -816,15 +763,24 @@ class VideoSystemDownload {
   Future<VideoDownloadStatus> _withRoute(
     String source,
     String? context,
-    Future<VideoDownloadStatus> Function() action,
+    Future<VideoDownloadStatus> Function(String?) action,
   ) async {
     SourceNetworkLease? route;
     try {
-      if (SourceNetworkPolicies.supports(source))
+      if (SourceNetworkPolicies.supports(source)) {
         route = await SourceNetworkPolicies.acquire(source);
-      if (!_routeSupported(route, context))
+      }
+      if (!_routeSupported(route, context)) {
+        _failureReason = 'routeUnavailable';
         return VideoDownloadStatus.routeUnavailable;
-      return await action();
+      }
+      final proxy = route?.snapshot.proxy;
+      return await action(
+        defaultTargetPlatform == TargetPlatform.android &&
+                proxy?.isNotEmpty == true
+            ? proxy
+            : null,
+      );
     } catch (_) {
       _failureStage ??= 'routeSetup';
       return VideoDownloadStatus.failed;
@@ -835,6 +791,7 @@ class VideoSystemDownload {
 
   Future<VideoDownloadStatus> _save({
     required bool Function() sourceCurrent,
+    required String? androidProxy,
     VideoDownloadChoice? choice,
     AndroidManagedVideoAttempt? attachment,
     String? networkContext,
@@ -954,6 +911,7 @@ class VideoSystemDownload {
     _failureHttpStatus = null;
     _source = source;
     _settled = Completer<void>();
+    _stopping = Completer<void>();
     _cancelRequested = false;
     _permit = permit;
     _active.add(this);
@@ -963,24 +921,6 @@ class VideoSystemDownload {
     ) {
       if (boundary.source == source &&
           (boundary.changing || boundary.generation != accountGeneration)) {
-        _failureReason = 'accountChanged';
-        unawaited(cancel().catchError((Object _) {}));
-      }
-    });
-    final routeSubscription = SourceNetworkPolicies.changes.listen((changed) {
-      final transfer = _iosTransfer;
-      if (changed != source || transfer == null) return;
-      unawaited(() async {
-        if (!await VideoHlsRecovery.directRoute(source) &&
-            identical(_iosTransfer, transfer)) {
-          _failureReason = 'routeUnavailable';
-          await cancel().catchError((Object _) {});
-        }
-      }());
-    });
-    final pluginSubscription = PluginRegistryService.I.stream.listen((_) {
-      final transfer = _iosTransfer;
-      if (transfer != null && !transfer.scopeIsCurrent) {
         _failureReason = 'accountChanged';
         unawaited(cancel().catchError((Object _) {}));
       }
@@ -995,11 +935,16 @@ class VideoSystemDownload {
     DownloadNetworkWait? interruptedBy;
     DownloadNetworkWait? hlsObservedNetworkWait;
     var nativeStarted = false;
+    var backgroundPaused = false;
     var nativeWifiOnly = false;
     void networkChanged() {
+      if (nativeStarted && !admission.foregroundAllowed) {
+        backgroundPaused = true;
+        return;
+      }
       if (!sourceCurrent() || interruptedBy != null) return;
       final wait = admission.networkWait;
-      if (nativeStarted && (hls || _iosTransfer != null)) {
+      if (nativeStarted && hls && defaultTargetPlatform == TargetPlatform.iOS) {
         if (nativeWifiOnly == admission.wifiOnly) {
           // iOS owns connectivity and cellular admission for this session.
           // Remember an outage only for a confirmed native failure.
@@ -1009,16 +954,17 @@ class VideoSystemDownload {
         // Session configuration is fixed after creation. Recreate this
         // attempt when the user changes the active Wi-Fi policy.
         interruptedBy = wait ?? DownloadNetworkWait.wifi;
+      } else if (nativeStarted &&
+          defaultTargetPlatform == TargetPlatform.android &&
+          nativeWifiOnly != admission.wifiOnly) {
+        // An active unbound connection must be recreated when the user
+        // enables only Wi-Fi, even if Wi-Fi is currently connected.
+        interruptedBy = wait ?? DownloadNetworkWait.wifi;
       } else {
         if (wait == null) return;
         interruptedBy = wait;
       }
       if (nativeStarted) {
-        final iosTransfer = _iosTransfer;
-        if (iosTransfer != null) {
-          unawaited(iosTransfer.cancel().catchError((Object _) {}));
-          return;
-        }
         unawaited(
           channel
               .invokeMethod<void>('cancel', {
@@ -1182,7 +1128,7 @@ class VideoSystemDownload {
       }
       exceptionStage = 'nativeBridge';
       final androidScope = !hls && managedId != null
-          ? AndroidManagedVideoAttempt.scopeFor(source)
+          ? AndroidManagedVideoAttempt.scopeFor(source, proxy: androidProxy)
           : null;
       if (attachment != null && androidScope != attachment.scope) {
         _failureReason = 'accountChanged';
@@ -1194,102 +1140,66 @@ class VideoSystemDownload {
       if (!sourceCurrent() || _cancelRequested) {
         return status = VideoDownloadStatus.cancelled;
       }
+      if (!admission.foregroundAllowed) {
+        final ready = Completer<void>();
+        void wake() {
+          if (admission.foregroundAllowed && !ready.isCompleted) {
+            ready.complete();
+          }
+        }
+
+        admission.addListener(wake);
+        try {
+          wake();
+          await Future.any([ready.future, _stopping!.future]);
+        } finally {
+          admission.removeListener(wake);
+        }
+        if (_cancelRequested || !sourceCurrent()) {
+          return status = VideoDownloadStatus.cancelled;
+        }
+        if (interruptedBy case final wait?) {
+          _failureReason = wait.code;
+          return status = VideoDownloadStatus.failed;
+        }
+      }
       nativeWifiOnly = admission.wifiOnly;
       nativeStarted = true;
       _androidTransferKey = androidScope != null
           ? AndroidManagedVideoAttempt.keyFor(_taskKey, _taskAttempt)
           : null;
       _androidScope = _androidTransferKey == null ? null : androidScope;
-      Object? iosResult;
-      if (IosBackgroundTransfer.supported &&
-          !hls &&
-          managedId != null &&
-          media != null &&
-          !media.hasQuery &&
-          media.host.contains('.') &&
-          networkContext == null &&
-          _taskKey != null &&
-          _taskAttempt != null) {
-        final scope = await VideoHlsRecovery.scopeForStart(source);
-        if (scope != null && sourceCurrent() && !_cancelRequested) {
-          final current = (await VideoLocalResources.read(
-            fresh: true,
-          )).where((row) => row['resourceId'] == managedId).firstOrNull;
-          if (!sourceCurrent() || _cancelRequested) {
-            return status = VideoDownloadStatus.cancelled;
-          }
-          final transfer = _iosTransfer = IosManagedVideoTransfer(
-            source: source,
-            scope: scope,
-            taskKey: _taskKey!,
-            attempt: _taskAttempt!,
-            resourceId: managedId,
-            media: media,
-            headers: {'Referer': referer.toString(), ...safeHeaders},
-            wifiOnly: nativeWifiOnly,
-            expectedVersion: current == null
-                ? ''
-                : VideoLocalResources.resourceVersion(current),
-          );
-          IosManagedVideoRecovery.live.add(
-            transfer.binding['batchId'] as String,
-          );
-          try {
-            int? expectedBytes;
-            iosResult = await transfer.download(
-              onExpectedBytes: (total) => expectedBytes = total,
-              onProgress: (bytes, saving) => _progressHandlers[job]!.handle(
-                MethodCall('progress', {
-                  'id': job,
-                  'received': bytes,
-                  'total': saving ? bytes : expectedBytes,
-                  'saving': saving,
-                }),
-              ),
-            );
-          } on MissingPluginException {
-            if (transfer.submitted) rethrow;
-          }
-          if (iosResult == null) {
-            IosManagedVideoRecovery.live.remove(transfer.binding['batchId']);
-            _iosTransfer = null;
-          }
-        }
-      }
-      if (_cancelRequested && iosResult == null) {
-        return status = VideoDownloadStatus.cancelled;
-      }
-      final result =
-          iosResult ??
-          (attachment != null
-              ? await attachment.attach(job)
-              : await channel.invokeMethod<Object?>('start', {
-                  'id': job,
-                  'managedId': ?managedId,
-                  'transferKey': ?_androidTransferKey,
-                  'scope': ?_androidScope,
-                  'networkContext': ?networkContext,
-                  if (nativeWifiOnly) 'wifiOnly': true,
-                  'url': media!.toString(),
-                  // Never forward cookies, session parameters or CDN URL as Referer.
-                  'referer': referer.toString(),
-                  if (safeHeaders.isNotEmpty) 'headers': safeHeaders,
-                  'title': title.length > 160 ? title.substring(0, 160) : title,
-                  'quality': quality,
-                  if (hls) ...{
-                    'source': source,
-                    'video': page.toString(),
-                    'taskKey': _taskKey,
-                    'cover': ?cover,
-                    'durationMs': ?durationMs,
-                    'sourceDuration': ?sourceDuration,
-                    'expectedGeneration': ?expectedGeneration,
-                    if (recoveryScope != null) ...{
-                      'attempt': _taskAttempt,
-                      'recoveryScope': recoveryScope,
-                    },
-                  },
-                }));
+      if (_cancelRequested) return status = VideoDownloadStatus.cancelled;
+      final result = attachment != null
+          ? await attachment.attach(job)
+          : await channel.invokeMethod<Object?>('start', {
+              'id': job,
+              'managedId': ?managedId,
+              'transferKey': ?_androidTransferKey,
+              'scope': ?_androidScope,
+              'networkContext': ?networkContext,
+              'androidProxy': ?androidProxy,
+              if (nativeWifiOnly) 'wifiOnly': true,
+              'url': media!.toString(),
+              // Never forward cookies, session parameters or CDN URL as Referer.
+              'referer': referer.toString(),
+              if (safeHeaders.isNotEmpty) 'headers': safeHeaders,
+              'title': title.length > 160 ? title.substring(0, 160) : title,
+              'quality': quality,
+              if (hls) ...{
+                'source': source,
+                'video': page.toString(),
+                'taskKey': _taskKey,
+                'cover': ?cover,
+                'durationMs': ?durationMs,
+                'sourceDuration': ?sourceDuration,
+                'expectedGeneration': ?expectedGeneration,
+                if (recoveryScope != null) ...{
+                  'attempt': _taskAttempt,
+                  'recoveryScope': recoveryScope,
+                },
+              },
+            });
       nativeStarted = false;
       if (recoveryScope != null &&
           result is Map &&
@@ -1302,7 +1212,8 @@ class VideoSystemDownload {
           result is Map && result['reason'] == 'network';
       final retryWait =
           interruptedBy ??
-          ((hls || _iosTransfer != null) && nativeNetworkFailure
+          ((hls || defaultTargetPlatform == TargetPlatform.iOS) &&
+                  nativeNetworkFailure
               ? admission.networkWait ?? hlsObservedNetworkWait
               : null);
       if (sourceCurrent() &&
@@ -1421,19 +1332,16 @@ class VideoSystemDownload {
             cover: cover,
             durationMs: durationMs,
             sourceDuration: sourceDuration,
-            expectedVersion:
-                _iosTransfer?.binding['expectedVersion'] as String?,
             cancelled: () =>
                 _cancelRequested ||
                 !sourceCurrent() ||
-                attachment?.scopeIsCurrent == false ||
-                (_iosTransfer?.scopeIsCurrent == false),
+                attachment?.matchesCurrentScope(androidProxy) == false,
           );
           if (committed) {
             storedId = managedId;
             status = VideoDownloadStatus.saved;
           } else {
-            if (attachment?.scopeIsCurrent == false)
+            if (attachment?.matchesCurrentScope(androidProxy) == false)
               _failureReason = 'accountChanged';
             status = VideoDownloadStatus.cancelled;
           }
@@ -1554,6 +1462,19 @@ class VideoSystemDownload {
               accountGeneration: accountGeneration,
             );
           }
+          if (backgroundPaused &&
+              sourceCurrent() &&
+              !_cancelRequested &&
+              attempt != null &&
+              media?.hasQuery == true &&
+              const {401, 403}.contains(_failureHttpStatus)) {
+            VideoDownloadRetry.refreshAfterBackground(
+              key,
+              attempt: attempt,
+              source: source,
+              accountGeneration: accountGeneration,
+            );
+          }
           if (status == VideoDownloadStatus.saved && storedId == null) {
             await VideoExportRecords.add(
               source: source,
@@ -1572,14 +1493,6 @@ class VideoSystemDownload {
         if (hlsCandidate != null) {
           await VideoHlsAssets.discard(hlsCandidate).catchError((Object _) {});
         }
-        final iosTransfer = _iosTransfer;
-        if (iosTransfer != null &&
-            await VideoExportRecords.confirmMp4Terminal(
-              iosTransfer.binding,
-              status.name,
-            )) {
-          await iosTransfer.acknowledge().catchError((Object _) {});
-        }
         if (hlsReceipt != null && key != null) {
           // Replay through the same durable writer before native drops its receipt.
           if (await VideoExportRecords.confirmHlsTerminal(
@@ -1593,15 +1506,11 @@ class VideoSystemDownload {
         }
       } finally {
         await accountSubscription.cancel();
-        await routeSubscription.cancel();
-        await pluginSubscription.cancel();
         if (managedId != null) VideoLocalResources.release(managedId);
         _taskKey = null;
         _taskAttempt = null;
         _androidTransferKey = null;
         _androidScope = null;
-        final iosTransfer = _iosTransfer;
-        _iosTransfer = null;
         _job = null;
         _active.remove(this);
         _permit = null;
@@ -1611,10 +1520,7 @@ class VideoSystemDownload {
         _transferChannel = null;
         _settled?.complete();
         _settled = null;
-        if (iosTransfer != null) {
-          IosManagedVideoRecovery.live.remove(iosTransfer.binding['batchId']);
-          unawaited(IosManagedVideoRecovery.refresh());
-        }
+        _stopping = null;
         if (hlsReceipt != null) {
           await VideoHlsRecovery.releaseLiveReceipt(hlsReceipt);
         }
@@ -1637,7 +1543,6 @@ class VideoSystemDownload {
     String? expectedResourceVersion,
   ) async {
     if (!VideoLocalResources.validId(id)) return VideoDownloadStatus.failed;
-    // iOS uses a separate native worker for exports and managed transfers.
     if ((defaultTargetPlatform != TargetPlatform.iOS && _active.isNotEmpty) ||
         !VideoLocalResources.tryHold(id)) {
       return VideoDownloadStatus.busy;
@@ -1681,15 +1586,12 @@ class VideoSystemDownload {
 
   Future<void> cancel() async {
     _cancelRequested = true;
+    if (_stopping case final stop? when !stop.isCompleted) stop.complete();
     final job = _job;
     final queued = _queuedCancellation;
     if (queued != null && !queued.isCompleted) queued.complete();
     if (job == null || !_active.contains(this)) return;
     try {
-      if (_iosTransfer case final transfer?) {
-        await transfer.cancel();
-        return;
-      }
       await (_transferChannel ?? _channel).invokeMethod<void>('cancel', {
         'id': job,
         'transferKey': ?_androidTransferKey,

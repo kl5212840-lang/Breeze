@@ -1,11 +1,48 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zephyr/page/video/api_video_browser.dart';
+import 'package:zephyr/page/video/api_video_episode_download.dart';
 import 'package:zephyr/page/video/api_video_repository.dart';
 import 'package:zephyr/page/video/video_site_browser.dart';
+import 'package:zephyr/page/video/video_download_resolution.dart';
+
+class _HeadlessPlatform extends InAppWebViewPlatform {
+  _HeadlessPlatform(this.controller, this.home);
+  final InAppWebViewController controller;
+  final Uri home;
+  int runs = 0, disposals = 0;
+
+  @override
+  PlatformHeadlessInAppWebView createPlatformHeadlessInAppWebView(
+    PlatformHeadlessInAppWebViewCreationParams params,
+  ) => view = _HeadlessView(params, this);
+
+  late _HeadlessView view;
+}
+
+class _HeadlessView extends PlatformHeadlessInAppWebView {
+  _HeadlessView(PlatformHeadlessInAppWebViewCreationParams params, this.host)
+    : super.implementation(params);
+  final _HeadlessPlatform host;
+
+  @override
+  Future<void> run() async {
+    host.runs++;
+    params.onWebViewCreated?.call(host.controller);
+  }
+
+  void loaded() =>
+      params.onLoadStop?.call(host.controller, WebUri(host.home.toString()));
+
+  @override
+  Future<void> dispose() async {
+    host.disposals++;
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -98,6 +135,94 @@ void main() {
       await expectLater(session.retainForDownloads(), throwsStateError);
     },
   );
+
+  for (final challenged in [false, true]) {
+    test(
+      'Android resolves from a leased WebView after the page closes (challenge=$challenged)',
+      () async {
+        debugDefaultTargetPlatformOverride = TargetPlatform.android;
+        addTearDown(() => debugDefaultTargetPlatformOverride = null);
+        final controller = InAppWebViewController.fromPlatform(
+          platform: VideoSiteBrowserController(channel, 82),
+        );
+        final platform = _HeadlessPlatform(controller, home);
+        final previous = InAppWebViewPlatform.instance;
+        InAppWebViewPlatform.instance = platform;
+        addTearDown(() => InAppWebViewPlatform.instance = previous ?? platform);
+        var details = 0;
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'load') {
+            scheduleMicrotask(platform.view.loaded);
+            return null;
+          }
+          return switch (call.method) {
+            'url' => home.toString(),
+            'evaluate'
+                when (call.arguments as Map)['source'].toString().startsWith(
+                  'String(',
+                ) =>
+              'previous-document',
+            'evaluate' => {
+              'url': home.toString(),
+              'documentId': 'headless-document',
+              'verification': challenged,
+              'cards': [],
+              'links': [],
+            },
+            'evaluateAsync' => {
+              'kind': 'public-detail',
+              'url': detail.toString(),
+              'html': '<p>Local test document ${++details}</p>',
+            },
+            _ => throw TestFailure('Unexpected command ${call.method}'),
+          };
+        });
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+        final repository = ApiVideoRepository(
+          source: 'android-browser-fixture',
+          home: home,
+          catalogFn: 'catalog',
+          detailFn: 'item',
+          playbackFn: 'play',
+          retainBrowserForDownloads: () async =>
+              throw TestFailure('Android retained the disposed visible view'),
+        );
+        expect(ApiVideoEpisodeDownloads.supportsBatch(repository), isTrue);
+        final lease = await repository.acquireDownloadBrowser();
+        expect(platform.runs, 0);
+        try {
+          final reader = lease.repository.browserDetailRead!;
+          if (challenged) {
+            await expectLater(
+              reader(detail),
+              throwsA(
+                isA<VideoDownloadResolutionFailure>().having(
+                  (error) => error.reason,
+                  'reason',
+                  'verificationRequired',
+                ),
+              ),
+            );
+            expect(details, 0);
+          } else {
+            expect(
+              (await reader(detail))['html'],
+              '<p>Local test document 1</p>',
+            );
+            expect(
+              (await reader(detail))['html'],
+              '<p>Local test document 2</p>',
+            );
+          }
+          expect(platform.runs, 1);
+        } finally {
+          await lease.release!();
+          await lease.release!();
+        }
+        expect(platform.disposals, 1);
+      },
+    );
+  }
 
   test(
     'repository network and browser clones retain the same background ownership contract',

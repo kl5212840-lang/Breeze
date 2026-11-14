@@ -29,7 +29,6 @@
 		B138A47E0000000000000010 /* HlsAssetDownloadPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B138A47E0000000000000011 /* HlsAssetDownloadPresenter.swift */; };
 		B138A47E0000000000000012 /* HlsAssetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B138A47E0000000000000013 /* HlsAssetStore.swift */; };
 		B138A47E0000000000000050 /* BackgroundFileTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B138A47E0000000000000051 /* BackgroundFileTransfer.swift */; };
-		B138A47E0000000000000052 /* ContinuedDownloadActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = B138A47E0000000000000053 /* ContinuedDownloadActivity.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -93,7 +92,6 @@
 		B138A47E0000000000000011 /* HlsAssetDownloadPresenter.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HlsAssetDownloadPresenter.swift; sourceTree = "<group>"; };
 		B138A47E0000000000000013 /* HlsAssetStore.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HlsAssetStore.swift; sourceTree = "<group>"; };
 		B138A47E0000000000000051 /* BackgroundFileTransfer.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = BackgroundFileTransfer.swift; sourceTree = "<group>"; };
-		B138A47E0000000000000053 /* ContinuedDownloadActivity.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ContinuedDownloadActivity.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -202,7 +200,6 @@
 				B138A47E0000000000000011 /* HlsAssetDownloadPresenter.swift */,
 				B138A47E0000000000000013 /* HlsAssetStore.swift */,
 				B138A47E0000000000000051 /* BackgroundFileTransfer.swift */,
-				B138A47E0000000000000053 /* ContinuedDownloadActivity.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
@@ -439,7 +436,6 @@
 				B138A47E0000000000000010 /* HlsAssetDownloadPresenter.swift in Sources */,
 				B138A47E0000000000000012 /* HlsAssetStore.swift in Sources */,
 				B138A47E0000000000000050 /* BackgroundFileTransfer.swift in Sources */,
-				B138A47E0000000000000052 /* ContinuedDownloadActivity.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 			);

@@ -24,6 +24,18 @@ class SourceVideoContent extends StatefulWidget {
   final bool? browseOnly;
   final ApiVideoPluginCall? pluginCall;
 
+  static bool handleAndroidBackFor(GlobalKey key) {
+    final state = key.currentState;
+    if (state is! _SourceVideoContentState ||
+        !state.widget.active ||
+        state._modules.isEmpty) {
+      return false;
+    }
+    return ApiVideoLibraryPage.handleAndroidBackFor(
+      state._libraryKeys[state._selected],
+    );
+  }
+
   @override
   State<SourceVideoContent> createState() => _SourceVideoContentState();
 }
@@ -37,6 +49,7 @@ class _SourceVideoContentState extends State<SourceVideoContent> {
     for (final module in _modules)
       module.id: module.repository(pluginCall: widget.pluginCall),
   };
+  late final _libraryKeys = List.generate(_modules.length, (_) => GlobalKey());
   int _selected = 0;
   final _visited = <int>{0};
 
@@ -59,7 +72,7 @@ class _SourceVideoContentState extends State<SourceVideoContent> {
         for (var index = 0; index < _modules.length; index++)
           if (_visited.contains(index))
             ApiVideoLibraryPage(
-              key: ValueKey('${widget.source}:${_modules[index].id}'),
+              key: _libraryKeys[index],
               repository: _repositories[_modules[index].id]!,
               title: _modules[index].title,
               embedded: true,

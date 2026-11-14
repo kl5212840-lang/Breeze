@@ -39,13 +39,18 @@ void main() {
     final file = await VideoLocalResources.file(id);
     await file.parent.create(recursive: true);
     await file.writeAsBytes([0, 0, 0, 24, 102, 116, 121, 112, ...List.filled(16, 0)]);
-    await VideoLocalResources.saved(resourceId: id, bytes: 24, source: 'removed-source',
-      video: page, title: 'Offline', quality: '720p', taskKey: 'poster-fixture');
+    final platform = debugDefaultTargetPlatformOverride;
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+    try {
+      await VideoLocalResources.saved(resourceId: id, bytes: 24, source: 'removed-source',
+        video: page, title: 'Offline', quality: '720p', taskKey: 'poster-fixture');
+    } finally {
+      debugDefaultTargetPlatformOverride = platform;
+    }
     return (await VideoLocalResources.read(fresh: true)).single;
   }
   test('one bound MP4 frame is persisted and reused without a URL/path bridge argument', () async {
     final row = await seed();
-    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     var calls = 0;
     var hlsReads = 0;
     messenger.setMockMethodCallHandler(hls, (_) async {
@@ -120,12 +125,16 @@ void main() {
       begin: () async => true, consume: (_) async => fail('stale HLS')), isFalse);
     expect(calls, 1);
   });
-  test('Android and arbitrary or stale resource identities never invoke frame extraction', () async {
+  test('Android skips HLS and rejects arbitrary or stale resource identities', () async {
     final row = await seed();
     var calls = 0;
     messenger.setMockMethodCallHandler(channel, (_) async { calls++; return png; });
-    expect(await VideoDownloadedDetails.ensureLocalPoster(row), isNull);
-    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    var hlsCalls = 0;
+    messenger.setMockMethodCallHandler(hls, (_) async { hlsCalls++; return png; });
+    expect(await VideoLocalPoster.capture({...row, 'format': 'hls'},
+      begin: () async => fail('unsupported HLS should not record an attempt'),
+      consume: (_) async => fail('unsupported HLS')), isFalse);
+    expect(hlsCalls, 0);
     expect(await VideoLocalPoster.capture({...row, 'source': 'other'},
       begin: () async => true, consume: (_) async => fail('stale frame')), isFalse);
     expect(await VideoLocalPoster.capture({...row, 'resourceId': '../../outside'},

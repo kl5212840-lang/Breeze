@@ -17,7 +17,8 @@ import 'package:zephyr/service/update/json/github_release_json.dart';
 import 'package:zephyr/util/get_path.dart';
 import 'package:zephyr/widgets/toast.dart';
 
-const _iosRepo = 'kl5212840-lang/Breeze';
+const breezeReleaseRepository = 'kl5212840-lang/Breeze';
+bool get usesBreezeReleaseChannel => Platform.isIOS || Platform.isAndroid;
 const _upstreamRepo = 'deretame/Breeze';
 const _upstreamRepoCurrent = 'breeze-project-org/Breeze';
 const _requestTimeout = Duration(seconds: 3);
@@ -32,7 +33,15 @@ Future<String> getAppVersion() async {
 }
 
 Future<GithubReleaseJson?> _loadLatestRelease() async {
-  final repo = Platform.isIOS ? _iosRepo : _upstreamRepo;
+  final repo = usesBreezeReleaseChannel
+      ? breezeReleaseRepository
+      : _upstreamRepo;
+  if (Platform.isAndroid) {
+    final device = await DeviceInfoPlugin().androidInfo.timeout(
+      _requestTimeout,
+    );
+    return _loadAndroidRelease(device.supportedAbis);
+  }
   GithubReleaseJson? parse(Object? json) {
     if (json is! Map<String, dynamic>) return null;
     try {
@@ -58,7 +67,7 @@ Future<GithubReleaseJson?> _loadLatestRelease() async {
     }
   }
 
-  if (!Platform.isIOS) {
+  if (!usesBreezeReleaseChannel) {
     final direct = await read(breezeLatestReleaseApi);
     if (direct != null) return direct;
     var ref = 'latest';
@@ -105,6 +114,39 @@ Future<GithubReleaseJson?> _loadLatestRelease() async {
   }
 }
 
+Future<GithubReleaseJson?> _loadAndroidRelease(
+  List<String> supportedAbis,
+) async {
+  if (supportedAbis.isEmpty) return null;
+  const endpoint =
+      'https://api.github.com/repos/$breezeReleaseRepository/releases?per_page=20';
+  final client = WindHttp.distribution(connectTimeout: _requestTimeout);
+  // Check GitHub first so an older CDN listing cannot hide an APK added to an
+  // existing iOS release. Fall back to the existing mirrors on network errors.
+  for (final url in [
+    endpoint,
+    ...mirrorBaseUrls.map((base) => '$base$endpoint'),
+  ]) {
+    try {
+      final response = await client.fetch(
+        url,
+        headers: const {
+          'Accept': 'application/vnd.github+json',
+          'User-Agent': 'Breeze',
+        },
+        timeout: _requestTimeout,
+      );
+      if (!response.ok) continue;
+      if (response.json case final List<dynamic> releases) {
+        return AppUpdateRelease.latestAndroid(releases, supportedAbis);
+      }
+    } catch (error) {
+      logger.w('Android 应用更新通道不可用', error: error);
+    }
+  }
+  return null;
+}
+
 /// Validates the release channel and the exact release asset selected for Android.
 abstract final class AppUpdateRelease {
   static GithubReleaseJson? tryParse(
@@ -125,6 +167,39 @@ abstract final class AppUpdateRelease {
       return null;
     }
     return release;
+  }
+
+  static GithubReleaseJson? latestAndroid(
+    List<dynamic> releases,
+    List<String> supportedAbis,
+  ) {
+    GithubReleaseJson? latest;
+    AppUpdateVersion? latestVersion;
+    for (final json in releases.whereType<Map<String, dynamic>>()) {
+      final GithubReleaseJson? release;
+      try {
+        release = tryParse(json, repo: breezeReleaseRepository);
+      } on FormatException {
+        continue;
+      } on TypeError {
+        continue;
+      }
+      final candidate = release;
+      if (candidate == null) continue;
+      if (!supportedAbis.any(
+        (abi) =>
+            androidAsset(candidate, repo: breezeReleaseRepository, abi: abi) !=
+            null,
+      )) {
+        continue;
+      }
+      final version = AppUpdateVersion.parse(candidate.tagName)!;
+      if (latestVersion == null || version.compareTo(latestVersion) > 0) {
+        latest = candidate;
+        latestVersion = version;
+      }
+    }
+    return latest;
   }
 
   static Uri? androidAsset(
@@ -300,12 +375,13 @@ Future<void> _showReleaseDetails(
       final device = await DeviceInfoPlugin().androidInfo.timeout(
         _requestTimeout,
       );
-      if (device.supportedAbis.isNotEmpty) {
+      for (final abi in device.supportedAbis) {
         apk = AppUpdateRelease.androidAsset(
           release,
-          repo: _upstreamRepo,
-          abi: device.supportedAbis.first,
+          repo: breezeReleaseRepository,
+          abi: abi,
         );
+        if (apk != null) break;
       }
     } catch (error) {
       logger.w('无法确认 Android 安装包架构', error: error);

@@ -2,7 +2,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/service/app_icon_controller.dart';
 
 /// Uses the same high-resolution artwork as the selected launcher icon.
-/// SpringBoard's user-selected tint/clear treatments are not public app state.
+/// The launcher applies its own home screen styling independently.
 class CurrentAppIcon extends StatefulWidget {
   const CurrentAppIcon({super.key, this.size = 88, this.controller});
   final double size;

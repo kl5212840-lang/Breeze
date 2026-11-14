@@ -363,6 +363,71 @@ void main() {
   );
 
   test(
+    'third-party cloud reinstall verifies the bundle and keeps the installation',
+    () async {
+      await seed(enabled: false);
+      final before = objectbox.pluginInfoBox.getAll().single;
+      final config = objectbox.pluginConfigBox.getAll().single.toJson();
+      final item = CloudPluginItem.fromJson({
+        'repo': 'fixture/source',
+        'manifest': {
+          'uuid': _uuid,
+          'version': '0.1.3',
+          'updateUrl': _releaseUrl,
+        },
+      });
+      String publishedBundle = 'wrong identity';
+      var publishedVersion = '0.1.4';
+      api.request = (url) async {
+        if (url == _releaseUrl) {
+          return jsonEncode({
+            'tag_name': publishedVersion,
+            'assets': [
+              {'name': 'update.cjs', 'browser_download_url': _assetUrl},
+            ],
+          });
+        }
+        expect(url, _assetUrl);
+        return publishedBundle;
+      };
+      api.getInfoOverride = {'uuid': 'another-plugin', 'version': '0.1.3'};
+      await expectLater(
+        PluginInstallService.I.installFromCloud(item, reinstall: true),
+        throwsStateError,
+      );
+      expect(
+        objectbox.pluginInfoBox.getAll().single.originScript,
+        'old bundle',
+      );
+      api.getInfoOverride = {'uuid': _uuid, 'version': '0.1.4'};
+      await expectLater(
+        PluginInstallService.I.installFromCloud(item, reinstall: true),
+        throwsStateError,
+      );
+      expect(
+        objectbox.pluginInfoBox.getAll().single.originScript,
+        'old bundle',
+      );
+
+      publishedBundle = 'repaired bundle';
+      publishedVersion = '0.1.3';
+      api.getInfoOverride = {'uuid': _uuid, 'version': '0.1.3'};
+      expect(
+        await PluginInstallService.I.installFromCloud(item, reinstall: true),
+        '更新成功',
+      );
+      final after = objectbox.pluginInfoBox.getAll().single;
+      expect(after.originScript, 'repaired bundle');
+      expect(after.id, before.id);
+      expect(after.version, before.version);
+      expect(after.insertedAt, before.insertedAt);
+      expect(after.sortOrder, before.sortOrder);
+      expect(after.isEnabled, isFalse);
+      expect(objectbox.pluginConfigBox.getAll().single.toJson(), config);
+    },
+  );
+
+  test(
     'catalog install keeps the old plugin when the advertised version differs',
     () async {
       await seed(enabled: false);
@@ -1167,13 +1232,20 @@ void main() {
           PluginInstallService.I.installFromCloud(item),
           throwsStateError,
         );
+        final cached = CloudPluginItem.fromJson(catalog('0.1.11'));
+        final staleCatalog = catalog('0.1.11');
+        (staleCatalog['manifest'] as Map)['scriptSha256'] =
+            publishedPluginScriptSha256('stale bundle');
+        final requests = serveMigration();
         await expectLater(
           PluginInstallService.I.installFromCloud(
-            CloudPluginItem.fromJson(catalog('0.1.11')),
+            CloudPluginItem.fromJson(staleCatalog),
             reinstall: true,
           ),
           throwsStateError,
         );
+        expect(requests, contains(_formalCatalog));
+        expect(requests, isNot(contains(_formalIndex)));
         serveMigration(indexOverrides: {'uuid': 'wrong-source'});
         await expectLater(
           PluginInstallService.I.installFromCloud(item, reinstall: true),
@@ -1186,7 +1258,10 @@ void main() {
 
         serveMigration();
         expect(
-          await PluginInstallService.I.installFromCloud(item, reinstall: true),
+          await PluginInstallService.I.installFromCloud(
+            cached,
+            reinstall: true,
+          ),
           '更新成功',
         );
         final after = objectbox.pluginInfoBox.getAll().single;

@@ -129,7 +129,8 @@ Future<VideoDownloadRetryResolution> resolveApiVideoDownloadRetry(
       }
       if (!current()) throw const VideoDownloadRetryFailure('accountChanged');
     }
-    releaseBrowser = await repository.retainBrowserForDownloads?.call();
+    final browser = await repository.acquireDownloadBrowser();
+    releaseBrowser = browser.release;
     if (SourceNetworkPolicies.supports(repository.source)) {
       lease = await SourceNetworkPolicies.acquire(repository.source);
       network = await OmoNetworkContext.open(
@@ -138,7 +139,7 @@ Future<VideoDownloadRetryResolution> resolveApiVideoDownloadRetry(
         siteOrigins: [repository.home],
       );
     }
-    final retained = repository.withNetwork(Future.value(network));
+    final retained = browser.repository.withNetwork(Future.value(network));
     final item = await retained.item(id, refresh: true, snapshot: snapshot);
     if (!current()) throw const VideoDownloadRetryFailure('accountChanged');
     final line = item.lines

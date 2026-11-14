@@ -7,6 +7,7 @@ import 'package:zephyr/network/source_network_policy.dart';
 import 'package:zephyr/page/video/video_local_resources.dart';
 import 'package:zephyr/page/video/video_playback_identity.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
+import 'package:zephyr/service/download/download_admission.dart';
 import 'package:zephyr/service/local_plugin_installation_state.dart';
 import 'package:zephyr/service/plugin_account_identity.dart';
 
@@ -35,10 +36,12 @@ class AndroidManagedVideoAttempt {
   static String _digest(List<Object?> parts) =>
       sha256.convert(utf8.encode(jsonEncode(parts))).toString();
 
-  /// Only the opaque scope crosses the native channel and it lives in memory.
-  static String? scopeFor(String source) {
+  /// Native matches an opaque, process-only account and route binding.
+  static String? scopeFor(String source, {String? proxy}) {
     if (!supported || source.isEmpty) return null;
-    if (!SourceNetworkPolicies.supports(source)) return _digest([source]);
+    final wifiOnly = DownloadAdmission.instance.wifiOnly;
+    if (!SourceNetworkPolicies.supports(source))
+      return _digest([source, wifiOnly]);
     try {
       final installation = LocalPluginInstallationState.instance;
       final plugin = PluginRegistryService.I.getByUuid(source);
@@ -53,13 +56,17 @@ class AndroidManagedVideoAttempt {
         installation.installationEpoch(source),
         plugin.version,
         PluginAccountIdentities.fingerprint(source),
+        wifiOnly,
+        if (proxy?.isNotEmpty == true) proxy,
       ]);
     } catch (_) {
       return null;
     }
   }
 
-  static AndroidManagedVideoAttempt? interrupted(Map<String, dynamic> row) {
+  static Future<AndroidManagedVideoAttempt?> interrupted(
+    Map<String, dynamic> row,
+  ) async {
     if (!supported ||
         row['status'] != 'interrupted' ||
         (row['format'] ?? 'mp4') != 'mp4') {
@@ -90,7 +97,15 @@ class AndroidManagedVideoAttempt {
         VideoLocalResources.identity(source, video, quality) != resourceId) {
       return null;
     }
-    final scope = scopeFor(source);
+    String? proxy;
+    if (SourceNetworkPolicies.supports(source)) {
+      try {
+        proxy = (await SourceNetworkPolicies.resolve(source)).proxy;
+      } on FormatException {
+        return null;
+      }
+    }
+    final scope = scopeFor(source, proxy: proxy);
     if (scope == null) return null;
     return AndroidManagedVideoAttempt._(
       taskKey: taskKey,
@@ -107,7 +122,8 @@ class AndroidManagedVideoAttempt {
   final int attempt;
   final Uri video;
   String get transferKey => keyFor(taskKey, attempt)!;
-  bool get scopeIsCurrent => scopeFor(source) == scope;
+  bool matchesCurrentScope(String? proxy) =>
+      scopeFor(source, proxy: proxy) == scope;
 
   Map<String, String> get _identity => {
     'managedId': resourceId,

@@ -12,6 +12,8 @@ import 'dart:convert';
 import 'package:zephyr/network/source_network_policy.dart';
 
 import 'package:auto_route/auto_route.dart';
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/config/router/router.gr.dart' as app_routes;
 import 'package:zephyr/i18n/strings.g.dart';
@@ -99,6 +101,7 @@ class _SourceShellPageState extends State<_SourceShellBody> {
   final List<int> _tabHistory = [];
   final SourceProfileBackController _profileBackController =
       SourceProfileBackController();
+  final _videoContentKeys = <String, ({int revision, GlobalKey key})>{};
   final Set<int> _visitedIndexes = {0};
   final Map<int, int> _tabRevisions = {};
   final Set<int> _loginRequiredIndexes = {};
@@ -195,6 +198,7 @@ class _SourceShellPageState extends State<_SourceShellBody> {
       _visitedIndexes.add(0);
       _tabHistory.clear();
       _tabRevisions.clear();
+      _videoContentKeys.clear();
       _loginRequiredIndexes.clear();
       _refreshBikaSections(notify: false);
       _sourceName = widget.sourceName;
@@ -240,6 +244,9 @@ class _SourceShellPageState extends State<_SourceShellBody> {
     };
     void accept() {
       _sections = next;
+      _videoContentKeys.removeWhere(
+        (id, _) => !next.any((section) => section.id == id),
+      );
       _selectedIndex = next.indexWhere((s) => s.id == selected);
       if (_selectedIndex < 0) _selectedIndex = 0;
       _visitedIndexes
@@ -499,6 +506,16 @@ class _SourceShellPageState extends State<_SourceShellBody> {
         currentFrom: widget.source,
       );
 
+  GlobalKey _videoContentKey(int index) {
+    final id = _sections[index].id;
+    final revision = _tabRevisions[index] ?? 0;
+    final previous = _videoContentKeys[id];
+    if (previous != null && previous.revision == revision) return previous.key;
+    final key = GlobalKey();
+    _videoContentKeys[id] = (revision: revision, key: key);
+    return key;
+  }
+
   Widget _sourceTabStack({required int index, required List<Widget> children}) {
     if (!isBikaExperienceSource(widget.source)) {
       return IndexedStack(
@@ -542,15 +559,29 @@ class _SourceShellPageState extends State<_SourceShellBody> {
     final canGoBack =
         _profileCanGoBack ||
         SourceReturnPreferences.includesTabHistory && _tabHistory.isNotEmpty;
+    final androidVideoBack =
+        showingVideo && defaultTargetPlatform == TargetPlatform.android;
     final backLabel = _profileCanGoBack
         ? _profileBackController.backLabel!
         : SourceReturnPreferences.includesTabHistory && _tabHistory.isNotEmpty
         ? '${t.common.back} · ${_sectionTitle(sections[_tabHistory.last])}'
         : null;
     final body = PopScope(
-      canPop: !canGoBack,
+      canPop: !canGoBack && !androidVideoBack,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _goBack();
+        if (didPop) return;
+        if (androidVideoBack) {
+          final section = sections[_selectedIndex];
+          final key = _videoContentKeys[section.id]?.key;
+          if (key != null && SourceVideoContent.handleAndroidBackFor(key)) {
+            return;
+          }
+          if (!canGoBack) {
+            Navigator.of(context).pop();
+            return;
+          }
+        }
+        _goBack();
       },
       child: Scaffold(
         extendBody: usesNativeSourceChrome(context),
@@ -667,9 +698,7 @@ class _SourceShellPageState extends State<_SourceShellBody> {
                     else if (_visitedIndexes.contains(index))
                       if (sections[index].videoGroup)
                         SourceVideoContent(
-                          key: ValueKey(
-                            '${sections[index].id}-${_tabRevisions[index] ?? 0}',
-                          ),
+                          key: _videoContentKey(index),
                           source: widget.source,
                           actions: sections[index].actions,
                           browseOnly: sections[index].videoBrowseOnly,
@@ -799,6 +828,7 @@ class _SourceShellPageState extends State<_SourceShellBody> {
         bottomNavigationBar: sections.length <= 1
             ? null
             : usesNativeSourceChrome(context) ||
+                  AppInterfaceStyleScope.usesAndroidSystem(context) ||
                   !AppInterfaceStyleScope.usesSystem(context)
             ? VideoNativeNavigation(
                 items: [

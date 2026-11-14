@@ -1,4 +1,5 @@
 import 'package:zephyr/plugin/utils/plugin_catalog_merge.dart';
+import 'package:zephyr/plugin/utils/published_plugin_artifact.dart';
 import 'package:zephyr/util/json/json_value.dart';
 
 class CloudPluginItem {
@@ -21,6 +22,26 @@ class CloudPluginItem {
       manifest: CloudPluginManifest.fromJson(asJsonMap(json['manifest'])),
       formalRelease: formalRelease,
     );
+  }
+
+  bool get isFormalCloudListing =>
+      repo == personalPluginCatalogRepository &&
+      requiresFormalPluginRelease(manifest.updateUrl) &&
+      manifest.npmName.trim().isEmpty &&
+      manifest.version.trim().isNotEmpty &&
+      parsePublishedPluginSha256(manifest.scriptSha256) != null;
+
+  bool canReinstallFromCloud(Map<String, dynamic>? installedInfo) {
+    if (formalRelease != null || isFormalCloudListing) return true;
+    final updateUrl = manifest.updateUrl.trim();
+    return manifest.version.trim().isNotEmpty &&
+        (manifest.npmName.trim().isNotEmpty || _isHttpUrl(updateUrl)) &&
+        !requiresFormalPluginRelease(updateUrl) &&
+        preservesFormalPluginChannel(
+          installedInfo: installedInfo,
+          updateUrl: updateUrl,
+          npmName: manifest.npmName,
+        );
   }
 
   /// 直达 GitHub 仓库的 URL：优先 manifest 的 `breeze-plugin-github-repository`，

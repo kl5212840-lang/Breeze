@@ -1,5 +1,6 @@
 import Foundation
 import Flutter
+import UIKit
 import os
 
 /// URLSession owns the requests. This journal owns bindings and file receipts.
@@ -117,6 +118,9 @@ final class BackgroundFileTransfer: NSObject, URLSessionDownloadDelegate, @unche
   private var readable = false
   private var loaded = false
   private var lastNotification = Date.distantPast
+  // Serialized alongside journal and task ownership on worker.
+  private var foreground = false
+  private var deferredByLifecycle = Set<String>()
 
   override init() {
     let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -126,9 +130,45 @@ final class BackgroundFileTransfer: NSObject, URLSessionDownloadDelegate, @unche
     worker.maxConcurrentOperationCount = 1
     worker.name = "breeze.download.files"
     worker.qualityOfService = .utility
+    NotificationCenter.default.addObserver(self, selector: #selector(enteredBackground),
+      name: UIApplication.didEnterBackgroundNotification, object: nil)
+    NotificationCenter.default.addObserver(self, selector: #selector(enteredForeground),
+      name: UIApplication.didBecomeActiveNotification, object: nil)
+    NotificationCenter.default.addObserver(self, selector: #selector(enteredBackground),
+      name: UIScene.didEnterBackgroundNotification, object: nil)
+    NotificationCenter.default.addObserver(self, selector: #selector(enteredForeground),
+      name: UIScene.didActivateNotification, object: nil)
   }
 
+  @objc private func enteredBackground() { setForeground(false) }
+  @objc private func enteredForeground() { setForeground(true) }
+
+  private func setForeground(_ allowed: Bool) {
+    worker.addOperation {
+      self.foreground = allowed
+      for batch in Array(self.batches.values) where !batch.terminal && !batch.cancelling {
+        if allowed && batch.binding.kind == "mp4" {
+          self.advance(batch.binding.batchId)
+        } else {
+          self.suspendRunning(batch)
+        }
+      }
+    }
+  }
+
+  private func suspendRunning(_ batch: Batch) {
+    for item in batch.items where item.status == "running" {
+      let key = token(batch.binding.batchId, item.index)
+      if let task = tasks[key], task.state == .running, deferredByLifecycle.insert(key).inserted {
+        task.suspend()
+      }
+    }
+  }
+
+  deinit { NotificationCenter.default.removeObserver(self) }
+
   func start() {
+    setForeground(UIApplication.shared.applicationState == .active)
     worker.addOperation { self.load() }
   }
 
@@ -516,10 +556,18 @@ final class BackgroundFileTransfer: NSObject, URLSessionDownloadDelegate, @unche
   private func advance(_ id: String) {
     guard pendingCompletions[id] == nil else { return }
     guard var batch = batches[id], !batch.cancelling, !batch.acknowledged else { return }
+    guard foreground && batch.binding.kind == "mp4" else {
+      suspendRunning(batch)
+      return
+    }
     var count = batch.items.filter { $0.status == "running" }.count
     var resuming = [URLSessionDownloadTask]()
     for item in batch.items where item.status == "running" {
-      if let task = tasks[token(id, item.index)], task.state == .suspended { task.resume() }
+      let key = token(id, item.index)
+      if let task = tasks[key] {
+        let deferred = deferredByLifecycle.remove(key) != nil
+        if deferred || task.state == .suspended { task.resume() }
+      }
     }
     for item in batch.items where count < batch.concurrency && item.status == "queued" {
       guard let task = tasks[token(id, item.index)] else { continue }
@@ -656,6 +704,7 @@ final class BackgroundFileTransfer: NSObject, URLSessionDownloadDelegate, @unche
     guard acceptsCallback(task, key: key), !batch.items[index].terminal,
       pendingCompletions[id]?[index] == nil else { return }
     tasks.removeValue(forKey: key)
+    deferredByLifecycle.remove(key)
     progress.removeValue(forKey: key)
     if batch.cancelling {
       finishCancel(id)

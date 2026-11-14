@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart' show SynchronousFuture;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -67,6 +68,24 @@ class _Texture extends CustomPainter {
 
   @override
   bool shouldRepaint(_Texture oldDelegate) => false;
+}
+
+class _DelayedCoverImage extends ImageProvider<_DelayedCoverImage> {
+  final pixels = Completer<ImageInfo>();
+  var loads = 0;
+
+  @override
+  Future<_DelayedCoverImage> obtainKey(ImageConfiguration configuration) =>
+      SynchronousFuture(this);
+
+  @override
+  ImageStreamCompleter loadImage(
+    _DelayedCoverImage key,
+    ImageDecoderCallback decode,
+  ) {
+    loads++;
+    return OneFrameImageStreamCompleter(pixels.future);
+  }
 }
 
 Future<Uint8List> _pixels(WidgetTester tester) async {
@@ -492,7 +511,7 @@ void main() {
   }
 
   testWidgets(
-    'mosaic rasterizes coarse sampled pixel blocks rather than drawing a grid',
+    'mosaic reuses the original decode and paints only opaque coarse blocks',
     (tester) async {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -501,11 +520,20 @@ void main() {
         style: CollectionCoverStyle.mosaic,
         ready: true,
       );
+      final provider = _DelayedCoverImage();
+      var originalPaints = 0;
       final cover = CollectionCoverPrivacyScope(
         child: CollectionCoverPrivacy(
+          image: provider,
           child: SizedBox.square(
             dimension: 96,
-            child: CustomPaint(painter: _Texture()),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Image(image: provider, gaplessPlayback: true),
+                CustomPaint(painter: _PaintCounter(() => originalPaints++)),
+              ],
+            ),
           ),
         ),
       );
@@ -519,17 +547,39 @@ void main() {
           ),
         ),
       );
+      expect(provider.loads, 1);
+      expect(originalPaints, 0);
+      final initial = await _pixels(tester);
+      expect(initial[3], 255);
+      expect(_difference(initial, 0, (48 * 96 + 48) * 4), 0);
+      await tester.runAsync(() async {
+        final recorder = ui.PictureRecorder();
+        _Texture().paint(Canvas(recorder), const Size(96, 96));
+        final picture = recorder.endRecording();
+        final image = await picture.toImage(96, 96);
+        picture.dispose();
+        provider.pixels.complete(ImageInfo(image: image));
+      });
       await tester.pumpAndSettle();
+      for (var attempt = 0; attempt < 20; attempt++) {
+        if (tester.widget<RawImage>(find.byType(RawImage).last).image != null) {
+          break;
+        }
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump();
+      }
       final data = await _pixels(tester);
       expect(data.length, 96 * 96 * 4);
       final blockColors = <String>{};
-      for (var by = 0; by < 4; by++) {
-        for (var bx = 0; bx < 4; bx++) {
-          final base = ((by * 24 + 10) * 96 + bx * 24 + 10) * 4;
+      for (var by = 0; by < 6; by++) {
+        for (var bx = 0; bx < 6; bx++) {
+          final base = ((by * 16 + 8) * 96 + bx * 16 + 8) * 4;
           blockColors.add('${data[base]},${data[base + 1]},${data[base + 2]}');
-          for (final dy in [5, 10, 16]) {
-            for (final dx in [5, 10, 16]) {
-              final sample = ((by * 24 + dy) * 96 + bx * 24 + dx) * 4;
+          for (final dy in [3, 8, 13]) {
+            for (final dx in [3, 8, 13]) {
+              final sample = ((by * 16 + dy) * 96 + bx * 16 + dx) * 4;
               expect(
                 _difference(data, base, sample),
                 lessThanOrEqualTo(3),
@@ -545,6 +595,13 @@ void main() {
         reason:
             'the sampled image must remain distinct from a flat placeholder',
       );
+      expect(originalPaints, 0);
+      controller.state.value = const CollectionCoverPrivacySettings(
+        ready: true,
+      );
+      await tester.pump();
+      expect(originalPaints, greaterThan(0));
+      expect(provider.loads, 1);
     },
   );
 }

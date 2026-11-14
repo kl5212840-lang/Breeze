@@ -25,6 +25,7 @@ final class HlsAssetDownloadPresenter: NSObject, AVAssetDownloadDelegate {
   private var backgroundCompletions: [String: () -> Void] = [:]
   private var backgroundFinished = Set<String>()
   private var offline: HlsOfflinePlayerController?
+  private var foreground = UIApplication.shared.applicationState == .active
 #if DEBUG
   private let diagnosticLock = NSLock()
   private var diagnosticEvents: [[String: Any]] = []
@@ -96,6 +97,7 @@ final class HlsAssetDownloadPresenter: NSObject, AVAssetDownloadDelegate {
     var result: FlutterResult?
     var lease: OmoNetworkLease?
     var task: AVAssetDownloadTask?
+    var transferResumed = false
     var location: URL?
     var cancelled = false
     var durable = false
@@ -119,6 +121,14 @@ final class HlsAssetDownloadPresenter: NSObject, AVAssetDownloadDelegate {
 
   override init() {
     super.init()
+    NotificationCenter.default.addObserver(self, selector: #selector(enteredBackground),
+      name: UIApplication.didEnterBackgroundNotification, object: nil)
+    NotificationCenter.default.addObserver(self, selector: #selector(enteredForeground),
+      name: UIApplication.didBecomeActiveNotification, object: nil)
+    NotificationCenter.default.addObserver(self, selector: #selector(enteredBackground),
+      name: UIScene.didEnterBackgroundNotification, object: nil)
+    NotificationCenter.default.addObserver(self, selector: #selector(enteredForeground),
+      name: UIScene.didActivateNotification, object: nil)
     let previous = UserDefaults.standard.stringArray(forKey: Self.pendingSessionsKey) ?? []
     io.async { [weak self] in
       guard let self else { return }
@@ -130,6 +140,24 @@ final class HlsAssetDownloadPresenter: NSObject, AVAssetDownloadDelegate {
       }
     }
   }
+
+  @objc private func enteredBackground() { setForeground(false) }
+  @objc private func enteredForeground() { setForeground(true) }
+
+  private func setForeground(_ allowed: Bool) {
+    foreground = allowed
+    for job in jobs.values { updateTransfer(job) }
+  }
+
+  private func updateTransfer(_ job: Job) {
+    let allowed = foreground && UIApplication.shared.applicationState != .background
+    guard !job.cancelled, let task = job.task, task.state != .completed,
+      task.state != .canceling, job.transferResumed != allowed else { return }
+    job.transferResumed = allowed
+    if allowed { task.resume() } else { task.suspend() }
+  }
+
+  deinit { NotificationCenter.default.removeObserver(self) }
 
   func attach(messenger: FlutterBinaryMessenger) {
     let channel = FlutterMethodChannel(name: "breeze.video.hls", binaryMessenger: messenger)
@@ -541,8 +569,8 @@ final class HlsAssetDownloadPresenter: NSObject, AVAssetDownloadDelegate {
     sessions[job.sessionID] = session
     remember(job.sessionID, present: true)
     progress(job, task: download, loaded: 0, total: nil, saving: false, force: true)
-    download.resume()
-    diagnose("task.resumed")
+    updateTransfer(job)
+    if job.transferResumed { diagnose("task.resumed") }
   }
 
   static func backgroundConfiguration(_ identifier: String) -> URLSessionConfiguration {
@@ -611,8 +639,10 @@ final class HlsAssetDownloadPresenter: NSObject, AVAssetDownloadDelegate {
           if let assetTask = task as? AVAssetDownloadTask,
             let job = self.recoveredJob(identifier, task: assetTask), !job.cancelled {
             keepingTask = true
-            // A valid, already-submitted task continues under system ownership.
-            // Do not manufacture a new request if the old one disappeared.
+            // The saved system task may return in a running or suspended
+            // state. Reapply the current app policy before advertising it.
+            job.transferResumed = task.state == .running
+            self.updateTransfer(job)
             self.recoveryChanged()
           } else {
             task.cancel()
@@ -674,6 +704,8 @@ final class HlsAssetDownloadPresenter: NSObject, AVAssetDownloadDelegate {
     }
     job.task = task
     jobs[identifier] = job
+    job.transferResumed = task.state == .running
+    updateTransfer(job)
     return job
   }
 
@@ -834,8 +866,16 @@ final class HlsAssetDownloadPresenter: NSObject, AVAssetDownloadDelegate {
       cleanup(job, completion: { [weak self] in
         guard let self else { return }
         let cancelled = job.cancelled || (error as NSError?)?.code == NSURLErrorCancelled
-        let value: Any = cancelled ? "cancelled" as Any : self.classifiedFailure("nativeTransfer", error: error)
-        self.settle(job, value: value)
+        if cancelled {
+          self.settle(job, value: "cancelled")
+        } else {
+          var failure = self.classifiedFailure("nativeTransfer", error: error)
+          if let response = task.response as? HTTPURLResponse,
+            (400...599).contains(response.statusCode) {
+            failure["httpStatus"] = response.statusCode
+          }
+          self.settle(job, value: failure)
+        }
       })
       return
     }

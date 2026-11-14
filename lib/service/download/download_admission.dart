@@ -39,6 +39,11 @@ class DownloadAdmission extends ChangeNotifier with WidgetsBindingObserver {
   static const _capacity = MethodChannel('breeze.download.capacity');
   static const queuePauseKey = 'breeze.local.download.queue-paused.v1';
 
+  static bool get supportsMobileControls =>
+      !kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.iOS ||
+          defaultTargetPlatform == TargetPlatform.android);
+
   final Future<List<ConnectivityResult>> Function() _readNetwork;
   final Stream<List<ConnectivityResult>> _networkEvents;
   final Future<int?> Function() _readFreeBytes;
@@ -51,17 +56,41 @@ class DownloadAdmission extends ChangeNotifier with WidgetsBindingObserver {
   bool _disposed = false;
   bool _queuePaused = false;
   bool _writingQueuePause = false;
+  bool? _lastForegroundAllowed;
 
   bool get wifiOnly => _wifiOnly;
   bool get queuePaused => _queuePaused;
+  bool get foregroundAllowed {
+    if (defaultTargetPlatform != TargetPlatform.iOS) return true;
+    final state = WidgetsBinding.instance.lifecycleState;
+    return state == null ||
+        state == AppLifecycleState.resumed ||
+        state == AppLifecycleState.inactive;
+  }
+
   DownloadNetworkWait? get networkWait {
     final transports = _transports;
     if (transports != null && transports.isEmpty)
       return DownloadNetworkWait.offline;
-    if (_wifiOnly && transports?.contains(ConnectivityResult.wifi) != true) {
+    if (_wifiOnly && !_hasWifi(transports)) {
       return DownloadNetworkWait.wifi;
     }
     return null;
+  }
+
+  bool _hasWifi(Set<ConnectivityResult>? transports) {
+    if (transports == null || !transports.contains(ConnectivityResult.wifi)) {
+      return false;
+    }
+    // Android VPNs can report several underlying transports at once. The OS
+    // may choose cellular, so wait for a route the native writers can confirm.
+    return defaultTargetPlatform != TargetPlatform.android ||
+        !transports.any(
+          (transport) =>
+              transport == ConnectivityResult.mobile ||
+              transport == ConnectivityResult.ethernet ||
+              transport == ConnectivityResult.vpn,
+        );
   }
 
   void setWifiOnly(bool enabled) {
@@ -74,6 +103,7 @@ class DownloadAdmission extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> _start() async {
     WidgetsBinding.instance.addObserver(this);
+    _lastForegroundAllowed = foregroundAllowed;
     _subscription = _networkEvents.listen(_update, onError: (Object _) {});
     await Future.wait([initializeQueueState(), _refresh()]);
   }
@@ -136,6 +166,11 @@ class DownloadAdmission extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final allowed = foregroundAllowed;
+    if (_lastForegroundAllowed != allowed) {
+      _lastForegroundAllowed = allowed;
+      notifyListeners();
+    }
     if (state == AppLifecycleState.resumed) unawaited(_refresh());
   }
 

@@ -9,6 +9,7 @@ import 'dart:io';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoIcons;
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -334,6 +335,9 @@ class _NavigationBarState extends State<NavigationBar> {
     final floating = system && Platform.isIOS;
     final height = switch ((system, floating)) {
       (true, true) => _nativeNavHeight ?? 49 + media.viewPadding.bottom,
+      (true, false) when AppInterfaceStyleScope.usesAndroidSystem(context) =>
+        VideoNativeNavigation.androidContentHeightOf(context) +
+            media.padding.bottom,
       (true, false) => kBottomNavigationBarHeight + media.padding.bottom,
       _ => BreezeNavigationBar.contentHeightOf(context) + media.padding.bottom,
     };
@@ -342,8 +346,8 @@ class _NavigationBarState extends State<NavigationBar> {
       screens: _pages,
       floatingNavigation: floating,
       navBarHeight: height,
-      handleAndroidBackButtonPress: !backPressExitEnabled,
-      onWillPop: backPressExitEnabled ? _handleExitOnBack : null,
+      onAndroidRootBack: () =>
+          _handleAndroidRootBack(exitEnabled: backPressExitEnabled),
       navigation: MediaQuery(
         data: media,
         child: system
@@ -388,13 +392,12 @@ class _NavigationBarState extends State<NavigationBar> {
     );
   }
 
-  Future<bool> _handleExitOnBack(BuildContext? _) async {
+  Future<void> _handleAndroidRootBack({required bool exitEnabled}) async {
     if (_selectedDestination != MainNavigationDestination.discover) {
       _select(MainNavigationDestination.discover);
-      return false;
+    } else if (exitEnabled) {
+      await SystemNavigator.pop();
     }
-    await SystemNavigator.pop();
-    return false;
   }
 
   static const _pages = <Widget>[
@@ -841,7 +844,7 @@ class MainNativeTabHost extends StatefulWidget {
     required this.navigation,
     this.floatingNavigation = true,
     this.handleAndroidBackButtonPress = true,
-    this.onWillPop,
+    this.onAndroidRootBack,
   });
   final PersistentTabController controller;
   final List<Widget> screens;
@@ -849,7 +852,7 @@ class MainNativeTabHost extends StatefulWidget {
   final Widget navigation;
   final bool floatingNavigation;
   final bool handleAndroidBackButtonPress;
-  final Future<bool> Function(BuildContext?)? onWillPop;
+  final Future<void> Function()? onAndroidRootBack;
   @override
   State<MainNativeTabHost> createState() => _MainNativeTabHostState();
 }
@@ -858,10 +861,13 @@ class _MainNativeTabHostState extends State<MainNativeTabHost> {
   // Each tab owns its own real Navigator stack, including plain Flutter pages.
   // Keep the same observer/list identity when parent preferences rebuild.
   final _routes = <RouteAndNavigatorSettings>[];
+  bool _handlingAndroidBack = false;
+
   void _ensureRoutes() {
     while (_routes.length < widget.screens.length) {
       _routes.add(
         RouteAndNavigatorSettings(
+          navigatorKey: GlobalKey<NavigatorState>(),
           navigatorObservers: [
             NativeCompositionObserver(geometryBasedOcclusion: true),
           ],
@@ -870,10 +876,30 @@ class _MainNativeTabHostState extends State<MainNativeTabHost> {
     }
   }
 
+  Future<void> _handleAndroidBack() async {
+    if (_handlingAndroidBack) return;
+    _handlingAndroidBack = true;
+    try {
+      final index = widget.controller.index;
+      final navigator = _routes[index].navigatorKey?.currentState;
+      if (navigator == null || await navigator.maybePop()) return;
+      if (!mounted || widget.controller.index != index) return;
+      final onRootBack = widget.onAndroidRootBack;
+      if (onRootBack != null) {
+        await onRootBack();
+      } else if (index != 0) {
+        widget.controller.jumpToTab(0);
+      }
+    } finally {
+      _handlingAndroidBack = false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     _ensureRoutes();
-    return PersistentTabView.custom(
+    final android = defaultTargetPlatform == TargetPlatform.android;
+    final tabs = PersistentTabView.custom(
       context,
       controller: widget.controller,
       screens: [
@@ -892,11 +918,25 @@ class _MainNativeTabHostState extends State<MainNativeTabHost> {
       bottomScreenMargin: widget.floatingNavigation ? 0 : widget.navBarHeight,
       // The dependency paints this color across the entire custom-bar bounds.
       backgroundColor: Colors.transparent,
-      handleAndroidBackButtonPress: widget.handleAndroidBackButtonPress,
-      onWillPop: widget.onWillPop,
+      handleAndroidBackButtonPress:
+          !android && widget.handleAndroidBackButtonPress,
       resizeToAvoidBottomInset: false,
       hideNavigationBarWhenKeyboardAppears: true,
       customWidget: widget.navigation,
+    );
+    if (!android ||
+        !widget.handleAndroidBackButtonPress &&
+            widget.onAndroidRootBack == null) {
+      return tabs;
+    }
+    // The tab package uses pop directly on secondary routes. Let the current
+    // Navigator honor its own PopScope and local history before switching tabs.
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) unawaited(_handleAndroidBack());
+      },
+      child: tabs,
     );
   }
 }

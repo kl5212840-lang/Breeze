@@ -19,6 +19,8 @@ const _blockedPluginUuid = kDebugMode
     ? ''
     : '00000000-0000-0000-0000-00000000e001';
 
+bool allowsPluginInstallation(String uuid) => uuid != _blockedPluginUuid;
+
 class PluginInstallService {
   PluginInstallService._();
   static final PluginInstallService I = PluginInstallService._();
@@ -40,7 +42,7 @@ class PluginInstallService {
       item.manifest.compatibilityMetadata,
       uuid: pluginUuid,
     );
-    if (pluginUuid == _blockedPluginUuid) {
+    if (!allowsPluginInstallation(pluginUuid)) {
       throw StateError('请更换插件id');
     }
     if (expectedUuid != null &&
@@ -60,9 +62,34 @@ class PluginInstallService {
         current != null &&
         !current.isDeleted &&
         installation?.removedAt == null;
-    final formal = item.formalRelease;
-    if (reinstall && (!installed || formal == null)) {
+    var formal = item.formalRelease;
+    if (reinstall &&
+        (!installed ||
+            !item.canReinstallFromCloud(
+              parseGetInfoJson(current.getInfoJson),
+            ))) {
       throw StateError(t.plugin.refreshBeforeCloudReinstall);
+    }
+    if (reinstall && formal == null && item.isFormalCloudListing) {
+      // Bundled/cached rows can display the action. A new live catalogue
+      // must certify exactly what the user saw before we download its code.
+      final catalog = await fetchCloudPluginListWithCdnFallback();
+      final version = normalizePublishedPluginVersion(item.manifest.version);
+      final digest = parsePublishedPluginSha256(item.manifest.scriptSha256);
+      formal = catalog.entries
+          .map((entry) => entry.formalRelease)
+          .whereType<FormalPluginRelease>()
+          .where(
+            (release) =>
+                release.uuid == pluginUuid &&
+                release.version == version &&
+                release.updateUrl == updateUrl &&
+                release.scriptSha256 == digest,
+          )
+          .firstOrNull;
+      if (formal == null) {
+        throw StateError(t.plugin.refreshBeforeCloudReinstall);
+      }
     }
     PluginReleaseMigration? migration;
     if (installed && !reinstall) {
@@ -82,8 +109,8 @@ class PluginInstallService {
         throw StateError(t.plugin.localVersionNewer);
       }
     }
-    final script = reinstall
-        ? await downloadFormalPluginRelease(formal!)
+    final script = reinstall && formal != null
+        ? await downloadFormalPluginRelease(formal)
         : migration == null
         ? await downloadFromJsdelivrOrGitHub(
             npmName: npmName,
@@ -263,7 +290,7 @@ class PluginInstallService {
     if (resolvedUuid.isEmpty) {
       throw StateError('getInfo 返回缺少 uuid');
     }
-    if (resolvedUuid == _blockedPluginUuid) {
+    if (!allowsPluginInstallation(resolvedUuid)) {
       throw StateError('请更换插件id');
     }
     final expected = expectedUuid?.trim() ?? '';

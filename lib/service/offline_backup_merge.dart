@@ -14,6 +14,7 @@ import 'package:zephyr/service/local_plugin_installation_state.dart';
 import 'package:zephyr/network/sync/sync_payload_compatibility.dart';
 import 'package:zephyr/network/sync/sync_service.dart';
 import 'package:zephyr/object_box/model.dart';
+import 'package:zephyr/page/download/models/unified_comic_download.dart';
 import 'package:zephyr/service/comic_follow/comic_follow_merge.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/page/video/video_local_resources.dart';
@@ -688,6 +689,7 @@ Future<OfflineBackupMergePlan> prepareOfflineBackupMerge(
         merged[name] = _downloadRows(
           merged[name] as List? ?? [],
           source[name] as List? ?? [],
+          mergeChapters: name == 'unifiedComicDownload',
         );
       }
     }
@@ -798,15 +800,93 @@ List<dynamic> _legacyRows(List<dynamic> local, List<dynamic> incoming) {
   return result.values.toList();
 }
 
-List<dynamic> _downloadRows(List<dynamic> local, List<dynamic> incoming) {
+List<dynamic> _downloadRows(
+  List<dynamic> local,
+  List<dynamic> incoming, {
+  required bool mergeChapters,
+}) {
   final result = {
-    for (final row in local) ((row as Map)['uniqueKey'] ?? row['comicId']): row,
+    for (final row in local.cast<Map<String, dynamic>>())
+      (row['uniqueKey'] ?? row['comicId']): row,
   };
-  for (final row in incoming) {
-    final key = (row as Map)['uniqueKey'] ?? row['comicId'];
-    result.putIfAbsent(key, () => row);
+  for (final row in incoming.cast<Map<String, dynamic>>()) {
+    final key = row['uniqueKey'] ?? row['comicId'];
+    final existing = result[key];
+    if (existing == null) {
+      result[key] = row;
+    } else if (mergeChapters) {
+      result[key] = _mergeUnifiedDownloadChapters(existing, row);
+    }
   }
   return result.values.toList();
+}
+
+Map<String, dynamic> _mergeUnifiedDownloadChapters(
+  Map<String, dynamic> local,
+  Map<String, dynamic> incoming,
+) {
+  if (local['deleted'] == true || incoming['deleted'] == true) return local;
+  final current = resolveDownloadChapterViews(
+    UnifiedComicDownload.fromJson(local),
+  );
+  final backup = resolveDownloadChapterViews(
+    UnifiedComicDownload.fromJson(incoming),
+  );
+  final chapters = [...current.stored];
+  final byId = {
+    for (var index = 0; index < current.download.length; index++)
+      current.download[index].id: index,
+  };
+  var changed = false;
+  for (var index = 0; index < backup.download.length; index++) {
+    final chapter = backup.download[index];
+    if (chapter.images.isEmpty) continue;
+    final existingIndex = byId[chapter.id];
+    if (existingIndex == null) {
+      byId[chapter.id] = chapters.length;
+      chapters.add(backup.stored[index]);
+      changed = true;
+    } else if (chapters[existingIndex].images.isEmpty) {
+      chapters[existingIndex] = backup.stored[index];
+      changed = true;
+    }
+  }
+  if (!changed) return local;
+
+  // Download order can be equal across groups. Keep those rows stable.
+  final ordered = chapters.asMap().entries.toList()
+    ..sort((a, b) {
+      final order = a.value.order.compareTo(b.value.order);
+      return order == 0 ? a.key.compareTo(b.key) : order;
+    });
+  final sorted = ordered.map((entry) => entry.value).toList();
+  final rows = sorted.map((chapter) => chapter.toMap()).toList();
+  final merged = {...local, 'chapters': jsonEncode(rows)};
+  final rawDetail = local['detailJson'] as String;
+  if (rawDetail.isEmpty) return merged;
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(rawDetail);
+  } on FormatException {
+    return merged;
+  }
+  if (decoded is! Map<String, dynamic>) return merged;
+  final extension = decoded['extern'];
+  merged['detailJson'] = jsonEncode({
+    ...decoded,
+    'eps': [
+      for (final chapter in buildDownloadEps(sorted))
+        {
+          ...chapter.toJson(),
+          if (chapter.id.isEmpty) 'id': chapter.storageChapterId,
+        },
+    ],
+    'extern': {
+      if (extension is Map<String, dynamic>) ...extension,
+      'downloadChapters': rows,
+    },
+  });
+  return merged;
 }
 
 Future<void> _mergeImages(

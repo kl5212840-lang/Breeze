@@ -7,6 +7,7 @@ import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/main.dart' show objectbox;
 import 'package:zephyr/page/plugin_store/models/cloud_plugin_item.dart';
 import 'package:zephyr/page/plugin_store/widgets/cloud_plugin_card.dart';
+import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/plugin/utils/plugin_catalog_merge.dart';
 import 'package:zephyr/plugin/utils/published_plugin_artifact.dart';
@@ -239,6 +240,74 @@ void main() {
     expect(installs, 1);
   });
 
+  testWidgets(
+    'third-party reinstall keeps its outlined trigger and a compact anchored menu',
+    (tester) async {
+      await PluginRegistryService.I.upsert(
+        PluginInfo(
+          uuid: _uuid,
+          version: '0.1.0',
+          originScript: 'fixture',
+          insertedAt: DateTime.utc(2026),
+          updatedAt: DateTime.utc(2026),
+          isEnabled: false,
+          isDeleted: false,
+          lastLoadSuccess: true,
+          debug: false,
+        ),
+      );
+      final item = CloudPluginItem.fromJson({
+        'repo': 'other-owner/source',
+        'manifest': {
+          'uuid': _uuid,
+          'version': '0.1.0',
+          'updateUrl': 'https://fixture.invalid/releases/latest',
+        },
+      });
+      String? selected;
+      await mount(
+        tester,
+        item: item,
+        reinstall: (version) => selected = version,
+      );
+      final more = find.byTooltip(t.common.more);
+      expect(more, findsOneWidget);
+      final menu = tester.widget<IconButton>(find.byType(IconButton));
+      expect(menu.style?.minimumSize?.resolve({}), const Size(44, 44));
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, t.plugin.alreadyLatest),
+            )
+            .onPressed,
+        isNull,
+      );
+      final trigger = tester.getRect(find.byType(NativeVideoMenu));
+      await tester.tap(more);
+      await tester.pumpAndSettle();
+      final surface = tester.getRect(
+        find.byKey(const ValueKey('video-host-menu')),
+      );
+      expect(surface.top, closeTo(trigger.bottom + 6, 1));
+      // The narrow test host wraps More to the leftmost column, so the panel
+      // starts at the safe inset when its width exceeds the trigger's right edge.
+      final expectedRight = trigger.right.clamp(16 + surface.width, 304);
+      expect(surface.right, closeTo(expectedRight, 1));
+      expect(surface.width, lessThan(180));
+      expect(find.byType(UiKitView), findsNothing);
+      await tester.tap(find.text(t.pluginLifecycle.reinstall));
+      await tester.pumpAndSettle();
+      expect(selected, '0.1.0');
+
+      await mount(tester, reinstall: (_) {});
+      expect(more, findsNothing);
+    },
+    variant: TargetPlatformVariant({
+      TargetPlatform.android,
+      TargetPlatform.iOS,
+    }),
+  );
+
   for (final localVersion in ['0.1.0', '0.1.8', '0.0.9']) {
     testWidgets(
       'a formal listing keeps the version action and puts reinstall in more ($localVersion)',
@@ -306,6 +375,20 @@ void main() {
         await tester.tap(find.text(t.pluginLifecycle.reinstall));
         await tester.pumpAndSettle();
         expect(selected, localVersion);
+
+        if (localVersion == '0.1.0') {
+          selected = null;
+          await mount(
+            tester,
+            item: CloudPluginItem.fromJson(entry.json),
+            reinstall: (version) => selected = version,
+          );
+          await tester.tap(find.byTooltip(t.common.more));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text(t.pluginLifecycle.reinstall));
+          await tester.pumpAndSettle();
+          expect(selected, localVersion);
+        }
 
         await mount(
           tester,

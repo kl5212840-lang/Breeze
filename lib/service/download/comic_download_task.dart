@@ -2,7 +2,6 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:zephyr/service/download/download_commit_guard.dart';
 import 'package:zephyr/service/download/comic_download_preview.dart';
 import 'package:zephyr/service/download/comic_download_route.dart';
-import 'package:zephyr/service/download/comic_background_download.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -80,8 +79,6 @@ Future<void> _unifiedDownloadTask(
         : null;
   }
 
-  Timer? progressTimer;
-  bool running = true;
   final initialTask = boundTask();
   var checkpoint = initialTask == null
       ? task
@@ -112,12 +109,6 @@ Future<void> _unifiedDownloadTask(
             );
           }),
     );
-  }
-
-  void updateTaskStatus(String status) {
-    final dbTask = findCurrentTask();
-    if (dbTask == null) return;
-    queueTaskWrite(dbTask.id, status: status);
   }
 
   void updateCheckpoint(
@@ -183,7 +174,6 @@ Future<void> _unifiedDownloadTask(
         ),
         status: t.download.statusFetchingComicInfo,
       );
-      updateTaskStatus(t.download.statusFetchingComicInfo);
       reporter.updateMessage(t.download.statusFetchingComicInfo);
       final PluginComicDetail detail;
       try {
@@ -212,7 +202,6 @@ Future<void> _unifiedDownloadTask(
                   '',
       });
 
-      updateTaskStatus(t.download.statusDownloadingCover);
       updateCheckpoint(
         (payload) => payload.copyWith(phaseCode: 'downloadingCover'),
         status: t.download.statusDownloadingCover,
@@ -284,12 +273,6 @@ Future<void> _unifiedDownloadTask(
         }
       }
     }
-
-    progressTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (running) {
-        updateTaskStatus(reporter.message);
-      }
-    });
 
     final requestChapterId = chapter.effectiveRequestId;
     final chapterExtern = Map<String, dynamic>.from(chapter.extern);
@@ -430,17 +413,9 @@ Future<void> _unifiedDownloadTask(
       );
       var lastPersistedImages = 0;
       var lastPersistedAt = DateTime.now();
-      var lastReportedPercent = -1;
-      ComicBackgroundDownload? background;
+      var lastReportedPercent = 0;
+      var progressMessage = startingMessage;
       try {
-        if (route != null) {
-          background = await ComicBackgroundDownload.prepare(
-            task: task,
-            jobs: jobs,
-            concurrency: concurrency,
-            ensureTaskRunning: ensureTaskRunning,
-          );
-        }
         progress = await downloadImageJobs(
           from: from,
           jobs: jobs,
@@ -449,7 +424,6 @@ Future<void> _unifiedDownloadTask(
           ensureTaskRunning: ensureTaskRunning,
           stopOnMissingPage: true,
           isolatedPages: route != null,
-          preparedImage: background?.read,
           reporter: reporter,
           concurrency: concurrency,
           onJobStarted: (job) {
@@ -463,9 +437,10 @@ Future<void> _unifiedDownloadTask(
             final percent = (completed / jobs.length * 100).floor();
             if (percent > lastReportedPercent) {
               lastReportedPercent = percent;
-              reporter.updateMessage(
-                t.download.statusDownloadProgress(percent: percent),
+              progressMessage = t.download.statusDownloadProgress(
+                percent: percent,
               );
+              reporter.updateMessage(progressMessage);
             }
             final now = DateTime.now();
             if (completed == jobs.length ||
@@ -479,6 +454,7 @@ Future<void> _unifiedDownloadTask(
                   reusedImages: reused,
                   imagePaths: completedPaths.toList(),
                 ),
+                status: progressMessage,
               );
             }
           },
@@ -507,8 +483,6 @@ Future<void> _unifiedDownloadTask(
         }
         previousRouteFailure = reason;
         excluded.add(failedRoute.key);
-      } finally {
-        await background?.close();
       }
     }
 
@@ -605,8 +579,6 @@ Future<void> _unifiedDownloadTask(
     rethrow;
   } finally {
     releaseChapterPages?.call();
-    running = false;
-    progressTimer?.cancel();
   }
 }
 

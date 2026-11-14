@@ -53,6 +53,7 @@ class VideoPlaybackQuickPanel extends StatelessWidget {
     this.floating = false,
     this.onAnalysis,
     this.showSeekActions = true,
+    this.trackControls = const [],
   });
 
   final bool? watchLater;
@@ -65,6 +66,7 @@ class VideoPlaybackQuickPanel extends StatelessWidget {
   final bool floating;
   final VoidCallback? onAnalysis;
   final bool showSeekActions;
+  final List<Widget> trackControls;
   final VideoQuickSection section;
   final VideoPlaybackPreferences preferences;
   final NativePlaybackSession session;
@@ -264,6 +266,7 @@ class VideoPlaybackQuickPanel extends StatelessWidget {
                     ),
                 ],
                 VideoQuickSection.playback => [
+                  ...trackControls,
                   if (onWatchLater != null)
                     ListTile(
                       leading: Icon(

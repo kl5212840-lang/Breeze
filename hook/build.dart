@@ -136,12 +136,34 @@ Map<String, String> _androidEnvironmentVariables(
   final sysroot = p.join(llvmBase, 'sysroot');
   final ndkTargetTriple = _ndkTargetTriple(codeConfig.targetArchitecture);
   final clangVersion = _detectClangVersion(llvmBase);
+  final apiLevel = codeConfig.android.targetNdkApi;
+  final target = ndkTargetTriple == 'arm-linux-androideabi'
+      ? 'armv7-linux-androideabi'
+      : ndkTargetTriple;
+  final targetEnv = target.replaceAll('-', '_');
+  final compilerTriple = target == 'armv7-linux-androideabi'
+      ? 'armv7a-linux-androideabi'
+      : target;
+  final clangWrapper = p.join(llvmBase, 'bin', '$compilerTriple$apiLevel');
+  final wrapperSuffix = Platform.isWindows ? '.cmd' : '';
+  final cCompiler = '$clangWrapper-clang$wrapperSuffix';
+  final cxxCompiler = '$clangWrapper-clang++$wrapperSuffix';
+  final home =
+      Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
+  final cargoHome =
+      Platform.environment['CARGO_HOME'] ??
+      (home == null ? null : p.join(home, '.cargo'));
+  final rustFlags = [
+    '--remap-path-prefix=$projectRoot=.',
+    if (home != null) '--remap-path-prefix=$home=/build-home',
+    if (cargoHome != null) '--remap-path-prefix=$cargoHome=/cargo',
+  ].join('\u001f');
+  final cFlags = '-ffile-prefix-map="${p.normalize(projectRoot)}"=.';
 
   final bindgenArgs = [
     '--sysroot=${sysroot.replaceAll('\\', '/')}',
     '-isystem ${p.join(sysroot, 'usr', 'include').replaceAll('\\', '/')}',
-    if (ndkTargetTriple case final t?)
-      '-isystem ${p.join(sysroot, 'usr', 'include', t).replaceAll('\\', '/')}',
+    '-isystem ${p.join(sysroot, 'usr', 'include', ndkTargetTriple).replaceAll('\\', '/')}',
     if (clangVersion case final v?)
       '-isystem ${p.join(llvmBase, 'lib', 'clang', v, 'include').replaceAll('\\', '/')}',
   ].join(' ');
@@ -150,6 +172,13 @@ Map<String, String> _androidEnvironmentVariables(
     'CLANG_PATH': clangBinary.replaceAll('\\', '/'),
     'LIBCLANG_PATH': _libClangPath(llvmBase).replaceAll('\\', '/'),
     'BINDGEN_EXTRA_CLANG_ARGS': bindgenArgs,
+    'CC_$targetEnv': cCompiler,
+    'CXX_$targetEnv': cxxCompiler,
+    'CC_SHELL_ESCAPED_FLAGS': '1',
+    'CFLAGS_$targetEnv': cFlags,
+    'CXXFLAGS_$targetEnv': cFlags,
+    'CARGO_TARGET_${targetEnv.toUpperCase()}_LINKER': cCompiler,
+    'CARGO_ENCODED_RUSTFLAGS': rustFlags,
     'PATH':
         '${p.join(llvmBase, 'bin')}${_pathSep()}${Platform.environment['PATH'] ?? ''}',
   };
@@ -218,13 +247,15 @@ String _hostPlatform() {
   return 'linux-x86_64';
 }
 
-String? _ndkTargetTriple(Architecture arch) {
+String _ndkTargetTriple(Architecture arch) {
   return switch (arch) {
     Architecture.arm64 => 'aarch64-linux-android',
     Architecture.arm => 'arm-linux-androideabi',
     Architecture.x64 => 'x86_64-linux-android',
     Architecture.ia32 => 'i686-linux-android',
-    _ => null,
+    final other => throw UnsupportedError(
+      'Unsupported Android architecture: $other',
+    ),
   };
 }
 

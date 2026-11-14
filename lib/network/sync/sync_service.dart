@@ -17,10 +17,13 @@ import 'package:zephyr/page/navigation/legacy_navigation_settings.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/http/plugin/qjs_network_route.dart';
 import 'package:zephyr/object_box/model.dart';
-import 'package:zephyr/object_box/objectbox.g.dart' show TxMode;
+import 'package:zephyr/object_box/objectbox.g.dart'
+    show PluginInfo_, StringPropertyQuery, TxMode;
 import 'package:zephyr/page/comic_follow/cubit/comic_follow_cubit.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/plugin/plugin_host_compatibility.dart';
+import 'package:zephyr/plugin/plugin_install_service.dart'
+    show allowsPluginInstallation;
 import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/page/video/video_playback_preferences.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
@@ -181,6 +184,8 @@ Future<void> preflightSyncRound(
   VideoLibrarySyncCodec videoCodec = const VideoLibrarySyncCodec(),
   bool requireCloudBackup = false,
   Future<bool> Function()? checkChapterProgress,
+  void Function(SettingsArchiveData? current, SettingsArchiveData? legacy)?
+  onSettingsRead,
 }) async {
   if (adapter is ScopedSyncArchiveAdapter) {
     await ArchivePreferenceTransaction.recover(adapter.identity);
@@ -188,13 +193,22 @@ Future<void> preflightSyncRound(
   await adapter.testConnection();
   if (!requireCloudBackup) await adapter.ensureRemoteReady();
 
-  Future<bool> checkRecords(ComicSyncRemoteAdapter source) async {
+  SettingsArchiveData? currentSettings, legacySettings;
+  Future<bool> checkRecords(
+    ComicSyncRemoteAdapter source, {
+    bool legacy = false,
+  }) async {
     final comic = await readComicArchiveData(source, codec: comicCodec);
     final video = await VideoLibrarySync.readArchive(source, codec: videoCodec);
     final settings = await readSettingsArchiveData(
       source,
       codec: settingsCodec,
     );
+    if (legacy) {
+      legacySettings = settings;
+    } else {
+      currentSettings = settings;
+    }
     return comic != null || video.digests.isNotEmpty || settings != null;
   }
 
@@ -210,13 +224,15 @@ Future<void> preflightSyncRound(
   if (adapter is ScopedSyncArchiveAdapter &&
       !adapter.context.legacy &&
       adapter.legacyReader != null) {
-    hasLegacy = await checkRecords(adapter.legacyReader!);
+    hasLegacy = await checkRecords(adapter.legacyReader!, legacy: true);
   }
   if (requireCloudBackup) {
-    if (!hasCurrent && !hasChapterProgress && !hasArtwork && !hasLegacy)
+    if (!hasCurrent && !hasChapterProgress && !hasArtwork && !hasLegacy) {
       throw const NoCloudBackup();
+    }
     await adapter.ensureRemoteReady();
   }
+  onSettingsRead?.call(currentSettings, legacySettings);
 }
 
 Future<void> preflightSettingsSync(
@@ -247,6 +263,58 @@ class SettingsArchiveData {
           }),
     );
   }
+}
+
+/// Manual cloud restore can provision sources absent from a new device. The
+/// current archive owns installation identity when both generations contain it.
+List<PluginInfo> planMissingPluginRestore(
+  SettingsArchiveData? current,
+  SettingsArchiveData? legacy,
+) {
+  final local = LocalPluginInstallationState.instance;
+  final existing = objectbox.pluginInfoBox.query().build();
+  final uuids = existing.property(PluginInfo_.uuid);
+  final Set<String> seen;
+  try {
+    seen = uuids.find().map((uuid) => uuid.trim()).toSet();
+  } finally {
+    uuids.close();
+    existing.close();
+  }
+  final result = <PluginInfo>[];
+  for (final archive in [current, legacy]) {
+    final data = archive?._snapshot.blocks[_pluginsBlockName]?.data;
+    for (final row in _toJsonMapList(data?['pluginInfos'])) {
+      final info = PluginInfo.fromJson(row);
+      final uuid = info.uuid.trim();
+      if (!seen.add(uuid) ||
+          !LocalPluginInstallationState.isValidSource(uuid) ||
+          !allowsPluginInstallation(uuid) ||
+          info.isDeleted ||
+          info.originScript.trim().isEmpty ||
+          local.isRemoved(uuid) ||
+          local.isInstalling(uuid) ||
+          PluginHostCompatibility.reportSkippedPluginInfo(row)) {
+        continue;
+      }
+      result.add(
+        PluginInfo(
+          uuid: uuid,
+          version: info.version,
+          originScript: info.originScript,
+          insertedAt: info.insertedAt,
+          updatedAt: info.updatedAt,
+          isEnabled: info.isEnabled,
+          isDeleted: false,
+          lastLoadSuccess: false,
+          sortOrder: info.sortOrder,
+          debug: false,
+          getInfoJson: info.getInfoJson,
+        ),
+      );
+    }
+  }
+  return result;
 }
 
 Future<SettingsArchiveData?> readSettingsArchiveData(
@@ -1085,6 +1153,13 @@ Future<Map<String, dynamic>> captureFullCloudSettings(
   ),
 );
 
+Map<String, dynamic> _portablePluginInfo(Map<String, dynamic> row) => {
+  ...row,
+  if (row.containsKey('debug')) 'debug': false,
+  if (row.containsKey('debugUrl')) 'debugUrl': null,
+  if (row.containsKey('lastLoadError')) 'lastLoadError': null,
+};
+
 Map<String, dynamic> _buildSettingsPayload(_SettingsSnapshot snapshot) {
   // This older-reader projection must describe the selected/retained snapshot,
   // never preferences excluded from it by this device's sync choices.
@@ -1120,7 +1195,9 @@ Map<String, dynamic> _buildSettingsPayload(_SettingsSnapshot snapshot) {
             .toList();
   final pluginInfos = pluginBlock == null
       ? <Map<String, dynamic>>[]
-      : _toJsonMapList(pluginBlock.data['pluginInfos']);
+      : _toJsonMapList(
+          pluginBlock.data['pluginInfos'],
+        ).map(_portablePluginInfo).toList();
 
   return {
     'version': syncDataVersion,
@@ -1135,7 +1212,11 @@ Map<String, dynamic> _buildSettingsPayload(_SettingsSnapshot snapshot) {
           entry.key: entry.key == _pluginsBlockName
               ? {
                   ...entry.value.toJson(),
-                  'data': {...entry.value.data, 'pluginConfigs': pluginConfigs},
+                  'data': {
+                    ...entry.value.data,
+                    'pluginConfigs': pluginConfigs,
+                    'pluginInfos': pluginInfos,
+                  },
                 }
               : entry.value.toJson(),
     },
@@ -1674,7 +1755,7 @@ Map<String, dynamic> _buildPluginBlockData({
       .getAll()
       .where((item) => item.uuid.trim().isNotEmpty)
       .map((item) {
-        final json = item.toJson();
+        final json = _portablePluginInfo(item.toJson());
         json.remove('id');
         // ObjectBox date properties are read as local DateTimes. Keep an
         // explicit zone on the portable wire; otherwise another timezone would
@@ -1852,10 +1933,8 @@ void _persistPluginBlockData(
           isDeleted: parsed.isDeleted,
           deletedAt: parsed.deletedAt?.toUtc(),
           lastLoadSuccess: !parsed.isDeleted && parsed.lastLoadSuccess,
-          lastLoadError: parsed.lastLoadError,
           sortOrder: parsed.sortOrder,
-          debug: parsed.debug,
-          debugUrl: parsed.debugUrl,
+          debug: false,
           getInfoJson: parsed.getInfoJson,
         ),
       );
@@ -1928,10 +2007,10 @@ void _persistPluginBlockData(
           ? incoming.deletedAt ?? incoming.updatedAt
           : null,
       lastLoadSuccess: !incoming.isDeleted && incoming.lastLoadSuccess,
-      lastLoadError: incoming.lastLoadError,
+      lastLoadError: existing?.lastLoadError,
       sortOrder: incoming.sortOrder ?? existing?.sortOrder,
-      debug: incoming.debug,
-      debugUrl: incoming.debugUrl,
+      debug: existing?.debug ?? false,
+      debugUrl: existing?.debugUrl,
       getInfoJson: incoming.getInfoJson.isNotEmpty
           ? incoming.getInfoJson
           : (existing?.getInfoJson ?? ''),
@@ -2674,10 +2753,7 @@ bool _shouldApplyIncomingPluginInfo(PluginInfo existing, PluginInfo incoming) {
   return existing.version != incoming.version ||
       existing.originScript != incoming.originScript ||
       existing.isEnabled != incoming.isEnabled ||
-      existing.debug != incoming.debug ||
-      (existing.debugUrl ?? '') != (incoming.debugUrl ?? '') ||
       existing.lastLoadSuccess != incoming.lastLoadSuccess ||
-      (existing.lastLoadError ?? '') != (incoming.lastLoadError ?? '') ||
       existing.sortOrder != incoming.sortOrder;
 }
 

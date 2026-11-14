@@ -6,6 +6,8 @@ import 'dart:io';
 import 'package:cbor/cbor.dart' as cbor;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -17,6 +19,7 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
 import 'package:zephyr/object_box/model.dart';
+import 'package:zephyr/object_box/objectbox.g.dart' show ObservableStore;
 import 'package:zephyr/page/comic_info/widgets/episode_download_controller.dart';
 import 'package:zephyr/page/comic_read/method/get_local_info.dart';
 import 'package:zephyr/page/download/adapters/download_chapter_adapter.dart';
@@ -1635,6 +1638,89 @@ void main() {
   });
 
   test(
+    'iOS backgrounding queues the active chapter and resumes without repeating saved pages',
+    () async {
+      const deadline = Duration(seconds: 5);
+      final queue = DownloadQueueManager.instance;
+      final saved = _page('saved-before-ios-background.png');
+      final held = _page('in-flight-at-ios-background.png');
+      final savedUrl = saved['url'] as String;
+      final heldUrl = held['url'] as String;
+      api.imageBodies.addAll({savedUrl: _png, heldUrl: _png});
+      api.heldImageUrl = heldUrl;
+      final entered = api.imageEntered = Completer<void>();
+      final release = api.releaseImage = Completer<void>();
+      api.chapterResponse = {
+        'chapter': {
+          'epId': 'selected',
+          'docs': [saved, held],
+        },
+      };
+      final taskId = objectbox.downloadTaskBox.put(
+        DownloadTask()
+          ..comicId = _payload.comicId
+          ..comicName = _payload.comicName
+          ..taskInfo = _payload.copyWith(stateCode: 'queued', attempt: 0),
+      );
+      final complete = Completer<void>();
+      var completions = 0;
+      final progress = queue.progressStream.listen((event) {
+        if (!event.isCompleted) return;
+        completions++;
+        if (!complete.isCompleted) complete.complete();
+      });
+      Future<void> waitForQueueToSettle() async {
+        final end = DateTime.now().add(deadline);
+        while (queue.isProcessing && DateTime.now().isBefore(end)) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(queue.isProcessing, isFalse);
+      }
+
+      try {
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        queue.watchTasks();
+        await entered.future.timeout(deadline);
+        expect(api.imageRequests, [savedUrl, heldUrl]);
+
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        await waitForQueueToSettle();
+        final waiting = objectbox.downloadTaskBox.get(taskId)!;
+        expect(waiting.taskInfo!.phaseCode, 'waitingForeground');
+        expect(waiting.taskInfo!.stateCode, 'queued');
+        expect(api.imageRequests, [savedUrl, heldUrl]);
+        expect(waiting.taskInfo!.attempt, 1);
+        expectNoPublication(taskId);
+
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await complete.future.timeout(deadline);
+        release.complete();
+        await waitForQueueToSettle();
+
+        expect(api.imageRequests, [savedUrl, heldUrl, heldUrl]);
+        expect(completions, 1);
+        expect(objectbox.downloadTaskBox.get(taskId)!.taskInfo!.attempt, 2);
+        final record = objectbox.unifiedDownloadBox.getAll().single;
+        expect(
+          resolveStoredDownloadChapters(record).single.images,
+          hasLength(2),
+        );
+        expect(objectbox.comicLinkBox.getAll(), hasLength(1));
+      } finally {
+        queue.stopWatchingTasks();
+        if (!release.isCompleted) release.complete();
+        debugDefaultTargetPlatformOverride = null;
+        await progress.cancel();
+      }
+    },
+  );
+
+  test(
     'pausing selected chapters settles all rows before stopping the worker',
     () async {
       const deadline = Duration(seconds: 5);
@@ -1940,6 +2026,40 @@ void main() {
       expect(box.get(old.id)!.isCompleted, isTrue);
       expect(box.get(offline.id)!.isCompleted, isTrue);
       expect(box.get(replacement.id)!.taskInfo!.stateCode, 'queued');
+    },
+  );
+
+  test(
+    'waiting for a chapter response does not write unchanged progress',
+    () async {
+      await seedReusablePage('waiting.png');
+      api.chapterResponse = {
+        'chapter': {
+          'epId': 'selected',
+          'docs': [_page('waiting.png')],
+        },
+      };
+      final entered = api.chapterEntered = Completer<void>();
+      final release = api.releaseChapter = Completer<void>();
+      final taskId = startTask();
+      final pending = run(taskId);
+      await entered.future;
+      await const DownloadTaskRepository().flushTaskWrites(_payload.taskKey);
+      final changes = <List<Type>>[];
+      final subscription = objectbox.store.entityChanges.listen(changes.add);
+      try {
+        await Future<void>.delayed(const Duration(milliseconds: 1250));
+        await const DownloadTaskRepository().flushTaskWrites(_payload.taskKey);
+        expect(changes.where((types) => types.contains(DownloadTask)), isEmpty);
+        expect(
+          objectbox.downloadTaskBox.get(taskId)!.status,
+          t.download.statusFetchingChapterInfo,
+        );
+      } finally {
+        await subscription.cancel();
+        release.complete();
+        await pending;
+      }
     },
   );
 

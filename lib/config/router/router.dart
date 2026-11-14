@@ -1,4 +1,5 @@
 import 'package:auto_route/auto_route.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/config/router/router.gr.dart';
@@ -32,7 +33,7 @@ class AppRouter extends RootStackRouter {
   @override
   List<AutoRoute> get routes => [
     AutoRoute(page: AppBootstrapRoute.page, initial: true),
-    AutoRoute(page: CoreMLUpscaleDebugRoute.page),
+    if (kDebugMode) AutoRoute(page: CoreMLUpscaleDebugRoute.page),
     AutoRoute(page: NavigationBar.page),
     AutoRoute(page: LoginRoute.page),
     AutoRoute(page: ComicListRoute.page),
@@ -57,7 +58,7 @@ class AppRouter extends RootStackRouter {
     AutoRoute(page: DebugSettingRoute.page),
     AutoRoute(page: ThemeColorRoute.page),
     AutoRoute(page: WebDavSyncRoute.page),
-    AutoRoute(page: ShowColorRoute.page),
+    if (kDebugMode) AutoRoute(page: ShowColorRoute.page),
     AutoRoute(page: AboutRoute.page),
     AutoRoute(page: FullRouteImageRoute.page),
     AutoRoute(page: ChangelogRoute.page),
@@ -69,7 +70,7 @@ class AppRouter extends RootStackRouter {
     AutoRoute(page: OldHomeRoute.page),
     AutoRoute(page: OldRankingRoute.page),
     AutoRoute(page: MoreRoute.page),
-    AutoRoute(page: QjsRuntimeDebugRoute.page),
+    if (kDebugMode) AutoRoute(page: QjsRuntimeDebugRoute.page),
     AutoRoute(page: CacheSettingRoute.page),
     AutoRoute(page: RealSrSettingRoute.page),
     AutoRoute(page: BookshelfSettingRoute.page),

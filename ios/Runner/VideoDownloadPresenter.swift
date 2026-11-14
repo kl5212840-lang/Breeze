@@ -8,6 +8,7 @@ final class VideoDownloadPresenter: NSObject {
   private let channel: FlutterMethodChannel
   private let exports: VideoDownloadTransfer
   private var jobs: [String: VideoDownloadTransfer] = [:]
+  private var foreground = UIApplication.shared.applicationState == .active
   private static let cleanupInterruptedExports: Void = {
     let cutoff = Date()
     DispatchQueue.global(qos: .utility).async {
@@ -45,20 +46,28 @@ final class VideoDownloadPresenter: NSObject {
     self.exports = VideoDownloadTransfer(channel: channel)
     super.init()
     _ = Self.cleanupInterruptedExports
+    NotificationCenter.default.addObserver(self, selector: #selector(enteredBackground),
+      name: UIApplication.didEnterBackgroundNotification, object: nil)
+    NotificationCenter.default.addObserver(self, selector: #selector(enteredForeground),
+      name: UIApplication.didBecomeActiveNotification, object: nil)
+    NotificationCenter.default.addObserver(self, selector: #selector(enteredBackground),
+      name: UIScene.didEnterBackgroundNotification, object: nil)
+    NotificationCenter.default.addObserver(self, selector: #selector(enteredForeground),
+      name: UIScene.didActivateNotification, object: nil)
     channel.setMethodCallHandler { [weak self] call, result in
       guard let self else { result("unavailable"); return }
       let args = call.arguments as? [String: Any] ?? [:]
       switch call.method {
       case "start":
         // Legacy Files presentation remains a single UI transaction.
-        guard args["managedId"] != nil else { self.exports.handle(call, result: result); return }
+        guard args["managedId"] != nil else { self.exports.handle(call, foreground: self.foreground, result: result); return }
         guard let id = args["id"] as? String, !id.isEmpty, id.count <= 80 else {
           result(["status": "failed", "reason": "invalidRequest"]); return
         }
         guard self.jobs[id] == nil, self.jobs.count < 3 else { result("busy"); return }
         let worker = VideoDownloadTransfer(channel: channel)
         self.jobs[id] = worker
-        worker.handle(call) { [weak self, weak worker] value in
+        worker.handle(call, foreground: self.foreground) { [weak self, weak worker] value in
           if let self, let worker, self.jobs[id] === worker { self.jobs.removeValue(forKey: id) }
           result(value)
         }
@@ -74,7 +83,19 @@ final class VideoDownloadPresenter: NSObject {
     }
   }
 
-  deinit { channel.setMethodCallHandler(nil) }
+  @objc private func enteredBackground() { setForeground(false) }
+  @objc private func enteredForeground() { setForeground(true) }
+
+  private func setForeground(_ allowed: Bool) {
+    foreground = allowed
+    exports.setForeground(allowed)
+    for worker in jobs.values { worker.setForeground(allowed) }
+  }
+
+  deinit {
+    NotificationCenter.default.removeObserver(self)
+    channel.setMethodCallHandler(nil)
+  }
 }
 
 /// One media transfer, staged for the app or presented in the system Files picker.
@@ -87,7 +108,7 @@ private final class VideoDownloadTransfer: NSObject, URLSessionDownloadDelegate,
   private var completion: FlutterResult?
   private var job: String?
   private var managedID: String?
-  private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+  private var transferResumed = false
   private var fileName = "Video.mp4"
   private var temporaryDirectory: URL?
   private weak var picker: UIDocumentPickerViewController?
@@ -103,10 +124,10 @@ private final class VideoDownloadTransfer: NSObject, URLSessionDownloadDelegate,
     super.init()
   }
 
-  func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+  func handle(_ call: FlutterMethodCall, foreground: Bool = true, result: @escaping FlutterResult) {
       let args = call.arguments as? [String: Any] ?? [:]
       switch call.method {
-      case "start": self.start(args, result: result)
+      case "start": self.start(args, foreground: foreground, result: result)
       case "export": self.exportManaged(args, result: result)
       case "exportArchive": self.exportArchive(args, result: result)
       case "poster": self.localPoster(args, result: result)
@@ -164,7 +185,7 @@ private final class VideoDownloadTransfer: NSObject, URLSessionDownloadDelegate,
     return result
   }
 
-  private func start(_ args: [String: Any], result: @escaping FlutterResult) {
+  private func start(_ args: [String: Any], foreground: Bool, result: @escaping FlutterResult) {
     guard job == nil else { result("busy"); return }
     let lease: OmoNetworkLease?
     if let context = args["networkContext"], !(context is NSNull) {
@@ -224,36 +245,15 @@ private final class VideoDownloadTransfer: NSObject, URLSessionDownloadDelegate,
       session = transport
       task = transport.downloadTask(with: request)
     }
-    if requestedID != nil, let task { requestBackgroundTime(for: task) }
     progress(saving: false, force: true)
-    task?.resume()
+    setForeground(foreground && UIApplication.shared.applicationState != .background)
   }
 
-  // Keep the existing redirect-checked transport running briefly when an
-  // in-flight managed download enters the background.
-  private func requestBackgroundTime(for download: URLSessionDownloadTask) {
-    let application = UIApplication.shared
-    guard application.applicationState != .background else { return }
-    let identifier = application.beginBackgroundTask(withName: "Breeze MP4 download") { [weak self, weak download] in
-      guard let self, let download, self.task === download else { return }
-      if UIApplication.shared.applicationState == .background {
-        self.finish(self.failure(.timeout))
-      } else {
-        self.endBackgroundTime()
-      }
-    }
-    if task === download {
-      backgroundTask = identifier
-    } else if identifier != .invalid {
-      application.endBackgroundTask(identifier)
-    }
-  }
-
-  private func endBackgroundTime() {
-    let identifier = backgroundTask
-    guard identifier != .invalid else { return }
-    backgroundTask = .invalid
-    UIApplication.shared.endBackgroundTask(identifier)
+  func setForeground(_ allowed: Bool) {
+    guard let task, task.state != .completed, task.state != .canceling,
+      transferResumed != allowed else { return }
+    transferResumed = allowed
+    if allowed { task.resume() } else { task.suspend() }
   }
 
   private func validID(_ value: String) -> Bool {
@@ -582,7 +582,6 @@ private final class VideoDownloadTransfer: NSObject, URLSessionDownloadDelegate,
 
   private func finish(_ status: Any) {
     guard job != nil else { return }
-    defer { endBackgroundTime() }
     job = nil
     managedID = nil
     let callback = completion
@@ -594,6 +593,7 @@ private final class VideoDownloadTransfer: NSObject, URLSessionDownloadDelegate,
     task?.cancel()
     if let task { networkLease?.removeDownload(task) }
     task = nil
+    transferResumed = false
     if networkLease == nil { transport?.invalidateAndCancel() }
     networkLease = nil
     let folder = temporaryDirectory
@@ -616,7 +616,6 @@ private final class VideoDownloadTransfer: NSObject, URLSessionDownloadDelegate,
     if networkLease == nil { session?.invalidateAndCancel() }
     networkLease = nil
     if let folder = temporaryDirectory { try? FileManager.default.removeItem(at: folder) }
-    endBackgroundTime()
   }
 }
 

@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/network/source_network_policy.dart';
 import 'package:zephyr/page/video/video_download.dart';
+import 'package:zephyr/page/video/video_hls_assets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
 import 'package:zephyr/page/video/video_export_records.dart';
@@ -47,21 +48,18 @@ void main() {
   });
 
   test(
-    'only standard resolved MP4 choices are exposed, with no playlist conversion or invented site operation',
+    'native HLS and MP4 are offered on mobile with their original formats',
     () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
       final adapter = VideoPlaybackDownloadAdapter(
         _session(_first, [_media('mp4'), _media('m3u8'), _media('mpd')]),
       );
       final result = await adapter.readChoices();
-      expect(result.value, hasLength(1));
-      expect(result.value!.single.url.path, '/media.mp4');
-      expect(result.value!.single.format, 'mp4');
-      expect(
-        VideoPlaybackDownloadAdapter(
-          _session(_first, [_media('m3u8')]),
-        ).choices,
-        isEmpty,
-      );
+      expect(result.value, [
+        (label: '720p', url: _media('mp4').url, format: 'mp4'),
+        (label: '720p · 2', url: _media('m3u8').url, format: 'hls'),
+      ]);
       expect(
         VideoPlaybackDownloadAdapter(
           _session(Uri.parse('https://site-fixture.test/voddetail/42.html'), [
@@ -112,18 +110,39 @@ void main() {
     },
   );
 
-  test('resolved MP4 supplies a missing entry without replacing a website workflow', () {
-    final mp4 = _session(_first, [_media('mp4')]);
-    expect(VideoPlaybackDownloadAdapter.resolve(mp4)!.choices, hasLength(1));
-    expect(VideoPlaybackDownloadAdapter.resolve(mp4, hasWebsiteDownload: true), isNull);
-    final hls = _session(_first, [_media('m3u8')]);
-    expect(VideoPlaybackDownloadAdapter.resolve(hls), isNull);
-    final explicit = VideoPlaybackDownloadAdapter(mp4);
-    expect(VideoPlaybackDownloadAdapter.resolve(mp4,
-      declared: (_) => explicit,
-      hasWebsiteDownload: true,
-    ), same(explicit));
-  });
+  test(
+    'resolved media preserves a website workflow and exposes HLS on mobile only',
+    () {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      final mp4 = _session(_first, [_media('mp4')]);
+      expect(VideoPlaybackDownloadAdapter.resolve(mp4)!.choices, hasLength(1));
+      expect(
+        VideoPlaybackDownloadAdapter.resolve(mp4, hasWebsiteDownload: true),
+        isNull,
+      );
+      final hls = _session(_first, [_media('m3u8')]);
+      expect(
+        VideoPlaybackDownloadAdapter.resolve(hls)!.choices.single.format,
+        'hls',
+      );
+      expect(
+        VideoPlaybackDownloadAdapter.resolve(hls, hasWebsiteDownload: true),
+        isNull,
+      );
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      expect(VideoPlaybackDownloadAdapter.resolve(hls), isNull);
+      final explicit = VideoPlaybackDownloadAdapter(mp4);
+      expect(
+        VideoPlaybackDownloadAdapter.resolve(
+          mp4,
+          declared: (_) => explicit,
+          hasWebsiteDownload: true,
+        ),
+        same(explicit),
+      );
+    },
+  );
 
   test(
     'new episode and line resources are distinct while original Hanime and legacy API identities stay unchanged',
@@ -366,18 +385,92 @@ void main() {
   );
 
   test(
-    'Android built-in proxy cannot silently fall back to the independent system downloader',
+    'Android uses the selected HTTP proxy for both native transfer channels',
     () async {
+      await useIsolatedVideoResources();
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
       addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      const source = '12345678-1234-1234-1234-123456789012';
+      const inherited = 'http://proxy-inherited.test:8000';
+      const sourceProxy = 'http://proxy-source.test:8001';
       SourceNetworkPolicies.initialize(
-        () => const ProxySettingState(enabled: true, address: '127.0.0.1:8080'),
+        () => const ProxySettingState(enabled: true, address: inherited),
       );
       addTearDown(
         () => SourceNetworkPolicies.initialize(() => const ProxySettingState()),
       );
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const mp4Channel = MethodChannel('breeze.video.download');
+      const hlsChannel = VideoHlsAssets.channel;
+      final requests = <Map>[];
+      for (final channel in [mp4Channel, hlsChannel]) {
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'list') return const [];
+          expect(call.method, 'start');
+          final wire = call.arguments as Map;
+          requests.add(wire);
+          expect(
+            wire['androidProxy'],
+            channel == mp4Channel ? inherited : sourceProxy,
+          );
+          expect(wire.containsKey('recoveryScope'), isFalse);
+          return {'status': 'failed', 'reason': 'network'};
+        });
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      }
+      expect(await VideoSystemDownload.supportsRoute(source, null), isTrue);
+      for (final path in ['mp4', 'm3u8']) {
+        if (path == 'm3u8') {
+          await SourceNetworkPolicies.save(
+            source,
+            const SourceNetworkPreference(
+              mode: SourceNetworkMode.proxy,
+              address: sourceProxy,
+            ),
+          );
+        }
+        expect(
+          await VideoSystemDownload().save(
+            choice: (
+              label: '720p',
+              url: _media(path).url,
+              format: path == 'mp4' ? 'mp4' : 'hls',
+            ),
+            source: source,
+            video: _first,
+            title: 'Episode one',
+            onProgress: (_) {},
+          ),
+          VideoDownloadStatus.failed,
+        );
+      }
+      expect(requests, hasLength(2));
+      final prefs = await SharedPreferences.getInstance();
+      final queue = prefs.getString(VideoExportRecords.taskStorageKey);
+      expect(queue, isNotNull);
+      expect(queue, isNot(contains('proxy-inherited.test')));
+      expect(queue, isNot(contains('proxy-source.test')));
+      expect(queue, isNot(contains('signature')));
+    },
+  );
+
+  test(
+    'Unsupported Android SOCKS and TLS proxy routes cannot fall back to direct downloads',
+    () async {
+      await useIsolatedVideoResources();
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      var settings = const ProxySettingState(
+        enabled: true,
+        type: ProxyType.socks5,
+        address: '127.0.0.1:1080',
+      );
+      SourceNetworkPolicies.initialize(() => settings);
+      addTearDown(
+        () => SourceNetworkPolicies.initialize(() => const ProxySettingState()),
+      );
       const source = '12345678-1234-1234-1234-123456789012';
-      expect(await VideoSystemDownload.supportsRoute(source, null), isFalse);
       const channel = MethodChannel('breeze.video.download');
       final messenger =
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -387,21 +480,29 @@ void main() {
         return 'saved';
       });
       addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
-      final result = await VideoSystemDownload().save(
-        choice: (label: '720p', url: _media('mp4').url, format: 'mp4'),
-        source: source,
-        video: _first,
-        title: 'Episode one',
-        onProgress: (_) {},
-      );
-      expect(result, VideoDownloadStatus.routeUnavailable);
-      expect(nativeCalls, 0);
-      expect(
-        (await SharedPreferences.getInstance()).getString(
-          VideoExportRecords.taskStorageKey,
+      for (final unsupported in [
+        settings,
+        const ProxySettingState(
+          enabled: true,
+          address: 'https://proxy.example.test:8443',
         ),
-        isNull,
-      );
+      ]) {
+        settings = unsupported;
+        expect(await VideoSystemDownload.supportsRoute(source, null), isFalse);
+        final result = await VideoSystemDownload().save(
+          choice: (label: '720p', url: _media('mp4').url, format: 'mp4'),
+          source: source,
+          video: _first,
+          title: 'Episode one',
+          onProgress: (_) {},
+        );
+        expect(result, VideoDownloadStatus.routeUnavailable);
+      }
+      expect(nativeCalls, 0);
+      final tasks = await VideoExportRecords.readTaskSnapshot();
+      expect(tasks.single['status'], 'routeUnavailable');
+      expect(tasks.single['failureReason'], 'routeUnavailable');
+      expect(jsonEncode(tasks), isNot(contains('proxy.example.test')));
     },
   );
 }

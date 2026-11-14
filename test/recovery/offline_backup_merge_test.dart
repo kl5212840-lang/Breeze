@@ -17,7 +17,9 @@ import 'package:zephyr/page/bookshelf/service/comic_link_service.dart';
 import 'package:zephyr/page/bookshelf/service/shelf_facet_adapters.dart';
 import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart'
     as normal;
+import 'package:zephyr/page/comic_read/method/get_local_info.dart';
 import 'package:zephyr/page/comic_read/model/normal_comic_ep_info.dart';
+import 'package:zephyr/page/download/models/unified_comic_download.dart';
 import 'package:zephyr/page/setting/data_backup/method.dart'
     show BackupImportHooks, importExtractedBreezeData;
 import 'package:zephyr/page/video/api_video_models.dart';
@@ -1008,6 +1010,119 @@ void main() {
       } finally {
         foreign.paths.dispose();
       }
+    },
+  );
+
+  test(
+    'restore merges both chapter indexes and files for the same comic',
+    () async {
+      const key = 'test:shared';
+      final localChapter = <String, dynamic>{
+        'id': 'gallery',
+        'logicalKey': 'chapter-1',
+        'taskChapterId': 'request-1',
+        'storageChapterId': 'gallery',
+        'name': 'Local chapter one',
+        'order': 1,
+        'images': [
+          {'path': 'first.jpg'},
+        ],
+      };
+      final local = createTestDownload(key)
+        ..comicId = 'shared'
+        ..chapters = jsonEncode([localChapter])
+        ..detailJson = jsonEncode({
+          'eps': [],
+          'extern': {'custom': 'keep'},
+        });
+      objectbox.unifiedDownloadBox.put(local);
+      final backup = createTestDownload(key)
+        ..comicId = 'shared'
+        ..chapters = '[]'
+        ..detailJson = jsonEncode({
+          'extern': {
+            'downloadChapters': [
+              {
+                ...localChapter,
+                'name': 'Foreign chapter one',
+                'images': [
+                  {'path': 'first.jpg'},
+                ],
+              },
+              {
+                ...localChapter,
+                'logicalKey': 'chapter-2',
+                'taskChapterId': 'request-2',
+                'name': 'Foreign chapter two',
+                'order': 2,
+                'images': [
+                  {'path': 'second.jpg'},
+                ],
+              },
+            ],
+          },
+        });
+      await write({
+        'unifiedComicDownload': [backup.toJson()],
+      }, media: true);
+      final source = await Directory(
+        p.join(incoming.path, 'downloads'),
+      ).create();
+      const gallery = ['test', 'original', 'shared', 'gallery'];
+      Future<File> page(Directory root, String name) async {
+        final file = File(p.joinAll([root.path, ...gallery, name]));
+        await file.parent.create(recursive: true);
+        return file;
+      }
+
+      await (await page(downloads, 'first.jpg')).writeAsString('first page');
+      await (await page(source, 'first.jpg')).writeAsString('first page');
+      await (await page(source, 'second.jpg')).writeAsString('second page');
+      expect(
+        await importExtractedBreezeData(
+          incoming.path,
+          restoreDownloadFiles: true,
+          hooks: BackupImportHooks(
+            appearanceImages: images,
+            downloadDirectory: downloads,
+            recoveryDirectory: Directory(p.join(root.path, 'recovery')),
+          ),
+        ),
+        isTrue,
+      );
+
+      final restored = objectbox.unifiedDownloadBox.getAll().single;
+      final chapters = resolveDownloadChapters(restored);
+      expect(chapters.map((chapter) => chapter.id), ['chapter-1', 'chapter-2']);
+      expect(chapters.map((chapter) => chapter.displayName), [
+        'Local chapter one',
+        'Foreign chapter two',
+      ]);
+      for (final (chapter, contents) in [
+        (chapters[0], 'first page'),
+        (chapters[1], 'second page'),
+      ]) {
+        final reader = await getPluginInfoFromLocal(
+          'test',
+          'shared',
+          chapter.order,
+          chapterKey: chapter.id,
+        );
+        expect(
+          await (await page(downloads, reader.docs.single.path)).readAsString(),
+          contents,
+        );
+      }
+      final detail = jsonDecode(restored.detailJson) as Map;
+      expect((detail['eps'] as List).map((chapter) => chapter['id']), [
+        'chapter-1',
+        'chapter-2',
+      ]);
+      expect(detail['extern']['custom'], 'keep');
+      expect(
+        detail['extern']['downloadChapters'],
+        jsonDecode(restored.chapters),
+      );
     },
   );
 

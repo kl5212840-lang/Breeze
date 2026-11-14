@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:pool/pool.dart';
 import 'package:zephyr/i18n/strings.g.dart';
@@ -180,7 +179,6 @@ Future<DownloadImageJobsResult> downloadImageJobs({
   bool Function()? shouldRetryUntilSuccess,
   bool isolatedPages = false,
   bool stopOnMissingPage = false,
-  Future<Uint8List> Function(DownloadImageJob job)? preparedImage,
   required DownloadProgressReporter reporter,
   Future<void> Function(Object error, DownloadImageJob job)? onError,
   void Function(DownloadImageJob job)? onJobStarted,
@@ -256,7 +254,6 @@ Future<DownloadImageJobsResult> downloadImageJobs({
             ensureTaskRunning: ensureWorkerRunning,
             shouldRetryUntilSuccess: shouldRetryUntilSuccess,
             isolatedPage: isolatedPages,
-            preparedImage: preparedImage,
             onError: onError,
             pictureType: PictureType.page,
           );
@@ -331,7 +328,6 @@ Future<DownloadPictureResult> _downloadSingleJob({
   required Future<void> Function() ensureTaskRunning,
   bool Function()? shouldRetryUntilSuccess,
   bool isolatedPage = false,
-  Future<Uint8List> Function(DownloadImageJob job)? preparedImage,
   Future<void> Function(Object error, DownloadImageJob job)? onError,
   PictureType pictureType = PictureType.comic,
 }) async {
@@ -370,9 +366,6 @@ Future<DownloadPictureResult> _downloadSingleJob({
           qjsTaskGroupKey: qjsTaskGroupKey,
           extern: job.extern,
           isolatedPage: isolatedPage,
-          preparedImage: preparedImage == null
-              ? null
-              : () => preparedImage(job),
           requestTimeoutMs: isolatedPage ? 12000 : 30000,
         );
         if (!result.isSuccess) {

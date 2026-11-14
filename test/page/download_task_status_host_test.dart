@@ -2954,7 +2954,7 @@ void main() {
           ),
         );
       final old = attempt('cancelled', 1);
-      final waiting = attempt('queued', 2);
+      final waiting = attempt('queued', 2, queuedAt: 100);
       final recent = attempt('queued', 1, chapter: 26, queuedAt: 200);
       final failure = attempt('failed', 1, chapter: 27);
       final retry = attempt('queued', 1, chapter: 28, phase: 'waitingRetry');
@@ -2962,8 +2962,8 @@ void main() {
       final running = attempt('running', 1, chapter: 30);
       objectbox.downloadTaskBox.putMany([
         old,
-        recent,
         waiting,
+        recent,
         failure,
         retry,
         paused,
@@ -2981,7 +2981,7 @@ void main() {
           find.byKey(ValueKey('download-swipe-tray.task:${task.id}'));
       expect(row(waiting), findsOneWidget);
       expect(row(old), findsOneWidget);
-      final order = [running, failure, recent, waiting, retry, paused, old];
+      final order = [running, waiting, recent, retry, failure, paused, old];
       final positions = [
         for (final task in order) tester.getTopLeft(row(task)).dy,
       ];
@@ -3421,7 +3421,8 @@ void main() {
               'order': 1,
               'storageChapterId': 'a',
               'images': [
-                {'path': 'chapter-a.jpg'},
+                for (var index = 1; index <= 6; index++)
+                  {'path': 'chapter-a-$index.jpg'},
               ],
             },
             {
@@ -3447,17 +3448,19 @@ void main() {
         );
         await tester.runAsync(() async {
           await createDownloadFixture(source, title);
-          final store = DownloadAssetStore(
-            from: source,
-            cartoonId: title,
-            chapterId: 'a',
-            storageChapterId: 'a',
-            path: 'chapter-a.jpg',
-            pictureType: PictureType.page,
-          );
-          final file = File((await store.canonicalDownloadCandidate()).path);
-          await file.parent.create(recursive: true);
-          await file.writeAsBytes(List.filled(2048, 7));
+          for (var index = 1; index <= 6; index++) {
+            final store = DownloadAssetStore(
+              from: source,
+              cartoonId: title,
+              chapterId: 'a',
+              storageChapterId: 'a',
+              path: 'chapter-a-$index.jpg',
+              pictureType: PictureType.page,
+            );
+            final file = File((await store.canonicalDownloadCandidate()).path);
+            await file.parent.create(recursive: true);
+            await file.writeAsBytes(List.filled(index == 6 ? 343 : 341, 7));
+          }
           final actual = objectbox.unifiedDownloadBox.get(record.id)!;
           final size = await DownloadResourceMetrics.instance.readComic(
             DownloadComicResource(actual),
@@ -3528,7 +3531,7 @@ void main() {
         objectbox.unifiedHistoryBox.put(history);
         await settleHost(tester);
         expect(
-          find.text(t.comicInfo.readProgressPage(page: '999')),
+          find.text(t.comicInfo.readProgressPage(page: '6')),
           findsOneWidget,
         );
         for (final key in ['a', 'b']) {

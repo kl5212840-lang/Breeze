@@ -42,7 +42,7 @@ import 'package:zephyr/widgets/image_recovery_region.dart';
 import 'package:zephyr/page/video/video_page_route.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, TargetPlatform;
+    show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -631,21 +631,26 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     _backStack.add(entry);
   }
 
-  Future<void> _goBackInside() async {
+  Future<void> _goBackInside({bool leaveVerification = false}) async {
     if (_openNativeMenu != null) {
       _dismissCatalogMenu();
       return;
     }
-    if (_returning || _verificationVisible) return;
+    if (_returning || _verificationVisible && !leaveVerification) return;
     if (_searchVisible) {
       FocusScope.of(context).unfocus();
       setState(() => _searchVisible = false);
       return;
     }
-    if (!await _allowLeaveAccount() || !mounted) return;
-    _resetAccountTask();
     _returning = true;
     try {
+      if (!await _allowLeaveAccount() || !mounted) return;
+      if (_verificationVisible) {
+        if (!leaveVerification) return;
+        _loadEpoch++;
+        _clearVerification();
+      }
+      _resetAccountTask();
       if (_inPersonalLibrary && _ownIdentityRoot != null) {
         await _load(
           _ownIdentityRoot!,
@@ -1177,16 +1182,22 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     }
   }
 
+  bool get _allowsAndroidVerificationWindow =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
   Future<void> _openVerificationWindow() async {
     final browser = _web?.platform;
     if (_verificationWindowActive ||
         !_verificationVisible ||
-        defaultTargetPlatform != TargetPlatform.iOS ||
-        browser is! VideoBrowserVerificationWindow) {
+        _web == null ||
+        (!_allowsAndroidVerificationWindow && !_usesVerificationWindow)) {
       return;
     }
     final epoch = _loadEpoch;
     final target = _requestedUrl;
+    if (!allowVideoSiteNavigation(widget.homeUrl, target, isMainFrame: true)) {
+      return;
+    }
     _dismissCatalogMenu();
     setState(() => _verificationWindowActive = true);
     _loadWatchdog?.cancel();
@@ -1196,8 +1207,22 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     _verificationDeadline = null;
     var retry = false;
     try {
-      retry = await (browser as VideoBrowserVerificationWindow)
-          .openVerificationWindow(target);
+      if (_allowsAndroidVerificationWindow) {
+        retry =
+            await Navigator.of(context, rootNavigator: true).push<bool>(
+              MaterialPageRoute(
+                fullscreenDialog: true,
+                builder: (_) => _AndroidVideoVerificationPage(
+                  home: widget.homeUrl,
+                  target: target,
+                ),
+              ),
+            ) ??
+            false;
+      } else {
+        retry = await (browser as VideoBrowserVerificationWindow)
+            .openVerificationWindow(target);
+      }
     } catch (error) {
       final reason =
           error is PlatformException &&
@@ -1712,7 +1737,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   /// Follow a real website link while retaining the user's renderer choice.
   /// Account/subscription pages do not turn all video links into web pages.
   bool _adoptWebsiteNavigation(Uri? uri) {
-    if (_browserNeedsRecovery) return false;
+    if (_browserNeedsRecovery ||
+        (_allowsAndroidVerificationWindow && _verificationWindowActive)) {
+      return false;
+    }
     // A real account form posts to the owner's root, then may redirect back
     // to edit. Keep this task mounted; its private inputs never join catalog
     // extraction or a cached frame. Only the same owner can be adopted.
@@ -6216,7 +6244,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   Widget _buildPage(BuildContext context) {
     final officialWebsite = sourceOfficialWebsite(widget.source);
     final tabIndex = widget.tabs.indexWhere((tab) => tab.id == _activeTab);
+    final android = defaultTargetPlatform == TargetPlatform.android;
     final internalBack = !_verificationVisible && _canGoBackInside;
+    final verificationBack =
+        android && _verificationVisible && _canGoBackInside;
     final requiredBrowser =
         _verificationVisible ||
         _websiteVisible &&
@@ -6226,14 +6257,14 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     return Theme(
       data: videoBrowseTheme(Theme.of(context)),
       child: PopScope<Object?>(
-        canPop: !_verificationVisible && !_canGoBackInside,
+        canPop: !_canGoBackInside && (!_verificationVisible || android),
         onPopInvokedWithResult: (didPop, _) {
-          if (!didPop) unawaited(_goBackInside());
+          if (!didPop) unawaited(_goBackInside(leaveVerification: android));
         },
         child: VideoBackGesture(
-          enabled: internalBack && _openNativeMenu == null,
+          enabled: !android && internalBack && _openNativeMenu == null,
           onBack: _goBackInside,
-          previousPage: _backPreview(),
+          previousPage: android ? null : _backPreview(),
           child: Stack(
             children: [
               Scaffold(
@@ -6246,20 +6277,31 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                         leading: Center(
                           child: NativeVideoIconButton(
                             light: false,
-                            tooltip: internalBack || widget.initialUrl != null
+                            tooltip:
+                                internalBack ||
+                                    verificationBack ||
+                                    widget.initialUrl != null
                                 ? t.common.back
                                 : t.videoPlayback.closeSource,
-                            symbol: internalBack || widget.initialUrl != null
+                            symbol:
+                                internalBack ||
+                                    verificationBack ||
+                                    widget.initialUrl != null
                                 ? 'chevron.left'
                                 : 'xmark',
-                            icon: internalBack || widget.initialUrl != null
+                            icon:
+                                internalBack ||
+                                    verificationBack ||
+                                    widget.initialUrl != null
                                 ? Icons.arrow_back_rounded
                                 : Icons.close_rounded,
                             onPressed: () {
-                              if (_verificationVisible) {
+                              if (_verificationVisible && !verificationBack) {
                                 Navigator.of(context).pop();
                               } else {
-                                unawaited(_goBackInside());
+                                unawaited(
+                                  _goBackInside(leaveVerification: android),
+                                );
                               }
                             },
                           ),
@@ -6356,10 +6398,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                               if (_verificationVisible) ...{
                                 'check': t.videoPlayback.checkVerification,
                                 'reload': t.videoPlayback.reloadVerification,
-                                if (defaultTargetPlatform ==
-                                        TargetPlatform.iOS &&
-                                    _web?.platform
-                                        is VideoBrowserVerificationWindow)
+                                if ((_allowsAndroidVerificationWindow &&
+                                        _web != null) ||
+                                    _usesVerificationWindow)
                                   'verificationWindow':
                                       t.videoPlayback.verificationWindow,
                                 'help': t.videoPlayback.verificationHelp,
@@ -6979,6 +7020,72 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                 ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Uses Android WebView's regular shared cookie and site-storage profile, just
+/// like the inline site. The dedicated route owns no catalog or account logic.
+class _AndroidVideoVerificationPage extends StatelessWidget {
+  const _AndroidVideoVerificationPage({
+    required this.home,
+    required this.target,
+  });
+
+  final Uri home;
+  final Uri target;
+
+  bool _allows(WebUri? destination, {required bool isMainFrame}) =>
+      allowVideoSiteNavigation(
+        home,
+        Uri.tryParse(destination?.toString() ?? ''),
+        isMainFrame: isMainFrame,
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(t.videoPlayback.verificationTitle)),
+      body: SafeArea(
+        top: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: InAppWebView(
+                initialUrlRequest: URLRequest(url: WebUri(target.toString())),
+                initialSettings: InAppWebViewSettings(
+                  javaScriptEnabled: true,
+                  domStorageEnabled: true,
+                  databaseEnabled: true,
+                  useHybridComposition: false,
+                  useShouldOverrideUrlLoading: true,
+                ),
+                shouldOverrideUrlLoading: (_, action) async =>
+                    _allows(
+                      action.request.url,
+                      isMainFrame: action.isForMainFrame,
+                    )
+                    ? NavigationActionPolicy.ALLOW
+                    : NavigationActionPolicy.CANCEL,
+                // Android does not report all POST requests to the override.
+                onLoadStart: (controller, url) async {
+                  if (!_allows(url, isMainFrame: true)) {
+                    await controller.stopLoading();
+                  }
+                },
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+              child: FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(t.videoPlayback.verificationWindowReturn),
+              ),
+            ),
+          ],
         ),
       ),
     );

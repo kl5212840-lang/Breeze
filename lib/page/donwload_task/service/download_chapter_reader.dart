@@ -23,26 +23,45 @@ DownloadedReaderPosition? resolveDownloadedReaderPosition(
   ComicChapterReadingProgress progress,
 ) {
   final chapters = resource.downloadChapters;
-  final ids = chapters.map((chapter) => chapter.id).toSet();
+  final identities = <String, int>{};
   final aliases = <String, int>{};
-  for (final chapter in chapters) {
-    final key = chapter.effectiveRequestId;
-    if (key != chapter.id && !ids.contains(key)) {
+  final chapterAliases = <Set<String>>[];
+  for (final (index, chapter) in chapters.indexed) {
+    final stored = resource.chapters[index];
+    final keys = {
+      chapter.effectiveRequestId,
+      stored.id.trim(),
+      stored.taskChapterId.trim(),
+    }..removeAll({'', chapter.id});
+    chapterAliases.add(keys);
+    identities.update(chapter.id, (count) => count + 1, ifAbsent: () => 1);
+    for (final key in keys) {
       aliases.update(key, (count) => count + 1, ifAbsent: () => 1);
     }
   }
+  final latestKey = latest?.chapterId;
+  // A shared legacy ID does not identify the current chapter. Only use older
+  // progress when the current ID is unambiguous or the chapter is absent.
+  if (latestKey != null &&
+      (identities[latestKey] ?? aliases[latestKey] ?? 0) > 1) {
+    return null;
+  }
   DownloadedReaderPosition? fallback;
   int? fallbackTime;
-  for (final chapter in chapters) {
-    if (chapter.images.isEmpty) continue;
-    final alias = chapter.effectiveRequestId;
-    final keys = [chapter.id, if (aliases[alias] == 1) alias];
+  for (final (index, chapter) in chapters.indexed) {
+    if (chapter.images.isEmpty || identities[chapter.id] != 1) continue;
+    final keys = [
+      chapter.id,
+      ...chapterAliases[index].where(
+        (key) => !identities.containsKey(key) && aliases[key] == 1,
+      ),
+    ];
     final revision = progress.lookupRevision(
       resource.source,
       resource.comicId,
       keys,
     );
-    final matchesLatest = latest != null && keys.contains(latest.chapterId);
+    final matchesLatest = latest != null && keys.contains(latestKey);
     final page =
         revision?.progress?.pageIndex ??
         (matchesLatest ? latest.pageIndex - 1 : 1);

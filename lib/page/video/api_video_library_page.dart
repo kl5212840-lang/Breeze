@@ -21,7 +21,8 @@ import 'dart:async';
 
 import 'package:collection/collection.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:flutter/foundation.dart' show mapEquals;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, mapEquals, TargetPlatform;
 import 'package:zephyr/service/collection_view_preferences.dart';
 import 'package:zephyr/network/sync/portable_preferences.dart';
 import 'package:flutter/services.dart';
@@ -127,6 +128,25 @@ bool _isOmoRecommendationCategory(ApiVideoCategory category) =>
     _omoRecommendationGroups.contains(category.parentId);
 
 class ApiVideoLibraryPage extends StatefulWidget {
+  static bool handleAndroidBackFor(GlobalKey key) {
+    final state = key.currentState;
+    if (state is! _ApiVideoLibraryPageState ||
+        !state.widget.active ||
+        defaultTargetPlatform != TargetPlatform.android) {
+      return false;
+    }
+    if (state._browser?.visible == true) {
+      state._browser!.cancel();
+      return true;
+    }
+    if (state._editingCatalogSearch &&
+        (!state._remoteSearchTask || state._query.isNotEmpty)) {
+      state._endCatalogSearch();
+      return true;
+    }
+    return false;
+  }
+
   const ApiVideoLibraryPage({
     super.key,
     required this.repository,
@@ -184,6 +204,8 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
   StreamSubscription<PluginLoginSucceeded>? _accountLoginEvents;
   StreamSubscription<PluginAccountSignedOut>? _accountLogoutEvents;
   bool get _embedded => widget.embedded && !_omo;
+  bool get _usesSourceBack =>
+      widget.embedded && defaultTargetPlatform == TargetPlatform.android;
   bool get _omo => _site != null && _repository.capabilities.animePresentation;
   bool get _recordTask =>
       !_omo && const {'favorite', 'history'}.contains(widget.initialSection);
@@ -1041,7 +1063,12 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                 siteClient: _site,
               ),
               if (_browser != null)
-                Positioned.fill(child: ApiVideoBrowserHost(session: _browser!)),
+                Positioned.fill(
+                  child: ApiVideoBrowserHost(
+                    session: _browser!,
+                    active: widget.active && !_usesSourceBack,
+                  ),
+                ),
             ],
           ),
         )
@@ -1049,11 +1076,18 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
           data: videoBrowseTheme(Theme.of(context)),
           child: PopScope<Object?>(
             canPop:
+                _usesSourceBack ||
                 !_editingCatalogSearch ||
                 !widget.active ||
                 _remoteSearchTask && _query.isEmpty,
             onPopInvokedWithResult: (didPop, _) {
-              if (!didPop && widget.active) _endCatalogSearch();
+              if (!didPop &&
+                  widget.active &&
+                  !_usesSourceBack &&
+                  (defaultTargetPlatform != TargetPlatform.android ||
+                      _browser?.visible != true)) {
+                _endCatalogSearch();
+              }
             },
             child: Stack(
               children: [
@@ -1471,7 +1505,10 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                 ),
                 if (_browser != null)
                   Positioned.fill(
-                    child: ApiVideoBrowserHost(session: _browser!),
+                    child: ApiVideoBrowserHost(
+                      session: _browser!,
+                      active: widget.active && !_usesSourceBack,
+                    ),
                   ),
               ],
             ),

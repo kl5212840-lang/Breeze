@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +8,7 @@ import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/page/setting/download/download_settings_page.dart';
+import 'package:zephyr/service/download/download_admission.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 
 import '../test_helper.dart';
@@ -111,6 +113,7 @@ void main() {
         final wifi = find.byKey(const ValueKey('download-wifi-only'));
         await tester.tap(wifi);
         await tester.pumpAndSettle();
+        expect(DownloadAdmission.instance.wifiOnly, isTrue);
         final keepRetrying = find.byKey(
           const ValueKey('download-keep-retrying'),
         );
@@ -147,7 +150,10 @@ void main() {
         expect(find.text('MAIN NAV').hitTestable(), findsOneWidget);
         expect(tester.takeException(), isNull);
       },
-      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+      variant: const TargetPlatformVariant({
+        TargetPlatform.iOS,
+        TargetPlatform.android,
+      }),
     );
   }
 }

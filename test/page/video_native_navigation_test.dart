@@ -2,6 +2,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/video/video_native_navigation.dart';
+import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/widgets/breeze_navigation_bar.dart';
+import 'package:zephyr/widgets/breeze_theme_colors.dart';
 
 void main() {
   const items = [
@@ -61,10 +64,7 @@ void main() {
         {'title': 'Home', 'symbol': 'book.closed'},
         {'title': 'Me', 'symbol': 'bell'},
       ]);
-      const mainSelectedSymbols = [
-        'book.fill',
-        'breeze.follow.selected',
-      ];
+      const mainSelectedSymbols = ['book.fill', 'breeze.follow.selected'];
       await tester.pumpWidget(view(0, selectedSymbols: mainSelectedSymbols));
       await tester.pump();
       expect(updates.last['items'], [
@@ -138,24 +138,57 @@ void main() {
   );
 
   testWidgets(
-    'non iOS navigation keeps existing tab behavior and layout fallback',
+    'Android system navigation follows theme changes and Breeze keeps its bar',
     (tester) async {
       int selected = 0;
-      await tester.pumpWidget(
-        MaterialApp(
+      final appearance = ValueNotifier('system');
+      addTearDown(appearance.dispose);
+      Widget view(Color seed, Brightness brightness) {
+        final scheme = BreezeThemeColors.fromSeed(seed, brightness);
+        return MaterialApp(
+          theme: ThemeData(colorScheme: scheme),
           home: Scaffold(
-            bottomNavigationBar: VideoNativeNavigation(
-              items: items,
-              symbols: const ['house', 'person'],
-              currentIndex: 0,
-              onTap: (i) => selected = i,
+            bottomNavigationBar: AppInterfaceStyleScope(
+              style: appearance,
+              child: MediaQuery(
+                data: const MediaQueryData(
+                  padding: EdgeInsets.only(top: 48, bottom: 24),
+                ),
+                child: VideoNativeNavigation(
+                  items: items,
+                  symbols: const ['house', 'person'],
+                  currentIndex: selected,
+                  onTap: (i) => selected = i,
+                ),
+              ),
             ),
           ),
-        ),
-      );
+        );
+      }
+
+      await tester.pumpWidget(view(Colors.pink, Brightness.light));
+      final bar = find.byType(NavigationBar);
+      expect(tester.getSize(bar).height, 92);
+      expect(tester.widget<NavigationBar>(bar).selectedIndex, 0);
+      final pink = tester.widget<NavigationBar>(bar).indicatorColor;
       expect(find.byType(UiKitView), findsNothing);
       await tester.tap(find.text('Me'));
       expect(selected, 1);
+      await tester.pumpWidget(view(Colors.teal, Brightness.dark));
+      await tester.pumpAndSettle();
+      final teal = tester.widget<NavigationBar>(bar);
+      expect(teal.selectedIndex, 1);
+      expect(teal.indicatorColor, isNot(pink));
+      final theme = NavigationBarTheme.of(tester.element(bar));
+      final icon = theme.iconTheme!.resolve({WidgetState.selected})!.color!;
+      expect(
+        BreezeThemeColors.contrast(icon, teal.indicatorColor!),
+        greaterThan(4.5),
+      );
+      appearance.value = 'breeze';
+      await tester.pumpAndSettle();
+      expect(bar, findsNothing);
+      expect(find.byType(BreezeNavigationBar), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
     variant: TargetPlatformVariant.only(TargetPlatform.android),

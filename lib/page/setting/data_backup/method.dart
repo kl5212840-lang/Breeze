@@ -341,6 +341,7 @@ const _portableBackupGlobalKeys = {
   'themeMode',
   'isAMOLED',
   'seedColor',
+  'switchStyle',
   'locale',
   'localeFollowsSystem',
   'welcomePageNum',

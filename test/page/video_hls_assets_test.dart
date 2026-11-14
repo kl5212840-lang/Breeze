@@ -57,6 +57,8 @@ class _NativeAssets {
   Map<String, dynamic>? candidate;
   Map<String, dynamic>? playbackArgs;
   bool failCommit = false;
+  String playbackFile = 'file:///app/download.movpkg';
+  List<Map<String, String>> playbackSubtitles = const [];
   Completer<Object?>? pending;
   Future<void> Function(Map args)? onStart;
   Future<void> Function()? onList;
@@ -135,6 +137,15 @@ class _NativeAssets {
         final assets = transactions[args['token']] ?? const [];
         rows.removeWhere((row) => assets.contains(row['assetId']));
         hidden.removeAll(assets);
+        return true;
+      case 'acquirePlayback':
+        playbackArgs = Map<String, dynamic>.from(args);
+        return {
+          'leaseId': 'lease-1',
+          'fileURL': playbackFile,
+          'subtitles': playbackSubtitles,
+        };
+      case 'releasePlayback':
         return true;
       case 'openOffline':
         playbackArgs = Map<String, dynamic>.from(args);
@@ -238,37 +249,88 @@ void main() {
     },
   );
 
+  test('mobile HLS choices stay available with public headers', () {
+    NativePlaybackSession session(Map<String, String> headers) =>
+        NativePlaybackSession(
+          title: 'HLS',
+          watchUrl: _watch,
+          description: '',
+          tags: const [],
+          sources: [
+            NativePlaybackSource(
+              url: _media,
+              label: _quality,
+              headers: headers,
+            ),
+          ],
+        );
+    expect(
+      VideoPlaybackDownloadAdapter.resolve(
+        session(const {}),
+      )!.choices.single.format,
+      'hls',
+    );
+    expect(
+      VideoPlaybackDownloadAdapter.resolve(
+        session({'Cookie': 'fixture-private'}),
+      ),
+      isNull,
+    );
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    expect(
+      VideoPlaybackDownloadAdapter.resolve(
+        session(const {}),
+      )!.choices.single.format,
+      'hls',
+    );
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+    expect(VideoPlaybackDownloadAdapter.resolve(session(const {})), isNull);
+  });
+
   test(
-    'only iOS resolved HLS is exposed; unknown protocols and private headers remain excluded',
-    () {
-      NativePlaybackSession session(Map<String, String> headers) =>
-          NativePlaybackSession(
-            title: 'HLS',
-            watchUrl: _watch,
-            description: '',
-            tags: const [],
-            sources: [
-              NativePlaybackSource(
-                url: _media,
-                label: _quality,
-                headers: headers,
-              ),
-            ],
-          );
-      expect(
-        VideoPlaybackDownloadAdapter.resolve(
-          session(const {}),
-        )!.choices.single.format,
-        'hls',
-      );
-      expect(
-        VideoPlaybackDownloadAdapter.resolve(
-          session({'Cookie': 'fixture-private'}),
-        ),
-        isNull,
-      );
+    'Android playback leases accept only the generated local manifest',
+    () async {
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
-      expect(VideoPlaybackDownloadAdapter.resolve(session(const {})), isNull);
+      final binding = _row();
+      final uri = VideoHlsAssets.playbackUri(binding);
+      native.playbackFile = 'file:///app/offline/index.m3u8';
+      native.playbackSubtitles = [
+        {'name': 'English', 'fileURL': 'file:///app/offline/subtitle-1.vtt'},
+        {'name': 'Remote', 'fileURL': 'https://example.test/subtitle-2.vtt'},
+        {'name': 'Other directory', 'fileURL': 'file:///other/subtitle-3.vtt'},
+        {'name': 'Unauthorized', 'fileURL': 'file:///app/offline/metadata.vtt'},
+        {
+          'name': 'Query',
+          'fileURL': 'file:///app/offline/subtitle-4.vtt?token=test',
+        },
+        {'name': 'Duplicate', 'fileURL': 'file:///app/offline/subtitle-1.vtt'},
+      ];
+      final lease = await VideoHlsAssets.acquirePlayback(uri, _id);
+      expect(lease.fileUrl.path, '/app/offline/index.m3u8');
+      expect(lease.subtitles, [
+        (
+          label: 'English',
+          fileUrl: Uri.parse('file:///app/offline/subtitle-1.vtt'),
+        ),
+      ]);
+      expect(native.playbackArgs, VideoHlsAssets.binding(binding));
+      await lease.release();
+
+      for (final rejected in [
+        'file:///app/download.movpkg',
+        'file:///app/offline/index.m3u8?origin=remote',
+        'https://example.test/offline/index.m3u8',
+      ]) {
+        native.playbackFile = rejected;
+        await expectLater(
+          VideoHlsAssets.acquirePlayback(uri, _id),
+          throwsStateError,
+        );
+      }
+      expect(
+        native.calls.where((method) => method == 'releasePlayback').length,
+        4,
+      );
     },
   );
 

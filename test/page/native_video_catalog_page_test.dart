@@ -215,8 +215,9 @@ class _WebWidget extends PlatformInAppWebViewWidget {
 
   @override
   Widget build(BuildContext context) {
-    final owner = context
-        .findAncestorStateOfType<State<NativeVideoCatalogPage>>()!;
+    final owner =
+        context.findAncestorStateOfType<State<NativeVideoCatalogPage>>() ??
+        ModalRoute.of(context)!;
     final doc = host._documentsByOwner.putIfAbsent(owner, () {
       if (host._documentsByOwner.isEmpty) return host;
       final child = _WebPlatform()
@@ -1781,7 +1782,7 @@ void main() {
     },
   );
 
-  testWidgets('internal back cannot interrupt a category challenge', (
+  testWidgets('iOS internal back cannot interrupt a category challenge', (
     tester,
   ) async {
     await _mount(
@@ -1808,11 +1809,57 @@ void main() {
     scope.onPopInvokedWithResult!(false, null);
     await _pump(tester);
     expect(find.text(t.videoPlayback.verificationTitle), findsOneWidget);
-    expect(find.byTooltip(t.videoPlayback.closeSource), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is NativeVideoIconButton &&
+            widget.tooltip == t.videoPlayback.closeSource,
+      ),
+      findsOneWidget,
+    );
     expect(web.stops, stops);
     expect(web.loads, hasLength(2));
     await tester.pumpWidget(const SizedBox.shrink());
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets(
+    'Android Back leaves a category verification at its source list',
+    (tester) async {
+      await _mount(
+        tester,
+        plugin,
+        nestedRoot: true,
+        categories: [
+          NativeCatalogCategory(
+            title: 'Test genre',
+            url: Uri.parse('https://hanime1.me/search?genre=Test'),
+          ),
+        ],
+      );
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.text('Home card'), findsOneWidget);
+      await tester.tap(find.text('Test genre'));
+      await _pump(tester);
+      web.challenge = true;
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.text(t.videoPlayback.verificationTitle), findsOneWidget);
+
+      await tester.binding.handlePopRoute();
+      await _pump(tester);
+      expect(find.byType(NativeVideoCatalogPage), findsOneWidget);
+      expect(find.text('Open fixture source'), findsNothing);
+      expect(find.text(t.videoPlayback.verificationTitle), findsNothing);
+      expect(web.loads.last.path, '/');
+      web.challenge = false;
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.text('Home card'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
 
   testWidgets(
     'diagnostic commands are opt-in and revocation closes inspection',
@@ -4204,6 +4251,69 @@ void main() {
       }
       await tester.pumpWidget(const SizedBox.shrink());
     },
+  );
+
+  testWidgets(
+    'Android verification window opens on demand and rechecks its original destination',
+    (tester) async {
+      web.challenge = true;
+      await _mount(tester, plugin, nativePersonal: true);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(web.documents, isEmpty);
+      final original = web.loads.last;
+      final loads = web.loads.length;
+      final menu = tester.widget<NativeVideoMenu>(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is NativeVideoMenu &&
+              widget.tooltip == t.videoPlayback.verificationActions,
+        ),
+      );
+      expect(
+        menu.options['verificationWindow'],
+        t.videoPlayback.verificationWindow,
+      );
+
+      await _verificationAction(tester, 'verificationWindow');
+      await tester.pumpAndSettle();
+      final verification = web.documents.single;
+      expect(
+        verification.params.initialUrlRequest?.url.toString(),
+        original.toString(),
+      );
+      final override = verification.params.shouldOverrideUrlLoading!;
+      Future<NavigationActionPolicy?> navigate(String url, bool main) async {
+        return await override(
+          verification.wrapped,
+          NavigationAction(
+            request: URLRequest(url: WebUri(url)),
+            isForMainFrame: main,
+          ),
+        );
+      }
+
+      expect(
+        await navigate('https://hanime1.me/verify', true),
+        NavigationActionPolicy.ALLOW,
+      );
+      expect(
+        await navigate('https://another.example/verify', true),
+        NavigationActionPolicy.CANCEL,
+      );
+      expect(
+        await navigate('https://challenges.cloudflare.com/iframe', false),
+        NavigationActionPolicy.ALLOW,
+      );
+      await web.navigateWebsite(Uri.parse('https://hanime1.me/verify'));
+      expect(web.loads, hasLength(loads));
+      await tester.tap(find.text(t.videoPlayback.verificationWindowReturn));
+      await tester.pumpAndSettle();
+      expect(web.loads, hasLength(loads + 1));
+      expect(web.loads.last, original);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
   );
 
   testWidgets(

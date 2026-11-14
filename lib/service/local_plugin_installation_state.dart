@@ -78,13 +78,17 @@ class LocalPluginInstallationState {
     return LocalPluginInstallationLease._(this, key);
   }
 
-  static void _check(String uuid) {
+  static bool isValidSource(String uuid) {
     final value = uuid.trim();
-    if (value.isEmpty ||
-        value.length > 200 ||
-        value == '.' ||
-        value == '..' ||
-        RegExp(r'[/\\\x00-\x1f]').hasMatch(value)) {
+    return value.isNotEmpty &&
+        value.length <= 200 &&
+        value != '.' &&
+        value != '..' &&
+        !RegExp(r'[/\\\x00-\x1f]').hasMatch(value);
+  }
+
+  static void _check(String uuid) {
+    if (!isValidSource(uuid)) {
       throw const FormatException('Invalid plugin identity');
     }
   }
