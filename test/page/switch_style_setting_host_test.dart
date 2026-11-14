@@ -10,6 +10,7 @@ import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/discover/service/discover_plugin_visibility.dart';
 import 'package:zephyr/page/discover/view/plugin_visibility_sheet.dart';
+import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/page/setting/global/appearance_setting_page.dart';
 import 'package:zephyr/page/setting/global/switch_style_setting_page.dart';
 import 'package:zephyr/service/local_appearance_images.dart';
@@ -50,10 +51,94 @@ void main() {
     }
   });
 
-  testWidgets('appearance entry, preview, real switch and platform boundary', (
+  testWidgets('Android keeps the same appearance options across styles', (
     tester,
   ) async {
     final cubit = GlobalSettingCubit();
+    final style = ValueNotifier('system');
+    addTearDown(cubit.close);
+    addTearDown(style.dispose);
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    await tester.pumpWidget(
+      BlocProvider.value(
+        value: cubit,
+        child: AppInterfaceStyleScope(
+          style: style,
+          child: MaterialApp(
+            theme: ThemeData(platform: TargetPlatform.android),
+            home: const AppearanceSettingPage(),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final entry = find.byKey(const ValueKey('settings.switch-style'));
+    final font = find.text(t.settings.fontSettings);
+    final displaySection = find.ancestor(
+      of: font,
+      matching: find.byType(SettingSection),
+    );
+    final amoled = find.ancestor(
+      of: find.text(t.settings.amoled),
+      matching: find.byType(ListTile),
+    );
+    final paint = find.descendant(of: amoled, matching: find.byKey(_paintKey));
+    final groups = find.byType(SettingSection);
+    List<String> headings() => tester
+        .widgetList<SettingSection>(groups)
+        .map((section) => section.title)
+        .toList();
+
+    expect(entry, findsOneWidget);
+    expect(paint, findsNothing);
+    final systemHeadings = headings();
+    expect(
+      tester.widget<SettingSection>(displaySection).title,
+      t.settings.appearanceOptions,
+    );
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+    final picker = find.byType(SwitchStyleSettingPage);
+    expect(picker, findsOneWidget);
+    expect(
+      find.byType(ListTile).evaluate().where((element) {
+        final key = element.widget.key;
+        return key is ValueKey<String> &&
+            key.value.startsWith('settings.switch-style.') &&
+            key != _trialKey;
+      }).length,
+      BreezeSwitchStyle.values.length,
+    );
+    await tester.tap(find.byKey(const ValueKey('settings.switch-style.ring')));
+    await tester.pumpAndSettle();
+    expect(cubit.state.switchStyle, BreezeSwitchStyle.ring);
+    Navigator.of(tester.element(picker)).pop();
+    await tester.pumpAndSettle();
+    expect(paint, findsOneWidget);
+
+    style.value = 'breeze';
+    await tester.pumpAndSettle();
+    expect(headings(), systemHeadings);
+    expect(entry, findsOneWidget);
+    expect(
+      tester.widget<SettingSection>(displaySection).title,
+      t.settings.appearanceOptions,
+    );
+    expect(paint, findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
+  testWidgets('appearance entry, preview, real switch and platform boundary', (
+    tester,
+  ) async {
+    final cubit = GlobalSettingCubit()
+      ..applySyncedState(const GlobalSettingState());
     final style = ValueNotifier('breeze');
     addTearDown(cubit.close);
     addTearDown(style.dispose);

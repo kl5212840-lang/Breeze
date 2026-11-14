@@ -6,7 +6,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 import 'package:zephyr/config/global/global_setting.dart';
-import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_control_motion.dart'
     show BreezePressedContent;
 import 'package:zephyr/widgets/breeze_theme_colors.dart';
@@ -33,7 +32,6 @@ class BreezeSwitch extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (AppInterfaceStyleScope.usesAndroidSystem(context)) return control;
     final style = _styleOf(context);
     if (style == BreezeSwitchStyle.classic) return control;
     return _StyledSwitch(
@@ -53,7 +51,6 @@ class BreezeSwitchListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (AppInterfaceStyleScope.usesAndroidSystem(context)) return tile;
     final style = _styleOf(context);
     if (style == BreezeSwitchStyle.classic) return tile;
     final onChanged = tile.onChanged;

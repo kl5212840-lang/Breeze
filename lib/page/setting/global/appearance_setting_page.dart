@@ -7,6 +7,7 @@ import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/widgets/touch_hover_intent.dart';
 import 'package:zephyr/page/setting/global/interface_style_setting.dart';
 import 'package:auto_route/auto_route.dart';
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/config/global/global_setting.dart';
@@ -26,7 +27,6 @@ import 'package:zephyr/widgets/collection_cover_privacy.dart';
 import 'package:zephyr/widgets/local_appearance_image_picker.dart';
 import 'package:zephyr/widgets/system_accent_availability.dart';
 import 'package:zephyr/widgets/breeze_switch.dart';
-import 'package:zephyr/widgets/app_interface_style.dart';
 
 @RoutePage()
 class AppearanceSettingPage extends StatelessWidget {
@@ -37,7 +37,7 @@ class AppearanceSettingPage extends StatelessWidget {
     final cubit = context.watch<GlobalSettingCubit>();
     final state = cubit.state;
     final systemAccentAvailable = SystemAccentAvailability.of(context);
-    final android = AppInterfaceStyleScope.usesAndroidSystem(context);
+    final android = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
     final chinese = Localizations.localeOf(context).languageCode == 'zh';
 
     return SettingPageShell(
@@ -53,7 +53,7 @@ class AppearanceSettingPage extends StatelessWidget {
               _systemTheme(state, cubit),
               const InterfaceStyleSetting(),
               const AppIconSetting(),
-              if (!android) _switchStyle(context, state.switchStyle),
+              _switchStyle(context, state.switchStyle),
               if (!android) _fontSettings(context),
             ],
           ),

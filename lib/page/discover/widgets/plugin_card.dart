@@ -348,7 +348,7 @@ class PluginCard extends StatelessWidget {
       toggled: isToggling ? shownEnabled : null,
       child: SizedBox(
         key: ValueKey('plugin-card.$pluginUuid.toggle'),
-        width: !android && power ? VideoControlMetrics.touchExtent : 60,
+        width: power ? VideoControlMetrics.touchExtent : 60,
         height: 48,
         child: AbsorbPointer(
           absorbing: isToggling,
