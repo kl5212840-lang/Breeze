@@ -18,6 +18,7 @@ import 'package:zephyr/util/get_path.dart';
 import 'package:zephyr/widgets/toast.dart';
 
 const breezeReleaseRepository = 'kl5212840-lang/Breeze';
+const _renamedBreezeReleaseRepository = 'kl5212840-lang/Breeze-Mobile';
 bool get usesBreezeReleaseChannel => Platform.isIOS || Platform.isAndroid;
 const _upstreamRepo = 'deretame/Breeze';
 const _upstreamRepoCurrent = 'breeze-project-org/Breeze';
@@ -245,6 +246,9 @@ abstract final class AppUpdateRelease {
     if (segments.length < 3 || segments[2] != 'releases') return null;
     final actualRepo = '${segments[0]}/${segments[1]}'.toLowerCase();
     if (actualRepo == repo.toLowerCase() ||
+        // GitHub can return the renamed repository after following a redirect.
+        (repo == breezeReleaseRepository &&
+            actualRepo == _renamedBreezeReleaseRepository.toLowerCase()) ||
         (repo == _upstreamRepo &&
             actualRepo == _upstreamRepoCurrent.toLowerCase())) {
       return segments;
