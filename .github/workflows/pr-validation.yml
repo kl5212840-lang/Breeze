@@ -1,0 +1,55 @@
+name: PR validation
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Source and mobile regression checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+
+      - name: Check imports and IPA packaging
+        run: |
+          python3 -B script/lint/check_relative_imports.py
+          python3 -B script/build/test_package_ipa.py
+
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version-file: .fvmrc
+          channel: stable
+          cache: true
+
+      - name: Resolve locked Flutter dependencies
+        run: flutter pub get --enforce-lockfile
+
+      - name: Analyze Dart sources
+        run: dart analyze --no-fatal-warnings
+
+      - name: Install native test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libclang-dev
+
+      - name: Run mobile regression tests
+        run: |
+          flutter test --no-pub --reporter expanded \
+            test/service/app_update_reminder_test.dart \
+            test/plugin/cloud_catalog_fallback_test.dart \
+            test/comic_read/reader_system_status_bar_test.dart \
+            test/comic_read/reader_system_ui_handoff_test.dart
