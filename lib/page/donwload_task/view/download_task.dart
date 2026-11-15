@@ -619,6 +619,7 @@ class _DownloadCenterState extends State<_DownloadCenter> {
   );
   bool _hasComicSnapshot = false, _loadingVideos = true;
   bool _comicFailed = false, _videoFailed = false, _working = false;
+  bool _retryingVideoEpisodes = false;
   bool get _inventoryReady =>
       _hasComicSnapshot && _verifiedVideoRevision != null;
   Future<void>? _manualRefresh;
@@ -1584,27 +1585,106 @@ class _DownloadCenterState extends State<_DownloadCenter> {
     Iterable<DownloadCenterItem> items, {
     BuildContext? origin,
   }) async {
-    for (final item in items) {
-      if (!mounted || _working) return;
-      final current = _videoProgress[item.video?['key']]?.value;
-      if (current != null && current['attempt'] != item.video?['attempt'])
-        continue;
-      final row = mergeVideoDownloadSnapshot(item.video!, current);
-      if (VideoDownloadRetry.isWaitingForNetwork(row)) continue;
-      if (!const {
-        'failed',
-        'interrupted',
-        'unavailable',
-        'unsupported',
-        'routeUnavailable',
-        'busy',
-      }.contains(row['status']))
-        continue;
-      if (VideoDownloadRetry.canRetry(row) &&
-          !VideoDownloadRetry.needsSource(row)) {
-        await _videoAction('retry-exact', row, playbackContext: origin);
+    if (_retryingVideoEpisodes || _working) return;
+    final entry = origin ?? context;
+    if (!entry.mounted) return;
+    final route = ModalRoute.of(entry);
+    if (route?.isCurrent != true) return;
+
+    _retryingVideoEpisodes = true;
+    final counts = <VideoDownloadRetryOutcome, int>{};
+    try {
+      for (final item in items) {
+        if (!mounted ||
+            !entry.mounted ||
+            _working ||
+            route?.isCurrent != true) {
+          return;
+        }
+        final original = item.video!;
+        final row = mergeVideoDownloadSnapshot(
+          original,
+          _videoProgress[original['key']]?.value,
+        );
+        final outcome = switch (row) {
+          _
+              when row['attempt'] != original['attempt'] ||
+                  row['resourceId'] != original['resourceId'] =>
+            VideoDownloadRetryOutcome.changed,
+          _ when VideoDownloadRetry.isWaitingForNetwork(row) =>
+            VideoDownloadRetryOutcome.waitingForNetwork,
+          _ when videoDownloadRequiresSourceDetails(row) =>
+            videoDownloadSourceTarget(row) == null
+                ? VideoDownloadRetryOutcome.failed
+                : VideoDownloadRetryOutcome.needsSource,
+          _
+              when VideoDownloadRetryHosts.canContinue(
+                '${row['source']}',
+                taskKey: '${row['key']}',
+              ) =>
+            VideoDownloadRetryOutcome.needsVerification,
+          _ when VideoDownloadRetry.isPending('${row['key']}') =>
+            VideoDownloadRetryOutcome.pending,
+          _ when VideoDownloadRetry.canRetry(row) => await retryVideoDownload(
+            entry,
+            row,
+            reportFailure: false,
+          ),
+          _ => VideoDownloadRetryOutcome.changed,
+        };
+        counts.update(outcome, (count) => count + 1, ifAbsent: () => 1);
       }
+    } finally {
+      _retryingVideoEpisodes = false;
     }
+    if (!mounted ||
+        !entry.mounted ||
+        route?.isCurrent != true ||
+        counts.isEmpty) {
+      return;
+    }
+    final message = [
+      for (final outcome in VideoDownloadRetryOutcome.values)
+        if (counts[outcome] case final count?)
+          switch (outcome) {
+            VideoDownloadRetryOutcome.queued => _label(
+              entry,
+              '已排队 $count 项',
+              'Queued: $count',
+            ),
+            VideoDownloadRetryOutcome.pending => _label(
+              entry,
+              '正在处理 $count 项',
+              'Already processing: $count',
+            ),
+            VideoDownloadRetryOutcome.waitingForNetwork => _label(
+              entry,
+              '等待网络 $count 项',
+              'Waiting for network: $count',
+            ),
+            VideoDownloadRetryOutcome.needsSource => _label(
+              entry,
+              '需回来源页 $count 项',
+              'Needs source page: $count',
+            ),
+            VideoDownloadRetryOutcome.needsVerification => _label(
+              entry,
+              '待继续验证 $count 项',
+              'Needs verification: $count',
+            ),
+            VideoDownloadRetryOutcome.failed => _label(
+              entry,
+              '未能重试 $count 项',
+              'Could not retry: $count',
+            ),
+            VideoDownloadRetryOutcome.changed => _label(
+              entry,
+              '状态已变化 $count 项',
+              'Status changed: $count',
+            ),
+          },
+    ].join(' · ');
+    showInfoToast(message, context: entry);
   }
 
   Future<void> _navigateFrom(
@@ -1992,7 +2072,8 @@ class _DownloadCenterState extends State<_DownloadCenter> {
         );
         return;
       }
-      return retryVideoDownload(origin, row);
+      await retryVideoDownload(origin, row);
+      return;
     }
     final id = row['resourceId'];
     if (action == 'play' || action == 'play-local') {

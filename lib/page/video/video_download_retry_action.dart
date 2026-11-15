@@ -11,13 +11,24 @@ bool videoDownloadRequiresSourceDetails(Map<String, dynamic> row) =>
     (row['status'] == 'saved' &&
         (row['fileInvalid'] == true || row['fileRemoved'] == true));
 
-Future<void> retryVideoDownload(
+enum VideoDownloadRetryOutcome {
+  queued,
+  pending,
+  waitingForNetwork,
+  needsSource,
+  needsVerification,
+  failed,
+  changed,
+}
+
+Future<VideoDownloadRetryOutcome> retryVideoDownload(
   BuildContext context,
-  Map<String, dynamic> row,
-) async {
+  Map<String, dynamic> row, {
+  bool reportFailure = true,
+}) async {
   if (VideoDownloadRetry.needsSource(row)) {
     await openVideoDownloadWork(context, row);
-    return;
+    return VideoDownloadRetryOutcome.needsSource;
   }
   final overlay = Overlay.of(context, rootOverlay: true);
   final owner = Object();
@@ -30,9 +41,11 @@ Future<void> retryVideoDownload(
       cancelResolution: () =>
           VideoDownloadRetryHosts.cancel('${row['source']}', owner),
     );
-    if (!queued &&
-        context.mounted &&
-        !VideoDownloadRetry.isPending('${row['key']}')) {
+    if (queued) return VideoDownloadRetryOutcome.queued;
+    if (VideoDownloadRetry.isPending('${row['key']}')) {
+      return VideoDownloadRetryOutcome.pending;
+    }
+    if (reportFailure && context.mounted) {
       showErrorToast(
         videoDownloadFailureText(
           'missingIdentity',
@@ -41,16 +54,20 @@ Future<void> retryVideoDownload(
       );
     }
   } on VideoDownloadRetryFailure catch (error) {
-    if (context.mounted)
+    if (reportFailure && context.mounted) {
       showErrorToast(
         videoDownloadFailureText(
           error.reason,
           chinese: Localizations.localeOf(context).languageCode == 'zh',
         ),
       );
+    }
   } catch (_) {
-    if (context.mounted) showErrorToast(t.common.loadingFailed);
+    if (reportFailure && context.mounted) {
+      showErrorToast(t.common.loadingFailed);
+    }
   }
+  return VideoDownloadRetryOutcome.failed;
 }
 
 class VideoDownloadRetryAction extends StatelessWidget {
