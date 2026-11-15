@@ -1,30 +1,32 @@
-# Breeze
+# Breeze Mobile
 
-本分支基于 [Breeze](https://github.com/breeze-project-org/Breeze)。
+Breeze Mobile 是 [Breeze](https://github.com/breeze-project-org/Breeze) 的独立维护分支。这里提供本分支的 iOS / iPadOS 和 Android 安装包及更新说明。
 
 ## 本分支下载
 
-[3.0.38 发布说明](https://github.com/kl5212840-lang/Breeze/releases/tag/v3.0.38)
+[最新发布和更新说明](https://github.com/kl5212840-lang/Breeze/releases/latest)
 
-- **iOS / iPadOS 15.0 及以上**。下载后需自行签名安装。[下载 IPA](https://github.com/kl5212840-lang/Breeze/releases/download/v3.0.38/Breeze-iOS-v3.0.38.ipa)
-- **Android 8.0 及以上（ARM64）**。本分支版本请从这里手动下载，应用内更新走上游渠道。[下载 APK](https://github.com/kl5212840-lang/Breeze/releases/download/v3.0.38/Breeze-Android-v3.0.38-arm64-v8a.apk)
+- **iOS / iPadOS 15.0 及以上**。下载后需[自行签名安装](#ios-侧载)。[下载 3.0.38 IPA](https://github.com/kl5212840-lang/Breeze/releases/download/v3.0.38/Breeze-iOS-v3.0.38.ipa)
+- **Android 8.0 及以上（ARM64）**。[下载 3.0.38 APK](https://github.com/kl5212840-lang/Breeze/releases/download/v3.0.38/Breeze-Android-v3.0.38-arm64-v8a.apk)
 
-升级前建议备份应用数据。插件可在应用内「插件商店」安装和更新。[本分支插件仓库](https://github.com/kl5212840-lang/Breeze-plugins)
+iOS 和 Android 可在应用内检查本分支更新。升级前建议备份应用数据，安装包的 SHA-256 校验值见发布页的 `SHA256SUMS.txt`。
 
-## 💖 鸣谢与赞助
+插件可在应用内「插件商店」安装和更新。[本分支插件仓库](https://github.com/kl5212840-lang/Breeze-plugins)
+
+## 上游项目鸣谢
 
 感谢以下组织对开源社区的支持：
 
-| [![Sentry Logo](asset/sentry-wordmark-dark-400x119.png)](https://sentry.io/) | 本项目由 **[Sentry](https://sentry.io/)** 提供全方位的错误监控赞助，其 Sponsored Business 计划帮助我们更快速地捕获并修复崩溃，提升用户体验。 |
+| [![Sentry Logo](asset/sentry-wordmark-dark-400x119.png)](https://sentry.io/) | 上游 Breeze 获得 **[Sentry](https://sentry.io/)** 的错误监控赞助。 |
 | :--------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------- |
 
-同时感谢 **[Aidoku](https://github.com/Aidoku/Aidoku)** 项目，本项目在 iOS / macOS 图片超分实现上参考了 Aidoku 的思路与模型处理方式。
+同时感谢 **[Aidoku](https://github.com/Aidoku/Aidoku)** 项目。上游 Breeze 在 iOS / macOS 图片超分实现上参考了 Aidoku 的思路与模型处理方式。
 
 ## 项目开发指南
 
-插件开发相关文档请参阅：<https://deretame.github.io/plugin-dev-docs/>
+插件开发文档见[上游插件开发指南](https://deretame.github.io/plugin-dev-docs/)。
 
-插件列表：<https://github.com/deretame/Breeze-plugin-list>
+[上游插件列表](https://github.com/deretame/Breeze-plugin-list)
 
 > **注：** 插件功能仍在beta阶段，可能会有较大改动，不建议基于此开发插件，仅适合学习用途。
 
@@ -185,30 +187,27 @@ brew uninstall --zap breeze
 >
 > _(备选方法：在“应用程序”文件夹中找到 Breeze，按住 `Control` 键点击应用图标，然后在弹出的菜单中选择“打开”。)_
 
-### 📱 iOS / iPadOS
+## iOS 侧载
 
-从[上游发布页](https://github.com/breeze-project-org/Breeze/releases)下载上游 IPA 后，可使用下列工具安装。
+从[本分支发布页](https://github.com/kl5212840-lang/Breeze/releases/latest)下载 IPA 后，可使用下列工具安装。覆盖安装时请沿用原来的签名账号和应用标识。
 
-#### 🌟 推荐方案：AltStore
+### AltStore
 
-AltStore 是目前最稳定且对新手友好的 iOS 侧载工具，支持通过同一局域网下的电脑实现应用自动续签。
+可使用 AltStore 签名安装 IPA，续签与使用说明见官方指南。
 
-- **官网下载**：[AltStore 官方网站](https://altstore.io/)
-- **使用教程**：
+- [AltStore 官方网站](https://altstore.io/)
 - [AltStore 官方图文指南（英文）](https://faq.altstore.io/)
 - [知乎：基于 AltStore 的越狱工具自签教程](https://zhuanlan.zhihu.com/p/143936759)
 - [哔哩哔哩：iOS无限自签IPA玩法](https://b23.tv/UbuuJTZ)
 
-#### 🔧 其他自签/免签备选方案
+### 其他安装方式
 
-如果你由于某些原因无法使用 AltStore，也可以考虑以下途径：
-
-- **Sideloadly**：免越狱、支持 Windows 和 macOS 的强大桌面自签工具。([官网与教程](https://sideloadly.io/))
-- **TrollStore (巨魔商店)**：如果你的 iOS 系统版本在特定的漏洞支持范围内，**强烈推荐**使用巨魔商店实现永久免签安装，永不掉签。([TrollStore 支持版本及安装指南](https://ios.cfw.guide/installing-trollstore/))
+- **Sideloadly** 支持在 Windows 和 macOS 上签名安装。 [官网与教程](https://sideloadly.io/)
+- **TrollStore（巨魔商店）** 的适用范围以[支持版本及安装指南](https://ios.cfw.guide/installing-trollstore/)为准。
 
 ---
 
-# **使用说明与免责声明**
+## 使用说明与免责声明
 
 1. **项目与插件**
    本版本基于 Breeze 开源项目开发。插件独立提供站点接入能力；除非另有明确说明，应用与插件均非来源站点官方产品，也不代表站点立场。
@@ -233,11 +232,11 @@ AltStore 是目前最稳定且对新手友好的 iOS 侧载工具，支持通过
 
 ---
 
-**开发者信息**
+## 上游项目信息
 
-- 开发者：**[windy](https://github.com/deretame)**
-- 项目仓库：**[Breeze](https://github.com/deretame/Breeze)**
-- 联系方式：**[telegram(电报)](https://t.me/breeze_zh_cn)**
+- 上游开发者 [windy](https://github.com/deretame)
+- [上游 Breeze 仓库](https://github.com/breeze-project-org/Breeze)
+- [上游 Telegram 社区](https://t.me/breeze_zh_cn)
 
 <p align="center">
   <picture>
