@@ -16,6 +16,7 @@ import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
 import 'package:zephyr/page/bookshelf/service/comic_link_service.dart';
+import 'package:zephyr/page/bookshelf/service/comic_folder_service.dart';
 import 'package:zephyr/util/json/json_sanitize.dart';
 import 'package:zephyr/util/path_util.dart';
 import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart';
@@ -60,6 +61,7 @@ Future<({bool collected, bool changed})> setLocalComicFavorite({
   required String from,
   required NormalComicAllInfo normalInfo,
   required bool collected,
+  String? folderPath,
 }) async {
   final comicInfo = normalInfo.comicInfo;
   final pluginId = from.trim();
@@ -99,7 +101,15 @@ Future<({bool collected, bool changed})> setLocalComicFavorite({
     }
     final existing = _findLocalFavorite(key);
     final wasCollected = existing != null && !existing.deleted;
-    if (wasCollected) return (collected: true, changed: false);
+    const type = ComicFolderType.favorite;
+    final folderId = ComicFolderService.folderSyncIdByPath(folderPath, type);
+    if (folderPath?.isNotEmpty == true && folderId == null) {
+      throw StateError(t.comicInfo.favoriteFolderUnavailable);
+    }
+    if (wasCollected) {
+      if (folderPath != null) ComicLinkService.addComic(key, folderPath, type);
+      return (collected: true, changed: false);
+    }
 
     objectbox.unifiedFavoriteBox.put(
       UnifiedComicFavorite(
@@ -121,7 +131,7 @@ Future<({bool collected, bool changed})> setLocalComicFavorite({
         schemaVersion: 2,
       ),
     );
-    ComicLinkService.addComic(key, null, ComicFolderType.favorite);
+    ComicLinkService.addComic(key, folderPath, type);
     return (collected: true, changed: true);
   });
 }

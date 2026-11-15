@@ -81,6 +81,7 @@ void main() {
       locale: Locale('en'),
       localeFollowsSystem: false,
       retryDownloadUntilSuccess: false,
+      comicDownloadConcurrency: 4,
       videoDownloadConcurrency: 3,
       downloadWifiOnly: true,
       downloadCompletionNotice: 'episode',
@@ -273,6 +274,7 @@ void main() {
           expect(global['locale'], 'en');
           expect(global['localeFollowsSystem'], isFalse);
           expect(global['retryDownloadUntilSuccess'], isFalse);
+          expect(global['comicDownloadConcurrency'], 4);
           expect(global['videoDownloadConcurrency'], 3);
           expect(global['downloadWifiOnly'], isTrue);
           expect(global['downloadCompletionNotice'], 'episode');
@@ -348,6 +350,7 @@ void main() {
           expect(restored.locale, const Locale('en'));
           expect(restored.localeFollowsSystem, isFalse);
           expect(restored.retryDownloadUntilSuccess, isFalse);
+          expect(restored.comicDownloadConcurrency, 4);
           expect(restored.videoDownloadConcurrency, 3);
           expect(restored.downloadWifiOnly, isTrue);
           expect(restored.downloadCompletionNotice, 'episode');

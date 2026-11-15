@@ -220,7 +220,8 @@ class _PageCountWidgetState extends State<PageCountWidget> {
     final showInStatusBar =
         readSetting.pageInfoVerticalPosition ==
             ReaderInfoVerticalPosition.top &&
-        readSetting.pageInfoTopInStatusBar;
+        readSetting.pageInfoTopInStatusBar &&
+        !readSetting.showSystemStatusBar;
 
     final verticalOffset =
         readSetting.pageInfoVerticalPosition == ReaderInfoVerticalPosition.top

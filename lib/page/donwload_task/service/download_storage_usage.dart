@@ -16,35 +16,59 @@ class DownloadStorageUsage {
     List<Map<String, dynamic>>? videos,
     bool partial = false,
     required bool Function() current,
+    void Function(DownloadStorageUsage)? onPartial,
   }) async {
-    final videoRead = videos == null
-        ? VideoLocalResources.readStorageInventory()
-              .then<({List<Map<String, dynamic>> rows, bool complete})?>(
-                (inventory) => inventory,
-              )
-              .catchError((Object _) => null)
-        : Future.value((rows: videos, complete: true));
+    var comicBytes = 0, videoBytes = 0;
+    var videoComplete = false;
+    void publish() {
+      final knownBytes = comicBytes + videoBytes;
+      if (knownBytes > 0 && current()) {
+        onPartial?.call(
+          DownloadStorageUsage(knownBytes: knownBytes, partial: true),
+        );
+      }
+    }
+
+    final videoRead =
+        () async {
+          final inventory = videos == null
+              ? await VideoLocalResources.readStorageInventory()
+              : (rows: videos, complete: true);
+          final rows = inventory.rows;
+          videoBytes = savedVideoSizes(
+            rows,
+          ).values.fold(0, (sum, size) => sum + size);
+          videoComplete = inventory.complete && !hasUnmeasuredSavedVideo(rows);
+          publish();
+        }().catchError((Object _) {
+          // Comic measurements are still useful when the video index is unavailable.
+        });
     try {
       comics ??= await DownloadCenterResources.readComicsAsync();
     } catch (_) {
-      // Read each media type independently so one error leaves the other usable.
+      // Video measurements are still useful when the comic index is unavailable.
     }
     final comicSizes = await measureSavedComicSizes(
       comics ?? const [],
       current: current,
+      onBatch: onPartial == null
+          ? null
+          : (batch) {
+              comicBytes += batch.fold(0, (sum, size) => sum + size.knownBytes);
+              publish();
+            },
     );
-    final videoInventory = await videoRead;
-    final videoRows = videoInventory?.rows ?? const [];
+    await videoRead;
     return DownloadStorageUsage(
       knownBytes:
           comicSizes.values.fold(0, (sum, size) => sum + size.knownBytes) +
-          savedVideoSizes(videoRows).values.fold(0, (sum, size) => sum + size),
+          videoBytes,
       partial:
           partial ||
           comics == null ||
-          videoInventory?.complete != true ||
-          comicSizes.values.any((size) => !size.complete) ||
-          hasUnmeasuredSavedVideo(videoRows),
+          comicSizes.length != comics.length ||
+          !videoComplete ||
+          comicSizes.values.any((size) => !size.complete),
     );
   }
 }
@@ -64,6 +88,7 @@ bool hasUnmeasuredSavedVideo(Iterable<Map<String, dynamic>> rows) => rows.any(
 Future<Map<String, SavedComicSize>> measureSavedComicSizes(
   List<DownloadComicResource> comics, {
   required bool Function() current,
+  void Function(List<DownloadResourceSize>)? onBatch,
 }) async {
   final sizes = <String, SavedComicSize>{};
   for (var index = 0; index < comics.length && current(); index += 2) {
@@ -79,6 +104,7 @@ Future<Map<String, SavedComicSize>> measureSavedComicSizes(
         complete: size.sizeBytes != null,
       );
     }
+    onBatch?.call(results);
   }
   return sizes;
 }

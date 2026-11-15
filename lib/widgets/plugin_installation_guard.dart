@@ -18,7 +18,12 @@ Future<bool> ensurePluginInstalled(BuildContext context, String source) async {
   final key = (Navigator.of(context), source);
   final pending = _prompts[key];
   if (pending != null) return pending;
-  if (LocalPluginInstallationState.instance.isInstalling(source)) {
+  final local = LocalPluginInstallationState.instance;
+  if (local.isRemovalPending(source)) {
+    showInfoToast(t.pluginLifecycle.working);
+    return false;
+  }
+  if (local.isInstalling(source)) {
     showInfoToast(t.pluginLifecycle.installing);
     return false;
   }
@@ -57,7 +62,9 @@ Future<bool> _ensurePluginInstalled(BuildContext context, String source) async {
     ),
   );
   if (reinstall != true || !context.mounted) return false;
-  if (local.installationEpoch(source) != epoch || local.isInstalling(source)) {
+  if (local.installationEpoch(source) != epoch ||
+      local.isRemovalPending(source) ||
+      local.isInstalling(source)) {
     showInfoToast(t.pluginLifecycle.changed);
     return false;
   }
@@ -110,6 +117,7 @@ Future<bool> _ensurePluginInstalled(BuildContext context, String source) async {
       return false;
     }
     if (local.installationEpoch(source) != epoch ||
+        local.isRemovalPending(source) ||
         local.isInstalling(source)) {
       await closeLoading();
       showInfoToast(t.pluginLifecycle.changed);

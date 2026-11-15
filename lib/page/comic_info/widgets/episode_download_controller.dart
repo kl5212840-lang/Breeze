@@ -123,7 +123,11 @@ class EpisodeDownloadController {
     });
 
     final taskQuery = objectbox.downloadTaskBox
-        .query(DownloadTask_.comicId.equals(_comicId))
+        .query(
+          DownloadTask_.comicId
+              .equals(_comicId)
+              .and(DownloadTask_.isCompleted.equals(false)),
+        )
         .watch();
     _taskSubscription = taskQuery.listen((query) {
       if (_disposed || !identical(_selectionOwner, owner)) return;
@@ -134,7 +138,11 @@ class EpisodeDownloadController {
   void _loadInitial() {
     final record = _repository.findDownloadRecord(_from, _comicId);
     final taskQuery = objectbox.downloadTaskBox
-        .query(DownloadTask_.comicId.equals(_comicId))
+        .query(
+          DownloadTask_.comicId
+              .equals(_comicId)
+              .and(DownloadTask_.isCompleted.equals(false)),
+        )
         .build();
     try {
       _updateStatus(
@@ -150,7 +158,6 @@ class EpisodeDownloadController {
     final snaps = <String, ChapterTaskSnap>{};
     final latestTaskIds = <String, int>{};
     for (final task in tasks) {
-      if (task.isCompleted) continue;
       DownloadTaskJson? payload;
       try {
         payload = task.taskInfo;

@@ -31,6 +31,30 @@ class DownloadSettingsPage extends StatelessWidget {
               title: t.download.settings,
               child: SettingListView(
                 children: [
+                  SettingChoiceTile<int>(
+                    key: const ValueKey('comic-download-concurrency'),
+                    leading: const InterfaceSymbol(
+                      symbol: 'photo.on.rectangle',
+                      fallback: Icons.collections_outlined,
+                    ),
+                    title: t.download.concurrentComicImages,
+                    description: t.download.concurrentComicImagesHint,
+                    value: normalizeComicDownloadConcurrency(
+                      state.comicDownloadConcurrency,
+                    ),
+                    items: {
+                      for (
+                        var count = 1;
+                        count <= maxComicDownloadConcurrency;
+                        count++
+                      )
+                        count: count.toString(),
+                    },
+                    onChanged: (value) => cubit.updateState(
+                      (current) =>
+                          current.copyWith(comicDownloadConcurrency: value),
+                    ),
+                  ),
                   if (DownloadAdmission.supportsMobileControls)
                     SettingChoiceTile<int>(
                       key: const ValueKey('download-concurrency'),

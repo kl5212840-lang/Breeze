@@ -35,6 +35,7 @@ class Remote implements ComicSyncRemoteAdapter, LegacyPluginPurgeTransport {
   String get root => legacy ? SyncArchiveContext.legacyRoot : ComicSyncCore.syncRemoteRootName;
   final files = <String, List<int>>{};
   int writes = 0;
+  final downloads = <String, int>{};
   int? failAt;
   String path(String name) => name.contains('/') ? name : '$root/$name';
   void seed(String name, Object value) => files[path(name)] = utf8.encode(jsonEncode(value));
@@ -42,7 +43,11 @@ class Remote implements ComicSyncRemoteAdapter, LegacyPluginPurgeTransport {
   @override Future<void> testConnection() async {}
   @override Future<void> ensureRemoteReady() async {}
   @override Future<List<String>> listRemoteDataFiles() async => files.keys.toList();
-  @override Future<List<int>> downloadRemoteFile(String name) async => files[path(name)] ?? (throw StateError('404'));
+  @override Future<List<int>> downloadRemoteFile(String name) async {
+    final key = path(name);
+    downloads.update(key, (count) => count + 1, ifAbsent: () => 1);
+    return files[key] ?? (throw StateError('404'));
+  }
   @override Future<String> downloadRemoteMd5() async => utf8.decode(files[path('comic.md5')] ?? []);
   @override Future<void> uploadRemoteMd5(String value) async => uploadRemoteFile('comic.md5', utf8.encode(value));
   @override Future<void> uploadRemoteFile(String name, List<int> bytes, {String contentType = 'application/octet-stream'}) async {
@@ -219,6 +224,20 @@ void main() {
     expect(current.writes + legacy.writes, count);
     await expectLater(Future<void>.sync(() => legacy.uploadRemoteFile('comic_1.bin', [])), throwsA(isA<LegacyArchiveReadOnly>()));
   });
+  test('purge avoids redundant scans of an unchanged historical chapter snapshot', () async {
+    final current = Remote();
+    final legacy = Remote(legacy: true);
+    const name = 'chapter_progress_v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bin';
+    const otherRow = (other, 'work', 'one');
+    final snapshot = ChapterProgressArchive({
+      otherRow: (at: 1, progress: (pageIndex: 1, pageCount: 3, completed: false)),
+    }).encode();
+    current.files[current.path(name)] = snapshot;
+    await purgeBoth(current, legacy);
+    expect(current.files[current.path(name)], snapshot);
+    expect(current.downloads[current.path(name)], lessThanOrEqualTo(7));
+  });
+
   test('a future legacy historical candidate blocks writes to BOTH archives', () async {
     final current = Remote()..seed('comic_1.bin', comics())..commit('comic');
     final legacy = Remote(legacy: true)..seed('comic_1.bin', comics())..commit('comic');

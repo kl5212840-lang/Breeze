@@ -250,10 +250,12 @@ private final class VideoDownloadTransfer: NSObject, URLSessionDownloadDelegate,
   }
 
   func setForeground(_ allowed: Bool) {
-    guard let task, task.state != .completed, task.state != .canceling,
-      transferResumed != allowed else { return }
-    transferResumed = allowed
-    if allowed { task.resume() } else { task.suspend() }
+    // A foreground session can finish in-flight work before iOS suspends
+    // the app. Managed background sessions have their own pause policy.
+    guard allowed, !transferResumed, let task,
+      task.state != .completed, task.state != .canceling else { return }
+    transferResumed = true
+    task.resume()
   }
 
   private func validID(_ value: String) -> Bool {

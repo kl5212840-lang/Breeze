@@ -3569,7 +3569,7 @@ void main() {
                 find.byKey(const ValueKey('download-chapters-total-size')),
               )
               .data,
-          'On-device size: ≥ 2.0 KB',
+          t.download.comicSavedBytes(amount: '2.0 KB'),
         );
         expect(
           tester

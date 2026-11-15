@@ -65,7 +65,16 @@ extension _ComicReadInteractionPart on _ComicReadPageState {
           parentPhysics: physics,
           disableScroll: _isScrollLockedByMultiTouch,
           volumeController: _volumeController,
-          onUserScrollActiveChanged: (active) => _isUserScrollActive = active,
+          onUserScrollActiveChanged: (active) {
+            final wasScrolling = _isUserScrollActive;
+            _isUserScrollActive = active;
+            if (wasScrolling && !active) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted)
+                  _countSettledEinkTurn(context.read<ReaderCubit>().state);
+              });
+            }
+          },
           onGlobalSlotChanged: seamlessEnabled
               ? (globalSlot) async {
                   _observeChapterPages(globalSlot);

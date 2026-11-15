@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:zephyr/main.dart';
+import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/service/download/download_cancel_signal.dart';
@@ -14,7 +15,14 @@ enum ComicDownloadRetryReason {
   network,
   timeout,
   rateLimited,
-  sourceUnavailable,
+  sourceUnavailable;
+
+  String get label => switch (this) {
+    network => t.download.retryNetwork,
+    timeout => t.download.retryTimeout,
+    rateLimited => t.download.retryRateLimited,
+    sourceUnavailable => t.download.retrySourceUnavailable,
+  };
 }
 
 class ComicDownloadRetryDeferred implements Exception {

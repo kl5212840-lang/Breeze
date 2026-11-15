@@ -1,12 +1,14 @@
 import 'dart:io';
+import 'dart:math';
 
-import 'package:pool/pool.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/network/http/picture/picture.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
+import 'package:zephyr/service/download/download_cancel_signal.dart';
 import 'package:zephyr/service/download/download_progress_reporter.dart';
 import 'package:zephyr/service/download/download_retry.dart';
 import 'package:zephyr/type/enum.dart';
+import 'package:zephyr/util/get_path.dart';
 
 class DownloadImageJob {
   const DownloadImageJob({
@@ -27,10 +29,15 @@ class DownloadImageJob {
 }
 
 class DownloadImageJobException implements Exception {
-  const DownloadImageJobException({required this.job, required this.result});
+  const DownloadImageJobException({
+    required this.job,
+    required this.result,
+    this.routed = false,
+  });
 
   final DownloadImageJob job;
   final DownloadPictureResult result;
+  final bool routed;
 
   int? get httpStatus => switch (result.error) {
     DownloadPictureHttpException(:final statusCode) => statusCode,
@@ -43,6 +50,9 @@ class DownloadImageJobException implements Exception {
 
   ComicDownloadRetryReason? get retryReason {
     final cause = result.error;
+    if (routed && result.status == DownloadPictureResultStatus.emptyData) {
+      return ComicDownloadRetryReason.network;
+    }
     if (cause == null ||
         result.status == DownloadPictureResultStatus.notFound ||
         isNonRetryableDownloadFailure(cause)) {
@@ -55,6 +65,12 @@ class DownloadImageJobException implements Exception {
       return ComicDownloadRetryReason.network;
     }
     if (cause is DownloadPictureHttpException) {
+      // The plugin can report a successful response with no image as an error
+      // before the host gets a byte buffer to validate.
+      if (routed &&
+          RegExp(r'^(?:Error: )?图片数据为空[。.]?$').hasMatch(cause.message.trim())) {
+        return ComicDownloadRetryReason.network;
+      }
       return comicDownloadRetryReason(cause.message);
     }
     return comicDownloadRetryReason(cause);
@@ -140,33 +156,35 @@ void _throwLocalFileFailure(DownloadPictureResult result) {
   }
 }
 
-/// 图片下载并发数：优先调用插件 `getDownloadConcurrency` 获取
-///（插件返回 `{concurrency: number}`），插件未实现、返回非法或调用失败时回落为 5。
-Future<int> resolveDownloadConcurrency({
-  required String from,
-  String? pluginId,
-  String? taskGroupKey,
+/// Older plugins can omit this capability. The user preference is still a cap.
+Future<int> resolveComicDownloadConcurrency({
+  required int requested,
+  required String pluginId,
+  required String runtimeName,
+  required String taskGroupKey,
 }) async {
-  const fallback = 5;
+  if (requested == 1) return 1;
   try {
-    final data = await callUnifiedComicPlugin(
-      from: from,
+    final result = await callUnifiedComicPlugin(
       pluginId: pluginId,
+      runtimeName: runtimeName,
       fnPath: 'getDownloadConcurrency',
-      core: const <String, dynamic>{},
+      core: const {},
       taskGroupKey: taskGroupKey,
+      notifyUnauthorized: false,
     );
-    Object? raw = data['concurrency'] ?? data['value'];
-    if (raw == null && data['data'] is Map) {
-      final nested = Map<String, dynamic>.from(data['data'] as Map);
-      raw = nested['concurrency'] ?? nested['value'];
-    }
-    final parsed = int.tryParse(raw?.toString().trim() ?? '');
-    if (parsed == null) return fallback;
-    return parsed.clamp(1, 32);
+    final nested = result['data'];
+    // Legacy concurrency/value fields were defaults. Only an explicit maximum
+    // restricts a user's chosen limit.
+    final raw =
+        result['maxConcurrency'] ??
+        (nested is Map ? nested['maxConcurrency'] : null);
+    final limit = int.tryParse(raw?.toString().trim() ?? '');
+    if (limit != null && limit >= 1) return min(limit, requested);
   } catch (_) {
-    return fallback;
+    // The optional capability must not prevent image downloads.
   }
+  return requested;
 }
 
 Future<DownloadImageJobsResult> downloadImageJobs({
@@ -177,6 +195,7 @@ Future<DownloadImageJobsResult> downloadImageJobs({
   required String qjsTaskGroupKey,
   required Future<void> Function() ensureTaskRunning,
   bool Function()? shouldRetryUntilSuccess,
+  Future<void> Function()? waitForForeground,
   bool isolatedPages = false,
   bool stopOnMissingPage = false,
   required DownloadProgressReporter reporter,
@@ -207,8 +226,9 @@ Future<DownloadImageJobsResult> downloadImageJobs({
     );
   }
 
-  final pool = Pool(concurrency ?? 5);
-  final workerCount = concurrency ?? 5;
+  await ensureTaskRunning();
+  final downloadRoot = await getDownloadPath();
+  final workerCount = min(concurrency ?? 5, jobs.length);
   var progress = 0;
   var downloaded = 0;
   var reused = 0;
@@ -231,18 +251,10 @@ Future<DownloadImageJobsResult> downloadImageJobs({
     try {
       while (firstError == null) {
         await ensureTaskRunning();
-        DownloadImageJob? job;
-        await pool.withResource(() async {
-          if (nextIndex >= jobs.length) {
-            return;
-          }
-          job = jobs[nextIndex];
-          nextIndex += 1;
-        });
-        final currentJob = job;
-        if (currentJob == null) {
-          return;
-        }
+        // Each worker holds at most one page. This claim runs synchronously
+        // on the same isolate, so no separate pool is needed.
+        if (firstError != null || nextIndex >= jobs.length) return;
+        final currentJob = jobs[nextIndex++];
         onJobStarted?.call(currentJob);
         var jobSkipped = false;
         try {
@@ -252,10 +264,12 @@ Future<DownloadImageJobsResult> downloadImageJobs({
             qjsRuntimeName: qjsRuntimeName,
             qjsTaskGroupKey: qjsTaskGroupKey,
             ensureTaskRunning: ensureWorkerRunning,
+            waitForForeground: waitForForeground,
             shouldRetryUntilSuccess: shouldRetryUntilSuccess,
             isolatedPage: isolatedPages,
             onError: onError,
             pictureType: PictureType.page,
+            downloadRoot: downloadRoot,
           );
           progress++;
           if (result.status == DownloadPictureResultStatus.existing) {
@@ -327,22 +341,74 @@ Future<DownloadPictureResult> _downloadSingleJob({
   required String qjsTaskGroupKey,
   required Future<void> Function() ensureTaskRunning,
   bool Function()? shouldRetryUntilSuccess,
+  Future<void> Function()? waitForForeground,
   bool isolatedPage = false,
   Future<void> Function(Object error, DownloadImageJob job)? onError,
   PictureType pictureType = PictureType.comic,
+  required String downloadRoot,
 }) async {
   var emptyResponses = 0;
+  Future<DownloadPictureResult> fetchPage() async {
+    if (waitForForeground != null) {
+      await waitForForeground();
+      await ensureTaskRunning();
+    }
+    final result = await downloadPictureResult(
+      from: from,
+      url: job.url,
+      path: job.path,
+      cartoonId: job.cartoonId,
+      chapterId: job.chapterId,
+      storageChapterId: job.storageChapterId,
+      pictureType: pictureType,
+      downloadRoot: downloadRoot,
+      // 外层负责整张图片的重试，避免网络层 10 次重试后才进入
+      // 保存/解码失败的重试流程。
+      retry: false,
+      qjsName: qjsRuntimeName,
+      qjsTaskGroupKey: qjsTaskGroupKey,
+      extern: job.extern,
+      isolatedPage: isolatedPage,
+      requestTimeoutMs: isolatedPage ? 12000 : 30000,
+    );
+    if (!result.isSuccess) {
+      _throwLocalFileFailure(result);
+      throw DownloadImageJobException(
+        job: job,
+        result: result,
+        routed: isolatedPage,
+      );
+    }
+    return result;
+  }
+
   try {
-    final result = await retryDownloadOperation<DownloadPictureResult>(
+    if (isolatedPage) {
+      await ensureTaskRunning();
+      try {
+        return await fetchPage();
+      } on DownloadImageJobException catch (error) {
+        // A single short interruption shouldn't discard this chapter's plan.
+        // Explicit host errors (including 429 and 503) keep their route policy.
+        final retryPage =
+            error.retryReason == ComicDownloadRetryReason.timeout ||
+            error.retryReason == ComicDownloadRetryReason.network;
+        if (!retryPage) rethrow;
+      }
+      await raceWithDownloadCancel(
+        qjsTaskGroupKey,
+        Future<void>.delayed(const Duration(milliseconds: 500)),
+      );
+      await ensureTaskRunning();
+      return await fetchPage();
+    }
+    return await retryDownloadOperation<DownloadPictureResult>(
       operation: '下载图片 ${job.path}',
       ensureTaskRunning: ensureTaskRunning,
       shouldRetryUntilSuccess: shouldRetryUntilSuccess,
       shouldRetry: (error) {
-        if (isolatedPage) return false;
         if (error is! DownloadImageJobException) return true;
         if (error.result.status == DownloadPictureResultStatus.emptyData) {
-          // A successful HTTP response without bytes cannot establish that
-          // the page is missing. Bound repeated empty responses for this page.
           emptyResponses++;
           return emptyResponses <= downloadSilentRetryCount;
         }
@@ -350,32 +416,8 @@ Future<DownloadPictureResult> _downloadSingleJob({
         return (cause == null || !isNonRetryableDownloadFailure(cause)) &&
             error.result.status != DownloadPictureResultStatus.notFound;
       },
-      action: () async {
-        final result = await downloadPictureResult(
-          from: from,
-          url: job.url,
-          path: job.path,
-          cartoonId: job.cartoonId,
-          chapterId: job.chapterId,
-          storageChapterId: job.storageChapterId,
-          pictureType: pictureType,
-          // 外层负责整张图片的重试，避免网络层 10 次重试后才进入
-          // 保存/解码失败的重试流程。
-          retry: false,
-          qjsName: qjsRuntimeName,
-          qjsTaskGroupKey: qjsTaskGroupKey,
-          extern: job.extern,
-          isolatedPage: isolatedPage,
-          requestTimeoutMs: isolatedPage ? 12000 : 30000,
-        );
-        if (!result.isSuccess) {
-          _throwLocalFileFailure(result);
-          throw DownloadImageJobException(job: job, result: result);
-        }
-        return result;
-      },
+      action: fetchPage,
     );
-    return result;
   } catch (error, stackTrace) {
     if (onError != null) {
       await onError(error, job);

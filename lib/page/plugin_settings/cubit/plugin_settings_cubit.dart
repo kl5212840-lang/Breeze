@@ -442,26 +442,6 @@ class PluginSettingsCubit extends Cubit<PluginSettingsState> {
     }
   }
 
-  void resetAfterPersonalDataClear() {
-    _loadEpoch++;
-    _userInfoEpoch++;
-    if (!isClosed) {
-      emit(
-        state.copyWith(
-          loading: false,
-          hasLoadedSettings: true,
-          values: const {},
-          userInfo: const {},
-          canShowUserInfo: false,
-          loadingUserInfo: false,
-          userInfoError: '',
-          userInfoLoginRequired: false,
-          error: '',
-        ),
-      );
-    }
-  }
-
   void saveFieldValue(String key, dynamic value) {
     if (key.isEmpty) {
       return;

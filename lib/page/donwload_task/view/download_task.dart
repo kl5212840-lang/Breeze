@@ -79,6 +79,7 @@ import 'package:zephyr/service/download/download_delete_service.dart';
 import 'package:zephyr/service/download/download_chapter_removal.dart';
 import 'package:zephyr/service/download/download_queue_manager.dart';
 import 'package:zephyr/service/download/download_task_progress.dart';
+import 'package:zephyr/service/download/download_retry.dart';
 import 'package:zephyr/service/download/download_task_repository.dart';
 import 'package:zephyr/service/download/download_admission.dart';
 import 'package:zephyr/service/download/models/download_task_json.dart'
@@ -2781,7 +2782,7 @@ class _DownloadRow extends StatefulWidget {
 }
 
 class _DownloadRowState extends State<_DownloadRow> {
-  Future<DownloadResourceSize>? _size;
+  List<DownloadTask> _selectedComicTasks = const [];
   String? _cancellingVideoTaskKey;
   int? _cancellingVideoAttempt;
   bool _cancellingVideo(Map<String, dynamic> row) =>
@@ -2823,7 +2824,6 @@ class _DownloadRowState extends State<_DownloadRow> {
   @override
   void initState() {
     super.initState();
-    _readSize();
     widget.videoProgress?.addListener(_sampleRate);
     _sampleRate();
   }
@@ -2838,16 +2838,6 @@ class _DownloadRowState extends State<_DownloadRow> {
       _currentRate = null;
       _sampleRate();
     }
-    // The service returns a shared versioned future; no scan occurs on byte
-    // progress. Explicit refresh invalidates it and provides a fresh future.
-    _readSize();
-  }
-
-  void _readSize() {
-    final resource = widget.item.resource;
-    _size = resource == null
-        ? null
-        : DownloadResourceMetrics.instance.readComic(resource);
   }
 
   void _sampleRate() {
@@ -2875,14 +2865,8 @@ class _DownloadRowState extends State<_DownloadRow> {
         video?['local'] == true &&
         video?['fileRemoved'] != true &&
         video?['fileInvalid'] != true;
-    final bytes = video == null
-        ? size?.sizeBytes
-        : savedVideo
-        ? item.sizeBytes
-        : null;
-    final partial =
-        size?.status == DownloadResourceSizeStatus.partial &&
-        (size?.knownBytes ?? 0) > 0;
+    final comicBytes = size?.downloadedBytes;
+    final comicInProgress = video == null && item.priority != 3;
     return DownloadCardFooter(
       itemKey: item.key,
       completedAt: video == null || savedVideo ? item.completedAt : null,
@@ -2893,10 +2877,12 @@ class _DownloadRowState extends State<_DownloadRow> {
             rate: rate,
             formatBytes: downloadByteAmount,
           )
-        else if (bytes != null)
-          downloadByteAmount(bytes)
-        else if (partial)
-          '≥ ${downloadByteAmount(size!.knownBytes, lowerBound: true)}',
+        else if (comicBytes != null &&
+            (comicInProgress || size?.sizeBytes == null))
+          t.download.comicSavedBytes(amount: downloadByteAmount(comicBytes))
+        else if ((comicBytes ?? (savedVideo ? item.sizeBytes : null))
+            case final bytes?)
+          downloadByteAmount(bytes),
       ],
     );
   }
@@ -3179,16 +3165,17 @@ class _DownloadRowState extends State<_DownloadRow> {
       ],
     );
     Widget row(List<DownloadTask> tasks, Map<String, dynamic>? video) {
-      if (video == null && item.comicId != null) {
-        _size = DownloadResourceMetrics.instance.readComicProgress(
-          source: item.source,
-          comicId: item.comicId!,
-          resource: item.resource,
-          tasks: tasks
-              .map(_repository.readPayload)
-              .whereType<DownloadTaskJson>(),
-        );
-      }
+      final comicId = item.comicId;
+      final sizeFuture = video == null && comicId != null
+          ? DownloadResourceMetrics.instance.readComicProgress(
+              source: item.source,
+              comicId: comicId,
+              resource: item.resource,
+              tasks: tasks
+                  .map(_repository.readPayload)
+                  .whereType<DownloadTaskJson>(),
+            )
+          : null;
       final colors = Theme.of(context).colorScheme;
       final chapterProgress = item.chapterProgress(tasks);
       final multi = !item.isVideo && chapterProgress.keys.length > 1;
@@ -3219,7 +3206,7 @@ class _DownloadRowState extends State<_DownloadRow> {
               failed: false,
             )
           : video == null
-          ? _comicStatus(tasks, item.resource, aggregate: multi)
+          ? _comicStatus(tasks, item.resource, aggregate: multi, workCard: true)
           : _videoStatus(video, compactEpisode: widget.compactVideoEpisode);
       final completed = video == null
           ? item.priority == 3
@@ -3232,12 +3219,33 @@ class _DownloadRowState extends State<_DownloadRow> {
           ? tasks.any((task) => downloadComicPriority(task) == 0)
           : _activeVideo(video);
       final checked = widget.managing && !active && widget.selected;
-      final canRetryComics =
-          !item.isVideo && tasks.any(comicQueue.canResumeTask);
+      final resumableComics = video == null
+          ? tasks.where(comicQueue.canResumeTask).toList()
+          : const <DownloadTask>[];
       final pausableComics = video == null
           ? tasks.where(comicQueue.canPauseTask).toList()
           : const <DownloadTask>[];
-      final recovery = active
+      final resumePausedComics =
+          !active &&
+          resumableComics.any(
+            (task) => _repository.readPayload(task)?.stateCode == 'paused',
+          );
+      final recoveryComics = resumableComics
+          .where(
+            (task) =>
+                (_repository.readPayload(task)?.stateCode == 'paused') ==
+                resumePausedComics,
+          )
+          .toList();
+      final pauseAction =
+          active &&
+          (video != null ||
+              pausableComics.any(
+                (task) =>
+                    _repository.readPayload(task)?.phaseCode != 'waitingRetry',
+              ) ||
+              recoveryComics.isEmpty);
+      final recovery = pauseAction
           ? IconButton(
               tooltip: video == null
                   ? _label(context, '暂停此作品的下载', 'Pause downloads for this work')
@@ -3263,11 +3271,17 @@ class _DownloadRowState extends State<_DownloadRow> {
               includeSourceDetails: false,
               onRetry: () => widget.onRetryVideo(video),
             )
-          : canRetryComics
+          : recoveryComics.isNotEmpty
           ? IconButton(
-              tooltip: t.common.retry,
-              icon: const Icon(Icons.refresh_rounded),
-              onPressed: widget.enabled ? () => _retry(tasks) : null,
+              tooltip: resumePausedComics
+                  ? _label(context, '继续下载', 'Resume download')
+                  : t.common.retry,
+              icon: Icon(
+                resumePausedComics
+                    ? Icons.play_arrow_rounded
+                    : Icons.refresh_rounded,
+              ),
+              onPressed: widget.enabled ? () => _retry(recoveryComics) : null,
             )
           : null;
       final exportLabel = _label(context, '导出副本', 'Export copy');
@@ -3388,6 +3402,46 @@ class _DownloadRowState extends State<_DownloadRow> {
           ),
         ],
       );
+      final progress = active && networkWait == null && !queuedVideo
+          ? LinearProgressIndicator(
+              key: ValueKey('download-work-progress.${item.key}'),
+              value: status.progress,
+              minHeight: 3,
+              borderRadius: BorderRadius.circular(2),
+            )
+          : null;
+      final transfer = showStatus || active
+          ? DownloadCardTransfer(
+              key: ValueKey('download-state-row.${item.key}'),
+              status: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                spacing: 4,
+                children: [
+                  statusMetadata,
+                  if (status.reason case final reason?)
+                    Text(
+                      reason,
+                      key: ValueKey('download-reason.${item.key}'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: bodyStyle?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                ],
+              ),
+              progress: progress,
+              action: recovery == null
+                  ? null
+                  : Visibility(
+                      visible: !widget.managing,
+                      maintainAnimation: true,
+                      maintainState: true,
+                      maintainSize: true,
+                      child: recovery,
+                    ),
+            )
+          : null;
       final content = CollectionPressFeedback(
         enabled: widget.enabled,
         child: TouchHoverIntent(
@@ -3490,56 +3544,12 @@ class _DownloadRowState extends State<_DownloadRow> {
                               color: colors.onSurfaceVariant,
                             ),
                           ),
+                        if (transfer != null) transfer,
                       ],
                       footer: [
-                        if (showStatus || active)
-                          Row(
-                            key: ValueKey('download-state-row.${item.key}'),
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  spacing: 4,
-                                  children: [
-                                    statusMetadata,
-                                    if (status.reason case final reason?)
-                                      Text(
-                                        reason,
-                                        key: ValueKey(
-                                          'download-reason.${item.key}',
-                                        ),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: bodyStyle?.copyWith(
-                                          color: colors.onSurfaceVariant,
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                              if (recovery != null)
-                                Visibility(
-                                  visible: !widget.managing,
-                                  maintainAnimation: true,
-                                  maintainState: true,
-                                  maintainSize: true,
-                                  child: recovery,
-                                ),
-                            ],
-                          ),
-                        if (active && networkWait == null && !queuedVideo)
-                          LinearProgressIndicator(
-                            key: ValueKey('download-work-progress.${item.key}'),
-                            value: status.progress,
-                            minHeight: 3,
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                        if (_size case final sizeFuture?)
+                        if (sizeFuture != null)
                           FutureBuilder<DownloadResourceSize>(
-                            key: ValueKey((
-                              item.resource?.key,
-                              item.resource?.metricsVersion,
-                            )),
+                            key: ValueKey(item.key),
                             future: sizeFuture,
                             builder: (context, result) => _sizeAndTime(
                               video,
@@ -3686,23 +3696,26 @@ class _DownloadRowState extends State<_DownloadRow> {
         },
       );
     }
-    final ids = item.tasks.map((task) => task.id).toSet();
-    return BlocSelector<DowloadTaskBloc, DowloadTaskState, String>(
-      selector: (state) => state.maybeWhen(
-        loaded: (tasks, _) => tasks
-            .where((task) => ids.contains(task.id))
-            .map((task) => task.dbTaskInfoStr)
-            .join('\n'),
-        orElse: () => '',
-      ),
-      builder: (context, _) {
-        final tasks = context.read<DowloadTaskBloc>().state.maybeWhen(
-          loaded: (rows, _) =>
-              rows.where((task) => ids.contains(task.id)).toList(),
+    return BlocSelector<DowloadTaskBloc, DowloadTaskState, List<DownloadTask>>(
+      selector: (state) {
+        final next = state.maybeWhen(
+          loaded: (_, _) => [
+            for (final task in item.tasks)
+              if (state.taskById(task.id) case final current?) current,
+          ],
           orElse: () => item.tasks,
         );
-        return row(tasks, null);
+        // Unchanged rows are identical across database snapshots. Reuse the
+        // selection without copying or concatenating serialized checkpoints.
+        if (!const ListEquality<DownloadTask>().equals(
+          _selectedComicTasks,
+          next,
+        )) {
+          _selectedComicTasks = next;
+        }
+        return _selectedComicTasks;
       },
+      builder: (_, tasks) => row(tasks, null),
     );
   }
 }
@@ -3738,6 +3751,7 @@ _Status _comicStatus(
   List<DownloadTask> tasks,
   DownloadComicResource? resource, {
   bool aggregate = false,
+  bool workCard = false,
 }) {
   final sorted = tasks.toList()
     ..sort((a, b) {
@@ -3778,14 +3792,30 @@ _Status _comicStatus(
           ? t.download.completed
           : payload?.phaseCode == 'waitingRetry'
           ? t.download.statusWaitingRetry
+          : payload?.phaseCode == 'switchingRoute'
+          ? (task.isDownloading && task.status.isNotEmpty
+                ? task.status
+                : t.download.statusSwitchingRoute)
           : waiting
           ? t.download.statusWaiting
-          : payload != null && payload.totalImages > 0
-          ? downloadTaskPayloadProgressMessage(payload)
+          : payload != null &&
+                payload.totalImages > 0 &&
+                const {'', 'downloadingChapter'}.contains(payload.phaseCode)
+          ? (workCard
+                ? t.download.downloading
+                : downloadTaskPayloadProgressMessage(payload))
           : task.status.isNotEmpty
           ? task.status
           : t.download.downloading);
-  final detail = failed ? payload?.lastErrorMessage.trim() ?? '' : '';
+  final detail = failed
+      ? payload?.lastErrorMessage.trim() ?? ''
+      : payload?.phaseCode == 'waitingRetry'
+      ? ComicDownloadRetryReason.values
+                .where((reason) => reason.name == payload?.lastErrorCode)
+                .firstOrNull
+                ?.label ??
+            ''
+      : '';
   final failedCount = aggregate
       ? tasks
             .where(
@@ -3804,26 +3834,9 @@ _Status _comicStatus(
               const <String>[],
         )
       : null;
-  final workMessage =
-      aggregate &&
-          networkWait == null &&
-          !waiting &&
-          downloadComicPriority(task) == 0 &&
-          payload != null &&
-          payload.totalImages > 0 &&
-          !cancelling
-      ? workProgress == null
-            ? t.download.downloading
-            : t.download.statusDownloadProgress(
-                percent: (workProgress * 100).floor(),
-              )
-      : message;
   return (
     message: [
-      if (aggregate && failed)
-        '${t.download.failed} $failedCount'
-      else
-        workMessage,
+      if (aggregate && failed) '${t.download.failed} $failedCount' else message,
       if (failedCount > 0 && !failed) '${t.download.failed} $failedCount',
     ].join(' · '),
     reason: detail.isNotEmpty ? detail : null,
@@ -4010,7 +4023,12 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
     );
   }
 
-  String? _spaceLabel(DownloadResourceSize? size) {
+  String? _chapterSizeLabel(DownloadResourceSize? size, bool isTransfer) {
+    if (isTransfer && size?.downloadedBytes != null) {
+      return t.download.comicSavedBytes(
+        amount: downloadByteAmount(size!.downloadedBytes!),
+      );
+    }
     final exact = size?.sizeBytes;
     if (exact != null) return downloadByteAmount(exact);
     if (size?.status == DownloadResourceSizeStatus.partial &&
@@ -4572,7 +4590,8 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
                                       ? metadata?.copyWith(color: colors.error)
                                       : metadata,
                                 ),
-                                if (_spaceLabel(size) case final chapterSize?)
+                                if (_chapterSizeLabel(size, taskVersion != null)
+                                    case final chapterSize?)
                                   Text(
                                     chapterSize,
                                     key: ValueKey('download-chapter-size.$key'),
@@ -4732,39 +4751,30 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
         ),
         body: BlocBuilder<DowloadTaskBloc, DowloadTaskState>(
           buildWhen: (before, after) {
-            List<DownloadTask> rows(DowloadTaskState state) => state.maybeWhen(
-              loaded: (tasks, _) => tasks,
-              orElse: () => <DownloadTask>[],
+            Iterable<DownloadTask> rows(DowloadTaskState state) =>
+                state.tasksForComic(
+                  widget.initial.source,
+                  widget.initial.comicId ?? '',
+                );
+            return !const IterableEquality<DownloadTask>().equals(
+              rows(before),
+              rows(after),
             );
-            bool belongs(DownloadTask task) {
-              final payload = _repository.readPayload(task);
-              return payload?.from == widget.initial.source &&
-                  payload?.comicId == widget.initial.comicId;
-            }
-
-            final prior = rows(before).where(belongs).toList();
-            final next = rows(after).where(belongs).toList();
-            if (prior.length != next.length) return true;
-            return next.indexed.any((entry) {
-              final old = prior[entry.$1], current = entry.$2;
-              return !identical(old, current) &&
-                  (old.id != current.id ||
-                      old.status != current.status ||
-                      old.isCompleted != current.isCompleted ||
-                      old.isDownloading != current.isDownloading ||
-                      old.dbTaskInfoStr != current.dbTaskInfoStr);
-            });
           },
           builder: (context, state) {
-            final tasks = state.maybeWhen(
-              loaded: (rows, _) => rows.where((task) {
-                final payload = _repository.readPayload(task);
-                return payload?.from == widget.initial.source &&
-                    payload?.comicId == widget.initial.comicId &&
-                    downloadCenterShowsComicTask(task, payload, _resource);
-              }).toList(),
-              orElse: () => <DownloadTask>[],
-            );
+            final tasks = state
+                .tasksForComic(
+                  widget.initial.source,
+                  widget.initial.comicId ?? '',
+                )
+                .where(
+                  (task) => downloadCenterShowsComicTask(
+                    task,
+                    _repository.readPayload(task),
+                    _resource,
+                  ),
+                )
+                .toList();
             final stored =
                 _resource?.chapters ??
                 const <UnifiedComicDownloadStoredChapter>[];
@@ -4979,12 +4989,10 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
                                   ),
                                   style: Theme.of(context).textTheme.bodySmall,
                                 ),
-                                if (_spaceLabel(metrics) case final size?)
+                                if (metrics?.downloadedBytes case final bytes?)
                                   Text(
-                                    _label(
-                                      context,
-                                      '本机占用：$size',
-                                      'On-device size: $size',
+                                    t.download.comicSavedBytes(
+                                      amount: downloadByteAmount(bytes),
                                     ),
                                     key: const ValueKey(
                                       'download-chapters-total-size',
@@ -5489,25 +5497,8 @@ class _ChapterRow extends StatelessWidget {
   final Widget Function(DownloadTask task) builder;
   @override
   Widget build(BuildContext context) =>
-      BlocSelector<DowloadTaskBloc, DowloadTaskState, String>(
-        selector: (state) => state.maybeWhen(
-          loaded: (rows, _) =>
-              rows
-                  .where((row) => row.id == task.id)
-                  .firstOrNull
-                  ?.dbTaskInfoStr ??
-              '',
-          orElse: () => '',
-        ),
-        builder: (context, _) {
-          final current =
-              context.read<DowloadTaskBloc>().state.maybeWhen(
-                loaded: (rows, _) =>
-                    rows.where((row) => row.id == task.id).firstOrNull,
-                orElse: () => null,
-              ) ??
-              task;
-          return builder(current);
-        },
+      BlocSelector<DowloadTaskBloc, DowloadTaskState, DownloadTask?>(
+        selector: (state) => state.taskById(task.id),
+        builder: (context, current) => builder(current ?? task),
       );
 }

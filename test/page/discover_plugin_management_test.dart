@@ -23,8 +23,6 @@ void main() {
     double scale = 1,
     double keyboard = 0,
     ValueNotifier<List<DiscoverPluginManagementOption>>? plugins,
-    Future<void> Function(DiscoverPluginManagementOption)? onSettings,
-    Future<void> Function(String, bool)? onToggleEnabled,
   }) async {
     tester.view.physicalSize = const Size(320, 740);
     tester.view.devicePixelRatio = 1;
@@ -51,8 +49,6 @@ void main() {
                         defaultOrder: const ['a', 'b'],
                         hiddenIds: hidden,
                         onSave: save,
-                        onSettings: onSettings,
-                        onToggleEnabled: onToggleEnabled,
                       )
                     : ValueListenableBuilder<
                         List<DiscoverPluginManagementOption>
@@ -63,8 +59,6 @@ void main() {
                           defaultOrder: const ['a', 'b', 'c'],
                           hiddenIds: hidden,
                           onSave: save,
-                          onSettings: onSettings,
-                          onToggleEnabled: onToggleEnabled,
                         ),
                       ),
               ),
@@ -156,56 +150,17 @@ void main() {
     },
   );
 
-  testWidgets(
-    'runtime actions target hidden sources without committing the visibility draft',
-    (tester) async {
-      final settings = <String>[];
-      final toggles = <(String, bool)>[];
-      var saves = 0;
-      final plugins = ValueNotifier<List<DiscoverPluginManagementOption>>([
-        const DiscoverPluginManagementOption(
-          id: 'a',
-          title: '待启用的来源',
-          enabled: false,
-        ),
-      ]);
-      addTearDown(plugins.dispose);
-      await open(
-        tester,
-        plugins: plugins,
-        hidden: {'a'},
-        scale: 2,
-        onSettings: (plugin) async => settings.add(plugin.id),
-        onToggleEnabled: (id, enabled) async => toggles.add((id, enabled)),
-        save: (_) async => saves++,
-      );
-      await tester.tap(control('actions.a'));
-      await tester.pumpAndSettle();
-      final setting = control('settings.a');
-      final toggle = control('enabled.a');
-      await tester.ensureVisible(setting);
-      await tester.pumpAndSettle();
-      await tester.tap(setting);
-      await tester.pumpAndSettle();
-      await tester.ensureVisible(toggle);
-      await tester.pumpAndSettle();
-      await tester.tap(toggle);
-      await tester.pumpAndSettle();
-      expect(settings, ['a']);
-      expect(toggles, [('a', true)]);
-      expect(tester.widget<Switch>(visible('a')).value, isFalse);
-      plugins.value = const [
-        DiscoverPluginManagementOption(id: 'a', title: '待启用的来源'),
-      ];
-      await tester.pumpAndSettle();
-      expect(find.text(t.discover.disablePlugin), findsOneWidget);
-      expect(tester.widget<Switch>(visible('a')).value, isFalse);
-      expect(tester.takeException(), isNull);
-      await tester.tap(control('cancel'));
-      await tester.pumpAndSettle();
-      expect(saves, 0);
-    },
-  );
+  testWidgets('only visibility and ordering are available in the dialog', (
+    tester,
+  ) async {
+    await open(tester, save: (_) async {}, scale: 2);
+    expect(control('actions.a'), findsNothing);
+    expect(find.text(t.discover.settings), findsNothing);
+    expect(find.text(t.discover.disablePlugin), findsNothing);
+    expect(visible('a'), findsOneWidget);
+    expect(control('drag.a'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'busy prevents close/back/duplicate saves and failure keeps the draft for retry',

@@ -419,51 +419,48 @@ class DownloadVideoWorkCard extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                               style: muted,
                             ),
-                        ],
-                        footer: [
-                          if (stateLabels.isNotEmpty || retry != null)
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    stateLabels.join(' · '),
-                                    key: ValueKey(
-                                      'download-work-state.${work.key}',
-                                    ),
-                                    style: muted?.copyWith(
-                                      color: live.failed > 0
-                                          ? colors.error
-                                          : null,
-                                    ),
-                                  ),
+                          if (stateLabels.isNotEmpty ||
+                              retry != null ||
+                              live.transferring)
+                            DownloadCardTransfer(
+                              status: Text(
+                                stateLabels.join(' · '),
+                                key: ValueKey(
+                                  'download-work-state.${work.key}',
                                 ),
-                                if (retry != null) retry,
-                              ],
-                            ),
-                          if (live.transferring)
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: LinearProgressIndicator(
-                                    value: fraction,
-                                    minHeight: 3,
-                                    borderRadius: BorderRadius.circular(2),
-                                  ),
+                                style: muted?.copyWith(
+                                  color: live.failed > 0 ? colors.error : null,
                                 ),
-                                if (fraction != null) ...[
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    '${(fraction * 100).floor()}%',
-                                    key: ValueKey(
-                                      'download-work-progress-text.${work.key}',
-                                    ),
-                                    style: muted,
-                                  ),
-                                ],
-                              ],
+                              ),
+                              action: retry,
+                              progress: live.transferring
+                                  ? Row(
+                                      children: [
+                                        Expanded(
+                                          child: LinearProgressIndicator(
+                                            value: fraction,
+                                            minHeight: 3,
+                                            borderRadius: BorderRadius.circular(
+                                              2,
+                                            ),
+                                          ),
+                                        ),
+                                        if (fraction != null) ...[
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            '${(fraction * 100).floor()}%',
+                                            key: ValueKey(
+                                              'download-work-progress-text.${work.key}',
+                                            ),
+                                            style: muted,
+                                          ),
+                                        ],
+                                      ],
+                                    )
+                                  : null,
                             ),
-                          _WorkTransferDetails(work: live),
                         ],
+                        footer: [_WorkTransferDetails(work: live)],
                       ),
                     ),
                   ],

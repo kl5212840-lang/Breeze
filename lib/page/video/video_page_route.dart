@@ -1,3 +1,6 @@
+import 'package:zephyr/config/global/global_setting.dart'
+    show eInkInstantRoutes;
+import 'package:zephyr/platform/eink/eink_page_transitions.dart';
 import 'package:zephyr/page/video/omo_network.dart';
 import 'package:zephyr/page/video/video_network_scope.dart';
 import 'package:cupertino_ui/cupertino_ui.dart' as cupertino_ui;
@@ -39,6 +42,9 @@ PageRoute<T> videoPageRoute<T>({
   }
 
   if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+    if (eInkInstantRoutes) {
+      return EinkCupertinoPageRoute<T>(builder: build, settings: settings);
+    }
     // AutoRoute recognizes the cupertino_ui route family when linking the
     // underlying page's secondary animation to this destination.
     if (matchAutoRouteTransition) {

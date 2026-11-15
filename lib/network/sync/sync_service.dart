@@ -1697,6 +1697,7 @@ Map<String, Map<String, dynamic>> _extractSyncableSettingsBlocks(
       'disableBika': json['disableBika'],
       'updateAccelerate': json['updateAccelerate'],
       'retryDownloadUntilSuccess': json['retryDownloadUntilSuccess'],
+      'comicDownloadConcurrency': json['comicDownloadConcurrency'],
       'videoDownloadConcurrency': json['videoDownloadConcurrency'],
       'downloadWifiOnly': json['downloadWifiOnly'],
       'downloadCompletionNotice': json['downloadCompletionNotice'],

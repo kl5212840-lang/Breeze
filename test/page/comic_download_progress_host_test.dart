@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:persistent_bottom_nav_bar/persistent_bottom_nav_bar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/navigation_bar.dart' show MainNativeTabHost;
@@ -149,9 +150,36 @@ void main() {
             .25,
           );
           expect(find.text('0 of 2 chapters completed'), findsOneWidget);
+          expect(
+            find.text(t.download.statusDownloadProgress(percent: 50)),
+            findsNothing,
+          );
+          final summaryLabel = find.text('0 of 2 chapters completed');
+          final transfer = find.byKey(
+            ValueKey('download-state-row.comic:$source:$work'),
+          );
+          final status = find.byKey(
+            ValueKey('download-status.comic:$source:$work'),
+          );
+          final pause = find.descendant(
+            of: transfer,
+            matching: find.byIcon(Icons.pause_rounded),
+          );
+          final statusRect = tester.getRect(status);
+          final progressRect = tester.getRect(workProgress);
+          expect(tester.getRect(summaryLabel).bottom, lessThan(statusRect.top));
+          expect(progressRect.top - statusRect.bottom, closeTo(4, .1));
+          expect(progressRect.right, lessThan(tester.getRect(pause).left));
+          expect(
+            tester.getRect(transfer).contains(progressRect.center),
+            isTrue,
+          );
           await _until(
             tester,
-            () => find.text('≥ 4.0 KB').evaluate().isNotEmpty,
+            () => find
+                .text(t.download.comicSavedBytes(amount: '4.1 KB'))
+                .evaluate()
+                .isNotEmpty,
             'The real written file is measurable before a UnifiedComicDownload row exists',
           );
           expect(objectbox.unifiedDownloadBox.count(), 0);
@@ -175,6 +203,18 @@ void main() {
             findsNothing,
             reason: 'The work interior covers the main bottom navigation',
           );
+          final totalSize = find.byKey(
+            const ValueKey('download-chapters-total-size'),
+          );
+          await _until(
+            tester,
+            () => totalSize.evaluate().isNotEmpty,
+            'Saved work bytes appear in the chapter summary',
+          );
+          expect(
+            tester.widget<Text>(totalSize).data,
+            t.download.comicSavedBytes(amount: '4.1 KB'),
+          );
           final chapterProgress = find.byKey(
             ValueKey('download-chapter-progress.task:${first.id}'),
           );
@@ -193,8 +233,12 @@ void main() {
                   ),
                 )
                 .data!
-                .contains('4.0 KB'),
+                .contains(t.download.comicSavedBytes(amount: '4.1 KB')),
             'The chapter uses the exact logical/request alias and actual disk bytes',
+          );
+          expect(
+            find.text(t.download.statusDownloadProgress(percent: 50)),
+            findsOneWidget,
           );
           first.taskInfo = payload.copyWith(completedImages: 3);
           objectbox.downloadTaskBox.put(first);

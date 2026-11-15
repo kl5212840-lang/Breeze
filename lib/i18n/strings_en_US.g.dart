@@ -540,7 +540,7 @@ class _Translations$settings$en_US extends Translations$settings$zh_CN {
 	@override String get einkEnabledSubtitle => 'Reduce animations and refresh the full screen periodically';
 	@override String get einkSectionAnimation => 'Animation & transitions';
 	@override String get einkNoRouteTransition => 'Remove page transition animation';
-	@override String get einkNoRouteTransitionSubtitle => 'Open and close pages without animation';
+	@override String get einkNoRouteTransitionSubtitle => 'Switch pages instantly and keep swipe-to-go-back';
 	@override String get einkNoScrollBounce => 'Remove scroll overscroll';
 	@override String get einkNoScrollBounceSubtitle => 'Stop without bouncing at webtoon edges';
 	@override String get einkSectionLoading => 'Loading';
@@ -549,7 +549,7 @@ class _Translations$settings$en_US extends Translations$settings$zh_CN {
 	@override String get einkRefreshNone => 'Disabled';
 	@override String get einkRefreshWhite => 'White flash';
 	@override String get einkRefreshFull => 'Black & white flash';
-	@override String get einkRefreshHint => 'Flash white or black-and-white to clear ghosting';
+	@override String get einkRefreshHint => 'Flash white or black and white to redraw the screen and reduce ghosting';
 	@override String get einkRefreshNow => 'Refresh now';
 	@override String get einkRefreshDone => 'Screen refreshed';
 	@override String get einkAutoRefreshTurns => 'Auto refresh interval (pages)';
@@ -557,7 +557,7 @@ class _Translations$settings$en_US extends Translations$settings$zh_CN {
 	@override String get einkShowRefreshButton => 'Show refresh button';
 	@override String get einkShowRefreshButtonSubtitle => 'Keep a manual full refresh in a reader corner';
 	@override String get einkNoSpinner => 'No loading spinner';
-	@override String get einkNoSpinnerSubtitle => 'Reduce repeated refreshes and ghosting';
+	@override String get einkNoSpinnerSubtitle => 'Show a static placeholder while comic images decode';
 	@override String get autoRealSr => 'Auto super-resolution';
 	@override String get resolutionThreshold => 'Resolution threshold';
 	@override String get debug => 'Debug';
@@ -894,6 +894,8 @@ class _Translations$comicInfo$en_US extends Translations$comicInfo$zh_CN {
 	@override String get collectToCloud => 'Collect to cloud';
 	@override String get removeCloudCollection => 'Remove cloud collection';
 	@override String get collectToLocal => 'Collect locally';
+	@override String get favoriteToFolder => 'Save to folder';
+	@override String get favoriteFolderUnavailable => 'This folder is unavailable. Choose another folder.';
 	@override String get removeLocalCollection => 'Remove local collection';
 	@override String get cloudCollectDisabled => 'This plugin does not support this feature';
 	@override String get collectingToCloud => 'Adding to cloud collection...';
@@ -1082,6 +1084,7 @@ class _Translations$reader$en_US extends Translations$reader$zh_CN {
 	@override String get timeSubtitle => 'Show current time';
 	@override String get infoBarPosition => 'Info bar position';
 	@override String get showInStatusBar => 'Show in status bar';
+	@override String get showSystemStatusBar => 'Show system status bar while reading';
 	@override String get showInStatusBarSubtitle => 'Top info bar enters system status bar area';
 	@override String get edgePadding => 'Edge padding';
 	@override String get infoBarStyle => 'Info bar style';
@@ -2518,6 +2521,8 @@ class _Translations$download$en_US extends Translations$download$zh_CN {
 	@override String get durationLong => '30–60 minutes';
 	@override String get durationHour => '1 hour or longer';
 	@override String get lastSuccessfulLine => 'Last successful download';
+	@override String get concurrentComicImages => 'Simultaneous comic images';
+	@override String get concurrentComicImagesHint => 'Download up to 10 images at once per chapter. Changes apply from the next chapter. Lower plugin limits apply automatically.';
 	@override String get concurrentVideos => 'Concurrent video downloads';
 	@override String get wifiOnly => 'Download over Wi-Fi only';
 	@override String get waitingForWifi => 'Waiting for Wi-Fi';
@@ -2575,6 +2580,12 @@ class _Translations$download$en_US extends Translations$download$zh_CN {
 	@override String statusComicProgressChaptersOnly({required Object completedChapters, required Object totalChapters}) => 'Comic progress: ${completedChapters}/${totalChapters} chapters';
 	@override String get statusStartDownload => 'Start downloading...';
 	@override String get statusWaiting => 'Waiting';
+	@override String get statusSwitchingRoute => 'Switching download routes…';
+	@override String comicSavedBytes({required Object amount}) => 'Saved on device: ${amount}';
+	@override String get retryNetwork => 'Connection temporarily interrupted';
+	@override String get retryTimeout => 'Source timed out';
+	@override String get retryRateLimited => 'Source is limiting requests';
+	@override String get retrySourceUnavailable => 'Source temporarily unavailable';
 	@override String get statusWaitingRetry => 'Waiting to retry';
 	@override String backgroundChapterProgress({required Object completed, required Object total}) => '${completed} / ${total} chapters';
 	@override String get retryNow => 'Retry now';
@@ -3623,6 +3634,8 @@ class _Translations$pluginLifecycle$en_US extends Translations$pluginLifecycle$z
 	@override String get keepDataDescription => 'Leave both unchecked to remove only the plugin and keep its data and downloads.';
 	@override String get deleteLocalData => 'Delete all local data';
 	@override String get deleteLocalDataHint => 'Includes favorites, history, following, account settings, downloads and local images.';
+	@override String get deletingCloud => 'Deleting plugin data from the cloud…';
+	@override String get removalContinueHint => 'You can go back. Breeze will notify you when it finishes.';
 	@override String get deleteCloudData => 'Also delete Breeze cloud data';
 	@override String get deleteCloudDataHint => 'Includes this plugin and its data. Other plugins are unaffected.';
 	@override String deleteConfirmTitle({required Object name}) => 'Delete ${name}?';
@@ -4275,7 +4288,7 @@ extension on TranslationsEnUs {
 			'settings.einkEnabledSubtitle' => 'Reduce animations and refresh the full screen periodically',
 			'settings.einkSectionAnimation' => 'Animation & transitions',
 			'settings.einkNoRouteTransition' => 'Remove page transition animation',
-			'settings.einkNoRouteTransitionSubtitle' => 'Open and close pages without animation',
+			'settings.einkNoRouteTransitionSubtitle' => 'Switch pages instantly and keep swipe-to-go-back',
 			'settings.einkNoScrollBounce' => 'Remove scroll overscroll',
 			'settings.einkNoScrollBounceSubtitle' => 'Stop without bouncing at webtoon edges',
 			'settings.einkSectionLoading' => 'Loading',
@@ -4284,7 +4297,7 @@ extension on TranslationsEnUs {
 			'settings.einkRefreshNone' => 'Disabled',
 			'settings.einkRefreshWhite' => 'White flash',
 			'settings.einkRefreshFull' => 'Black & white flash',
-			'settings.einkRefreshHint' => 'Flash white or black-and-white to clear ghosting',
+			'settings.einkRefreshHint' => 'Flash white or black and white to redraw the screen and reduce ghosting',
 			'settings.einkRefreshNow' => 'Refresh now',
 			'settings.einkRefreshDone' => 'Screen refreshed',
 			'settings.einkAutoRefreshTurns' => 'Auto refresh interval (pages)',
@@ -4292,7 +4305,7 @@ extension on TranslationsEnUs {
 			'settings.einkShowRefreshButton' => 'Show refresh button',
 			'settings.einkShowRefreshButtonSubtitle' => 'Keep a manual full refresh in a reader corner',
 			'settings.einkNoSpinner' => 'No loading spinner',
-			'settings.einkNoSpinnerSubtitle' => 'Reduce repeated refreshes and ghosting',
+			'settings.einkNoSpinnerSubtitle' => 'Show a static placeholder while comic images decode',
 			'settings.autoRealSr' => 'Auto super-resolution',
 			'settings.resolutionThreshold' => 'Resolution threshold',
 			'settings.debug' => 'Debug',
@@ -4662,6 +4675,8 @@ extension on TranslationsEnUs {
 			'comicInfo.collectToCloud' => 'Collect to cloud',
 			'comicInfo.removeCloudCollection' => 'Remove cloud collection',
 			'comicInfo.collectToLocal' => 'Collect locally',
+			'comicInfo.favoriteToFolder' => 'Save to folder',
+			'comicInfo.favoriteFolderUnavailable' => 'This folder is unavailable. Choose another folder.',
 			'comicInfo.removeLocalCollection' => 'Remove local collection',
 			'comicInfo.cloudCollectDisabled' => 'This plugin does not support this feature',
 			'comicInfo.collectingToCloud' => 'Adding to cloud collection...',
@@ -4841,6 +4856,7 @@ extension on TranslationsEnUs {
 			'reader.timeSubtitle' => 'Show current time',
 			'reader.infoBarPosition' => 'Info bar position',
 			'reader.showInStatusBar' => 'Show in status bar',
+			'reader.showSystemStatusBar' => 'Show system status bar while reading',
 			'reader.showInStatusBarSubtitle' => 'Top info bar enters system status bar area',
 			'reader.edgePadding' => 'Edge padding',
 			'reader.infoBarStyle' => 'Info bar style',
@@ -4912,11 +4928,11 @@ extension on TranslationsEnUs {
 			'plugin.urlCannotBeEmpty' => 'URL cannot be empty',
 			'plugin.startInstall' => 'Start install',
 			'plugin.pluginSettingsTitle' => ({required Object name}) => '${name} settings',
+			_ => null,
+		} ?? switch (path) {
 			'plugin.debugConfigUpdated' => 'Plugin debug config updated',
 			'plugin.deletePlugin' => 'Remove plugin',
 			'plugin.confirmDeletePlugin' => 'Remove this plugin from this device? Personal data and downloads are kept. Other devices are unaffected.',
-			_ => null,
-		} ?? switch (path) {
 			'plugin.deleteFailed' => ({required Object error}) => 'Delete failed: ${error}',
 			'plugin.pluginDeleted' => 'Removed from this device',
 			'plugin.executeFailed' => ({required Object error}) => 'Execute failed: ${error}',
@@ -5426,11 +5442,11 @@ extension on TranslationsEnUs {
 			'sourceProfile.backToProfile' => 'Back to profile',
 			'sourceProfile.recordsUnavailable' => 'Local records are unavailable',
 			'sourceProfile.signInForFavorites' => 'Sign in to view site favorites',
+			_ => null,
+		} ?? switch (path) {
 			'sourceProfile.dataNotRefreshed' => 'Site data could not be refreshed',
 			'sourceProfile.checkinIdentityChanged' => 'The account or date changed. Check again.',
 			'sourceProfile.calendarCheckedIn' => ({required Object date}) => '${date} · Site calendar confirms check-in',
-			_ => null,
-		} ?? switch (path) {
 			'sourceProfile.calendarNotCheckedIn' => ({required Object date}) => '${date} · Site calendar shows no check-in',
 			'sourceProfile.calendarCheckinRetained' => 'Site status is unavailable. The saved record is kept.',
 			'sourceProfile.calendarCheckinUnavailable' => 'Could not verify site status. Try again later.',
@@ -5940,11 +5956,11 @@ extension on TranslationsEnUs {
 			'videoPlayback.selectCurrentRange' => 'Select this range',
 			'videoPlayback.deselectCurrentRange' => 'Deselect this range',
 			'videoPlayback.clearAllSelections' => 'Clear all selections',
+			_ => null,
+		} ?? switch (path) {
 			'videoPlayback.addRange' => 'Add range',
 			'videoPlayback.episodeApplyOrder' => 'Apply order',
 			'videoPlayback.episodeReorder' => 'Reorder',
-			_ => null,
-		} ?? switch (path) {
 			'videoPlayback.episodeMoveUp' => 'Move up',
 			'videoPlayback.episodeMoveDown' => 'Move down',
 			'videoPlayback.episodeWaiting' => 'Loading the selected video…',
@@ -6082,6 +6098,8 @@ extension on TranslationsEnUs {
 			'download.durationLong' => '30–60 minutes',
 			'download.durationHour' => '1 hour or longer',
 			'download.lastSuccessfulLine' => 'Last successful download',
+			'download.concurrentComicImages' => 'Simultaneous comic images',
+			'download.concurrentComicImagesHint' => 'Download up to 10 images at once per chapter. Changes apply from the next chapter. Lower plugin limits apply automatically.',
 			'download.concurrentVideos' => 'Concurrent video downloads',
 			'download.wifiOnly' => 'Download over Wi-Fi only',
 			'download.waitingForWifi' => 'Waiting for Wi-Fi',
@@ -6139,6 +6157,12 @@ extension on TranslationsEnUs {
 			'download.statusComicProgressChaptersOnly' => ({required Object completedChapters, required Object totalChapters}) => 'Comic progress: ${completedChapters}/${totalChapters} chapters',
 			'download.statusStartDownload' => 'Start downloading...',
 			'download.statusWaiting' => 'Waiting',
+			'download.statusSwitchingRoute' => 'Switching download routes…',
+			'download.comicSavedBytes' => ({required Object amount}) => 'Saved on device: ${amount}',
+			'download.retryNetwork' => 'Connection temporarily interrupted',
+			'download.retryTimeout' => 'Source timed out',
+			'download.retryRateLimited' => 'Source is limiting requests',
+			'download.retrySourceUnavailable' => 'Source temporarily unavailable',
 			'download.statusWaitingRetry' => 'Waiting to retry',
 			'download.backgroundChapterProgress' => ({required Object completed, required Object total}) => '${completed} / ${total} chapters',
 			'download.retryNow' => 'Retry now',
@@ -6446,6 +6470,8 @@ extension on TranslationsEnUs {
 			'videoFilters.active' => 'Active filters',
 			'videoFilters.removeFilter' => 'Remove this condition',
 			'videoFilters.customDate' => 'Custom date',
+			_ => null,
+		} ?? switch (path) {
 			'videoFilters.searchGroup' => 'Group',
 			'videoFilters.yearNeedsCategory' => 'Choose a category that supports year filtering',
 			'videoFilters.yearUnavailableRange' => 'Year filtering is unavailable in this scope',
@@ -6457,8 +6483,6 @@ extension on TranslationsEnUs {
 			'videoSearch.removeRecent' => 'Remove this search',
 			'videoSearch.localOnly' => 'Stored only on this device',
 			'videoSearch.hint' => 'Search videos or creators',
-			_ => null,
-		} ?? switch (path) {
 			'videoSearch.clearQuery' => 'Clear query',
 			'videoSearch.submit' => 'Search',
 			'videoSearch.cancel' => 'Cancel search',
@@ -6960,6 +6984,8 @@ extension on TranslationsEnUs {
 			'backupSecurity.localVideoInUse' => 'Close local video playback and try again.',
 			'backupSecurity.scopeHint' => 'Shared protection settings for cloud sync and local backup exports.',
 			'backupSecurity.cloudNotConfigured' => 'Cloud sync is not configured. Choose a service and enter its connection details in Sync.',
+			_ => null,
+		} ?? switch (path) {
 			'backupSecurity.readFailed' => 'Could not read the protection method. Tap to retry.',
 			'pluginLifecycle.remove' => 'Remove plugin',
 			'pluginLifecycle.removeHint' => 'Remove it from this device only. Favorites, history, account settings and downloads are kept.',
@@ -6971,8 +6997,6 @@ extension on TranslationsEnUs {
 			'pluginLifecycle.purgeHint' => 'Clear this plugin’s data on this device. Downloaded files are optional.',
 			'pluginLifecycle.purgeTitle' => 'Delete this plugin’s data?',
 			'pluginLifecycle.purgeConfirm' => 'The listed data will be cleared. This cannot be directly undone.',
-			_ => null,
-		} ?? switch (path) {
 			'pluginLifecycle.clearTarget' => 'Cloud data',
 			'pluginLifecycle.localOnly' => 'Clear this device only',
 			'pluginLifecycle.localOnlyHint' => 'Cloud data is kept and will not be imported automatically on this device.',
@@ -7011,6 +7035,8 @@ extension on TranslationsEnUs {
 			'pluginLifecycle.keepDataDescription' => 'Leave both unchecked to remove only the plugin and keep its data and downloads.',
 			'pluginLifecycle.deleteLocalData' => 'Delete all local data',
 			'pluginLifecycle.deleteLocalDataHint' => 'Includes favorites, history, following, account settings, downloads and local images.',
+			'pluginLifecycle.deletingCloud' => 'Deleting plugin data from the cloud…',
+			'pluginLifecycle.removalContinueHint' => 'You can go back. Breeze will notify you when it finishes.',
 			'pluginLifecycle.deleteCloudData' => 'Also delete Breeze cloud data',
 			'pluginLifecycle.deleteCloudDataHint' => 'Includes this plugin and its data. Other plugins are unaffected.',
 			'pluginLifecycle.deleteConfirmTitle' => ({required Object name}) => 'Delete ${name}?',

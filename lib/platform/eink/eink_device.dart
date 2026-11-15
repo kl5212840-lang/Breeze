@@ -57,7 +57,7 @@ Future<void> applyEinkAutoDetection(GlobalSettingCubit cubit) async {
   cubit.updateState(
     (current) => current.copyWith(
       eInkSetting: current.eInkSetting.copyWith(
-        enabled: detected,
+        enabled: current.eInkSetting.enabled || detected,
         detectionHandled: true,
       ),
       readSetting: detected

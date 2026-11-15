@@ -774,8 +774,8 @@ class PluginRegistryService {
     }
 
     guard();
-    _holdPublication(uuid);
     local.beginRemoval(uuid);
+    _holdPublication(uuid);
     try {
       await DownloadQueueManager.instance.stopSourceRetainingFiles(uuid);
       await VideoSystemDownload.stopSource(uuid);
@@ -821,8 +821,8 @@ class PluginRegistryService {
         local.isInstalling(uuid)) {
       throw const PluginLifecycleChanged();
     }
-    _holdPublication(uuid);
     local.beginRemoval(uuid);
+    _holdPublication(uuid);
     try {
       await DownloadQueueManager.instance.stopSourceRetainingFiles(uuid);
       await VideoSystemDownload.stopSource(uuid);

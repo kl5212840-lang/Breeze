@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:collection/collection.dart';
 import 'package:crypto/crypto.dart';
 import 'package:zephyr/network/sync/comic_sync_core.dart';
 import 'package:zephyr/network/sync/chapter_progress_sync.dart';
@@ -200,8 +201,8 @@ Future<void> purgeCloudPluginAccountData(
         'Transport does not support explicit legacy plugin purge',
       );
     }
-    await current.checkOriginals();
     await legacy?.checkOriginals();
+    await current.checkOriginals();
     void changing() {
       guard?.call();
       changed = true;
@@ -211,54 +212,70 @@ Future<void> purgeCloudPluginAccountData(
     await current.verify();
     currentComplete = true;
     if (legacy != null) {
+      await legacy.checkOriginals();
       await legacy.commit(changing);
       await legacy.verify();
     }
     legacyComplete = true;
     // Only candidate blobs proven owned by removed refs are collected; shared
     // content stays if ANY retained manifest still references it.
-    await current.verify();
-    await legacy?.verify();
     final referenced = {
       ...current.retainedDigests,
       ...?legacy?.retainedDigests,
     };
     // Re-list immediately before collection: a newly published OTHER-source
     // reference must protect a formerly source-owned shared blob too.
-    for (final path in await adapter.listRemoteDataFiles()) {
-      if (!appearanceManifestName.hasMatch(path.split('/').last)) continue;
-      final bytes = await adapter.downloadRemoteFile(path);
-      final expected = appearanceManifestDigest(path);
-      if (expected != null && sha256.convert(bytes).toString() != expected)
-        continue;
-      final manifest = AppearanceSyncManifest.fromBytes(bytes);
-      if (manifest.records.keys.any(
-        (key) => appearanceImageSource(key) == source,
-      ))
-        throw StateError('Cloud changed; retry');
-      referenced.addAll(
-        manifest.records.values.where((r) => !r.deleted).map((r) => r.digest),
-      );
-    }
-    for (final digest in {
+    final orphanCandidates = {
       ...current.removedDigests,
       ...?legacy?.removedDigests,
-    }.difference(referenced)) {
-      final path =
-          '${ComicSyncCore.syncRemoteRootName}/appearance_resource_$digest.bin';
-      if (!current.resourcePaths.contains(path)) continue;
-      changing();
-      await adapter.deleteRemoteFiles([path]);
-      if ((await adapter.listRemoteDataFiles()).contains(path))
-        throw StateError('Artwork deletion not confirmed');
+    }.difference(referenced);
+    if (orphanCandidates.isNotEmpty) {
+      for (final path in await adapter.listRemoteDataFiles()) {
+        if (!appearanceManifestName.hasMatch(path.split('/').last)) continue;
+        final bytes = await _readFresh(adapter, path);
+        final expected = appearanceManifestDigest(path);
+        if (expected != null && sha256.convert(bytes).toString() != expected) {
+          continue;
+        }
+        final manifest = AppearanceSyncManifest.fromBytes(bytes);
+        if (manifest.records.keys.any(
+          (key) => appearanceImageSource(key) == source,
+        )) {
+          throw StateError('Cloud changed; retry');
+        }
+        referenced.addAll(
+          manifest.records.values.where((r) => !r.deleted).map((r) => r.digest),
+        );
+      }
+      final paths = [
+        for (final digest in orphanCandidates.difference(referenced))
+          if (current.resourcePaths.contains(
+            '${ComicSyncCore.syncRemoteRootName}/appearance_resource_$digest.bin',
+          ))
+            '${ComicSyncCore.syncRemoteRootName}/appearance_resource_$digest.bin',
+      ];
+      for (final path in paths) {
+        changing();
+        await adapter.deleteRemoteFiles([path]);
+      }
+      if (paths.isNotEmpty) {
+        final remaining = (await adapter.listRemoteDataFiles()).toSet();
+        if (paths.any(remaining.contains)) {
+          throw StateError('Artwork deletion not confirmed');
+        }
+      }
     }
-    // Recheck both after the second commit; no source can hide in a late file.
-    currentComplete = false;
-    await current.verify();
-    currentComplete = true;
-    legacyComplete = false;
-    await legacy?.verify();
-    legacyComplete = true;
+    // Recheck archives after any subsequent writes by this operation.
+    if (legacy != null || orphanCandidates.isNotEmpty) {
+      currentComplete = false;
+      await current.verify();
+      currentComplete = true;
+    }
+    if (legacy != null && orphanCandidates.isNotEmpty) {
+      legacyComplete = false;
+      await legacy.verify();
+      legacyComplete = true;
+    }
     guard?.call();
   } catch (error) {
     throw CloudPluginPurgeFailure(
@@ -269,6 +286,11 @@ Future<void> purgeCloudPluginAccountData(
     );
   }
 }
+
+Future<List<int>> _readFresh(ComicSyncRemoteAdapter reader, String path) =>
+    reader is ScopedSyncArchiveAdapter
+    ? reader.readFreshSnapshot(path)
+    : reader.downloadRemoteFile(path);
 
 class _PurgeBudget {
   int bytes = 0, files = 0;
@@ -388,6 +410,7 @@ class _PurgePlan {
     budget.files += plan.paths.length;
     if (budget.files > 200)
       throw const FormatException('Too many cloud snapshots');
+    final artworkSizes = <String, int>{};
     for (final path in plan.paths) {
       guard?.call();
       final bytes = await reader.downloadRemoteFile(path);
@@ -421,12 +444,21 @@ class _PurgePlan {
           after.records.values.where((r) => !r.deleted).map((r) => r.digest),
         );
         for (final record in before.records.values.where((r) => !r.deleted)) {
+          final checkedSize = artworkSizes[record.digest];
+          if (checkedSize != null) {
+            if (checkedSize != record.size) {
+              throw const FormatException('Artwork integrity failure');
+            }
+            continue;
+          }
           final blobPath =
               '${ComicSyncCore.syncRemoteRootName}/appearance_resource_${record.digest}.bin';
           final blob = await reader.downloadRemoteFile(blobPath);
           if (blob.length != record.size ||
-              sha256.convert(blob).toString() != record.digest)
+              sha256.convert(blob).toString() != record.digest) {
             throw const FormatException('Artwork integrity failure');
+          }
+          artworkSizes[record.digest] = blob.length;
         }
       }
       if (jsonEncode(raw) != jsonEncode(output)) {
@@ -463,7 +495,7 @@ class _PurgePlan {
 
   Future<void> _unchanged(String path, String digest) async {
     guard?.call();
-    final now = await reader.downloadRemoteFile(path);
+    final now = await _readFresh(reader, path);
     if (sha256.convert(now).toString() != digest)
       throw StateError('Cloud changed; retry');
   }
@@ -472,19 +504,21 @@ class _PurgePlan {
     final listing = _managedPaths(await reader.listRemoteDataFiles());
     if (jsonEncode(listing) != jsonEncode(paths))
       throw StateError('Cloud changed; retry');
-    for (final entry in originals.entries) {
-      await _unchanged(entry.key, entry.value);
-    }
-    for (final entry in heads.entries) {
-      await _unchanged(
-        '${ComicSyncCore.syncRemoteRootName}/${entry.key}.md5',
-        sha256.convert(entry.value).toString(),
+    final expected = {
+      ...originals,
+      for (final entry in heads.entries)
+        '${ComicSyncCore.syncRemoteRootName}/${entry.key}.md5': sha256
+            .convert(entry.value)
+            .toString(),
+    };
+    for (final batch in expected.entries.slices(4)) {
+      await Future.wait(
+        batch.map((entry) => _unchanged(entry.key, entry.value)),
       );
     }
   }
 
   Future<void> commit(void Function() changing) async {
-    await checkOriginals();
     for (final kind in ['comic', 'settings']) {
       final oldHead = heads[kind];
       if (oldHead == null) continue;
@@ -542,21 +576,29 @@ class _PurgePlan {
       settingsCodec: settingsCodec,
       videoCodec: videoCodec,
     );
-    for (final path in _managedPaths(await reader.listRemoteDataFiles())) {
-      guard?.call();
-      final bytes = await reader.downloadRemoteFile(path);
-      if (bytes.length > 32 * 1024 * 1024)
-        throw const FormatException('Cloud snapshot too large');
-      await _validate(path, bytes);
-      if (_kind(path) == 'appearance' &&
-          appearanceManifestDigest(path) != null &&
-          sha256.convert(bytes).toString() != appearanceManifestDigest(path))
-        continue;
-      final raw = await _readPayload(_kind(path)!, bytes);
-      if (jsonEncode(raw) !=
-          jsonEncode(removePluginFromCloudPayload(_kind(path)!, raw, source))) {
-        throw StateError('Cloud purge is not complete');
-      }
+    final paths = _managedPaths(await reader.listRemoteDataFiles());
+    for (final batch in paths.slices(4)) {
+      await Future.wait(batch.map(_verifySnapshot));
+    }
+  }
+
+  Future<void> _verifySnapshot(String path) async {
+    guard?.call();
+    final bytes = await _readFresh(reader, path);
+    if (bytes.length > 32 * 1024 * 1024) {
+      throw const FormatException('Cloud snapshot too large');
+    }
+    await _validate(path, bytes);
+    final kind = _kind(path)!;
+    if (kind == 'appearance' &&
+        appearanceManifestDigest(path) != null &&
+        sha256.convert(bytes).toString() != appearanceManifestDigest(path)) {
+      return;
+    }
+    final raw = await _readPayload(kind, bytes);
+    if (jsonEncode(raw) !=
+        jsonEncode(removePluginFromCloudPayload(kind, raw, source))) {
+      throw StateError('Cloud purge is not complete');
     }
   }
 }

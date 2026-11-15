@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/cubit/comic_read_preference_cubit.dart';
 import 'package:zephyr/page/comic_read/controller/reader_auto_read_controller.dart';
 import 'package:zephyr/page/comic_read/controller/reader_history_controller.dart';
@@ -41,6 +43,8 @@ class ReaderLifecycleController {
 
   final _desktopFullscreenService = ReaderDesktopFullscreenService.instance;
   StreamSubscription<bool>? _menuVisibleSubscription;
+  StreamSubscription<bool>? _statusBarSubscription;
+  StreamSubscription<bool?>? _perComicStatusBarSubscription;
 
   bool _hasBootstrappedReadState = false;
   bool _isDesktopFullscreen = false;
@@ -54,6 +58,26 @@ class ReaderLifecycleController {
   /// 在 [State.initState] 中调用，完成除各子控制器创建外的初始化工作。
   void init() {
     _initMenuVisibilitySubscription();
+    if (!kIsWeb && (Platform.isIOS || _isAndroid)) {
+      _statusBarSubscription = context
+          .read<GlobalSettingCubit>()
+          .stream
+          .map((state) => state.readSetting.showSystemStatusBar)
+          .distinct()
+          .listen((_) => _syncSystemUi());
+      _perComicStatusBarSubscription = context
+          .read<ComicReadPreferenceCubit>()
+          .stream
+          .map((state) {
+            final override = state.override;
+            return override != null &&
+                    override.keys.contains('showSystemStatusBar')
+                ? override.setting.showSystemStatusBar
+                : null;
+          })
+          .distinct()
+          .listen((_) => _syncSystemUi());
+    }
     _postFrameBootstrap();
   }
 
@@ -63,6 +87,8 @@ class ReaderLifecycleController {
     historyController.stop();
     autoReadController.dispose();
     await _menuVisibleSubscription?.cancel();
+    await _statusBarSubscription?.cancel();
+    await _perComicStatusBarSubscription?.cancel();
     await systemUiController.close();
     if (isDesktopPlatform()) {
       await _restoreDesktopFullscreen();
@@ -110,9 +136,11 @@ class ReaderLifecycleController {
     _menuVisibleSubscription = readerCubit.stream
         .map((state) => state.isMenuVisible)
         .distinct()
-        .listen((isMenuVisible) {
-          systemUiController.applyVisibility(isMenuVisible);
-        });
+        .listen((_) => _syncSystemUi());
+  }
+
+  void _syncSystemUi() {
+    if (_mounted) onSyncSystemUi();
   }
 
   void _postFrameBootstrap() {
@@ -129,7 +157,7 @@ class ReaderLifecycleController {
       await Future.delayed(const Duration(milliseconds: 200));
       if (!_mounted) return;
       readerCubit.updateMenuVisible(visible: false);
-      await systemUiController.applyVisibility(false, force: true);
+      onSyncSystemUi(force: true);
       if (!context.mounted) return;
       final readSetting = context.readEffectiveReadSetting();
       volumeController.sync(readSetting, readerCubit.state.isMenuVisible);

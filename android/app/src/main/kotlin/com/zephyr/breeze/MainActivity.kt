@@ -171,7 +171,10 @@ open class MainActivity: FlutterFragmentActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYSTEM_UI_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "hideSystemBars" -> {
-                    setInstantSystemUiVisibility(immersive = true)
+                    setInstantSystemUiVisibility(
+                        immersive = true,
+                        showStatusBar = call.argument<Boolean>("showStatusBar") == true,
+                    )
                     result.success(null)
                 }
                 "showSystemBars" -> {
@@ -392,27 +395,29 @@ open class MainActivity: FlutterFragmentActivity() {
     }
 
     @Suppress("DEPRECATION")
-    private fun setInstantSystemUiVisibility(immersive: Boolean) {
+    private fun setInstantSystemUiVisibility(immersive: Boolean, showStatusBar: Boolean = false) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val controller = window.decorView.windowInsetsController ?: run {
-                fallbackSystemUiVisibility(immersive)
+                fallbackSystemUiVisibility(immersive, showStatusBar)
                 return
             }
             if (immersive) {
                 controller.systemBarsBehavior =
                     WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                controller.hide(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
+                val statusBars = WindowInsets.Type.statusBars()
+                controller.hide(WindowInsets.Type.navigationBars())
+                if (showStatusBar) controller.show(statusBars) else controller.hide(statusBars)
             } else {
                 controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_DEFAULT
                 controller.show(WindowInsets.Type.statusBars() or WindowInsets.Type.navigationBars())
             }
             return
         }
-        fallbackSystemUiVisibility(immersive)
+        fallbackSystemUiVisibility(immersive, showStatusBar)
     }
 
     @Suppress("DEPRECATION")
-    private fun fallbackSystemUiVisibility(immersive: Boolean) {
+    private fun fallbackSystemUiVisibility(immersive: Boolean, showStatusBar: Boolean) {
         var flags = (
             View.SYSTEM_UI_FLAG_LAYOUT_STABLE
             or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
@@ -420,10 +425,10 @@ open class MainActivity: FlutterFragmentActivity() {
         )
         if (immersive) {
             flags = flags or (
-                View.SYSTEM_UI_FLAG_FULLSCREEN
-                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                 or View.SYSTEM_UI_FLAG_IMMERSIVE
             )
+            if (!showStatusBar) flags = flags or View.SYSTEM_UI_FLAG_FULLSCREEN
         }
         window.decorView.systemUiVisibility = flags
     }

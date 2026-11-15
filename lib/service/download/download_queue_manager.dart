@@ -9,6 +9,7 @@ import 'package:zephyr/main.dart';
 import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
+import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/service/download/comic_download_task.dart';
@@ -85,11 +86,11 @@ class DownloadQueueManager {
   Completer<void>? _backupTreeHold;
   bool _backupTreeRecoveryRequired = false;
 
-  bool _isProcessing = false;
   bool _checkingAdmission = false;
   Future<void>? _workerCancellation;
   StreamSubscription? _watchSubscription;
   StreamSubscription<PluginSessionBoundary>? _sessionSubscription;
+  StreamSubscription<String>? _endpointSubscription;
   Timer? _startupResumeTimer;
   Timer? _retryTimer;
   StreamSubscription? _retryPreferenceSubscription;
@@ -204,12 +205,9 @@ class DownloadQueueManager {
     );
   }
 
-  void _deferActiveChapterUntilForeground() {
+  void _requeueActiveChapter(String phase, String status, {String? source}) {
     final active = _activeTask;
-    if (active == null) {
-      _isProcessing = false;
-      return;
-    }
+    if (active == null) return;
     final retained = objectbox.store.runInTransaction(TxMode.write, () {
       final row = objectbox.downloadTaskBox.get(active.id);
       final payload = row == null ? null : _taskRepository.readPayload(row);
@@ -219,25 +217,56 @@ class DownloadQueueManager {
           payload == null ||
           payload.stateCode != 'running' ||
           !_ownsRunningAttempt(row.id, payload) ||
-          !_canPauseTask(row, payload)) {
+          !_canPauseTask(row, payload) ||
+          (source != null && normalizePluginId(payload.from) != source)) {
         return null;
       }
       _taskRepository.putPayload(
         row,
         payload.copyWith(
           stateCode: 'queued',
-          phaseCode: 'waitingForeground',
+          phaseCode: phase,
           imagePaths: {
             ...payload.imagePaths,
             ...startedDownloadChapterPages(payload),
           }.toList(),
         ),
-        status: t.download.statusWaiting,
+        status: status,
         isDownloading: false,
       );
       return payload.from;
     });
-    if (retained != null) _cancelWorkerRetainingFiles(active.key, retained);
+    if (retained == null) return;
+    if (source != null && _nextTask == null) {
+      _setNextTask(active.id, active.key, active.attempt);
+    }
+    _cancelWorkerRetainingFiles(active.key, retained);
+  }
+
+  void _endpointChanged(String source) {
+    final status = t.download.statusSwitchingRoute;
+    _requeueActiveChapter('switchingRoute', status, source: source);
+    objectbox.store.runInTransaction(TxMode.write, () {
+      for (final task in _taskRepository.getAll(incompleteOnly: true)) {
+        final payload = _taskRepository.readPayload(task);
+        if (payload == null ||
+            normalizePluginId(payload.from) != source ||
+            payload.stateCode != 'queued' ||
+            payload.phaseCode != 'waitingRetry') {
+          continue;
+        }
+        _taskRepository.putPayload(
+          task,
+          payload.copyWith(
+            phaseCode: 'switchingRoute',
+            nextRetryAt: null,
+            retryRounds: 0,
+          ),
+          status: status,
+        );
+      }
+    });
+    unawaited(_processQueue());
   }
 
   /// 进度 Stream，供 UI 和前台服务通知监听
@@ -246,7 +275,7 @@ class DownloadQueueManager {
   Stream<DownloadProgress> get progressStream => _progressController.stream;
 
   /// 当前是否有任务在执行
-  bool get isProcessing => _isProcessing;
+  bool get isProcessing => _activeTask != null;
 
   /// Called under the work's removal lease so no new writer can take over.
   Future<void>? pendingComicWorkerStop({
@@ -293,7 +322,6 @@ class DownloadQueueManager {
       _requireRecoveredTree();
       return false;
     } on LocalImportRecoveryFailed {
-      _isProcessing = false;
       return true;
     }
   }
@@ -320,11 +348,15 @@ class DownloadQueueManager {
         current.attempt != expected.attempt) {
       return false;
     }
-    _nextTask = (id: task.id, key: current.taskKey, attempt: current.attempt);
-    _priorityChanges.value++;
-    _startupResumeTaskIds.remove(task.id);
+    _setNextTask(task.id, current.taskKey, current.attempt);
     unawaited(_processQueue());
     return true;
+  }
+
+  void _setNextTask(int id, String key, int attempt) {
+    _nextTask = (id: id, key: key, attempt: attempt);
+    _startupResumeTaskIds.remove(id);
+    _priorityChanges.value++;
   }
 
   bool canPauseTask(DownloadTask task) {
@@ -339,7 +371,7 @@ class DownloadQueueManager {
       const {'', 'pending', 'queued', 'running'}.contains(payload.stateCode);
 
   /// Settle all requested rows before asking the running worker to stop.
-  /// Snapshots identify the exact attempt the caller selected.
+  /// A queued chapter may enter its first running attempt before the tap.
   int pauseTasks(Iterable<DownloadTask> snapshots) {
     _requireRecoveredTree();
     final tasks = <int, String>{};
@@ -348,15 +380,38 @@ class DownloadQueueManager {
     for (final task in snapshots) {
       final payload = _taskRepository.readPayload(task);
       if (payload == null || !_canPauseTask(task, payload)) continue;
-      tasks[task.id] = payload.taskKey;
-      attempts[task.id] = payload.attempt;
-      sources[payload.taskKey] = payload.from;
+      final current = objectbox.downloadTaskBox.get(task.id);
+      final live = current == null
+          ? null
+          : _taskRepository.readPayload(current);
+      if (current == null ||
+          live == null ||
+          live.taskKey != payload.taskKey ||
+          live.queuedAt != payload.queuedAt ||
+          !_canPauseTask(current, live)) {
+        continue;
+      }
+      final justDispatched =
+          !task.isDownloading &&
+          const {'', 'pending', 'queued'}.contains(payload.stateCode) &&
+          current.isDownloading &&
+          live.stateCode == 'running' &&
+          live.attempt == payload.attempt + 1 &&
+          _ownsRunningAttempt(task.id, live);
+      if (live.attempt != payload.attempt && !justDispatched) continue;
+      tasks[task.id] = live.taskKey;
+      attempts[task.id] = live.attempt;
+      sources[live.taskKey] = live.from;
     }
     final paused = _pauseTasksRetainingFiles(
       tasks,
       phase: 'userPaused',
       expectedAttempts: attempts,
     );
+    if (paused.contains(_nextTask?.key)) {
+      _nextTask = null;
+      _priorityChanges.value++;
+    }
     final activeKey = _downloadingTaskKey;
     if (paused.contains(activeKey)) {
       _cancelWorkerRetainingFiles(activeKey, sources[activeKey]!);
@@ -435,8 +490,8 @@ class DownloadQueueManager {
       );
     }
     final ready = await Future.wait(resumes);
-    final queued = _requeuePreparedRetries(ready.nonNulls);
-    if (queued.isNotEmpty && Platform.isAndroid) {
+    final queued = _requeuePreparedRetries(ready.nonNulls, prioritize: true);
+    if (queued && Platform.isAndroid) {
       await _startForegroundForResume();
     }
   }
@@ -984,6 +1039,7 @@ class DownloadQueueManager {
     int? nextRetryAt;
     final runnable =
         _taskRepository.getAll(incompleteOnly: true).where((task) {
+          if (task.isDownloading) return false;
           final payload = _taskRepository.readPayload(task);
           final removal = payload == null
               ? null
@@ -997,7 +1053,7 @@ class DownloadQueueManager {
               unawaited(
                 removal.released.then((_) {
                   _removalWaits.remove(removal);
-                  if (_watchSubscription != null && !_isProcessing) {
+                  if (_watchSubscription != null) {
                     unawaited(_processQueue());
                   }
                 }),
@@ -1071,7 +1127,7 @@ class DownloadQueueManager {
           )) {
         _cancelWorkerRetainingFiles(key, payload.from);
       }
-    } else if (!_isProcessing) {
+    } else {
       unawaited(_processQueue());
     }
   }
@@ -1100,10 +1156,11 @@ class DownloadQueueManager {
 
   /// 统一的队列处理入口
   Future<void> _processQueue() async {
-    if (_waitForForeground ||
-        _blocksTreeWrites() ||
+    if (_watchSubscription == null ||
         _checkingAdmission ||
-        _downloadingTaskKey.isNotEmpty) {
+        isProcessing ||
+        _waitForForeground ||
+        _blocksTreeWrites()) {
       return;
     }
     _checkingAdmission = true;
@@ -1123,13 +1180,9 @@ class DownloadQueueManager {
     } finally {
       _checkingAdmission = false;
     }
-    if (_watchSubscription == null) {
-      _isProcessing = false;
-      return;
-    }
-    if (_waitForForeground ||
-        _blocksTreeWrites() ||
-        _downloadingTaskKey.isNotEmpty) {
+    if (_watchSubscription == null ||
+        _waitForForeground ||
+        _blocksTreeWrites()) {
       return;
     }
     final allPendingTasks = _runnableTasks();
@@ -1142,40 +1195,27 @@ class DownloadQueueManager {
 
     if (_admission.networkWait case final wait?) {
       for (final task in pendingTasks) {
-        if (_taskRepository.readPayload(task)?.phaseCode == 'waitingRetry')
+        if (_taskRepository.readPayload(task)?.phaseCode == 'waitingRetry') {
           continue;
+        }
         _taskRepository.markNetworkWaiting(task, wait);
       }
-      _isProcessing = false;
       return;
     }
 
     if (pendingTasks.isEmpty || _admission.queuePaused) {
       if (_startupResumeWaiting && allPendingTasks.isNotEmpty) {
-        _isProcessing = false;
         return;
       }
       if (Platform.isMacOS) {
         MacOSActivity.stop();
       }
-      _isProcessing = false;
       if (Platform.isAndroid && _retryTimer == null) {
         await ForegroundTaskService.instance.stop();
       }
       return;
     }
 
-    if (Platform.isMacOS) {
-      MacOSActivity.start();
-    }
-    _isProcessing = true;
-
-    final reporter = DownloadNotificationReporter();
-    reporter.setOnUpdate((comicName, message) {
-      _progressController.add(
-        DownloadProgress(comicName: comicName, message: message),
-      );
-    });
     final next = _nextTask;
     final dbTask = pendingTasks.first;
     final task = _taskRepository.readPayload(dbTask);
@@ -1193,25 +1233,26 @@ class DownloadQueueManager {
 
     final taskKey = task.taskKey;
     final workKey = buildDownloadTaskKey(task.from, task.comicId);
-    if (_downloadingTaskKey == taskKey) {
-      logger.w("重复添加任务 ${task.comicName}");
-      _isProcessing = false;
-      Future.microtask(() => _processQueue());
-      return;
-    }
-
     _checkingAdmission = true;
-    final hasSpace = await _admission.hasSpace();
-    _checkingAdmission = false;
-    final fresh = objectbox.downloadTaskBox.get(dbTask.id);
-    if (_watchSubscription == null) {
-      _isProcessing = false;
+    final bool hasSpace;
+    try {
+      hasSpace = await _admission.hasSpace();
+    } finally {
+      _checkingAdmission = false;
+    }
+    if (_watchSubscription == null ||
+        _waitForForeground ||
+        _blocksTreeWrites()) {
       return;
     }
-    if (_waitForForeground || _blocksTreeWrites()) return;
+    final fresh = objectbox.downloadTaskBox.get(dbTask.id);
     if (fresh == null ||
         fresh.dbTaskInfoStr != dbTask.dbTaskInfoStr ||
         fresh.isCompleted ||
+        fresh.isDownloading ||
+        LocalPluginInstallationState.instance.isRemoved(task.from) ||
+        _sourceDisabled(task.from) ||
+        pluginSessionWriteFence.isChanging(task.from) ||
         DownloadResourceLifecycle.removing(
               DownloadResourceLifecycle.comic(workKey),
             ) !=
@@ -1237,6 +1278,14 @@ class DownloadQueueManager {
       Future.microtask(_processQueue);
       return;
     }
+
+    if (Platform.isMacOS) MacOSActivity.start();
+    final reporter = DownloadNotificationReporter();
+    reporter.setOnUpdate((comicName, message) {
+      _progressController.add(
+        DownloadProgress(comicName: comicName, message: message),
+      );
+    });
 
     if (_isPrioritized(dbTask, task)) {
       _nextTask = null;
@@ -1265,7 +1314,6 @@ class DownloadQueueManager {
     logger.d("dbTask.status: ${dbTask.status}");
     objectbox.downloadTaskBox.put(dbTask);
     final source = normalizePluginId(task.from);
-    await ResourceDownloadNotifications.instance.observeBeforeWork();
     final sessionGeneration = pluginSessionWriteFence.generation(source);
     final displayName = _taskDisplayName(task);
     _progressController.add(
@@ -1276,6 +1324,9 @@ class DownloadQueueManager {
     );
 
     try {
+      await ResourceDownloadNotifications.instance.observeComicBeforeWork(
+        dbTask,
+      );
       if (isDownloadCancelSignaled(taskKey)) {
         throw const DownloadTaskCancelledException();
       }
@@ -1338,9 +1389,11 @@ class DownloadQueueManager {
             comicName: displayName,
             message:
                 wait?.label ??
-                (phase == 'waitingForeground'
-                    ? t.download.statusWaiting
-                    : t.download.paused),
+                switch (phase) {
+                  'waitingForeground' => t.download.statusWaiting,
+                  'switchingRoute' => t.download.statusSwitchingRoute,
+                  _ => t.download.paused,
+                },
           ),
         );
       } else if (_isTaskCancelledOrMarked(taskKey, e)) {
@@ -1430,7 +1483,6 @@ class DownloadQueueManager {
       clearDownloadCancelSignal(taskKey);
       _activeTask = null;
       _taskStops.remove(taskKey)?.complete();
-      if (_waitForForeground) _isProcessing = false;
       Future.microtask(() => _processQueue());
     }
   }
@@ -1605,7 +1657,7 @@ class DownloadQueueManager {
       final payload = _taskRepository.readPayload(existing);
       if (payload?.stateCode == 'failed') {
         logger.i('章节任务失败残留，自动重新排队: ${task.taskKey}');
-        retryTask(existing.id);
+        unawaited(_retryTask(existing.id, prioritize: false));
         return;
       }
       logger.w("任务 ${task.comicName} ${task.chapterRef.title} 已存在，跳过添加");
@@ -1627,7 +1679,7 @@ class DownloadQueueManager {
     if (previous != null &&
         previousPayload?.stateCode == 'cancelled' &&
         _canResumeTask(previous, previousPayload!)) {
-      unawaited(retryTask(previous.id));
+      unawaited(_retryTask(previous.id, prioritize: false));
       return;
     }
 
@@ -1656,10 +1708,14 @@ class DownloadQueueManager {
   /// 手动继续或重试一个章节任务。
   Future<void> retryTask(int taskId) => _retryTask(taskId);
 
-  Future<void> _retryTask(int taskId, {bool Function()? isCurrent}) async {
+  Future<void> _retryTask(
+    int taskId, {
+    bool Function()? isCurrent,
+    bool prioritize = true,
+  }) async {
     final ready = await _prepareRetry(taskId, isCurrent: isCurrent);
     if (ready == null || isCurrent?.call() == false) return;
-    _requeuePreparedRetries([ready]);
+    _requeuePreparedRetries([ready], prioritize: prioritize);
   }
 
   Future<_ComicRetry?> _prepareRetry(
@@ -1709,8 +1765,11 @@ class DownloadQueueManager {
     return (task: latest, payload: payload);
   }
 
-  List<DownloadTaskJson> _requeuePreparedRetries(Iterable<_ComicRetry> ready) {
-    if (ready.isEmpty) return const [];
+  bool _requeuePreparedRetries(
+    Iterable<_ComicRetry> ready, {
+    required bool prioritize,
+  }) {
+    if (ready.isEmpty) return false;
     // Revalidate every row at submission. Register completion notices for
     // the whole accepted selection before the query watcher can start it.
     final queued = objectbox.store.runInTransaction(TxMode.write, () {
@@ -1775,7 +1834,15 @@ class DownloadQueueManager {
       _startupResumeTaskIds.remove(task.id);
       logger.i('已重新排队下载任务: taskId=${task.id}, taskKey=${payload.taskKey}');
     }
-    return queued.map((retry) => retry.payload).toList();
+    if (queued.isEmpty) return false;
+    if (prioritize) {
+      // Resume the selected work at the next chapter boundary.
+      queued.sort((left, right) => left.task.id.compareTo(right.task.id));
+      final (:task, :payload) = queued.first;
+      _setNextTask(task.id, payload.taskKey, payload.attempt);
+    }
+    unawaited(_processQueue());
+    return true;
   }
 
   /// 重置异常退出时遗留的“下载中”状态。
@@ -1785,7 +1852,8 @@ class DownloadQueueManager {
   void resetStuckTasks() {
     // Navigation can be recreated while the process still owns a live worker.
     if (_watchSubscription != null ||
-        _isProcessing ||
+        isProcessing ||
+        _checkingAdmission ||
         _taskDeletionOperations != 0) {
       return;
     }
@@ -1825,8 +1893,6 @@ class DownloadQueueManager {
     if (_watchSubscription != null) return;
     if (defaultTargetPlatform == TargetPlatform.iOS) {
       _queueLifecycle = AppLifecycleListener(
-        onHide: _deferActiveChapterUntilForeground,
-        onPause: _deferActiveChapterUntilForeground,
         onResume: () => unawaited(_processQueue()),
       );
     }
@@ -1869,35 +1935,28 @@ class DownloadQueueManager {
         _startupResumeTaskIds.clear();
         _startupResumeTimer = null;
         logger.i('应用启动下载恢复延迟结束，开始处理下载队列');
-        if (!_isProcessing) {
-          _processQueue();
-        }
+        unawaited(_processQueue());
       });
     }
 
     _watchSubscription = watchedQuery.listen((query) {
-      final pendingTasks = query.find();
+      if (isProcessing || _checkingAdmission) return;
       if (defaultTargetPlatform == TargetPlatform.iOS &&
           !_retiredComicTransfers) {
         unawaited(noticeBaseline.then((_) => _processQueue()));
         return;
       }
-      if (pendingTasks.isNotEmpty && !_isProcessing) {
-        final hasNewTaskDuringStartupDelay =
-            _startupResumeWaiting &&
-            pendingTasks.any(
-              (task) => !_startupResumeTaskIds.contains(task.id),
-            );
-        if (!_startupResumeWaiting || hasNewTaskDuringStartupDelay) {
-          unawaited(noticeBaseline.then((_) => _processQueue()));
-        }
-      }
+      final shouldWake = _startupResumeWaiting
+          ? query.findIds().any((id) => !_startupResumeTaskIds.contains(id))
+          : query.count() > 0;
+      if (shouldWake) unawaited(noticeBaseline.then((_) => _processQueue()));
     });
     _admission.addListener(_networkChanged);
     _retryPreferenceSubscription = objectbox.userSettingBox
         .query()
         .watch()
         .listen((_) => _retryPreferenceChanged());
+    _endpointSubscription = pluginEndpointChanges.listen(_endpointChanged);
     _sessionSubscription = pluginSessionWriteFence.changes.listen((change) {
       if (change.changing) {
         final waiting = <int, String>{};
@@ -1935,6 +1994,8 @@ class DownloadQueueManager {
     ResourceDownloadNotifications.instance.stopObserving();
     _queueLifecycle?.dispose();
     _queueLifecycle = null;
+    _endpointSubscription?.cancel();
+    _endpointSubscription = null;
     _sessionSubscription?.cancel();
     _sessionSubscription = null;
     _retryPreferenceSubscription?.cancel();

@@ -1,7 +1,6 @@
 import 'dart:convert';
 
 import 'package:zephyr/main.dart';
-import 'package:zephyr/network/utils/github_proxy.dart';
 import 'package:zephyr/plugin/utils/plugin_cloud_download_utils.dart';
 import 'package:zephyr/util/json/json_value.dart';
 
@@ -107,7 +106,7 @@ Future<String> fetchNpmLatestVersion(String npmName) async {
 
 /// 通过 updateUrl 获取远端版本（GitHub Release 类 API 的 tag_name）。
 Future<String> fetchUpdateUrlLatestVersion(String updateUrl) async {
-  final release = await fetchReleaseData(updateUrl);
+  final release = await fetchPluginReleaseIndex(updateUrl);
   final tagName = release['tag_name']?.toString().trim() ?? '';
   if (tagName.isNotEmpty) {
     return tagName;

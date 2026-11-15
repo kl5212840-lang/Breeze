@@ -54,6 +54,9 @@ _GlobalSettingState _$GlobalSettingStateFromJson(
   backPressExitEnabled: json['backPressExitEnabled'] as bool? ?? false,
   updateAccelerate: json['updateAccelerate'] as bool? ?? true,
   retryDownloadUntilSuccess: json['retryDownloadUntilSuccess'] as bool? ?? true,
+  comicDownloadConcurrency: json['comicDownloadConcurrency'] == null
+      ? defaultComicDownloadConcurrency
+      : normalizeComicDownloadConcurrency(json['comicDownloadConcurrency']),
   videoDownloadConcurrency:
       (json['videoDownloadConcurrency'] as num?)?.toInt() ?? 1,
   downloadWifiOnly: json['downloadWifiOnly'] as bool? ?? false,
@@ -136,6 +139,7 @@ Map<String, dynamic> _$GlobalSettingStateToJson(_GlobalSettingState instance) =>
       'backPressExitEnabled': instance.backPressExitEnabled,
       'updateAccelerate': instance.updateAccelerate,
       'retryDownloadUntilSuccess': instance.retryDownloadUntilSuccess,
+      'comicDownloadConcurrency': instance.comicDownloadConcurrency,
       'videoDownloadConcurrency': instance.videoDownloadConcurrency,
       'downloadWifiOnly': instance.downloadWifiOnly,
       'downloadCompletionNotice': instance.downloadCompletionNotice,
@@ -370,6 +374,7 @@ _ReadSettingState _$ReadSettingStateFromJson(Map<String, dynamic> json) =>
           ) ??
           ReaderInfoVerticalPosition.bottom,
       pageInfoTopInStatusBar: json['pageInfoTopInStatusBar'] as bool? ?? false,
+      showSystemStatusBar: json['showSystemStatusBar'] as bool? ?? false,
       pageInfoHorizontalPosition:
           $enumDecodeNullable(
             _$ReaderInfoHorizontalPositionEnumMap,
@@ -423,6 +428,7 @@ Map<String, dynamic> _$ReadSettingStateToJson(
   'pageInfoVerticalPosition':
       _$ReaderInfoVerticalPositionEnumMap[instance.pageInfoVerticalPosition]!,
   'pageInfoTopInStatusBar': instance.pageInfoTopInStatusBar,
+  'showSystemStatusBar': instance.showSystemStatusBar,
   'pageInfoHorizontalPosition':
       _$ReaderInfoHorizontalPositionEnumMap[instance
           .pageInfoHorizontalPosition]!,

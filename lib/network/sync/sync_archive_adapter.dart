@@ -1,3 +1,4 @@
+import 'package:zephyr/network/sync/backup_protection_adapter.dart';
 import 'package:zephyr/network/sync/comic_sync_core.dart';
 import 'package:zephyr/network/sync/sync_archive_context.dart';
 
@@ -149,6 +150,14 @@ class ScopedSyncArchiveAdapter implements ComicSyncRemoteAdapter {
   @override
   Future<List<int>> downloadRemoteFile(String path) =>
       transport.downloadRemoteFile(_physical(path));
+  Future<List<int>> readFreshSnapshot(String path) {
+    final target = transport;
+    final physical = _physical(path);
+    return target is BackupProtectionSyncAdapter
+        ? target.readFreshSnapshot(physical)
+        : target.downloadRemoteFile(physical);
+  }
+
   @override
   Future<String> downloadRemoteMd5() => transport.downloadRemoteMd5();
   @override

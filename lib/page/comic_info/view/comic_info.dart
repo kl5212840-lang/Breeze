@@ -19,6 +19,9 @@ import 'package:zephyr/cubit/string_select.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/page/comic_follow/cubit/comic_follow_cubit.dart';
+import 'package:zephyr/object_box/model.dart' show ComicFolderType;
+import 'package:zephyr/page/bookshelf/service/comic_folder_service.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_folder_picker.dart';
 import 'package:zephyr/page/comic_info/comic_info.dart';
 import 'package:zephyr/page/comic_info/models/comic_detail_presentation.dart';
 import 'package:zephyr/page/comic_info/models/plugin_action_login.dart';
@@ -860,12 +863,14 @@ class _ComicInfoState extends State<_ComicInfo>
           required String label,
           required bool selected,
           required VoidCallback? onPressed,
+          VoidCallback? onLongPress,
         }) {
           return SizedBox(
             width: double.infinity,
             height: 46,
             child: OutlinedButton.icon(
               onPressed: onPressed,
+              onLongPress: onLongPress,
               style: OutlinedButton.styleFrom(
                 backgroundColor: selected ? colors.primaryContainer : null,
                 foregroundColor: selected
@@ -885,6 +890,9 @@ class _ComicInfoState extends State<_ComicInfo>
           label: _isLocalCollected ? '已存本地' : '本地收藏',
           selected: _isLocalCollected,
           onPressed: _localFavoriteBusy ? null : _toggleLocalCollectFromMenu,
+          onLongPress: info == null || _localFavoriteBusy
+              ? null
+              : () => _toggleLocalCollectFromMenu(chooseFolder: true),
         );
         final cloudAction = action(
           icon: _isCloudCollected
@@ -1216,7 +1224,43 @@ class _ComicInfoState extends State<_ComicInfo>
     );
   }
 
-  Future<void> _toggleLocalCollectFromMenu() async {
+  Future<String?> _pickLocalFavoriteFolder() async {
+    const type = ComicFolderType.favorite;
+    final folders = ComicFolderService.listAllFolders(type);
+    final byId = {for (final folder in folders) folder.syncId: folder};
+    final paths = {
+      for (final folder in folders)
+        folder.syncId: ComicFolderService.folderPath(folder, syncIdMap: byId),
+    };
+    String? selected;
+    await showDialog<void>(
+      context: context,
+      builder: (_) => BookshelfFolderPicker(
+        title: t.comicInfo.favoriteToFolder,
+        choices: [
+          BookshelfFolderChoice(path: '', name: t.common.root, parentPath: ''),
+          for (final folder in folders)
+            BookshelfFolderChoice(
+              path: paths[folder.syncId]!,
+              name: folder.name,
+              parentPath: paths[folder.parentSyncId] ?? '',
+            ),
+        ],
+        onCreate: (parent, name) async {
+          final folder = ComicFolderService.createFolder(parent, name, type);
+          return BookshelfFolderChoice(
+            path: ComicFolderService.folderPath(folder),
+            name: folder.name,
+            parentPath: parent,
+          );
+        },
+        onConfirmed: (paths) => selected = paths.single,
+      ),
+    );
+    return selected;
+  }
+
+  Future<void> _toggleLocalCollectFromMenu({bool chooseFolder = false}) async {
     if (_localFavoriteBusy) return;
     final info = _currentInfo;
     if (info == null) {
@@ -1230,9 +1274,11 @@ class _ComicInfoState extends State<_ComicInfo>
         identical(_currentInfo, info) &&
         widget.from == source &&
         pluginSessionWriteFence.generation(source.trim()) == session;
-    final shouldCollect = !_isLocalCollected;
+    final shouldCollect = chooseFolder || !_isLocalCollected;
     setState(() => _localFavoriteBusy = true);
     try {
+      final folderPath = chooseFolder ? await _pickLocalFavoriteFolder() : null;
+      if (chooseFolder && (folderPath == null || !isCurrent())) return;
       // 取消收藏需要确认，因为会删除所有文件夹中的记录
       if (!shouldCollect) {
         final confirmed = await _showLocalUncollectConfirmDialog();
@@ -1245,6 +1291,7 @@ class _ComicInfoState extends State<_ComicInfo>
         from: widget.from,
         normalInfo: info,
         collected: shouldCollect,
+        folderPath: folderPath,
       );
       if (!isCurrent()) {
         return;

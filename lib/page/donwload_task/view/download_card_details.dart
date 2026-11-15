@@ -50,6 +50,34 @@ class DownloadCardDetails extends StatelessWidget {
   );
 }
 
+/// Keeps transfer feedback next to the action that controls it.
+class DownloadCardTransfer extends StatelessWidget {
+  const DownloadCardTransfer({
+    super.key,
+    required this.status,
+    this.progress,
+    this.action,
+  });
+
+  final Widget status;
+  final Widget? progress, action;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Expanded(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          spacing: 4,
+          children: [status, ?progress],
+        ),
+      ),
+      if (action != null) ...[const SizedBox(width: 8), action!],
+    ],
+  );
+}
+
 class DownloadCardSelection extends StatelessWidget {
   const DownloadCardSelection({
     super.key,

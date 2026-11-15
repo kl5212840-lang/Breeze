@@ -1,6 +1,5 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/config/global/global_setting.dart';
-import 'package:zephyr/main.dart' show navigatorKey;
 
 /// 墨水屏整屏刷新。
 ///
@@ -11,10 +10,14 @@ class EinkRefresh {
 
   static bool _running = false;
 
-  static Future<void> run(EinkRefreshMode mode, {int holdMs = 120}) async {
-    if (_running || mode == EinkRefreshMode.none) return;
-    final overlay = navigatorKey.currentState?.overlay;
-    if (overlay == null) return;
+  static Future<bool> run(
+    BuildContext context,
+    EinkRefreshMode mode, {
+    int holdMs = 120,
+  }) async {
+    if (_running || mode == EinkRefreshMode.none) return false;
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return false;
 
     final stages = mode == EinkRefreshMode.fullFlash
         ? const <Color>[Colors.white, Colors.black, Colors.white]
@@ -26,11 +29,8 @@ class EinkRefresh {
       builder: (context) => Positioned.fill(
         child: ValueListenableBuilder<Color>(
           valueListenable: current,
-          builder: (context, color, _) => GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {},
-            child: ColoredBox(color: color),
-          ),
+          builder: (context, color, _) =>
+              ColoredBox(color: color, child: const SizedBox.expand()),
         ),
       ),
     );
@@ -38,10 +38,14 @@ class EinkRefresh {
 
     try {
       for (final color in stages) {
+        if (!context.mounted || ModalRoute.of(context)?.isCurrent == false) {
+          return false;
+        }
         current.value = color;
         await WidgetsBinding.instance.endOfFrame;
         await Future<void>.delayed(Duration(milliseconds: holdMs));
       }
+      return true;
     } finally {
       entry.remove();
       current.dispose();

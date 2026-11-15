@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'package:worker_manager/worker_manager.dart';
 import 'package:path/path.dart' as p;
 import 'package:zephyr/config/global/global.dart';
+import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart';
 import 'package:zephyr/object_box/model.dart';
@@ -19,6 +20,7 @@ import 'package:zephyr/page/comic_read/model/unified_plugin_chapter.dart';
 import 'package:zephyr/page/download/adapters/download_chapter_adapter.dart';
 import 'package:zephyr/page/download/models/download_chapter.dart';
 import 'package:zephyr/page/download/models/unified_comic_download.dart';
+import 'package:zephyr/service/download/download_admission.dart';
 import 'package:zephyr/service/download/download_cancel_signal.dart';
 import 'package:zephyr/service/download/download_asset_store.dart';
 import 'package:zephyr/service/download/download_chapter_cancellation.dart';
@@ -138,6 +140,11 @@ Future<void> _unifiedDownloadTask(
     }
   }
 
+  Future<void> awaitForeground() async {
+    await DownloadAdmission.instance.waitForForeground(taskKey);
+    await ensureTaskRunning();
+  }
+
   const adapter = DownloadChapterAdapter();
   final chapter = adapter.fromTaskRef(task.chapterRef);
   // Paths owned by this chapter's transfer, including a reserved page plan.
@@ -148,12 +155,14 @@ Future<void> _unifiedDownloadTask(
   void Function()? releaseChapterPages;
 
   try {
+    await awaitForeground();
     await ensureQjsRuntimeReady(pluginId: pluginId);
     await ensureTaskRunning();
     updateCheckpoint(
       (payload) =>
           payload.copyWith(stateCode: 'running', phaseCode: 'preparingRuntime'),
     );
+    await awaitForeground();
     await preparePluginDownloadRuntime(
       from: from,
       pluginId: pluginId,
@@ -177,6 +186,7 @@ Future<void> _unifiedDownloadTask(
       reporter.updateMessage(t.download.statusFetchingComicInfo);
       final PluginComicDetail detail;
       try {
+        await awaitForeground();
         detail = await getComicDetailByPlugin(
           comicId,
           from,
@@ -215,6 +225,7 @@ Future<void> _unifiedDownloadTask(
       String coverPath = '404';
       if (rawCoverFileName.trim().isNotEmpty && cover.url.trim().isNotEmpty) {
         final coverFileName = normalizeStoredAssetPath(rawCoverFileName);
+        await awaitForeground();
         coverPath = await downloadCoverAsset(
           from: from,
           url: cover.url,
@@ -249,17 +260,30 @@ Future<void> _unifiedDownloadTask(
         jsonDecode(existing.detailJson) as Map<String, dynamic>,
       );
       // 追加：本章不在目录快照里说明快照过期，重拉一次刷新。失败不阻塞下载。
-      onlineCatalog = readChapterCatalogMaps(existing);
-      final catalogChapters = readChapterCatalog(existing);
-      final inCatalog = catalogChapters.any(
-        (entry) => downloadChapterIdentityMatches(entry, chapter),
+      onlineCatalog = chapterCatalogMaps(normalInfo.extern);
+      final inCatalog = onlineCatalog.any(
+        (entry) => downloadChapterIdentityMatches(
+          chapterFromCatalogEntry(entry),
+          chapter,
+        ),
       );
       if (!inCatalog) {
+        updateCheckpoint(
+          (payload) => payload.copyWith(phaseCode: 'fetchingComicInfo'),
+          status: t.download.statusFetchingComicInfo,
+        );
+        reporter.updateMessage(t.download.statusFetchingComicInfo);
         try {
+          await awaitForeground();
           final fresh = await getComicDetailByPlugin(
             comicId,
             from,
             pluginId: pluginId,
+            extern: {
+              'comicDownload': true,
+              'chapterId': chapter.effectiveRequestId,
+            },
+            notifyUnauthorized: false,
             taskGroupKey: taskKey,
           );
           onlineCatalog = buildChapterCatalog(fresh.normalInfo.eps);
@@ -279,6 +303,7 @@ Future<void> _unifiedDownloadTask(
     final excluded = <String>[];
     ComicDownloadRetryReason? previousRouteFailure;
     Future<UnifiedPluginChapterResponse> readChapter() async {
+      await awaitForeground();
       try {
         return await getComicChapterByPlugin(
           comicId,
@@ -301,6 +326,9 @@ Future<void> _unifiedDownloadTask(
     late List<UnifiedPluginChapterDoc> docs;
     late DownloadImageJobsResult progress;
     ComicDownloadRoute? route;
+    final requestedConcurrency = normalizeComicDownloadConcurrency(
+      objectbox.userSettingBox.get(1)?.globalSetting.comicDownloadConcurrency,
+    );
     int? concurrency;
     while (true) {
       await ensureTaskRunning();
@@ -406,11 +434,16 @@ Future<void> _unifiedDownloadTask(
         docPaths: jobs.map((job) => job.path),
         startedPaths: startedPaths,
       );
-      concurrency ??= await resolveDownloadConcurrency(
-        from: from,
-        pluginId: pluginId,
-        taskGroupKey: taskKey,
-      );
+      if (concurrency == null) {
+        await awaitForeground();
+        concurrency = await resolveComicDownloadConcurrency(
+          requested: requestedConcurrency,
+          pluginId: pluginId,
+          runtimeName: runtimeName,
+          taskGroupKey: taskKey,
+        );
+        await ensureTaskRunning();
+      }
       var lastPersistedImages = 0;
       var lastPersistedAt = DateTime.now();
       var lastReportedPercent = 0;
@@ -422,6 +455,8 @@ Future<void> _unifiedDownloadTask(
           qjsRuntimeName: runtimeName,
           qjsTaskGroupKey: taskKey,
           ensureTaskRunning: ensureTaskRunning,
+          waitForForeground: () =>
+              DownloadAdmission.instance.waitForForeground(taskKey),
           stopOnMissingPage: true,
           isolatedPages: route != null,
           reporter: reporter,
@@ -434,20 +469,23 @@ Future<void> _unifiedDownloadTask(
             if (job.path.trim().isNotEmpty) {
               completedPaths.add(job.path);
             }
-            final percent = (completed / jobs.length * 100).floor();
-            if (percent > lastReportedPercent) {
-              lastReportedPercent = percent;
-              progressMessage = t.download.statusDownloadProgress(
-                percent: percent,
-              );
-              reporter.updateMessage(progressMessage);
-            }
             final now = DateTime.now();
-            if (completed == jobs.length ||
+            if (completed == 1 ||
+                completed == jobs.length ||
                 completed - lastPersistedImages >= 5 ||
                 now.difference(lastPersistedAt) >= const Duration(seconds: 1)) {
               lastPersistedImages = completed;
               lastPersistedAt = now;
+              // The foreground service publishes notification progress from
+              // this reporter. Match its updates to the visible checkpoints.
+              final percent = (completed / jobs.length * 100).floor();
+              if (percent > lastReportedPercent) {
+                lastReportedPercent = percent;
+                progressMessage = t.download.statusDownloadProgress(
+                  percent: percent,
+                );
+                reporter.updateMessage(progressMessage);
+              }
               updateCheckpoint(
                 (payload) => payload.copyWith(
                   completedImages: completed,
@@ -658,10 +696,10 @@ Future<void> _saveUnifiedDownloadChapter({
 }) async {
   final now = DateTime.now().toUtc();
   final key = buildDownloadTaskKey(from, comicId);
-  final existing = objectbox.unifiedDownloadBox
-      .query(UnifiedComicDownload_.uniqueKey.equals(key))
-      .build()
-      .findFirst();
+  final existing = const DownloadTaskRepository().findDownloadRecord(
+    from,
+    comicId,
+  );
   final downloadPath = await getDownloadPath();
   // JSON 拼装是纯计算，走全局 worker 池；主线程只做 put。
   final buildArgs = <String, dynamic>{
@@ -963,10 +1001,15 @@ int commitDownloadChapterOnWorker(Store store, Map<String, dynamic> args) {
   final linkUniqueKey = args['linkUniqueKey'] as String;
   final nowMs = e['nowMs'] as int;
   final linkBox = store.box<ComicLink>();
-  final found = linkBox
+  final linkQuery = linkBox
       .query(ComicLink_.uniqueKey.equals(linkUniqueKey))
-      .build()
-      .findFirst();
+      .build();
+  final ComicLink? found;
+  try {
+    found = linkQuery.findFirst();
+  } finally {
+    linkQuery.close();
+  }
   if (found != null) {
     if (found.deletedAt != null) {
       found

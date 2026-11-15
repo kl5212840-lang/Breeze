@@ -25,6 +25,10 @@ extension _ComicReadSystemUiPart on _ComicReadPageState {
     bool isMenuVisible, {
     bool force = false,
   }) async {
-    await _systemUiController.applyVisibility(isMenuVisible, force: force);
+    await _systemUiController.applyVisibility(
+      isMenuVisible,
+      showStatusBar: context.readEffectiveReadSetting().showSystemStatusBar,
+      force: force,
+    );
   }
 }

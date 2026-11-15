@@ -27,9 +27,14 @@ class DownloadTaskRepository {
       <String, Future<void>>{};
 
   List<DownloadTask> getAll({bool incompleteOnly = false}) {
-    final tasks = objectbox.downloadTaskBox.getAll();
-    if (!incompleteOnly) return tasks;
-    return tasks.where((task) => !task.isCompleted).toList();
+    final box = objectbox.downloadTaskBox;
+    if (!incompleteOnly) return box.getAll();
+    final query = box.query(DownloadTask_.isCompleted.equals(false)).build();
+    try {
+      return query.find();
+    } finally {
+      query.close();
+    }
   }
 
   /// Older versions left this explicit marker after deleting the files.

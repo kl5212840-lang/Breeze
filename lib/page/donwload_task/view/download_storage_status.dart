@@ -32,6 +32,7 @@ class _DownloadStorageStatusState extends State<DownloadStorageStatus> {
   Future<DownloadStorageUsage>? _usage;
   Future<int?>? _available;
   int _revision = 0;
+  DownloadStorageUsage? _partialUsage;
 
   @override
   void initState() {
@@ -80,11 +81,16 @@ class _DownloadStorageStatusState extends State<DownloadStorageStatus> {
 
   void _read() {
     final revision = ++_revision;
+    _partialUsage = null;
     _usage = DownloadStorageUsage.read(
       comics: widget.comics,
       videos: widget.videos,
       partial: widget.partial,
       current: () => mounted && revision == _revision,
+      onPartial: (usage) {
+        if (!mounted || revision != _revision) return;
+        setState(() => _partialUsage = usage);
+      },
     );
     _available = DownloadAdmission.instance.availableBytes();
   }
@@ -95,7 +101,14 @@ class _DownloadStorageStatusState extends State<DownloadStorageStatus> {
     builder: (context, used) => FutureBuilder<int?>(
       future: _available,
       builder: (context, free) {
-        final result = used.data;
+        final previous = used.data;
+        final partial = _partialUsage;
+        final result =
+            used.connectionState != ConnectionState.done &&
+                partial != null &&
+                partial.knownBytes > (previous?.knownBytes ?? 0)
+            ? partial
+            : previous;
         final String? usage;
         if (result == null) {
           usage = used.connectionState == ConnectionState.done

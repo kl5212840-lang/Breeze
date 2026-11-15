@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
+import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/video/video_downloaded_details.dart';
 import 'package:zephyr/page/video/video_export_records.dart';
 import 'package:zephyr/service/download/download_notification_reporter.dart';
@@ -59,6 +60,7 @@ final class ResourceDownloadNotifications {
   StreamSubscription? _comicChanges, _settingsChanges;
   int? _comicRowCount;
   final _sending = <String>{};
+  Set<String> _registeredPending = const {};
 
   Future<void> startObserving() {
     if (_observing) return settle();
@@ -81,6 +83,7 @@ final class ResourceDownloadNotifications {
   void stopObserving() {
     if (!_observing) return;
     _observing = false;
+    _registeredPending = const {};
     _comicChanges?.cancel();
     _settingsChanges?.cancel();
     _comicChanges = _settingsChanges = null;
@@ -124,6 +127,35 @@ final class ResourceDownloadNotifications {
     changed();
     return settle();
   }
+
+  Future<void> observeComicBeforeWork(DownloadTask task) {
+    final payload = task.taskInfo;
+    if (payload != null &&
+        _registeredPending.contains(
+          _comicItemIdentity(
+            payload.from,
+            payload.comicId,
+            payload.chapterKey,
+            task.id,
+          ),
+        )) {
+      return Future.value();
+    }
+    return observeBeforeWork();
+  }
+
+  static String _comicChapterIdentity(
+    String source,
+    String work,
+    String chapter,
+  ) => _identity(['comic', source, work, chapter]);
+
+  static String _comicItemIdentity(
+    String source,
+    String work,
+    String chapter,
+    int id,
+  ) => _identity([_comicChapterIdentity(source, work, chapter), id]);
 
   static Map<String, dynamic> _load(SharedPreferences prefs) {
     final encoded = prefs.get(storageKey);
@@ -256,6 +288,7 @@ final class ResourceDownloadNotifications {
       'blocked': blocked.toList(),
     };
     if (jsonEncode(after) != jsonEncode(before)) await _save(prefs, after);
+    _registeredPending = pending.keys.toSet();
     if (!_ready || mode == 'off') return;
     for (final entry in outbox.entries) {
       if (_sending.add(entry.key)) {
@@ -345,12 +378,11 @@ final class ResourceDownloadNotifications {
         continue;
       final title = payload.comicName;
       final chapter = payload.chapterRef.title.trim();
-      final identity = _identity([
-        'comic',
+      final identity = _comicChapterIdentity(
         payload.from,
         payload.comicId,
         payload.chapterKey,
-      ]);
+      );
       comic[identity] = (
         work: _identity(['comic', payload.from, payload.comicId]),
         item: _identity([identity, task.id]),

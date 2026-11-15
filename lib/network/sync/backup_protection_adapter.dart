@@ -132,6 +132,13 @@ class BackupProtectionSyncAdapter
     return raw;
   }
 
+  Future<List<int>> readFreshSnapshot(String path) async {
+    await _prepare();
+    final removed = _decoded.remove(_path(path));
+    if (removed != null) _cacheBytes -= removed.length;
+    return downloadRemoteFile(path);
+  }
+
   /// The explicit full replacement must observe current remote bytes, rather
   /// than the authenticated cache populated during its earlier preview.
   void useFullReplaceStaging(Set<String> paths, {bool reset = true}) {
@@ -142,10 +149,8 @@ class BackupProtectionSyncAdapter
 
   Future<List<int>> readFreshForFullReplace(String path) async {
     await _guard();
-    final removed = _decoded.remove(_path(path));
-    if (removed != null) _cacheBytes -= removed.length;
     try {
-      return await downloadRemoteFile(path);
+      return await readFreshSnapshot(path);
     } on BackupProtectionException catch (error) {
       if (!_fullReplaceStaging.contains(_path(path)) ||
           !{

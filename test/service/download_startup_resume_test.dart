@@ -252,6 +252,47 @@ void main() {
   });
 
   test(
+    'explicit chapter resume gets the next slot without resuming other works',
+    () async {
+      final admission = DownloadAdmission.instance;
+      await admission.setQueuePaused(true);
+      try {
+        final older = seed(payload('older').copyWith(comicId: 'older-work'));
+        final paused = seed(
+          payload('paused').copyWith(
+            comicId: 'paused-work',
+            stateCode: 'paused',
+            phaseCode: 'userPaused',
+          ),
+        );
+        final selected = seed(
+          payload('selected').copyWith(
+            stateCode: 'paused',
+            phaseCode: 'userPaused',
+            imagePaths: ['checkpoint.png'],
+          ),
+        );
+        queue.watchTasks();
+        await queue.resumeTasks([objectbox.downloadTaskBox.get(selected)!]);
+        expect(runtime.entered.isCompleted, isFalse);
+        await admission.setQueuePaused(false);
+        await runtime.entered.future.timeout(deadline);
+
+        final live = objectbox.downloadTaskBox.get(selected)!;
+        expect(live.isDownloading, isTrue);
+        expect(live.taskInfo!.imagePaths, ['checkpoint.png']);
+        expect(objectbox.downloadTaskBox.get(older)!.isDownloading, isFalse);
+        expect(
+          objectbox.downloadTaskBox.get(paused)!.taskInfo!.phaseCode,
+          'userPaused',
+        );
+      } finally {
+        await admission.setQueuePaused(false);
+      }
+    },
+  );
+
+  test(
     'explicit queue resume bypasses startup delay and preserves admission',
     () async {
       final admission = DownloadAdmission.instance;

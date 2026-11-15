@@ -101,6 +101,7 @@ class _EInkSettingPageState extends State<EInkSettingPage> {
                   hoverColor: hover.hoverColor(),
                   secondary: const Icon(Icons.arrow_back_outlined),
                   title: Text(t.settings.einkNoRouteTransition),
+                  subtitle: Text(t.settings.einkNoRouteTransitionSubtitle),
                   thumbIcon: settingSwitchThumbIcon(context),
                   value: eink.noRouteTransition,
                   onChanged: (value) => cubit.updateEInkSetting(
@@ -165,8 +166,9 @@ class _EInkSettingPageState extends State<EInkSettingPage> {
             _dropdownTile(
               icon: Icons.repeat_outlined,
               title: t.settings.einkAutoRefreshTurns,
-              value: eink.autoRefreshEveryNTurns,
-              values: _autoRefreshOptions,
+              value: eink.autoRefreshTurns,
+              values: {..._autoRefreshOptions, eink.autoRefreshTurns}.toList()
+                ..sort(),
               label: (value) =>
                   value == 0 ? t.settings.einkAutoRefreshOff : '$value',
               onChanged: (value) => cubit.updateEInkSetting(
@@ -198,11 +200,14 @@ class _EInkSettingPageState extends State<EInkSettingPage> {
                   title: Text(t.settings.einkRefreshNow),
                   trailing: const Icon(Icons.play_arrow),
                   onTap: () async {
-                    await EinkRefresh.run(
+                    final completed = await EinkRefresh.run(
+                      context,
                       eink.refreshMode,
                       holdMs: readSetting.einkDelayMs.clamp(50, 500),
                     );
-                    showSuccessToast(t.settings.einkRefreshDone);
+                    if (completed && context.mounted) {
+                      showSuccessToast(t.settings.einkRefreshDone);
+                    }
                   },
                 ),
               ),

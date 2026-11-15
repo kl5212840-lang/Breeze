@@ -110,7 +110,7 @@ class PluginSettingsPage extends StatelessWidget {
           includeLogin: showAccount,
           userInfoFunction: settingsUserInfoFunction,
           readWebIdentity: readWebIdentity,
-        )..load(from),
+        ),
         child: _PluginSettingsPageView(
           from: from,
           pluginUuid: pluginUuid,
@@ -154,8 +154,9 @@ class _PluginSettingsPageView extends StatefulWidget {
 
 class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
   bool _lifecycleBusy = false;
-  bool _confirmingRemoval = false;
-  int _purgeGeneration = 0;
+  PluginRemovalScope? _removalScope;
+  bool _runtimePaused = false;
+  final _installation = LocalPluginInstallationState.instance;
   final Set<String> _pendingFields = {};
   final Set<String> _pendingActions = {};
   final Map<String, String> _fieldErrors = {};
@@ -169,7 +170,32 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
   ExternalChromiumLoginSession? _externalChromiumSession;
 
   @override
+  void initState() {
+    super.initState();
+    _runtimePaused = _installation.isRemovalPending(widget.pluginUuid);
+    _installation.removalChanges.addListener(_removalChanged);
+    _loadInstalledSettings();
+  }
+
+  void _loadInstalledSettings() {
+    if (_installation.isRemoved(widget.pluginUuid) ||
+        PluginRegistryService.I.getByUuid(widget.pluginUuid)?.isDeleted ==
+            true) {
+      return;
+    }
+    unawaited(context.read<PluginSettingsCubit>().load(widget.from));
+  }
+
+  void _removalChanged() {
+    final pending = _installation.isRemovalPending(widget.pluginUuid);
+    if (pending == _runtimePaused) return;
+    setState(() => _runtimePaused = pending);
+    if (!pending) _loadInstalledSettings();
+  }
+
+  @override
   void dispose() {
+    _installation.removalChanges.removeListener(_removalChanged);
     final sub = _webLoginSub;
     _webLoginSub = null;
     if (sub != null) {
@@ -593,7 +619,11 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
         .state[widget.pluginUuid];
     final debugEnabled = pluginState?.debug ?? false;
     final debugUrl = pluginState?.debugUrl ?? '';
-    final deleted = pluginState?.isDeleted == true;
+    final deleted =
+        pluginState?.isDeleted == true ||
+        _installation.removedAt(widget.pluginUuid) != null;
+    final removing = _runtimePaused || _removalScope != null;
+    final unavailable = removing || deleted;
     final pluginVersion = pluginState?.version ?? '';
     final state = context.watch<PluginSettingsCubit>().state;
 
@@ -603,65 +633,106 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
           : t.plugin.pluginSettingsTitle(name: widget.pluginDisplayName),
       grouped: true,
       actions: [
-        if (widget.insideSource)
+        if (widget.insideSource && !unavailable)
           SourceMoreButton(source: widget.from, showSettings: false),
       ],
-      child: PluginSettingsContent(
-        from: widget.from,
-        pluginUuid: widget.pluginUuid,
-        pluginRuntimeName: widget.pluginRuntimeName,
-        state: state,
-        debugEnabled: debugEnabled,
-        debugUrl: debugUrl,
-        deleted: deleted,
-        pluginVersion: pluginVersion,
-        colorScheme: colorScheme,
-        scope: widget.scope,
-        showAccount: widget.showAccount,
-        readOnlyAccount: widget.readOnlyAccount,
-        jmEndpointBusy:
-            widget.from == PluginAccountAuthenticationService.jm &&
-            isPluginEndpointUpdating(widget.from),
-        pendingActions: _pendingActions,
-        onUpdateDebugConfig: _updateDebugConfig,
-        onConfirmDeletePlugin: _confirmDeletePlugin,
-        lifecycleBusy: _lifecycleBusy,
-        lifecycleExecuting: _lifecycleBusy && !_confirmingRemoval,
-        onReinstall: () async {
-          if (_lifecycleBusy) return;
-          setState(() => _lifecycleBusy = true);
-          try {
-            await ensurePluginInstalled(context, widget.pluginUuid);
-          } finally {
-            if (mounted) setState(() => _lifecycleBusy = false);
-          }
-        },
-        dataExcluded: PluginDataScope.values.any(
-          (scope) => LocalPluginInstallationState.instance.isDataExcluded(
-            widget.pluginUuid,
-            scope,
-          ),
-        ),
-        onRefresh: deleted || _lifecycleBusy ? null : _refresh,
-        onCheckPluginUpdate: _syncPlugin,
-        onUpdatePlugin: _updatePlugin,
-        onOpenLoginPage:
-            state.loginSupported ||
-                (state.userInfoLoginRequired &&
-                    state.accountProfilesSupported &&
-                    _hasVideoAccountLogin())
-            ? _openLoginPage
-            : null,
-        onOpenSavedAccounts:
-            state.loginSupported || state.accountProfilesSupported
-            ? _openSavedAccounts
-            : null,
-        onOpenDetailPage: _openDetailPage,
-        onCommitField: _commitField,
-        pendingFields: Set.unmodifiable(_pendingFields),
-        fieldErrors: Map.unmodifiable(_fieldErrors),
-        onRunAction: (action) => _runAction(context, action),
-      ),
+      child: unavailable
+          ? ListView(
+              children: [
+                SettingSection(
+                  children: [
+                    ListTile(
+                      title: Text(
+                        removing
+                            ? _removalScope?.cloud == true
+                                  ? t.pluginLifecycle.deletingCloud
+                                  : t.pluginLifecycle.working
+                            : t.pluginLifecycle.notInstalledTitle,
+                      ),
+                      subtitle: removing
+                          ? Text(t.pluginLifecycle.removalContinueHint)
+                          : null,
+                      trailing: removing
+                          ? const SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : null,
+                    ),
+                    if (!removing &&
+                        widget.scope != PluginSettingsScope.preferences)
+                      ListTile(
+                        leading: const Icon(Icons.download_outlined),
+                        title: Text(t.pluginLifecycle.reinstall),
+                        onTap: _lifecycleBusy
+                            ? null
+                            : () async {
+                                setState(() => _lifecycleBusy = true);
+                                try {
+                                  if (await ensurePluginInstalled(
+                                        context,
+                                        widget.pluginUuid,
+                                      ) &&
+                                      mounted) {
+                                    _loadInstalledSettings();
+                                  }
+                                } finally {
+                                  if (mounted) {
+                                    setState(() => _lifecycleBusy = false);
+                                  }
+                                }
+                              },
+                      ),
+                  ],
+                ),
+              ],
+            )
+          : PluginSettingsContent(
+              from: widget.from,
+              pluginUuid: widget.pluginUuid,
+              pluginRuntimeName: widget.pluginRuntimeName,
+              state: state,
+              debugEnabled: debugEnabled,
+              debugUrl: debugUrl,
+              deleted: deleted,
+              pluginVersion: pluginVersion,
+              colorScheme: colorScheme,
+              scope: widget.scope,
+              showAccount: widget.showAccount,
+              readOnlyAccount: widget.readOnlyAccount,
+              jmEndpointBusy:
+                  widget.from == PluginAccountAuthenticationService.jm &&
+                  isPluginEndpointUpdating(widget.from),
+              pendingActions: _pendingActions,
+              onUpdateDebugConfig: _updateDebugConfig,
+              onConfirmDeletePlugin: _confirmDeletePlugin,
+              lifecycleBusy: _lifecycleBusy,
+              dataExcluded: PluginDataScope.values.any(
+                (scope) => LocalPluginInstallationState.instance.isDataExcluded(
+                  widget.pluginUuid,
+                  scope,
+                ),
+              ),
+              onRefresh: deleted || _lifecycleBusy ? null : _refresh,
+              onCheckPluginUpdate: _syncPlugin,
+              onUpdatePlugin: _updatePlugin,
+              onOpenLoginPage:
+                  state.loginSupported ||
+                      (state.userInfoLoginRequired &&
+                          state.accountProfilesSupported &&
+                          _hasVideoAccountLogin())
+                  ? _openLoginPage
+                  : null,
+              onOpenSavedAccounts:
+                  state.loginSupported || state.accountProfilesSupported
+                  ? _openSavedAccounts
+                  : null,
+              onOpenDetailPage: _openDetailPage,
+              onCommitField: _commitField,
+              pendingFields: Set.unmodifiable(_pendingFields),
+              fieldErrors: Map.unmodifiable(_fieldErrors),
+              onRunAction: (action) => _runAction(context, action),
+            ),
     );
   }
 
@@ -1023,64 +1094,61 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
   }
 
   Future<void> _confirmDeletePlugin() async {
-    if (_lifecycleBusy) return;
+    if (_lifecycleBusy || _runtimePaused) return;
     if (_pendingFields.isNotEmpty ||
         _pendingActions.isNotEmpty ||
         _submittingWebCookie) {
       showInfoToast(t.pluginLifecycle.working);
       return;
     }
-    setState(() {
-      _lifecycleBusy = true;
-      _confirmingRemoval = true;
-    });
-    final generation = ++_purgeGeneration;
-    final local = LocalPluginInstallationState.instance;
-    final epoch = local.installationEpoch(widget.pluginUuid);
+    setState(() => _lifecycleBusy = true);
+    final source = widget.pluginUuid;
+    final displayName = widget.pluginDisplayName;
+    final local = _installation;
+    final epoch = local.installationEpoch(source);
     var cloudCompleted = false;
+    var confirmed = false;
+    var cleanupPending = false;
     PluginRemovalScope? scope;
     void guard() {
-      if (!mounted ||
-          generation != _purgeGeneration ||
-          local.installationEpoch(widget.pluginUuid) != epoch ||
-          local.isInstalling(widget.pluginUuid)) {
+      if (local.installationEpoch(source) != epoch ||
+          local.isInstalling(source)) {
         throw const PluginLifecycleChanged();
       }
     }
 
     try {
-      scope = await showPluginRemovalScope(
-        context,
-        pluginName: widget.pluginDisplayName,
-      );
+      scope = await showPluginRemovalScope(context, pluginName: displayName);
       if (scope == null || !mounted) return;
       guard();
       if (!await confirmPluginRemoval(
             context,
-            pluginName: widget.pluginDisplayName,
+            pluginName: displayName,
             scope: scope,
           ) ||
-          !mounted)
+          !mounted) {
         return;
+      }
       guard();
-      setState(() => _confirmingRemoval = false);
+      final adapter = scope.cloud
+          ? createSyncArchiveAdapter(context.read<GlobalSettingCubit>().state)
+          : null;
+      if (scope.cloud && adapter == null) {
+        showInfoToast(t.pluginLifecycle.deleteCloudUnconfigured);
+        return;
+      }
+      confirmed = true;
+      setState(() => _removalScope = scope);
       await _stopWebLoginFlow();
       _stopExternalChromiumLoginFlow();
       if (!scope.local) {
         await PluginRegistryService.I.deletePlugin(
-          widget.pluginUuid,
+          source,
           expectedInstallationEpoch: epoch,
         );
       } else {
-        final adapter = scope.cloud
-            ? createSyncArchiveAdapter(context.read<GlobalSettingCubit>().state)
-            : null;
-        if (scope.cloud && adapter == null) {
-          showInfoToast(t.pluginLifecycle.deleteCloudUnconfigured);
-          return;
-        }
         final result = await clearPluginPersonalData(
-          widget.pluginUuid,
+          source,
           expectedEpoch: epoch,
           // Cloud deletion is completed now, not represented by future-sync
           // tombstones. Local clearing uses the existing physical-delete path.
@@ -1093,7 +1161,7 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
               ? () async {
                   Future<void> purge() => purgeCloudPluginAccountData(
                     adapter!,
-                    widget.pluginUuid,
+                    source,
                     guard: guard,
                   );
                   try {
@@ -1102,11 +1170,17 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
                     final cause = error.cause;
                     if (error.mayHaveChanged ||
                         cause is! BackupProtectionException ||
-                        cause.code != 'backup_locked')
+                        cause.code != 'backup_locked') {
                       rethrow;
+                    }
                     guard();
-                    if (!await unlockCloudBackupProtection(context))
+                    if (!mounted || ModalRoute.of(context)?.isCurrent != true) {
+                      rethrow;
+                    }
+                    if (!await unlockCloudBackupProtection(context)) {
+                      if (!mounted) rethrow;
                       throw const BackupProtectionCancelled();
+                    }
                     guard();
                     await purge();
                   }
@@ -1114,28 +1188,27 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
                 }
               : null,
         );
-        if (!local.isRemoved(widget.pluginUuid)) {
+        if (local.removedAt(source) == null) {
           throw StateError(
             'Local data committed but plugin removal is incomplete',
           );
         }
-        if (!mounted) return;
-        context.read<PluginSettingsCubit>().resetAfterPersonalDataClear();
-        _fieldErrors.clear();
-        if (result.cleanupPending) {
-          showInfoToast(t.pluginLifecycle.cleanupPending);
-          return;
-        }
+        cleanupPending = result.cleanupPending;
       }
-      if (!mounted) return;
-      showSuccessToast(t.pluginLifecycle.removed);
-      if (ModalRoute.of(context)?.isCurrent == true &&
-          Navigator.of(context).canPop())
+      if (cleanupPending) {
+        showInfoToast(t.pluginLifecycle.cleanupPending);
+      } else {
+        showSuccessToast(t.pluginLifecycle.removed);
+      }
+      if (mounted &&
+          ModalRoute.of(context)?.isCurrent == true &&
+          Navigator.of(context).canPop()) {
         Navigator.of(context).pop();
+      }
     } on BackupProtectionCancelled {
       // Unlock cancellation happens before the local journal or data mutations.
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted && !confirmed) return;
       showErrorToast(
         cloudCompleted
             ? t.pluginLifecycle.cloudDeleteCompleteLocalFailed
@@ -1148,11 +1221,10 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
             : t.pluginLifecycle.removeFailed,
       );
     } finally {
-      _purgeGeneration++;
       if (mounted) {
         setState(() {
           _lifecycleBusy = false;
-          _confirmingRemoval = false;
+          _removalScope = null;
         });
       }
     }

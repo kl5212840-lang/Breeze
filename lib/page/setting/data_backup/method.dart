@@ -352,6 +352,7 @@ const _portableBackupGlobalKeys = {
   'backPressExitEnabled',
   'updateAccelerate',
   'retryDownloadUntilSuccess',
+  'comicDownloadConcurrency',
   'videoDownloadConcurrency',
   'downloadWifiOnly',
   'downloadCompletionNotice',

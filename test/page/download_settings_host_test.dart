@@ -44,11 +44,25 @@ void main() {
     () {
       final legacy = GlobalSettingState.fromJson({});
       expect(legacy.videoDownloadConcurrency, 1);
+      expect(legacy.comicDownloadConcurrency, 2);
+      expect(
+        GlobalSettingState.fromJson({
+          'comicDownloadConcurrency': 11,
+        }).comicDownloadConcurrency,
+        10,
+      );
+      expect(
+        GlobalSettingState.fromJson({
+          'comicDownloadConcurrency': 'invalid',
+        }).comicDownloadConcurrency,
+        2,
+      );
       expect(legacy.downloadWifiOnly, isFalse);
       expect(legacy.downloadCompletionNotice, 'work');
       final saved = legacy
           .copyWith(
             videoDownloadConcurrency: 3,
+            comicDownloadConcurrency: 5,
             downloadWifiOnly: true,
             downloadCompletionNotice: 'episode',
           )
@@ -58,6 +72,7 @@ void main() {
         'futureDownloadField': true,
       });
       expect(restored.videoDownloadConcurrency, 3);
+      expect(restored.comicDownloadConcurrency, 5);
       expect(restored.downloadWifiOnly, isTrue);
       expect(restored.downloadCompletionNotice, 'episode');
     },
@@ -107,11 +122,22 @@ void main() {
         await tester.tap(find.text('Open'));
         await tester.pumpAndSettle();
         expect(find.text('MAIN NAV').hitTestable(), findsNothing);
-        final concurrency = find.byType(SettingChoiceTile<int>);
-        tester.widget<SettingChoiceTile<int>>(concurrency).onChanged(2);
+        final comics = find.byKey(const ValueKey('comic-download-concurrency'));
+        final comicChoice = tester.widget<SettingChoiceTile<int>>(comics);
+        expect(comicChoice.items.keys, List.generate(10, (i) => i + 1));
+        expect(comicChoice.value, 2);
+        comicChoice.onChanged(10);
+        final video = find.byKey(const ValueKey('download-concurrency'));
+        tester.widget<SettingChoiceTile<int>>(video).onChanged(2);
         await tester.pumpAndSettle();
         final wifi = find.byKey(const ValueKey('download-wifi-only'));
-        await tester.tap(wifi);
+        await tester.ensureVisible(wifi);
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find
+              .descendant(of: wifi, matching: find.byType(Switch))
+              .hitTestable(),
+        );
         await tester.pumpAndSettle();
         expect(DownloadAdmission.instance.wifiOnly, isTrue);
         final keepRetrying = find.byKey(
@@ -133,6 +159,7 @@ void main() {
         final cold = GlobalSettingCubit();
         await cold.initBox();
         expect(cold.state.videoDownloadConcurrency, 2);
+        expect(cold.state.comicDownloadConcurrency, 10);
         expect(cold.state.downloadWifiOnly, isTrue);
         expect(cold.state.retryDownloadUntilSuccess, isFalse);
         await cold.close();
