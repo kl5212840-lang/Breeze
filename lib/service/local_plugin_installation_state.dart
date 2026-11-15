@@ -44,6 +44,7 @@ class LocalPluginInstallationState {
   static const storageKey = 'breeze.local.plugin-removals.v1';
   final Future<SharedPreferences> Function() _preferences;
   final changes = ValueNotifier<int>(0);
+  final removalChanges = ValueNotifier<int>(0);
   Map<String, int> _removed = {}, _epochs = {};
   Map<String, Set<PluginDataScope>> _masks = {};
   final Set<String> _pendingRemoval = {};
@@ -54,6 +55,7 @@ class LocalPluginInstallationState {
   bool isRemoved(String uuid) =>
       _removed.containsKey(uuid.trim()) ||
       _pendingRemoval.contains(uuid.trim());
+  bool isRemovalPending(String uuid) => _pendingRemoval.contains(uuid.trim());
   int? removedAt(String uuid) => _removed[uuid.trim()];
   int installationEpoch(String uuid) => _epochs[uuid.trim()] ?? 0;
   bool isInstalling(String uuid) => (_installing[uuid.trim()] ?? 0) > 0;
@@ -67,10 +69,14 @@ class LocalPluginInstallationState {
   Set<String> get removedUuids => Set.unmodifiable(_removed.keys);
   void beginRemoval(String uuid) {
     _check(uuid);
-    _pendingRemoval.add(uuid.trim());
+    if (!_pendingRemoval.add(uuid.trim())) throw const PluginLifecycleChanged();
+    removalChanges.value++;
   }
 
-  void endRemoval(String uuid) => _pendingRemoval.remove(uuid.trim());
+  void endRemoval(String uuid) {
+    if (_pendingRemoval.remove(uuid.trim())) removalChanges.value++;
+  }
+
   LocalPluginInstallationLease beginExplicitInstallation(String source) {
     _check(source);
     final key = source.trim();

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -15,15 +14,16 @@ class ReaderSystemUiService {
   static const _systemUiChannel = MethodChannel('system_ui_control');
 
   Timer? _syncTimer;
-  bool? _lastMenuVisible;
+  ({bool menuVisible, bool showStatusBar})? _lastVisibility;
   int _owner = 0;
   Future<void> _pending = Future<void>.value();
 
-  bool get _isAndroid => !kIsWeb && Platform.isAndroid;
+  bool get _isAndroid =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   int acquire() {
     _syncTimer?.cancel();
-    _lastMenuVisible = null;
+    _lastVisibility = null;
     return ++_owner;
   }
 
@@ -43,16 +43,24 @@ class ReaderSystemUiService {
   Future<void> applyVisibility(
     int owner,
     bool isMenuVisible, {
+    bool showStatusBar = false,
     bool force = false,
   }) async {
-    if (owner != _owner || (!force && _lastMenuVisible == isMenuVisible))
-      return;
-    _lastMenuVisible = isMenuVisible;
+    final visibility = (
+      menuVisible: isMenuVisible,
+      showStatusBar: !isMenuVisible && showStatusBar,
+    );
+    if (owner != _owner || (!force && _lastVisibility == visibility)) return;
+    _lastVisibility = visibility;
     try {
-      await _enqueue(owner, visible: isMenuVisible);
+      await _enqueue(
+        owner,
+        visible: isMenuVisible,
+        showStatusBar: visibility.showStatusBar,
+      );
     } catch (_) {
-      if (owner == _owner && _lastMenuVisible == isMenuVisible) {
-        _lastMenuVisible = null;
+      if (owner == _owner && _lastVisibility == visibility) {
+        _lastVisibility = null;
       }
       rethrow;
     }
@@ -62,14 +70,18 @@ class ReaderSystemUiService {
   Future<void> release(int owner) {
     if (owner != _owner) return Future<void>.value();
     _syncTimer?.cancel();
-    _lastMenuVisible = null;
+    _lastVisibility = null;
     return _enqueue(++_owner, visible: true);
   }
 
-  Future<void> _enqueue(int owner, {required bool visible}) {
+  Future<void> _enqueue(
+    int owner, {
+    required bool visible,
+    bool showStatusBar = false,
+  }) {
     final request = _pending.then((_) async {
       if (owner != _owner) return;
-      await (visible ? _showSystemBars() : _hideSystemBars());
+      await (visible ? _showSystemBars() : _hideSystemBars(showStatusBar));
     });
     _pending = request.then<void>((_) {}, onError: (Object _) {});
     return request;
@@ -86,9 +98,20 @@ class ReaderSystemUiService {
     );
   }
 
-  Future<void> _hideSystemBars() async {
+  Future<void> _hideSystemBars(bool showStatusBar) async {
     if (_isAndroid) {
-      await _systemUiChannel.invokeMethod('hideSystemBars');
+      await _systemUiChannel.invokeMethod('hideSystemBars', {
+        'showStatusBar': showStatusBar,
+      });
+      return;
+    }
+    if (!kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.iOS &&
+        showStatusBar) {
+      await SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.manual,
+        overlays: [SystemUiOverlay.top],
+      );
       return;
     }
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);

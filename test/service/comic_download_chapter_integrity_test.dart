@@ -18,6 +18,8 @@ import 'package:worker_manager/worker_manager.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
+import 'package:zephyr/network/sync/plugin_config_merge.dart'
+    show copyPluginConfigSource;
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/object_box/objectbox.g.dart' show ObservableStore;
 import 'package:zephyr/page/comic_info/widgets/episode_download_controller.dart';
@@ -25,6 +27,7 @@ import 'package:zephyr/page/comic_read/method/get_local_info.dart';
 import 'package:zephyr/page/download/adapters/download_chapter_adapter.dart';
 import 'package:zephyr/page/download/models/unified_comic_download.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
+import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/service/download/comic_download_route.dart';
 import 'package:zephyr/service/download/comic_download_task.dart';
@@ -120,8 +123,11 @@ class _PluginApi extends RustLibApi {
   final firstImageStatus = <String, int>{};
   final imageStatus = <String, int>{};
   final firstImageEmpty = <String>{};
+  final firstImageError = <String, String>{};
   final imageBodies = <String, Uint8List>{};
   String? heldImageUrl;
+  final imageGates = <String, Completer<void>>{};
+  final imageDispatched = <String, Completer<void>>{};
   Completer<void>? imageEntered;
   Completer<void>? releaseImage;
   Completer<void>? imageResponseReturned;
@@ -133,6 +139,7 @@ class _PluginApi extends RustLibApi {
   Completer<void>? detailEntered;
   Completer<void>? releaseDetail;
   bool failCommitPath = false;
+  Map<String, dynamic>? downloadConcurrency;
 
   @override
   String crateApiSimpleEncodePath({required String path}) {
@@ -201,8 +208,9 @@ class _PluginApi extends RustLibApi {
       'init' => {'ok': true},
       'isJm' => false,
       'getComicDetail' => {'normal': _normalDetail(detailChapters)},
-      'getDownloadConcurrency' => {'concurrency': 1},
       'getChapter' => _chapterResponse(chapterRequest, chapterArgs!),
+      'getDownloadConcurrency' when downloadConcurrency != null =>
+        downloadConcurrency!,
       _ => throw StateError('Unexpected plugin function $fnPath'),
     };
     if (fnPath == 'getChapter') {
@@ -254,20 +262,26 @@ class _PluginApi extends RustLibApi {
         ? Uint8List(0)
         : imageBodies[url] ?? Uint8List(0);
     imageRequests.add(url);
+    if (isFirstRequest) imageDispatched[url]?.complete();
+    await imageGates[url]?.future;
     if (isFirstRequest && url == heldImageUrl) {
       imageEntered?.complete();
       await releaseImage?.future;
       imageResponseReturned?.complete();
     }
+    final error = isFirstRequest ? firstImageError[url] : null;
     return Uint8List.fromList(
       cbor.cbor.encode(
         cbor.CborValue({
           'version': 1,
           'bytes': bytes,
-          'statusCode':
-              status ??
-              imageStatus[url] ??
-              (url.endsWith('404.png') ? 404 : 200),
+          if (error != null)
+            'error': error
+          else
+            'statusCode':
+                status ??
+                imageStatus[url] ??
+                (url.endsWith('404.png') ? 404 : 200),
           'responseBodyLength': bytes.length,
         }),
       ),
@@ -336,6 +350,13 @@ void main() {
     RustLib.dispose();
     await TestObjectBoxHelper.tearDownTestObjectBox();
   });
+  setUp(() {
+    final user = objectbox.userSettingBox.get(1)!;
+    user.globalSetting = user.globalSetting.copyWith(
+      comicDownloadConcurrency: 1,
+    );
+    objectbox.userSettingBox.put(user);
+  });
   tearDown(() {
     objectbox.downloadTaskBox.removeAll();
     TestObjectBoxHelper.cleanComicFolderBoxes();
@@ -348,8 +369,11 @@ void main() {
     api.firstImageStatus.clear();
     api.imageStatus.clear();
     api.firstImageEmpty.clear();
+    api.firstImageError.clear();
     api.imageBodies.clear();
     api.heldImageUrl = null;
+    api.imageGates.clear();
+    api.imageDispatched.clear();
     api.imageEntered = null;
     api.releaseImage = null;
     api.imageResponseReturned = null;
@@ -365,6 +389,7 @@ void main() {
     api.detailEntered = null;
     api.releaseDetail = null;
     api.failCommitPath = false;
+    api.downloadConcurrency = null;
   });
 
   int startTask([DownloadTaskJson payload = _payload]) =>
@@ -655,6 +680,142 @@ void main() {
     });
   }
 
+  for (final (label, requested, capability, limit, copy) in [
+    ('user sets one', 1, const {'concurrency': 5}, 1, false),
+    ('legacy plugin supports the user setting', 2, null, 2, false),
+    ('legacy plugin can use all ten slots', 10, null, 10, false),
+    (
+      'plugin has an explicit lower limit',
+      10,
+      const {'maxConcurrency': 3},
+      3,
+      false,
+    ),
+    (
+      'Copy legacy default does not prevent all ten slots',
+      10,
+      const {'concurrency': 1},
+      10,
+      true,
+    ),
+    (
+      'nested explicit maximum respects the user setting',
+      4,
+      const {
+        'data': {'maxConcurrency': '8'},
+      },
+      4,
+      false,
+    ),
+    (
+      'invalid capability falls back to the user setting',
+      5,
+      const {'maxConcurrency': 0},
+      5,
+      false,
+    ),
+  ]) {
+    test('comic image concurrency: $label', () async {
+      const deadline = Duration(seconds: 5);
+      final user = objectbox.userSettingBox.get(1)!;
+      user.globalSetting = user.globalSetting.copyWith(
+        comicDownloadConcurrency: requested,
+      );
+      objectbox.userSettingBox.put(user);
+      api.downloadConcurrency = capability;
+      final task = copy
+          ? _payload.copyWith(from: copyPluginConfigSource)
+          : _payload;
+      final caseKey = label.replaceAll(' ', '-');
+      final pages = [
+        for (var i = 0; i <= limit; i++) _page('parallel-$caseKey-$i.png'),
+      ];
+      final urls = [for (final page in pages) page['url'] as String];
+      final gates = [
+        for (final url in urls) api.imageGates[url] = Completer<void>(),
+      ];
+      final dispatched = [
+        for (final url in urls) api.imageDispatched[url] = Completer<void>(),
+      ];
+      api.imageBodies.addAll({for (final url in urls) url: _png});
+      api.chapterResponse = {
+        'chapter': {'epId': 'catalog-id', 'docs': pages},
+      };
+      final id = startTask(task);
+      final outcome = run(id, task);
+      try {
+        await Future.wait(
+          dispatched.take(limit).map((item) => item.future),
+        ).timeout(deadline);
+        expect(dispatched.last.isCompleted, isFalse);
+      } finally {
+        for (final gate in gates) {
+          gate.complete();
+        }
+        await outcome.timeout(deadline);
+      }
+      expect(api.imageRequests, unorderedEquals(urls));
+      expect(
+        api.readGroups['getDownloadConcurrency'],
+        requested == 1 ? isNull : task.taskKey,
+      );
+      expect(objectbox.downloadTaskBox.get(id)!.isCompleted, isTrue);
+    });
+  }
+
+  test('fast page batches report progress at saved checkpoints', () async {
+    final pages = [for (var i = 0; i < 12; i++) _page('progress-$i.png')];
+    api.imageBodies.addAll({
+      for (final page in pages) page['url'] as String: _png,
+    });
+    api.chapterResponse = {
+      'chapter': {'epId': 'catalog-id', 'docs': pages},
+    };
+    final progress = <int>[];
+    final expectedMessages = {
+      for (var count = 0; count <= pages.length; count++)
+        t.download.statusDownloadProgress(percent: count * 100 ~/ pages.length):
+            count,
+    };
+    final reporter = _Reporter()
+      ..setOnUpdate((_, message) {
+        if (expectedMessages[message] case final count?) progress.add(count);
+      });
+    final id = startTask();
+    await run(id, _payload, reporter);
+    expect(progress.first, 0);
+    expect(progress[1], 1);
+    expect(progress.last, pages.length);
+    expect(progress.length, lessThan(pages.length));
+  });
+
+  for (final failure in ['timeout', 'empty', 'plugin empty response']) {
+    test('a transient $failure gets one more try on the same route', () async {
+      final name = 'routed-${failure.replaceAll(' ', '-')}.png';
+      final url = 'https://cdn-a.example/$name';
+      api.downloadRouteResponses.addAll({
+        'a': _routedChapter('a', [name]),
+        'b': _routedChapter('b', [name]),
+      });
+      api.imageBodies[url] = _png;
+      switch (failure) {
+        case 'timeout':
+          api.firstImageError[url] =
+              'TimeoutError: Request timed out: GET $url';
+        case 'plugin empty response':
+          api.firstImageError[url] = 'Error: 图片数据为空';
+        default:
+          api.firstImageEmpty.add(url);
+      }
+
+      final id = startTask();
+      await run(id);
+      expect(api.imageRequests, [url, url]);
+      expect(api.downloadRouteRequests, hasLength(1));
+      expect(objectbox.downloadTaskBox.get(id)!.isCompleted, isTrue);
+    });
+  }
+
   test('a temporary automatic route exhaustion returns to the queue', () async {
     final fixture = configureRoutedPages(
       'automatic-exhausted',
@@ -729,11 +890,7 @@ void main() {
       'comicDownload': true,
       'chapterId': _payload.chapterRef.requestId,
     });
-    for (final call in [
-      'getComicDetail',
-      'getChapter',
-      'getDownloadConcurrency',
-    ]) {
+    for (final call in ['getComicDetail', 'getChapter']) {
       expect(api.readGroups[call], _payload.taskKey);
     }
     expect(objectbox.downloadTaskBox.get(taskId)!.isCompleted, isTrue);
@@ -1638,22 +1795,24 @@ void main() {
   });
 
   test(
-    'iOS backgrounding queues the active chapter and resumes without repeating saved pages',
+    'iOS backgrounding finishes in-flight pages without starting new ones until foreground',
     () async {
       const deadline = Duration(seconds: 5);
       final queue = DownloadQueueManager.instance;
       final saved = _page('saved-before-ios-background.png');
       final held = _page('in-flight-at-ios-background.png');
+      final next = _page('after-ios-background.png');
       final savedUrl = saved['url'] as String;
       final heldUrl = held['url'] as String;
-      api.imageBodies.addAll({savedUrl: _png, heldUrl: _png});
+      final nextUrl = next['url'] as String;
+      api.imageBodies.addAll({savedUrl: _png, heldUrl: _png, nextUrl: _png});
       api.heldImageUrl = heldUrl;
       final entered = api.imageEntered = Completer<void>();
       final release = api.releaseImage = Completer<void>();
       api.chapterResponse = {
         'chapter': {
           'epId': 'selected',
-          'docs': [saved, held],
+          'docs': [saved, held, next],
         },
       };
       final taskId = objectbox.downloadTaskBox.put(
@@ -1687,10 +1846,17 @@ void main() {
         binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-        await waitForQueueToSettle();
+        release.complete();
+        final heldFile = File(
+          await storedPage(held['path'] as String).canonicalDownloadPath(),
+        );
+        final end = DateTime.now().add(deadline);
+        while (!await heldFile.exists() && DateTime.now().isBefore(end)) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(await heldFile.exists(), isTrue);
         final waiting = objectbox.downloadTaskBox.get(taskId)!;
-        expect(waiting.taskInfo!.phaseCode, 'waitingForeground');
-        expect(waiting.taskInfo!.stateCode, 'queued');
+        expect(waiting.taskInfo!.stateCode, 'running');
         expect(api.imageRequests, [savedUrl, heldUrl]);
         expect(waiting.taskInfo!.attempt, 1);
         expectNoPublication(taskId);
@@ -1699,16 +1865,15 @@ void main() {
         binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
         binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
         await complete.future.timeout(deadline);
-        release.complete();
         await waitForQueueToSettle();
 
-        expect(api.imageRequests, [savedUrl, heldUrl, heldUrl]);
+        expect(api.imageRequests, [savedUrl, heldUrl, nextUrl]);
         expect(completions, 1);
-        expect(objectbox.downloadTaskBox.get(taskId)!.taskInfo!.attempt, 2);
+        expect(objectbox.downloadTaskBox.get(taskId)!.taskInfo!.attempt, 1);
         final record = objectbox.unifiedDownloadBox.getAll().single;
         expect(
           resolveStoredDownloadChapters(record).single.images,
-          hasLength(2),
+          hasLength(3),
         );
         expect(objectbox.comicLinkBox.getAll(), hasLength(1));
       } finally {
@@ -1847,6 +2012,113 @@ void main() {
       }
     },
   );
+
+  test('pause survives dispatch of the selected queued chapter', () async {
+    const deadline = Duration(seconds: 5);
+    final queue = DownloadQueueManager.instance;
+    final box = objectbox.downloadTaskBox;
+    final held = _page('pause-during-dispatch.png');
+    api.heldImageUrl = held['url'] as String;
+    api.imageBodies[api.heldImageUrl!] = _png;
+    final entered = api.imageEntered = Completer<void>();
+    final release = api.releaseImage = Completer<void>();
+    api.chapterResponse = {
+      'chapter': {
+        'epId': 'catalog-id',
+        'docs': [held],
+      },
+    };
+    final id = box.put(
+      DownloadTask()
+        ..comicId = _payload.comicId
+        ..comicName = _payload.comicName
+        ..taskInfo = _payload.copyWith(stateCode: 'queued', attempt: 0),
+    );
+    final queued = box.get(id)!;
+    queue.watchTasks();
+    try {
+      await entered.future.timeout(deadline);
+      expect(box.get(id)!.isDownloading, isTrue);
+      expect(queue.pauseTasks([queued]), 1);
+      expect(box.get(id)!.taskInfo!.phaseCode, 'userPaused');
+      expectNoPublication(id);
+    } finally {
+      final pending = queue.pendingComicWorkerStop(
+        from: _payload.from,
+        comicId: _payload.comicId,
+      );
+      queue.stopWatchingTasks();
+      release.complete();
+      await pending?.timeout(deadline);
+    }
+  });
+
+  test('changing the source route replaces a stalled image request', () async {
+    const deadline = Duration(seconds: 5);
+    final queue = DownloadQueueManager.instance;
+    final box = objectbox.downloadTaskBox;
+    final oldPage = _page('before-route-change.png');
+    final newPage = _page('after-route-change.png');
+    final oldUrl = oldPage['url'] as String;
+    final newUrl = newPage['url'] as String;
+    api.heldImageUrl = oldUrl;
+    api.imageBodies.addAll({oldUrl: _png, newUrl: _png});
+    final entered = api.imageEntered = Completer<void>();
+    final release = api.releaseImage = Completer<void>();
+    api.chapterResponse = {
+      'chapter': {
+        'epId': 'catalog-id',
+        'docs': [oldPage],
+      },
+    };
+    final id = box.put(
+      DownloadTask()
+        ..comicId = _payload.comicId
+        ..comicName = _payload.comicName
+        ..taskInfo = _payload.copyWith(stateCode: 'queued', attempt: 0),
+    );
+    final pausedId = box.put(
+      DownloadTask()
+        ..comicId = 'other-work'
+        ..taskInfo = _payload.copyWith(
+          comicId: 'other-work',
+          stateCode: 'paused',
+          phaseCode: 'userPaused',
+        ),
+    );
+    queue.watchTasks();
+    final completed = queue.progressStream.firstWhere(
+      (progress) => progress.isCompleted,
+    );
+    try {
+      await entered.future.timeout(deadline);
+      api.chapterResponse = {
+        'chapter': {
+          'epId': 'catalog-id',
+          'docs': [newPage],
+        },
+      };
+      final revision = beginPluginEndpointUpdate(_payload.from)!;
+      finishPluginEndpointUpdate(
+        _payload.from,
+        revision,
+        refreshSettings: false,
+        refreshProfile: true,
+      );
+      await completed.timeout(deadline);
+      expect(api.imageRequests, [oldUrl, newUrl]);
+      expect(box.get(id)!.taskInfo!.attempt, 2);
+      expect(box.get(pausedId)!.taskInfo!.phaseCode, 'userPaused');
+    } finally {
+      final pending = queue.pendingComicWorkerStop(
+        from: _payload.from,
+        comicId: _payload.comicId,
+      );
+      queue.stopWatchingTasks();
+      release.complete();
+      await pending?.timeout(deadline);
+    }
+  });
 
   test('pause and resume ignore a newer attempt from the same row', () async {
     final queue = DownloadQueueManager.instance;

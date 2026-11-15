@@ -20,6 +20,7 @@ import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_management_island.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
+import 'package:zephyr/service/local_plugin_installation_state.dart';
 import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
@@ -651,8 +652,6 @@ class _DiscoverViewState extends State<_DiscoverView> {
                   for (final plugin in plugins)
                     DiscoverPluginManagementOption(
                       id: plugin.uuid,
-                      enabled: plugin.isEnabled,
-                      toggling: state.pendingEnabled.containsKey(plugin.uuid),
                       title:
                           state.infoStates[plugin.uuid]?.data?['name']
                                   ?.toString()
@@ -670,13 +669,6 @@ class _DiscoverViewState extends State<_DiscoverView> {
                           '',
                     ),
                 ],
-                onToggleEnabled: _layout == _DiscoverLayout.grid
-                    ? cubit.toggleEnabled
-                    : null,
-                onSettings: _layout == _DiscoverLayout.grid
-                    ? (plugin) =>
-                          _openPluginSettings(context, plugin.id, plugin.title)
-                    : null,
                 onSave: (draft) => saveDiscoverPluginManagement(
                   draft: draft,
                   visibility: _visibility,
@@ -716,6 +708,14 @@ class _DiscoverViewState extends State<_DiscoverView> {
     String uuid,
     String title,
   ) async {
+    if (LocalPluginInstallationState.instance.isRemovalPending(uuid)) {
+      showInfoToast(t.pluginLifecycle.working);
+      return;
+    }
+    if (PluginRegistryService.I.getByUuid(uuid)?.isDeleted != false) {
+      showInfoToast(t.pluginLifecycle.notInstalledTitle);
+      return;
+    }
     await context.pushRoute(
       PluginSettingsRoute(
         from: uuid,

@@ -355,48 +355,46 @@ List<Map<String, dynamic>> buildChapterCatalog(List<Ep> eps) {
       .toList();
 }
 
-/// 读取记录里的目录快照原始数据，没有返回空数组。
-List<Map<String, dynamic>> readChapterCatalogMaps(UnifiedComicDownload record) {
+/// 从已解码的详情中读取目录快照，供批量下载复用。
+List<Map<String, dynamic>> chapterCatalogMaps(Map<String, dynamic> extern) {
+  final raw = extern['chapterCatalog'];
+  if (raw is! List) return const [];
+  return raw
+      .whereType<Map>()
+      .map((entry) => Map<String, dynamic>.from(entry))
+      .toList();
+}
+
+/// 读取记录里的目录快照（身份视图），没有返回空数组。
+List<DownloadChapter> readChapterCatalog(UnifiedComicDownload record) {
   try {
     final detail = jsonDecode(record.detailJson);
     if (detail is! Map) return const [];
     final extern = Map<String, dynamic>.from(
       detail['extern'] as Map? ?? const {},
     );
-    final raw = extern['chapterCatalog'];
-    if (raw is! List) return const [];
-    return raw
-        .whereType<Map>()
-        .map((entry) => Map<String, dynamic>.from(entry))
-        .toList();
+    return chapterCatalogMaps(extern).map(chapterFromCatalogEntry).toList();
   } catch (_) {
     return const [];
   }
 }
 
-/// 读取记录里的目录快照（身份视图），没有返回空数组。
-List<DownloadChapter> readChapterCatalog(UnifiedComicDownload record) {
-  try {
-    return readChapterCatalogMaps(record).map((map) {
-      final logicalKey = map['logicalKey']?.toString().trim() ?? '';
-      final id = map['id']?.toString().trim() ?? '';
-      final requestId = map['requestId']?.toString().trim() ?? '';
-      final resolvedId = logicalKey.isNotEmpty
-          ? logicalKey
-          : (id.isNotEmpty ? id : requestId);
-      return DownloadChapter(
-        id: resolvedId,
-        displayName: map['name']?.toString() ?? '',
-        order: int.tryParse(map['order']?.toString() ?? '') ?? 0,
-        requestId: requestId.isNotEmpty ? requestId : null,
-        groupTitle: map['groupTitle']?.toString() ?? '',
-        extern: const {},
-        images: const [],
-      );
-    }).toList();
-  } catch (_) {
-    return const [];
-  }
+DownloadChapter chapterFromCatalogEntry(Map<String, dynamic> map) {
+  final logicalKey = map['logicalKey']?.toString().trim() ?? '';
+  final id = map['id']?.toString().trim() ?? '';
+  final requestId = map['requestId']?.toString().trim() ?? '';
+  final resolvedId = logicalKey.isNotEmpty
+      ? logicalKey
+      : (id.isNotEmpty ? id : requestId);
+  return DownloadChapter(
+    id: resolvedId,
+    displayName: map['name']?.toString() ?? '',
+    order: int.tryParse(map['order']?.toString() ?? '') ?? 0,
+    requestId: requestId.isNotEmpty ? requestId : null,
+    groupTitle: map['groupTitle']?.toString() ?? '',
+    extern: const {},
+    images: const [],
+  );
 }
 
 /// 按目录快照顺序排列已下载章节，快照里没有的缀在最后（保持原相对顺序）。

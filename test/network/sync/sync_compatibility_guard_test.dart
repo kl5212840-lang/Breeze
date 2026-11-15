@@ -128,6 +128,7 @@ void main() {
         customExportPath: '/synthetic/local/export',
         switchStyle: BreezeSwitchStyle.spark,
         retryDownloadUntilSuccess: false,
+        comicDownloadConcurrency: 4,
         videoDownloadConcurrency: 2,
         downloadWifiOnly: true,
         downloadCompletionNotice: 'chapter',
@@ -169,6 +170,7 @@ void main() {
         'disableBika',
         'updateAccelerate',
         'retryDownloadUntilSuccess',
+        'comicDownloadConcurrency',
         'videoDownloadConcurrency',
         'downloadWifiOnly',
         'downloadCompletionNotice',
@@ -185,6 +187,7 @@ void main() {
       });
       expect(global['switchStyle'], 'spark');
       expect(global['retryDownloadUntilSuccess'], isFalse);
+      expect(global['comicDownloadConcurrency'], 4);
       expect(global['videoDownloadConcurrency'], 2);
       expect(global['downloadWifiOnly'], isTrue);
       expect(global['downloadCompletionNotice'], 'chapter');

@@ -391,6 +391,85 @@ void main() {
     },
   );
   test(
+    'saved storage reads preserve a running work byte measurement',
+    () async {
+      await useIsolatedDownloadFixture();
+      await pageFile('page.jpg', '123');
+      await pageFile('in-flight.jpg', '12345');
+      final saved = resource();
+      final metrics = DownloadResourceMetrics(clock: () => DateTime.utc(2026));
+      const running = DownloadTaskJson(
+        from: 'source',
+        comicId: 'comic',
+        comicName: 'Comic',
+        stateCode: 'running',
+        totalImages: 3,
+        completedImages: 1,
+        imagePaths: ['in-flight.jpg'],
+        chapterRef: DownloadChapterTaskRef(
+          chapterId: 'second',
+          logicalKey: 'second',
+          storageChapterId: 'shared',
+        ),
+      );
+      Future<DownloadResourceSize> active() => metrics.readComicProgress(
+        source: 'source',
+        comicId: 'comic',
+        resource: saved,
+        tasks: [running],
+      );
+      final first = active();
+      expect((await first).downloadedBytes, 8);
+      expect((await metrics.readComic(saved)).downloadedBytes, 3);
+      expect(active(), same(first));
+      expect((await active()).chapters['second']?.downloadedBytes, 5);
+    },
+  );
+
+  test(
+    'active byte progress reuses committed files until invalidated',
+    () async {
+      await useIsolatedDownloadFixture();
+      final committed = await pageFile('page.jpg', '123');
+      final active = await pageFile('active.jpg', '12345');
+      final saved = resource();
+      var now = DateTime.utc(2026);
+      final metrics = DownloadResourceMetrics(clock: () => now);
+      const task = DownloadTaskJson(
+        from: 'source',
+        comicId: 'comic',
+        comicName: 'Comic',
+        stateCode: 'running',
+        totalImages: 3,
+        completedImages: 1,
+        imagePaths: ['active.jpg'],
+        chapterRef: DownloadChapterTaskRef(
+          chapterId: 'chapter-2',
+          logicalKey: 'logical-2',
+          storageChapterId: 'shared',
+        ),
+      );
+
+      Future<int> read(DownloadTaskJson snapshot) async =>
+          (await metrics.readComicProgress(
+            source: 'source',
+            comicId: 'comic',
+            resource: saved,
+            tasks: [snapshot],
+          )).knownBytes;
+
+      expect(await read(task), 8);
+      await active.writeAsString('1234567');
+      await committed.writeAsString('123456789');
+      now = now.add(const Duration(seconds: 3));
+      final next = task.copyWith(completedImages: 2);
+      expect(await read(next), 10);
+      metrics.invalidate(saved.key);
+      expect(await read(next), 16);
+    },
+  );
+
+  test(
     'running task paths expose actual bytes before the first chapter commit and preserve aliases',
     () async {
       await useIsolatedDownloadFixture();
@@ -422,6 +501,7 @@ void main() {
       );
       final measured = await first;
       expect(measured.knownBytes, 7);
+      expect(measured.downloadedBytes, 7);
       expect(measured.status, DownloadResourceSizeStatus.partial);
       expect(
         measured.sizeBytes,

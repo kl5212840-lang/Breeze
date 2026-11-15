@@ -68,9 +68,7 @@ class PluginSettingsContent extends StatelessWidget {
     this.fieldErrors = const {},
     this.appearanceImages,
     this.lifecycleBusy = false,
-    this.lifecycleExecuting = false,
     this.onConfirmPurgeData,
-    this.onReinstall,
     this.onRestorePersonalData,
     this.dataExcluded = false,
   });
@@ -78,10 +76,8 @@ class PluginSettingsContent extends StatelessWidget {
   final String from;
   final String? pluginUuid;
   final LocalAppearanceImages? appearanceImages;
-  final bool lifecycleBusy, lifecycleExecuting, dataExcluded;
-  final Future<void> Function()? onConfirmPurgeData,
-      onReinstall,
-      onRestorePersonalData;
+  final bool lifecycleBusy, dataExcluded;
+  final Future<void> Function()? onConfirmPurgeData, onRestorePersonalData;
   final String pluginRuntimeName;
   final PluginSettingsState state;
   final bool debugEnabled;
@@ -145,16 +141,7 @@ class PluginSettingsContent extends StatelessWidget {
               PluginSettingsSectionCard(
                 title: '',
                 colorScheme: colorScheme,
-                children: [
-                  if (deleted && onReinstall != null)
-                    PluginSettingsFieldRow(
-                      title: t.pluginLifecycle.reinstall,
-                      subtitle: '',
-                      onTap: lifecycleBusy ? null : onReinstall,
-                      trailing: const Icon(Icons.download_outlined, size: 18),
-                    ),
-                  _buildDeletePluginRow(),
-                ],
+                children: [_buildDeletePluginRow()],
               ),
             ],
             if (scope == PluginSettingsScope.all) ...[
@@ -175,9 +162,8 @@ class PluginSettingsContent extends StatelessWidget {
               _buildErrorSection(context),
           ],
         ),
-        if (lifecycleExecuting ||
-            state.loading &&
-                (state.hasContent || scope == PluginSettingsScope.management))
+        if (state.loading &&
+            (state.hasContent || scope == PluginSettingsScope.management))
           const Positioned(
             top: 0,
             left: 0,

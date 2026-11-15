@@ -1300,8 +1300,8 @@ class Translations$settings$zh_CN {
 	/// zh-CN: '去除页面切换动画'
 	String get einkNoRouteTransition => '去除页面切换动画';
 
-	/// zh-CN: '进入和退出页面时不播放动画'
-	String get einkNoRouteTransitionSubtitle => '进入和退出页面时不播放动画';
+	/// zh-CN: '页面直接切换，保留侧滑返回'
+	String get einkNoRouteTransitionSubtitle => '页面直接切换，保留侧滑返回';
 
 	/// zh-CN: '去除滚动回弹'
 	String get einkNoScrollBounce => '去除滚动回弹';
@@ -1327,8 +1327,8 @@ class Translations$settings$zh_CN {
 	/// zh-CN: '黑白全刷'
 	String get einkRefreshFull => '黑白全刷';
 
-	/// zh-CN: '闪白或黑白刷新以清除残影'
-	String get einkRefreshHint => '闪白或黑白刷新以清除残影';
+	/// zh-CN: '通过闪白或黑白切换重绘屏幕，减轻残影'
+	String get einkRefreshHint => '通过闪白或黑白切换重绘屏幕，减轻残影';
 
 	/// zh-CN: '立即整屏刷新'
 	String get einkRefreshNow => '立即整屏刷新';
@@ -1351,8 +1351,8 @@ class Translations$settings$zh_CN {
 	/// zh-CN: '加载时不转圈'
 	String get einkNoSpinner => '加载时不转圈';
 
-	/// zh-CN: '减少反复刷新和残影'
-	String get einkNoSpinnerSubtitle => '减少反复刷新和残影';
+	/// zh-CN: '漫画图片解码时使用静态占位，减少屏幕反复刷新'
+	String get einkNoSpinnerSubtitle => '漫画图片解码时使用静态占位，减少屏幕反复刷新';
 
 	/// zh-CN: '自动超分'
 	String get autoRealSr => '自动超分';
@@ -2306,6 +2306,12 @@ class Translations$comicInfo$zh_CN {
 	/// zh-CN: '收藏到本地'
 	String get collectToLocal => '收藏到本地';
 
+	/// zh-CN: '收藏到文件夹'
+	String get favoriteToFolder => '收藏到文件夹';
+
+	/// zh-CN: '该文件夹已不可用，请重新选择。'
+	String get favoriteFolderUnavailable => '该文件夹已不可用，请重新选择。';
+
 	/// zh-CN: '取消本地收藏'
 	String get removeLocalCollection => '取消本地收藏';
 
@@ -2851,6 +2857,9 @@ class Translations$reader$zh_CN {
 
 	/// zh-CN: '显示在状态栏'
 	String get showInStatusBar => '显示在状态栏';
+
+	/// zh-CN: '阅读时显示系统状态栏'
+	String get showSystemStatusBar => '阅读时显示系统状态栏';
 
 	/// zh-CN: '开启后，顶部信息条会进入系统状态栏区域'
 	String get showInStatusBarSubtitle => '开启后，顶部信息条会进入系统状态栏区域';
@@ -6673,6 +6682,12 @@ class Translations$download$zh_CN {
 	/// zh-CN: '上次下载成功'
 	String get lastSuccessfulLine => '上次下载成功';
 
+	/// zh-CN: '漫画同时下载图片数'
+	String get concurrentComicImages => '漫画同时下载图片数';
+
+	/// zh-CN: '每话最多同时下载 10 张，从下一话生效。若插件限制更低，自动采用较低上限。'
+	String get concurrentComicImagesHint => '每话最多同时下载 10 张，从下一话生效。若插件限制更低，自动采用较低上限。';
+
 	/// zh-CN: '视频同时下载数'
 	String get concurrentVideos => '视频同时下载数';
 
@@ -6843,6 +6858,24 @@ class Translations$download$zh_CN {
 
 	/// zh-CN: '等待中'
 	String get statusWaiting => '等待中';
+
+	/// zh-CN: '正在切换下载线路…'
+	String get statusSwitchingRoute => '正在切换下载线路…';
+
+	/// zh-CN: '已下载 $amount'
+	String comicSavedBytes({required Object amount}) => '已下载 ${amount}';
+
+	/// zh-CN: '连接暂时中断'
+	String get retryNetwork => '连接暂时中断';
+
+	/// zh-CN: '来源响应超时'
+	String get retryTimeout => '来源响应超时';
+
+	/// zh-CN: '来源限制了请求频率'
+	String get retryRateLimited => '来源限制了请求频率';
+
+	/// zh-CN: '来源暂时不可用'
+	String get retrySourceUnavailable => '来源暂时不可用';
 
 	/// zh-CN: '等待重试'
 	String get statusWaitingRetry => '等待重试';
@@ -9628,6 +9661,12 @@ class Translations$pluginLifecycle$zh_CN {
 	/// zh-CN: '包括收藏、历史、追更、账号设置、下载和本机图片。'
 	String get deleteLocalDataHint => '包括收藏、历史、追更、账号设置、下载和本机图片。';
 
+	/// zh-CN: '正在删除云端插件资料…'
+	String get deletingCloud => '正在删除云端插件资料…';
+
+	/// zh-CN: '可以返回，处理完成后会提示。'
+	String get removalContinueHint => '可以返回，处理完成后会提示。';
+
 	/// zh-CN: '同时删除 Breeze 云端资料'
 	String get deleteCloudData => '同时删除 Breeze 云端资料';
 
@@ -10629,7 +10668,7 @@ extension on Translations {
 			'settings.einkEnabledSubtitle' => '减少动画，定期整屏刷新',
 			'settings.einkSectionAnimation' => '动画与过渡',
 			'settings.einkNoRouteTransition' => '去除页面切换动画',
-			'settings.einkNoRouteTransitionSubtitle' => '进入和退出页面时不播放动画',
+			'settings.einkNoRouteTransitionSubtitle' => '页面直接切换，保留侧滑返回',
 			'settings.einkNoScrollBounce' => '去除滚动回弹',
 			'settings.einkNoScrollBounceSubtitle' => '长图滚动到边缘时不回弹',
 			'settings.einkSectionLoading' => '加载',
@@ -10638,7 +10677,7 @@ extension on Translations {
 			'settings.einkRefreshNone' => '不刷新',
 			'settings.einkRefreshWhite' => '白屏刷',
 			'settings.einkRefreshFull' => '黑白全刷',
-			'settings.einkRefreshHint' => '闪白或黑白刷新以清除残影',
+			'settings.einkRefreshHint' => '通过闪白或黑白切换重绘屏幕，减轻残影',
 			'settings.einkRefreshNow' => '立即整屏刷新',
 			'settings.einkRefreshDone' => '已完成整屏刷新',
 			'settings.einkAutoRefreshTurns' => '自动刷新间隔（页）',
@@ -10646,7 +10685,7 @@ extension on Translations {
 			'settings.einkShowRefreshButton' => '显示刷新按钮',
 			'settings.einkShowRefreshButtonSubtitle' => '阅读页角落常驻，随时手动整屏刷新',
 			'settings.einkNoSpinner' => '加载时不转圈',
-			'settings.einkNoSpinnerSubtitle' => '减少反复刷新和残影',
+			'settings.einkNoSpinnerSubtitle' => '漫画图片解码时使用静态占位，减少屏幕反复刷新',
 			'settings.autoRealSr' => '自动超分',
 			'settings.resolutionThreshold' => '分辨率阈值',
 			'settings.debug' => '调试',
@@ -11017,6 +11056,8 @@ extension on Translations {
 			'comicInfo.collectToCloud' => '收藏到云端',
 			'comicInfo.removeCloudCollection' => '取消云端收藏',
 			'comicInfo.collectToLocal' => '收藏到本地',
+			'comicInfo.favoriteToFolder' => '收藏到文件夹',
+			'comicInfo.favoriteFolderUnavailable' => '该文件夹已不可用，请重新选择。',
 			'comicInfo.removeLocalCollection' => '取消本地收藏',
 			'comicInfo.cloudCollectDisabled' => '该插件暂不支持此功能',
 			'comicInfo.collectingToCloud' => '收藏到云端中...',
@@ -11196,6 +11237,7 @@ extension on Translations {
 			'reader.timeSubtitle' => '显示当前时间',
 			'reader.infoBarPosition' => '信息条位置',
 			'reader.showInStatusBar' => '显示在状态栏',
+			'reader.showSystemStatusBar' => '阅读时显示系统状态栏',
 			'reader.showInStatusBarSubtitle' => '开启后，顶部信息条会进入系统状态栏区域',
 			'reader.edgePadding' => '边缘间距',
 			'reader.infoBarStyle' => '信息条样式',
@@ -11266,11 +11308,11 @@ extension on Translations {
 			'plugin.addFromNetwork' => '从网络添加插件',
 			'plugin.urlCannotBeEmpty' => 'URL 不能为空',
 			'plugin.startInstall' => '开始安装',
+			_ => null,
+		} ?? switch (path) {
 			'plugin.pluginSettingsTitle' => ({required Object name}) => '${name} 设置',
 			'plugin.debugConfigUpdated' => '插件调试配置已更新',
 			'plugin.deletePlugin' => '移除插件',
-			_ => null,
-		} ?? switch (path) {
 			'plugin.confirmDeletePlugin' => '从此设备移除插件？个人资料和下载会保留，其他设备不受影响。',
 			'plugin.deleteFailed' => ({required Object error}) => '删除失败: ${error}',
 			'plugin.pluginDeleted' => '已从此设备移除',
@@ -11780,11 +11822,11 @@ extension on Translations {
 			'sourceProfile.backToRecords' => '返回记录列表',
 			'sourceProfile.backToProfile' => '返回我的',
 			'sourceProfile.recordsUnavailable' => '本地记录暂时无法读取',
+			_ => null,
+		} ?? switch (path) {
 			'sourceProfile.signInForFavorites' => '登录后查看站点收藏',
 			'sourceProfile.dataNotRefreshed' => '网络数据尚未更新',
 			'sourceProfile.checkinIdentityChanged' => '账号或日期已变化，请重新核对',
-			_ => null,
-		} ?? switch (path) {
 			'sourceProfile.calendarCheckedIn' => ({required Object date}) => '${date} · 源站日历确认已签到',
 			'sourceProfile.calendarNotCheckedIn' => ({required Object date}) => '${date} · 源站日历本次显示未签到',
 			'sourceProfile.calendarCheckinRetained' => '暂时无法核对源站状态，已保存记录保留',
@@ -12294,11 +12336,11 @@ extension on Translations {
 			'videoPlayback.episodeSessionOrder' => '排序仅影响显示，播放顺序不变。',
 			'videoPlayback.selectCurrentRange' => '全选当前分段',
 			'videoPlayback.deselectCurrentRange' => '取消当前分段全选',
+			_ => null,
+		} ?? switch (path) {
 			'videoPlayback.clearAllSelections' => '清空全部选择',
 			'videoPlayback.addRange' => '添加范围',
 			'videoPlayback.episodeApplyOrder' => '应用顺序',
-			_ => null,
-		} ?? switch (path) {
 			'videoPlayback.episodeReorder' => '拖动排序',
 			'videoPlayback.episodeMoveUp' => '上移',
 			'videoPlayback.episodeMoveDown' => '下移',
@@ -12437,6 +12479,8 @@ extension on Translations {
 			'download.durationLong' => '30–60 分钟',
 			'download.durationHour' => '1 小时以上',
 			'download.lastSuccessfulLine' => '上次下载成功',
+			'download.concurrentComicImages' => '漫画同时下载图片数',
+			'download.concurrentComicImagesHint' => '每话最多同时下载 10 张，从下一话生效。若插件限制更低，自动采用较低上限。',
 			'download.concurrentVideos' => '视频同时下载数',
 			'download.wifiOnly' => '仅 Wi-Fi 下载',
 			'download.waitingForWifi' => '等待 Wi-Fi',
@@ -12494,6 +12538,12 @@ extension on Translations {
 			'download.statusComicProgressChaptersOnly' => ({required Object completedChapters, required Object totalChapters}) => '漫画进度: ${completedChapters}/${totalChapters} 章',
 			'download.statusStartDownload' => '开始下载...',
 			'download.statusWaiting' => '等待中',
+			'download.statusSwitchingRoute' => '正在切换下载线路…',
+			'download.comicSavedBytes' => ({required Object amount}) => '已下载 ${amount}',
+			'download.retryNetwork' => '连接暂时中断',
+			'download.retryTimeout' => '来源响应超时',
+			'download.retryRateLimited' => '来源限制了请求频率',
+			'download.retrySourceUnavailable' => '来源暂时不可用',
 			'download.statusWaitingRetry' => '等待重试',
 			'download.backgroundChapterProgress' => ({required Object completed, required Object total}) => '${completed} / ${total} 话',
 			'download.retryNow' => '立即重试',
@@ -12800,6 +12850,8 @@ extension on Translations {
 			'videoFilters.clearAll' => '清空所有条件与关键词',
 			'videoFilters.active' => '当前条件',
 			'videoFilters.removeFilter' => '移除此条件',
+			_ => null,
+		} ?? switch (path) {
 			'videoFilters.customDate' => '指定日期',
 			'videoFilters.searchGroup' => '分组',
 			'videoFilters.yearNeedsCategory' => '先选择可按年份筛选的分类',
@@ -12811,8 +12863,6 @@ extension on Translations {
 			'videoSearch.clearRecent' => '清空最近搜索',
 			'videoSearch.removeRecent' => '删除这条搜索',
 			'videoSearch.localOnly' => '仅保存在本机',
-			_ => null,
-		} ?? switch (path) {
 			'videoSearch.hint' => '搜索视频或作者',
 			'videoSearch.clearQuery' => '清除关键词',
 			'videoSearch.submit' => '搜索',
@@ -13314,6 +13364,8 @@ extension on Translations {
 			'backupSecurity.startupRetry' => '重试恢复',
 			'backupSecurity.localVideoInUse' => '请先关闭正在播放的本机视频，再试。',
 			'backupSecurity.scopeHint' => '云端同步与本地备份导出共用此保护设置。',
+			_ => null,
+		} ?? switch (path) {
 			'backupSecurity.cloudNotConfigured' => '尚未配置云同步；可在“同步”中选择服务并填写连接资料。',
 			'backupSecurity.readFailed' => '未能读取保护方式，点此重试。',
 			'pluginLifecycle.remove' => '移除插件',
@@ -13325,8 +13377,6 @@ extension on Translations {
 			'pluginLifecycle.purge' => '彻底删除资料',
 			'pluginLifecycle.purgeHint' => '清理此插件的本机资料，下载文件可另选。',
 			'pluginLifecycle.purgeTitle' => '删除此插件的资料？',
-			_ => null,
-		} ?? switch (path) {
 			'pluginLifecycle.purgeConfirm' => '将清理所列资料，无法直接撤销。',
 			'pluginLifecycle.clearTarget' => '云端资料',
 			'pluginLifecycle.localOnly' => '仅清理本机',
@@ -13366,6 +13416,8 @@ extension on Translations {
 			'pluginLifecycle.keepDataDescription' => '不勾选时仅移除插件，资料和下载保留。',
 			'pluginLifecycle.deleteLocalData' => '删除全部本机资料',
 			'pluginLifecycle.deleteLocalDataHint' => '包括收藏、历史、追更、账号设置、下载和本机图片。',
+			'pluginLifecycle.deletingCloud' => '正在删除云端插件资料…',
+			'pluginLifecycle.removalContinueHint' => '可以返回，处理完成后会提示。',
 			'pluginLifecycle.deleteCloudData' => '同时删除 Breeze 云端资料',
 			'pluginLifecycle.deleteCloudDataHint' => '包括此插件及其资料，其他插件不受影响。',
 			'pluginLifecycle.deleteConfirmTitle' => ({required Object name}) => '确认删除 ${name}？',

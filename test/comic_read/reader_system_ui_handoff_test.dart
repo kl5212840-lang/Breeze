@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zephyr/page/comic_read/controller/reader_system_ui_controller.dart';
@@ -23,9 +24,11 @@ void main() {
       );
 
       final old = ReaderSystemUiController();
-      await old.applyVisibility(false);
+      await old.applyVisibility(false, showStatusBar: false);
       final next = ReaderSystemUiController();
-      next.scheduleSync(() => unawaited(next.applyVisibility(false)));
+      next.scheduleSync(
+        () => unawaited(next.applyVisibility(false, showStatusBar: false)),
+      );
 
       await old.close();
       await tester.pump(const Duration(milliseconds: 30));
@@ -36,5 +39,6 @@ void main() {
       await next.close();
       expect(calls.last.method, 'SystemChrome.setEnabledSystemUIOverlays');
     },
+    variant: TargetPlatformVariant({TargetPlatform.iOS}),
   );
 }

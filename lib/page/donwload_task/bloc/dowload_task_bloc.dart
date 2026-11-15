@@ -15,7 +15,14 @@ part 'dowload_task_event.dart';
 part 'dowload_task_state.dart';
 
 class DowloadTaskBloc extends Bloc<DowloadTaskEvent, DowloadTaskState> {
-  StreamSubscription? _watchSubscription;
+  static const _backgroundReadThreshold = 64;
+
+  StreamSubscription<Query<DownloadTask>>? _watchSubscription;
+  Timer? _refresh;
+  bool _hasSnapshot = false;
+  bool _reading = false;
+  bool _refreshNeeded = false;
+  bool _closing = false;
   var _previousTasks = <int, DownloadTask>{};
 
   DowloadTaskBloc() : super(_Initial()) {
@@ -39,11 +46,55 @@ class DowloadTaskBloc extends Bloc<DowloadTaskEvent, DowloadTaskState> {
         .order(DownloadTask_.id)
         .watch(triggerImmediately: true);
 
-    _watchSubscription = watchedQuery.listen((query) {
-      final tasks = reuseDownloadTaskRows(query.find(), _previousTasks);
-      _previousTasks = {for (final task in tasks) task.id: task};
-      if (!isClosed) add(DowloadTaskEvent.tasksUpdated(tasks));
+    late Query<DownloadTask> query;
+
+    void schedule() {
+      if (_closing || _reading || _refresh != null) return;
+      _refresh = Timer(
+        _hasSnapshot ? const Duration(milliseconds: 64) : Duration.zero,
+        () {
+          _refresh = null;
+          unawaited(_readSnapshot(query, schedule));
+        },
+      );
+    }
+
+    _watchSubscription = watchedQuery.listen((watched) {
+      query = watched;
+      _refreshNeeded = true;
+      schedule();
     });
+  }
+
+  Future<void> _readSnapshot(
+    Query<DownloadTask> query,
+    void Function() schedule,
+  ) async {
+    if (_closing) return;
+    _reading = true;
+    _refreshNeeded = false;
+    try {
+      // ObjectBox starts an isolate for each async read. Keep tiny snapshots
+      // synchronous and move larger reads away from the frame scheduler.
+      final rows = query.count() < _backgroundReadThreshold
+          ? query.find()
+          : await query.findAsync();
+      if (_closing) return;
+      final tasks = reuseDownloadTaskRows(rows, _previousTasks);
+      if (_hasSnapshot &&
+          tasks.length == _previousTasks.length &&
+          tasks.every((task) => identical(task, _previousTasks[task.id]))) {
+        return;
+      }
+      _hasSnapshot = true;
+      _previousTasks = {for (final task in tasks) task.id: task};
+      add(DowloadTaskEvent.tasksUpdated(tasks));
+    } catch (error, stackTrace) {
+      if (!_closing) addError(error, stackTrace);
+    } finally {
+      _reading = false;
+      if (_refreshNeeded) schedule();
+    }
   }
 
   void _handleTasksUpdated(
@@ -91,6 +142,8 @@ class DowloadTaskBloc extends Bloc<DowloadTaskEvent, DowloadTaskState> {
 
   @override
   Future<void> close() {
+    _closing = true;
+    _refresh?.cancel();
     _watchSubscription?.cancel();
     return super.close();
   }

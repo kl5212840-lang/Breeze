@@ -15,6 +15,7 @@ import 'package:zephyr/page/plugin_settings/widgets/plugin_local_appearance_sect
 import 'package:zephyr/page/plugin_settings/widgets/plugin_settings_sections.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
+import 'package:zephyr/service/local_plugin_installation_state.dart';
 import 'package:zephyr/src/rust/frb_generated.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 
@@ -199,6 +200,56 @@ void main() {
       messenger.setMockMethodCallHandler(channel, null);
     }
     channels.clear();
+  });
+
+  testWidgets('reopening settings during removal keeps runtime calls paused', (
+    tester,
+  ) async {
+    final registry = PluginRegistryCubit();
+    final local = LocalPluginInstallationState.instance;
+    addTearDown(registry.close);
+    addTearDown(() => local.endRemoval(_source));
+    local.beginRemoval(_source);
+    await tester.pumpWidget(
+      BlocProvider.value(
+        value: registry,
+        child: MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const PluginSettingsPage(
+                      from: _source,
+                      pluginUuid: _source,
+                      pluginRuntimeName: _source,
+                      pluginDisplayName: '第三方插件',
+                    ),
+                  ),
+                ),
+                child: const Text('Open settings'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    for (var attempt = 0; attempt < 2; attempt++) {
+      await tester.tap(find.text('Open settings'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text(t.pluginLifecycle.working), findsOneWidget);
+      expect(find.byType(PluginSettingsContent), findsNothing);
+      expect(api.calls, isNot(contains('getSettingsBundle')));
+      expect(await tester.binding.handlePopRoute(), isTrue);
+      await tester.pumpAndSettle();
+      expect(find.text('Open settings'), findsOneWidget);
+    }
+    local.endRemoval(_source);
+    await tester.tap(find.text('Open settings'));
+    await tester.pumpAndSettle();
+    expect(find.byType(PluginSettingsContent), findsOneWidget);
+    expect(find.text(t.pluginLifecycle.working), findsNothing);
   });
 
   for (final style in ['system', 'breeze']) {

@@ -28,6 +28,7 @@ class DownloadAssetStore {
     String storageChapterId = '',
     required this.pictureType,
     this.cacheVariant = '',
+    this.downloadRoot,
   }) : from = from.trim(),
        path = path.trim(),
        cartoonId = cartoonId.trim(),
@@ -40,6 +41,9 @@ class DownloadAssetStore {
   final String chapterId;
   final String storageChapterId;
   final PictureType pictureType;
+
+  /// A resolved download root shared by callers processing a batch of pages.
+  final String? downloadRoot;
 
   /// Distinguishes different online bytes for the same downloaded asset ID.
   final String cacheVariant;
@@ -54,7 +58,7 @@ class DownloadAssetStore {
   /// 新布局只由 hash 片段组成，任何外部传入值都不会直接进入路径。
   Future<DownloadAssetCandidate> canonicalDownloadCandidate() async {
     return _canonicalCandidate(
-      await getDownloadPath(),
+      downloadRoot ?? await getDownloadPath(),
       DownloadAssetLocation.canonicalDownload,
     );
   }
@@ -72,11 +76,19 @@ class DownloadAssetStore {
   }) async {
     if (path.isEmpty) return const [];
 
-    final root = await getDownloadPath();
-    final result = <DownloadAssetCandidate>[
+    final root = downloadRoot ?? await getDownloadPath();
+    return [
       _canonicalCandidate(root, DownloadAssetLocation.canonicalDownload),
+      ..._legacyDownloadCandidates(root, forRemoval: forRemoval),
     ];
-    if (!isLegacyPathSegment(from)) return result;
+  }
+
+  List<DownloadAssetCandidate> _legacyDownloadCandidates(
+    String root, {
+    bool forRemoval = false,
+  }) {
+    if (!isLegacyPathSegment(from) || path.isEmpty) return const [];
+    final result = <DownloadAssetCandidate>[];
 
     final normalizedPath = normalizeStoredAssetPath(path);
     final pathHash = encodePath(path: path);
@@ -151,16 +163,11 @@ class DownloadAssetStore {
     return _findExisting([await canonicalDownloadCandidate()]);
   }
 
-  Future<DownloadAssetCandidate?> findLegacyDownload() async {
-    return _findExisting(
-      (await downloadCandidates())
-          .where(
-            (candidate) =>
-                candidate.location == DownloadAssetLocation.legacyDownload,
-          )
-          .toList(),
-    );
-  }
+  Future<List<DownloadAssetCandidate>> legacyDownloadCandidates() async =>
+      _legacyDownloadCandidates(downloadRoot ?? await getDownloadPath());
+
+  Future<DownloadAssetCandidate?> findLegacyDownload() async =>
+      _findExisting(await legacyDownloadCandidates());
 
   Future<DownloadAssetCandidate?> _findExisting(
     List<DownloadAssetCandidate> candidates,
@@ -168,7 +175,8 @@ class DownloadAssetStore {
     for (final candidate in candidates) {
       final file = File(candidate.path);
       try {
-        if (await file.exists() && await file.length() > 0) {
+        final stat = await file.stat();
+        if (stat.type == FileSystemEntityType.file && stat.size > 0) {
           return candidate;
         }
       } catch (_) {
@@ -183,7 +191,10 @@ class DownloadAssetStore {
     final candidate = await canonicalCacheCandidate();
     final file = File(candidate.path);
     try {
-      if (await file.exists() && await file.length() > 0) return candidate;
+      final stat = await file.stat();
+      if (stat.type == FileSystemEntityType.file && stat.size > 0) {
+        return candidate;
+      }
     } catch (_) {}
     return null;
   }
@@ -278,9 +289,6 @@ class DownloadAssetStore {
     try {
       await ensureParentDirectory(finalPath);
       await temporaryFile.writeAsBytes(data, flush: true);
-      if (await temporaryFile.length() <= 0) {
-        throw StateError('临时图片文件为空');
-      }
       await commitTemporaryFile(temporaryPath, finalPath);
     } catch (_) {
       await _deleteIfExists(temporaryFile);
@@ -331,9 +339,6 @@ class DownloadAssetStore {
     try {
       await ensureParentDirectory(finalPath);
       await source.copy(temporaryPath);
-      if (await temporaryFile.length() <= 0) {
-        throw StateError('临时复制文件为空');
-      }
       await commitTemporaryFile(temporaryPath, finalPath);
     } catch (_) {
       await _deleteIfExists(temporaryFile);
@@ -355,12 +360,18 @@ class DownloadAssetStore {
   ) async {
     final temporaryFile = File(temporaryPath);
     final finalFile = File(finalPath);
-    if (!await temporaryFile.exists() || await temporaryFile.length() <= 0) {
+    final staged = await temporaryFile.stat();
+    if (staged.type != FileSystemEntityType.file || staged.size <= 0) {
       throw StateError('临时图片文件不存在或为空: $temporaryPath');
     }
 
+    Future<bool> hasCommittedFile() async {
+      final stat = await finalFile.stat();
+      return stat.type == FileSystemEntityType.file && stat.size > 0;
+    }
+
     // 并发下载同一资源时，已经提交的完整文件优先保留。
-    if (await finalFile.exists() && await finalFile.length() > 0) {
+    if (await hasCommittedFile()) {
       await _deleteIfExists(temporaryFile);
       return;
     }
@@ -371,7 +382,7 @@ class DownloadAssetStore {
     } on FileSystemException {
       // Windows 等平台在 rename 竞态下可能报告目标已存在；重新确认后
       // 将其视为另一个执行器已经完成写入。
-      if (await finalFile.exists() && await finalFile.length() > 0) {
+      if (await hasCommittedFile()) {
         await _deleteIfExists(temporaryFile);
         return;
       }

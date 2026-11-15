@@ -130,6 +130,30 @@ void _expectRectangularNativeAncestry(WidgetTester tester, Finder view) {
 }
 
 void main() {
+  testWidgets(
+    'the mobile reading settings persist the system status bar choice',
+    (tester) async {
+      final settings = await _open(tester, textScale: 1);
+      final option = find.text(t.reader.showSystemStatusBar);
+      await _show(tester, option);
+      expect(settings.state.readSetting.showSystemStatusBar, isFalse);
+      await tester.tap(option);
+      await tester.pumpAndSettle();
+      expect(settings.state.readSetting.showSystemStatusBar, isTrue);
+      expect(
+        ReadSettingState.fromJson(
+          settings.state.readSetting.toJson(),
+        ).showSystemStatusBar,
+        isTrue,
+      );
+      expect(ReadSettingState.fromJson({}).showSystemStatusBar, isFalse);
+    },
+    variant: TargetPlatformVariant({
+      TargetPlatform.iOS,
+      TargetPlatform.android,
+    }),
+  );
+
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(TestObjectBoxHelper.setUpTestObjectBox);
   tearDownAll(TestObjectBoxHelper.tearDownTestObjectBox);

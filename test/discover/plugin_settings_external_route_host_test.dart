@@ -214,11 +214,16 @@ void main() {
           await frames(tester);
           final visibility = find.byKey(ValueKey('plugin-manager.visible.$uuid'));
           final actions = find.byKey(ValueKey('plugin-manager.actions.$uuid'));
+          expect(visibility, findsOneWidget);
+          expect(actions, findsNothing);
+          if (layout == 'grid') {
+            await tester.tap(visibility);
+            await tester.pump();
+            expect(tester.widget<Switch>(visibility).value, isFalse);
+          }
+          await tester.tap(find.byKey(const ValueKey('plugin-manager.cancel')));
+          await frames(tester);
           if (layout == 'list') {
-            expect(visibility, findsOneWidget);
-            expect(actions, findsNothing);
-            await tester.tap(find.byKey(const ValueKey('plugin-manager.cancel')));
-            await frames(tester);
             if (styleName == 'system') {
               final view = find.descendant(
                 of: entry,
@@ -248,10 +253,20 @@ void main() {
               tester.widget<SourceChromeIconButton>(settings).onPressed!();
             }
           } else {
-            await tester.tap(visibility);
-            await tester.tap(actions);
-            await frames(tester);
-            await tester.tap(find.byKey(ValueKey('plugin-manager.settings.$uuid')));
+            final tileMenu = find.byKey(ValueKey('plugin-grid.$uuid.manage'));
+            final menu = tester.widget<NativeVideoMenu>(tileMenu);
+            expect(menu.options['settings'], t.discover.settings);
+            expect(menu.selectAfterDismissal, contains('settings'));
+            if (styleName == 'system') {
+              final id = arguments.keys.singleWhere(
+                (id) => arguments[id]?['tooltip'] == menu.tooltip,
+              );
+              await event(tester, id, 'select', 'settings');
+            } else {
+              await tester.tap(tileMenu);
+              await tester.pumpAndSettle();
+              await tester.tap(find.text(t.discover.settings));
+            }
           }
           await frames(tester);
           expect(router.current.name,PluginSettingsRoute.name);
@@ -263,32 +278,6 @@ void main() {
           expect(page.insideSource,isFalse);expect(page.scope,PluginSettingsScope.all);
           expect(find.byType(SourceShellPage),findsNothing);
           await router.maybePop();await frames(tester);
-          if (layout == 'grid') {
-            expect(tester.widget<Switch>(visibility).value,isFalse);
-            await tester.tap(find.byKey(const ValueKey('plugin-manager.cancel')));
-            await frames(tester);
-            final tileMenu = find.byKey(ValueKey('plugin-grid.$uuid.manage'));
-            final menu = tester.widget<NativeVideoMenu>(tileMenu);
-            expect(menu.options['settings'], t.discover.settings);
-            expect(menu.selectAfterDismissal, contains('settings'));
-            received.remove(uuid);
-            if (styleName == 'system') {
-              final id = arguments.keys.singleWhere(
-                (id) => arguments[id]?['tooltip'] == menu.tooltip,
-              );
-              await event(tester, id, 'select', 'settings');
-            } else {
-              await tester.tap(tileMenu);
-              await tester.pumpAndSettle();
-              await tester.tap(find.text(t.discover.settings));
-            }
-            await frames(tester);
-            expect(router.current.name, PluginSettingsRoute.name);
-            expect(received[uuid]!.pluginUuid, uuid);
-            expect(received[uuid]!.scope, PluginSettingsScope.all);
-            await router.maybePop();
-            await frames(tester);
-          }
           expect(entry,findsOneWidget);
           unawaited(router.pushPath('/inside/$uuid'));await frames(tester);
           final sourceMenu=find.descendant(of:find.byType(SourceMoreButton),matching:find.byType(NativeVideoMenu));

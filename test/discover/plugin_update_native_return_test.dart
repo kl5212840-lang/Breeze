@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:zephyr/page/video/native_video_controls.dart' show NativeVideoMenu;
 import 'dart:convert';
 
 import 'package:auto_route/auto_route.dart';
@@ -253,20 +254,18 @@ void main() {
             await tester.tap(find.descendant(of: _entry(_a, layout), matching: find.byTooltip(t.discover.settings)));
           }
         } else {
+          final tileMenu = find.byKey(const ValueKey('plugin-grid.$_a.manage'));
           if (styleName == 'system') {
+            final menu = tester.widget<NativeVideoMenu>(tileMenu);
             final id = arguments.keys.singleWhere(
-              (id) => arguments[id]?['tooltip'] == t.common.more,
+              (id) => arguments[id]?['tooltip'] == menu.tooltip,
             );
-            await nativeEvent(id, const MethodCall('select', 'manage'));
+            await nativeEvent(id, const MethodCall('select', 'settings'));
           } else {
-            await tester.tap(find.byTooltip(t.common.more));
+            await tester.tap(tileMenu);
             await tester.pumpAndSettle();
-            await tester.tap(find.text(t.discover.pluginManagement));
+            await tester.tap(find.text(t.discover.settings));
           }
-          await tester.pumpAndSettle();
-          await tester.tap(find.byKey(const ValueKey('plugin-manager.actions.$_a')));
-          await tester.pumpAndSettle();
-          await tester.tap(find.byKey(const ValueKey('plugin-manager.settings.$_a')));
         }
         await tester.pump();
       }
@@ -305,10 +304,6 @@ void main() {
       if (router.current.name == PluginSettingsRoute.name) { unawaited(router.maybePop()); await frames(tester); }
       await frames(tester);
       expect(router.current.name, 'NavigationBar');
-      if (layout == 'grid') {
-        await tester.tap(find.byKey(const ValueKey('plugin-manager.close')));
-        await frames(tester);
-      }
       expect(discover.state.plugins[_a]?.isEnabled, isTrue);
       expect(discover.state.plugins[_b]?.isEnabled, isTrue);
       expect(discover.state.infoStates[_a]?.error, isNull);

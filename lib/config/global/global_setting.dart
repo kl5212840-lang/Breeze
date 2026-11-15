@@ -103,7 +103,7 @@ extension EinkRefreshModeExtension on EinkRefreshMode {
   }
 }
 
-/// 路由构建器拿不到 BuildContext，瞬时切页开关在这里留一份同步好的镜像。
+/// 独立 iOS 路由的工厂没有 BuildContext，需要同步当前无动画设置。
 bool eInkInstantRoutes = false;
 
 const Color readerBackgroundBlack = Colors.black;
@@ -138,6 +138,12 @@ GlobalSettingState get globalSetting {
   return objectbox.userSettingBox.get(1)!.globalSetting;
 }
 
+const defaultComicDownloadConcurrency = 2;
+const maxComicDownloadConcurrency = 10;
+int normalizeComicDownloadConcurrency(Object? value) => value is int
+    ? value.clamp(1, maxComicDownloadConcurrency)
+    : defaultComicDownloadConcurrency;
+
 @freezed
 abstract class GlobalSettingState with _$GlobalSettingState {
   const factory GlobalSettingState({
@@ -170,6 +176,9 @@ abstract class GlobalSettingState with _$GlobalSettingState {
     @Default(false) bool backPressExitEnabled,
     @Default(true) bool updateAccelerate,
     @Default(true) bool retryDownloadUntilSuccess,
+    @JsonKey(fromJson: normalizeComicDownloadConcurrency)
+    @Default(defaultComicDownloadConcurrency)
+    int comicDownloadConcurrency,
     @Default(1) int videoDownloadConcurrency,
     @Default(false) bool downloadWifiOnly,
     @Default('work') String downloadCompletionNotice,
@@ -342,6 +351,7 @@ abstract class ReadSettingState with _$ReadSettingState {
     @Default(ReaderInfoVerticalPosition.bottom)
     ReaderInfoVerticalPosition pageInfoVerticalPosition,
     @Default(false) bool pageInfoTopInStatusBar,
+    @Default(false) bool showSystemStatusBar,
     @Default(ReaderInfoHorizontalPosition.left)
     ReaderInfoHorizontalPosition pageInfoHorizontalPosition,
     @Default(12) int pageInfoEdgePadding,

@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/network/sync/sync_service.dart'
     show runExclusiveStorageOperation;
 import 'package:zephyr/page/donwload_task/service/download_center_projection.dart';
+import 'package:zephyr/page/donwload_task/service/download_center_resources.dart';
 import 'package:zephyr/page/donwload_task/service/download_storage_usage.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
 import 'package:zephyr/page/video/video_download.dart';
@@ -17,9 +18,12 @@ import 'package:zephyr/page/video/video_local_resources.dart';
 import 'package:zephyr/page/video/video_playback_download_adapter.dart';
 import 'package:zephyr/page/setting/data_backup/method.dart';
 import 'package:zephyr/service/local_plugin_installation_state.dart';
+import 'package:zephyr/service/download/download_asset_store.dart';
+import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/get_path.dart';
 
 import '../download_fixture.dart';
+import '../test_helper.dart' show createTestDownload;
 
 final _watch = Uri.parse(
   'https://site-fixture.test/voddetail/42.html?line=a&episode=one',
@@ -220,6 +224,49 @@ void main() {
       final hlsOnly = await measure();
       expect(hlsOnly.knownBytes, 4096);
       expect(hlsOnly.partial, isTrue);
+    },
+  );
+
+  test(
+    'known comic storage is reported while HLS inventory is pending',
+    () async {
+      final store = DownloadAssetStore(
+        from: 'source',
+        cartoonId: 'work',
+        chapterId: 'one',
+        path: 'image.jpg',
+        pictureType: PictureType.page,
+      );
+      final file = File(await store.canonicalDownloadPath());
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(List.filled(8192, 1));
+      final comic = DownloadComicResource(
+        createTestDownload('source:work')
+          ..source = 'source'
+          ..comicId = 'work'
+          ..chapters =
+              '[{"id":"one","logicalKey":"one","images":[{"path":"image.jpg"}]}]',
+      );
+      final hlsReply = Completer<void>();
+      native.onList = () => hlsReply.future;
+      final partial = Completer<DownloadStorageUsage>();
+      final status = DownloadStorageUsage.read(
+        comics: [comic],
+        current: () => true,
+        onPartial: (usage) {
+          if (!partial.isCompleted) partial.complete(usage);
+        },
+      );
+      try {
+        final known = await partial.future.timeout(const Duration(seconds: 3));
+        expect(known.knownBytes, 8192);
+        expect(known.partial, isTrue);
+      } finally {
+        hlsReply.complete();
+      }
+      final done = await status;
+      expect(done.knownBytes, 8192);
+      expect(done.partial, isFalse);
     },
   );
 

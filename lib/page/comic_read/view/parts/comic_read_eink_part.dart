@@ -5,30 +5,41 @@ extension _ComicReadEinkPart on _ComicReadPageState {
   ///
   /// 局刷攒到一定页数后残影会叠成一片，定期走一次全刷把它清掉。
   void _initEinkAutoRefresh() {
-    final globalSettingCubit = context.read<GlobalSettingCubit>();
-    _einkRefreshSubscription = context.read<ReaderCubit>().stream.listen((
-      state,
-    ) {
-      final slot = state.currentSlot;
-      final previous = _einkLastSlot;
-      _einkLastSlot = slot;
-      if (previous < 0 || slot == previous) return;
-      // 长图模式滚动时槽位会连续跳变，只在停下来的那次翻页上计次。
-      if (state.isComicRolling || state.isSliderRolling) return;
+    _einkRefreshSubscription = context.read<ReaderCubit>().stream.listen(
+      _countSettledEinkTurn,
+    );
+  }
 
-      final globalState = globalSettingCubit.state;
-      final eink = globalState.eInkSetting;
-      if (!eink.canFullRefresh || eink.autoRefreshTurns == 0) return;
-      _einkTurnCount++;
-      if (_einkTurnCount < eink.autoRefreshTurns) return;
-      _runEinkRefresh(globalState);
-    });
+  void _countSettledEinkTurn(ReaderState state) {
+    if (!mounted || state.totalSlots <= 0) return;
+    if (_isUserScrollActive || state.isComicRolling || state.isSliderRolling) {
+      return;
+    }
+    final slot = state.currentSlot;
+    final previous = _einkLastSlot;
+    _einkLastSlot = slot;
+    final globalState = context.read<GlobalSettingCubit>().state;
+    final eink = globalState.eInkSetting;
+    if (!_readerRegionActive ||
+        !eink.canFullRefresh ||
+        eink.autoRefreshTurns == 0) {
+      _einkTurnCount = 0;
+      return;
+    }
+    if (previous < 0 ||
+        slot == previous ||
+        _seamless.isTransitionSlot(slot, context.readEffectiveReadSetting())) {
+      return;
+    }
+    _einkTurnCount++;
+    if (_einkTurnCount >= eink.autoRefreshTurns) _runEinkRefresh(globalState);
   }
 
   void _runEinkRefresh(GlobalSettingState globalState) {
     _einkTurnCount = 0;
     unawaited(
       EinkRefresh.run(
+        context,
         globalState.eInkSetting.refreshMode,
         holdMs: globalState.readSetting.einkDelayMs.clamp(50, 500),
       ),

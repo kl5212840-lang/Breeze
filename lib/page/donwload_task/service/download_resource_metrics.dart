@@ -39,6 +39,9 @@ class DownloadResourceSize {
   final Map<String, DownloadResourceSize> chapters;
   int? get sizeBytes =>
       status == DownloadResourceSizeStatus.complete ? knownBytes : null;
+
+  /// Physical file lengths confirmed on this device, including partial work.
+  int? get downloadedBytes => knownFiles > 0 ? knownBytes : null;
 }
 
 class _ComicMetricInput {
@@ -63,14 +66,22 @@ typedef _ProgressMembership = ({
   int attempt,
   String state,
   String phase,
+  bool hasWrittenPages,
 });
 
 class _Measurement {
-  const _Measurement(this.version, this.result, {this.base, this.membership});
+  const _Measurement(
+    this.version,
+    this.result, {
+    this.base,
+    this.membership,
+    this.committedFiles,
+  });
   final String version;
   final Future<DownloadResourceSize> result;
   final String? base;
   final List<_ProgressMembership>? membership;
+  final Map<String, (String, int)>? committedFiles;
 }
 
 /// On-demand, read-only measurements. No directory walks, decoding, migrations,
@@ -92,7 +103,8 @@ class DownloadResourceMetrics {
   final int maximumConcurrent, maximumCacheEntries;
   final DateTime Function() _clock;
   final void Function()? onProgressFingerprint;
-  final _cache = LinkedHashMap<String, _Measurement>();
+  final _savedCache = LinkedHashMap<String, _Measurement>();
+  final _progressCache = LinkedHashMap<String, _Measurement>();
   final _waiting = Queue<Completer<void>>();
   int _running = 0;
 
@@ -120,11 +132,15 @@ class DownloadResourceMetrics {
   }
 
   Future<DownloadResourceSize> readComic(DownloadComicResource resource) {
-    final prior = _cache.remove(resource.key);
+    final prior = _savedCache.remove(resource.key);
     if (prior != null && prior.version == resource.metricsVersion) {
-      _cache[resource.key] = prior;
+      _savedCache[resource.key] = prior;
       return prior.result;
     }
+    final progress = _progressCache[resource.key];
+    final committedFiles = progress?.base == resource.metricsVersion
+        ? progress?.committedFiles ?? <String, (String, int)>{}
+        : <String, (String, int)>{};
     final future = _limited(
       () => _measure(
         _ComicMetricInput(
@@ -136,13 +152,16 @@ class DownloadResourceMetrics {
           resource.downloadChapters,
           _aliases(resource),
         ),
+        committedFiles: committedFiles,
       ),
     );
-    _cache[resource.key] = _Measurement(resource.metricsVersion, future);
-    while (_cache.length > maximumCacheEntries) {
-      final oldest = _cache.keys.first;
-      _cache.remove(oldest);
-      _progressReadAt.remove(oldest);
+    _savedCache[resource.key] = _Measurement(
+      resource.metricsVersion,
+      future,
+      committedFiles: committedFiles,
+    );
+    while (_savedCache.length > maximumCacheEntries) {
+      _savedCache.remove(_savedCache.keys.first);
     }
     return future;
   }
@@ -174,7 +193,7 @@ class DownloadResourceMetrics {
       }
     }
     final base = resource?.metricsVersion ?? 'pending';
-    final old = _cache[key];
+    final old = _progressCache[key];
     final now = _clock();
     final active = rows.any(
       (task) => !const {
@@ -191,6 +210,7 @@ class DownloadResourceMetrics {
           attempt: task.attempt,
           state: task.stateCode,
           phase: task.phaseCode,
+          hasWrittenPages: task.completedImages > 0,
         ),
     ];
     if (active &&
@@ -266,6 +286,13 @@ class DownloadResourceMetrics {
       for (final task in rows)
         if (task.stateCode != 'completed') task.chapterKey,
     };
+    // Share verified files from committed chapters while the saved work's
+    // inventory revision stays the same. Active pages still use fresh stats.
+    final saved = _savedCache[key];
+    final committedFiles =
+        (saved?.version == base ? saved?.committedFiles : null) ??
+        (old?.base == base ? old?.committedFiles : null) ??
+        <String, (String, int)>{};
     final future = _limited(
       () => _measure(
         _ComicMetricInput(
@@ -278,18 +305,20 @@ class DownloadResourceMetrics {
           aliases,
           incomplete,
         ),
+        committedFiles: committedFiles,
       ),
     );
-    _cache[key] = _Measurement(
+    _progressCache[key] = _Measurement(
       version,
       future,
       base: base,
       membership: membership,
+      committedFiles: committedFiles,
     );
     _progressReadAt[key] = now;
-    while (_cache.length > maximumCacheEntries) {
-      final oldest = _cache.keys.first;
-      _cache.remove(oldest);
+    while (_progressCache.length > maximumCacheEntries) {
+      final oldest = _progressCache.keys.first;
+      _progressCache.remove(oldest);
       _progressReadAt.remove(oldest);
     }
     return future;
@@ -297,21 +326,24 @@ class DownloadResourceMetrics {
 
   void invalidate(String resourceKey) {
     _progressReadAt.remove(resourceKey);
-    _cache.remove(resourceKey);
+    _savedCache.remove(resourceKey);
+    _progressCache.remove(resourceKey);
   }
 
   void invalidateAll() {
-    _cache.clear();
+    _savedCache.clear();
+    _progressCache.clear();
     _progressReadAt.clear();
   }
 
   /// Call when resource membership changes to release removed-row cache entries.
   void retainResources(Iterable<DownloadComicResource> resources) {
     final versions = {for (final row in resources) row.key: row.metricsVersion};
-    _cache.removeWhere(
-      (key, value) => versions[key] != (value.base ?? value.version),
+    _savedCache.removeWhere((key, value) => versions[key] != value.version);
+    _progressCache.removeWhere(
+      (key, value) => (versions[key] ?? 'pending') != value.base,
     );
-    _progressReadAt.removeWhere((key, _) => !_cache.containsKey(key));
+    _progressReadAt.removeWhere((key, _) => !_progressCache.containsKey(key));
   }
 
   Future<T> _limited<T>(Future<T> Function() action) async {
@@ -333,7 +365,10 @@ class DownloadResourceMetrics {
     }
   }
 
-  Future<DownloadResourceSize> _measure(_ComicMetricInput resource) async {
+  Future<DownloadResourceSize> _measure(
+    _ComicMetricInput resource, {
+    Map<String, (String, int)>? committedFiles,
+  }) async {
     var bytes = 0, missing = 0, failed = 0;
     final files = <String>{};
     final chapters = <String, DownloadResourceSize>{};
@@ -352,6 +387,7 @@ class DownloadResourceMetrics {
         required String chapterId,
         required String storageId,
         required PictureType type,
+        bool committed = false,
         void Function(String path, int bytes)? onFile,
       }) async {
         if (!references.add((type, storageId, path))) return;
@@ -366,38 +402,52 @@ class DownloadResourceMetrics {
           storageChapterId: storageId,
           path: path,
           pictureType: type,
+          downloadRoot: root,
         );
-        var found = false, unsafe = false;
-        try {
-          for (final candidate in await store.downloadCandidates()) {
-            try {
-              final measurement = await checkedFiles.putIfAbsent(
-                candidate.path,
-                () => _fileLength(
+        var unsafe = false;
+        Future<bool> measureCandidate(DownloadAssetCandidate candidate) async {
+          try {
+            final cached = committed ? committedFiles : null;
+            final measurement =
+                cached?[candidate.path] ??
+                await checkedFiles.putIfAbsent(
                   candidate.path,
-                  root,
-                  canonicalRoot,
-                  checkedDirectories,
-                ),
-              );
-              if (measurement == null) continue;
-              if (files.add(measurement.$1)) bytes += measurement.$2;
-              onFile?.call(measurement.$1, measurement.$2);
-              found = true;
-              break;
-            } on FileSystemException {
-              unsafe = true;
+                  () => _fileLength(
+                    candidate.path,
+                    root,
+                    canonicalRoot,
+                    checkedDirectories,
+                  ),
+                );
+            if (measurement == null) return false;
+            if (cached != null && cached.length < 8192) {
+              cached[candidate.path] = measurement;
             }
+            if (files.add(measurement.$1)) bytes += measurement.$2;
+            onFile?.call(measurement.$1, measurement.$2);
+            return true;
+          } on FileSystemException {
+            unsafe = true;
+            return false;
+          }
+        }
+
+        try {
+          if (await measureCandidate(
+            await store.canonicalDownloadCandidate(),
+          )) {
+            return;
+          }
+          for (final candidate in await store.legacyDownloadCandidates()) {
+            if (await measureCandidate(candidate)) return;
           }
         } catch (_) {
           unsafe = true;
         }
-        if (!found) {
-          if (unsafe) {
-            failed++;
-          } else {
-            missing++;
-          }
+        if (unsafe) {
+          failed++;
+        } else {
+          missing++;
         }
       }
 
@@ -432,17 +482,23 @@ class DownloadResourceMetrics {
         final chapterFiles = <String>{};
         var chapterBytes = 0;
         final missingBefore = missing, failedBefore = failed;
-        for (final image in chapter.images) {
-          if (image.extern['downloadSkipped'] == true) continue;
-          await measureImage(
-            path: image.path,
-            chapterId: chapter.id,
-            storageId: chapter.effectiveStorageId,
-            type: PictureType.page,
-            onFile: (path, length) {
-              if (chapterFiles.add(path)) chapterBytes += length;
-            },
-          );
+        final images = chapter.images;
+        final committed = !resource.incomplete.contains(chapter.id);
+        for (var start = 0; start < images.length; start += 8) {
+          await Future.wait([
+            for (final image in images.skip(start).take(8))
+              if (image.extern['downloadSkipped'] != true)
+                measureImage(
+                  path: image.path,
+                  chapterId: chapter.id,
+                  storageId: chapter.effectiveStorageId,
+                  type: PictureType.page,
+                  committed: committed,
+                  onFile: (path, length) {
+                    if (chapterFiles.add(path)) chapterBytes += length;
+                  },
+                ),
+          ]);
         }
         final chapterMissing = missing - missingBefore;
         final chapterFailed = failed - failedBefore;

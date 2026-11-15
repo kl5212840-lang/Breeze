@@ -542,6 +542,7 @@ Future<DownloadPictureResult> downloadPictureResult({
   bool isolatedPage = false,
   int requestTimeoutMs = 30000,
   Future<Uint8List> Function()? preparedImage,
+  String? downloadRoot,
 }) async {
   final resolvedFrom = normalizePluginId(from);
   if (resolvedFrom.isEmpty) {
@@ -572,6 +573,7 @@ Future<DownloadPictureResult> downloadPictureResult({
     chapterId: chapterId,
     storageChapterId: storageChapterId,
     pictureType: pictureType,
+    downloadRoot: downloadRoot,
     cacheVariant: onlinePictureCacheVariant(
       from: resolvedFrom,
       url: url,
@@ -740,15 +742,15 @@ Future<DownloadPictureResult> downloadPictureResult({
   }
 
   _throwIfDownloadCancelled(qjsTaskGroupKey);
-  final finalFile = File(downloadFilePath);
-  if (!await finalFile.exists()) {
+  final saved = await File(downloadFilePath).stat();
+  if (saved.type != FileSystemEntityType.file) {
     return DownloadPictureResult(
       status: DownloadPictureResultStatus.failed,
       error: StateError('图片保存后文件不存在: $downloadFilePath'),
       errorStackTrace: StackTrace.current,
     );
   }
-  if (await finalFile.length() <= 0) {
+  if (saved.size <= 0) {
     return DownloadPictureResult(
       status: DownloadPictureResultStatus.failed,
       error: StateError('图片保存后文件为空: $downloadFilePath'),

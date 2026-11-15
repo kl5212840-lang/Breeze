@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,6 +10,9 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
+import 'package:zephyr/object_box/model.dart' show ComicFolderType;
+import 'package:zephyr/page/bookshelf/service/comic_folder_service.dart';
+import 'package:zephyr/page/bookshelf/service/comic_link_service.dart';
 import 'package:zephyr/page/comic_follow/cubit/comic_follow_cubit.dart';
 import 'package:zephyr/page/comic_info/bloc/get_comic_info_bloc.dart';
 import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart';
@@ -136,6 +140,50 @@ void main() {
     messenger.setMockMethodCallHandler(connectivity, null);
     messenger.setMockMethodCallHandler(changes, null);
   });
+  testWidgets(
+    'long pressing local favorite saves directly to the chosen folder',
+    (tester) async {
+      const type = ComicFolderType.favorite;
+      ComicFolderService.createFolder('', 'Favorites A', type);
+      ComicFolderService.createFolder('', 'Favorites B', type);
+      await mountChapterDetail(
+        tester,
+        count: 1,
+        platform: defaultTargetPlatform,
+      );
+      final favorite = find.widgetWithText(OutlinedButton, '本地收藏');
+      await tester.ensureVisible(favorite);
+      await tester.longPress(favorite);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(t.common.cancel));
+      await tester.pumpAndSettle();
+      expect(ComicLinkService.listAllLinks(type), isEmpty);
+
+      Future<void> save(Finder button, String folder) async {
+        await tester.longPress(button);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(folder));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('shelf-folder.confirm')));
+        await tester.pumpAndSettle();
+      }
+
+      await save(favorite, 'Favorites A');
+      expect(
+        ComicLinkService.listLinks('/Favorites A', type).single.comicUniqueKey,
+        'fixture:51',
+      );
+      expect(ComicLinkService.listLinks('', type), isEmpty);
+      await save(find.widgetWithText(OutlinedButton, '已存本地'), 'Favorites B');
+      expect(ComicLinkService.listLinks('/Favorites A', type), hasLength(1));
+      expect(ComicLinkService.listLinks('/Favorites B', type), hasLength(1));
+    },
+    variant: TargetPlatformVariant({
+      TargetPlatform.iOS,
+      TargetPlatform.android,
+    }),
+  );
+
   for (final hasHistory in [false, true]) {
     testWidgets(
       'first comic detail frame includes the read action ($hasHistory)',

@@ -430,6 +430,19 @@ class _ReadExperienceSection extends StatelessWidget {
               );
             },
           ),
+        if (!kIsWeb &&
+            (defaultTargetPlatform == TargetPlatform.iOS ||
+                defaultTargetPlatform == TargetPlatform.android))
+          _SettingsSwitchTile(
+            title: t.reader.showSystemStatusBar,
+            value: effective.showSystemStatusBar,
+            onChanged: (value) {
+              HapticFeedback.selectionClick();
+              context.updateEffectiveReadSetting(
+                (current) => current.copyWith(showSystemStatusBar: value),
+              );
+            },
+          ),
         _SettingsSwitchTile(
           title: t.reader.einkOptimization,
           subtitle: t.reader.einkOptimizationSubtitle,

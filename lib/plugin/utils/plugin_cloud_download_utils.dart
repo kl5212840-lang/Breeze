@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/utils/github_proxy.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
@@ -96,26 +97,52 @@ Future<CloudPluginCatalogSnapshot> _refreshCloudPluginCatalog() async {
 
 Future<String?> _fetchPersonalPluginList(String sourceUrl) async {
   try {
-    final response = await _fetchFirstPartyPluginMetadata(sourceUrl);
-    if (response.ok &&
-        response.url == sourceUrl &&
-        !response.redirected &&
-        response.text.trim().isNotEmpty) {
-      return response.text.trim();
-    }
-    logger.w('个人插件目录不可用: HTTP ${response.status}');
+    return (await _fetchFirstPartyPluginMetadata(sourceUrl)).text.trim();
   } catch (e, stackTrace) {
     logger.w('个人插件目录不可用', error: e, stackTrace: stackTrace);
+    return null;
   }
-  return null;
 }
 
-Future<FetchResponse> _fetchFirstPartyPluginMetadata(String url) => WindHttp(
-  connectTimeout: const Duration(seconds: 5),
-  receiveTimeout: const Duration(seconds: 8),
-  dangerAcceptInvalidCerts: false,
-  followRedirects: false,
-).fetch(url, headers: {'Accept': 'application/json'});
+Future<FetchResponse> _fetchFirstPartyPluginMetadata(String sourceUrl) async {
+  final raw = Uri.parse(sourceUrl);
+  // Both endpoints serve the same repository path on main. Use the GitHub
+  // Contents API as a second HTTPS origin when the raw origin is unavailable.
+  final path = raw.pathSegments.skip(3).join('/');
+  final api = Uri.https(
+    'api.github.com',
+    '/repos/$personalPluginCatalogRepository/contents/$path',
+    {'ref': 'main'},
+  );
+  final client = WindHttp(
+    connectTimeout: const Duration(seconds: 3),
+    receiveTimeout: const Duration(seconds: 3),
+    dangerAcceptInvalidCerts: false,
+    followRedirects: false,
+  );
+  Object? lastError;
+  for (final (url, accept) in [
+    (sourceUrl, 'application/json'),
+    (api.toString(), 'application/vnd.github.raw+json'),
+  ]) {
+    try {
+      final response = await client.fetch(
+        url,
+        headers: {'Accept': accept, 'User-Agent': 'Breeze'},
+      );
+      if (response.ok &&
+          response.url == url &&
+          !response.redirected &&
+          response.body.isNotEmpty) {
+        return response;
+      }
+      lastError = StateError('HTTP ${response.status}');
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw StateError('GitHub 插件元数据暂不可用: $lastError');
+}
 
 Future<String> _fetchOfficialCloudPluginList() async {
   final client = WindHttp.distribution(
@@ -241,7 +268,7 @@ Future<String> downloadFromJsdelivrOrGitHub({
     logger.w('所有 CDN 镜像下载失败，回退 GitHub release: $npmName');
   }
 
-  final release = await fetchReleaseData(updateUrl);
+  final release = await fetchPluginReleaseIndex(updateUrl);
   final releaseDigest = release['scriptSha256']?.toString().trim() ?? '';
   if (releaseDigest.isNotEmpty) {
     verifyPublishedPluginVersion(
@@ -259,17 +286,24 @@ Future<String> downloadFromJsdelivrOrGitHub({
     throw StateError('release 资产缺少 browser_download_url');
   }
 
-  final response = await downloadPluginAssetWithFallback(downloadUrl);
-  final script = await decodeDownloadedPluginScript(
-    response: response,
-    resolvedUrl: downloadUrl,
+  final script = await _downloadPublishedPluginScript(
+    downloadUrl,
+    releaseDigest,
   );
   final trimmed = script.trim();
   if (trimmed.isEmpty) {
     throw StateError('下载到的插件脚本为空');
   }
-  verifyPublishedPluginScript(trimmed, releaseDigest);
   return trimmed;
+}
+
+Future<Map<String, dynamic>> fetchPluginReleaseIndex(String updateUrl) async {
+  if (!requiresFormalPluginRelease(updateUrl))
+    return fetchReleaseData(updateUrl);
+  final response = await _fetchFirstPartyPluginMetadata(updateUrl.trim());
+  final index = response.json;
+  if (index is! Map) throw StateError('插件更新索引格式错误');
+  return asJsonMap(index);
 }
 
 Future<String> downloadFormalPluginMigration(
@@ -282,9 +316,6 @@ Future<String> downloadFormalPluginRelease(
 }) async {
   final indexUrl = release.updateUrl;
   final response = await _fetchFirstPartyPluginMetadata(indexUrl);
-  if (!response.ok || response.redirected || response.url != indexUrl) {
-    throw StateError('插件更新索引暂不可用，请稍后重试');
-  }
   final index = asJsonMap(response.json);
   if (!(migration?.isConfirmedBy(index) ?? release.isConfirmedBy(index))) {
     throw StateError('插件更新索引与商店清单不一致，请刷新插件商店后重试');
@@ -309,17 +340,89 @@ Future<String> downloadFormalPluginRelease(
       !url.endsWith('/$name')) {
     throw StateError('插件发布附件与更新索引不一致，请刷新插件商店后重试');
   }
-  final downloaded = await downloadPluginAssetWithFallback(url);
+  return _downloadPublishedPluginScript(url, release.scriptSha256);
+}
+
+bool _isFirstPartyRelease(String url) => url.startsWith(
+  'https://github.com/$personalPluginCatalogRepository/releases/download/',
+);
+
+Future<String> _downloadPublishedPluginScript(String url, String digest) async {
+  if (Platform.isAndroid &&
+      _isFirstPartyRelease(url) &&
+      parsePublishedPluginSha256(digest) != null &&
+      !globalSetting.blockRustHttpRequests) {
+    try {
+      final script = await _fetchAndroidReleaseScript(Uri.parse(url));
+      verifyPublishedPluginScript(script, digest);
+      return script;
+    } catch (error) {
+      logger.w('Android GitHub 附件下载失败，尝试现有下载通道', error: error);
+    }
+  }
+  final response = await downloadPluginAssetWithFallback(url);
   final script = await decodeDownloadedPluginScript(
-    response: downloaded,
+    response: response,
     resolvedUrl: url,
   );
-  verifyPublishedPluginScript(script, release.scriptSha256);
+  verifyPublishedPluginScript(script, digest);
   return script;
 }
 
+Future<String> _fetchAndroidReleaseScript(Uri original) async {
+  const maxBytes = 8 * 1024 * 1024;
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+  try {
+    var uri = original;
+    for (var redirects = 0; redirects <= 3; redirects++) {
+      final request = await client.getUrl(uri);
+      request.followRedirects = false;
+      final response = await request.close().timeout(
+        const Duration(seconds: 8),
+      );
+      if (response.isRedirect) {
+        final location = response.headers.value(HttpHeaders.locationHeader);
+        final next = location == null ? null : uri.resolve(location);
+        if (next == null ||
+            next.scheme != 'https' ||
+            next.hasPort ||
+            next.userInfo.isNotEmpty ||
+            !const {
+              'github.com',
+              'release-assets.githubusercontent.com',
+              'objects.githubusercontent.com',
+            }.contains(next.host)) {
+          throw StateError('插件附件重定向无效');
+        }
+        uri = next;
+        continue;
+      }
+      if (response.statusCode != HttpStatus.ok) {
+        throw HttpException('HTTP ${response.statusCode}');
+      }
+      final bytes = <int>[];
+      await for (final chunk in response.timeout(const Duration(seconds: 5))) {
+        if (bytes.length + chunk.length > maxBytes) {
+          throw StateError('插件附件超出大小限制');
+        }
+        bytes.addAll(chunk);
+      }
+      return decodePluginScriptFromBytes(
+        bytes: bytes,
+        shouldUseBrotli: original.path.toLowerCase().endsWith('.br'),
+      );
+    }
+    throw StateError('插件附件重定向过多');
+  } finally {
+    client.close(force: true);
+  }
+}
+
 Future<FetchResponse> downloadPluginAssetWithFallback(String sourceUrl) async {
-  final requestUrls = buildCloudRequestCandidates(sourceUrl);
+  final candidates = buildCloudRequestCandidates(sourceUrl);
+  final requestUrls = _isFirstPartyRelease(sourceUrl)
+      ? [sourceUrl, ...candidates.where((url) => url != sourceUrl)]
+      : candidates;
   final client = WindHttp.distribution(
     connectTimeout: const Duration(seconds: 12),
     receiveTimeout: const Duration(seconds: 30),

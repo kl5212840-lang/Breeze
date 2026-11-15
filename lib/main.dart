@@ -55,6 +55,7 @@ import 'package:zephyr/platform/desktop/native_window.dart';
 import 'package:zephyr/platform/desktop/system_tray.dart';
 import 'package:zephyr/platform/desktop/window_logic.dart';
 import 'package:zephyr/platform/eink/eink_device.dart';
+import 'package:zephyr/platform/eink/eink_page_transitions.dart';
 import 'package:zephyr/service/download/download_chapter_removal_recovery.dart';
 import 'package:zephyr/service/reader/reader_desktop_fullscreen_service.dart';
 import 'package:zephyr/service/startup_database_snapshot_service.dart';
@@ -1050,6 +1051,10 @@ class _MyAppState extends State<MyApp>
                 supportedLocales: AppLocaleUtils.supportedLocales,
                 localizationsDelegates: GlobalMaterialLocalizations.delegates,
                 theme: ThemeData.light().copyWith(
+                  pageTransitionsTheme:
+                      globalSettingState.eInkSetting.shouldRemoveRouteTransition
+                      ? einkPageTransitionsTheme
+                      : null,
                   // 墨水屏：水波纹是一圈纯装饰动画，在 EPD 上只会糊成残影。
                   // 传 null 走 copyWith 的保留语义，非墨水屏时不改默认 SplashFactory。
                   splashFactory: globalSettingState.eInkSetting.enabled
@@ -1072,6 +1077,10 @@ class _MyAppState extends State<MyApp>
                   ),
                 ),
                 darkTheme: ThemeData.dark().copyWith(
+                  pageTransitionsTheme:
+                      globalSettingState.eInkSetting.shouldRemoveRouteTransition
+                      ? einkPageTransitionsTheme
+                      : null,
                   splashFactory: globalSettingState.eInkSetting.enabled
                       ? NoSplash.splashFactory
                       : null,

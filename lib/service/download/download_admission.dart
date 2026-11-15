@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/service/download/download_cancel_signal.dart';
 
 enum DownloadNetworkWait {
   offline('waitingNetwork'),
@@ -172,6 +173,23 @@ class DownloadAdmission extends ChangeNotifier with WidgetsBindingObserver {
       notifyListeners();
     }
     if (state == AppLifecycleState.resumed) unawaited(_refresh());
+  }
+
+  Future<void> waitForForeground(String taskKey) async {
+    if (foregroundAllowed) return;
+    await start();
+    if (foregroundAllowed) return;
+    final ready = Completer<void>();
+    void changed() {
+      if (foregroundAllowed && !ready.isCompleted) ready.complete();
+    }
+
+    addListener(changed);
+    try {
+      await raceWithDownloadCancel(taskKey, ready.future);
+    } finally {
+      removeListener(changed);
+    }
   }
 
   Future<bool> waitForNetwork(Future<void> cancelled) async {
