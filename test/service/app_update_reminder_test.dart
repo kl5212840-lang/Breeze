@@ -182,5 +182,42 @@ void main() {
       )?.tagName,
       'v3.0.38',
     );
+
+    const renamedFork = 'kl5212840-lang/Breeze-Mobile';
+    const nextTag = 'v3.0.39';
+    const nextApk = 'Breeze-Android-v3.0.39-arm64-v8a.apk';
+    final renamed = release(nextTag, nextApk, repo: renamedFork);
+    final next = AppUpdateRelease.tryParse(renamed, repo: fork);
+    expect(
+      next?.htmlUrl,
+      'https://github.com/$renamedFork/releases/tag/$nextTag',
+    );
+    expect(
+      AppUpdateRelease.latestAndroid(
+        [android, renamed],
+        ['arm64-v8a'],
+      )?.tagName,
+      nextTag,
+    );
+    expect(
+      AppUpdateRelease.androidAsset(
+        next!,
+        repo: fork,
+        abi: 'arm64-v8a',
+      )?.toString(),
+      'https://github.com/$renamedFork/releases/download/$nextTag/$nextApk',
+    );
+    for (final repo in ['another-owner/Breeze-Mobile', '$renamedFork-Test']) {
+      final unrelated = release(nextTag, nextApk, repo: repo);
+      expect(AppUpdateRelease.tryParse(unrelated, repo: fork), isNull);
+      final mismatchedAsset = {...renamed, 'assets': unrelated['assets']};
+      expect(
+        AppUpdateRelease.latestAndroid(
+          [android, mismatchedAsset],
+          ['arm64-v8a'],
+        )?.tagName,
+        'v3.0.38',
+      );
+    }
   });
 }
