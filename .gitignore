@@ -59,7 +59,21 @@ objectbox_temp/
 .fvm/
 
 .crashlytics
-# .env.proxy
+
+# Local configuration, signing material, and mobile release artifacts
+.env
+.env.*
+!.env.example
+/android/key.properties
+*.jks
+*.keystore
+*.p8
+*.p12
+*.pfx
+*.mobileprovision
+*.ipa
+*.apk
+*.aab
 
 script/build/bin/
 windows-installer/src-tauri/resources
