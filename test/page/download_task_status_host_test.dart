@@ -27,6 +27,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/config/router/router.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
+import 'package:zephyr/network/sync/sync_operation_queue.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/donwload_task/view/download_task.dart';
 import 'package:zephyr/page/donwload_task/view/download_card_details.dart';
@@ -287,11 +288,11 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
       await settleHost(tester);
-      // File measurements have their own concurrency slots and can outlive
-      // a disposed FutureBuilder. Keep this clock alive until they drain.
+      // File measurements and follow-up storage reads can outlive the page.
+      // Drain both while their FakeAsync callbacks can still run.
       final metrics = DownloadResourceMetrics.instance;
       final elapsed = Stopwatch()..start();
-      while (metrics.measuring &&
+      while ((metrics.measuring || syncStorageOperations.busy.value) &&
           elapsed.elapsed < const Duration(seconds: 5)) {
         await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 5)),
@@ -302,6 +303,11 @@ void main() {
         metrics.measuring,
         isFalse,
         reason: 'File measurements must drain.',
+      );
+      expect(
+        syncStorageOperations.busy.value,
+        isFalse,
+        reason: 'Pending storage reads must finish before the next host.',
       );
     }
   }
@@ -3965,7 +3971,9 @@ void main() {
             'Reopening the actual page must read the completion from the DB.',
       );
       expect(
-        find.byKey(const ValueKey('comic:offline-download-fixture:可见任务')),
+        find.byKey(
+          const ValueKey('download-open.comic:offline-download-fixture:可见任务'),
+        ),
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);

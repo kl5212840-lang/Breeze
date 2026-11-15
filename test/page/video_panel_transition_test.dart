@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/video/video_panel_transition.dart';
@@ -36,7 +37,7 @@ void main() {
     expect(gradient.colors.first.a, 0);
     expect(gradient.colors[1].a, greaterThan(.8));
     expect(tester.takeException(), isNull);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
   testWidgets('closing panel consumes touches until its exit animation is dismissed', (tester) async {
     var open = true, taps = 0;
