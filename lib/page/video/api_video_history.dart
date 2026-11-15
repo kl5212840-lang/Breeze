@@ -248,6 +248,7 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
   PageStorageBucket? _storage;
   bool _restoredConditions = false, _openingFilters = false;
   ShelfFacetSelection _facets = const ShelfFacetSelection();
+  final _gridCoverCache = ApiVideoGridCoverCache();
 
   String get _conditionsKey =>
       'api-video-history.conditions.${widget.source}.${widget.home.origin}.${widget.itemNamespace}';
@@ -309,6 +310,7 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
       _searchFocus.unfocus();
     }
     if (changed) {
+      _gridCoverCache.clear();
       _selectedPaths.clear();
       _selecting = false;
       _records = null;
@@ -1007,6 +1009,7 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
                               : 0,
                           imageRefreshToken: _imageRefreshToken,
                           retryMissingCoverDetailsOnRefresh: false,
+                          gridCoverCache: _gridCoverCache,
                           posterAspectRatio: widget.posterAspectRatio,
                           loadDetail: widget.loadDetail,
                           recordNoteBuilder: (initial) => initial.remarks,

@@ -21,6 +21,9 @@ void main() {
                 'https://module.test/videos/Hid$i?line=main&episode=1',
               ),
               title: 'Work $i',
+              coverUrl: i == 1
+                  ? Uri.parse('https://module.test/cover.jpg')
+                  : null,
               position: const Duration(seconds: 30),
               duration: const Duration(minutes: 10),
               updatedAt: DateTime.utc(2026, 10, i + 1),
@@ -35,7 +38,7 @@ void main() {
           );
         }
       });
-      var requests = 0;
+      final requests = <String>[];
       final style = ValueNotifier('breeze');
       addTearDown(style.dispose);
       await tester.pumpWidget(
@@ -52,7 +55,7 @@ void main() {
                 mode: ApiVideoView.grid,
                 onOpen: (_, _) async {},
                 loadDetail: (item) async {
-                  requests++;
+                  requests.add(item.id);
                   return item;
                 },
               ),
@@ -61,6 +64,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      expect(requests, unorderedEquals(['movie:Hid0', 'movie:Hid2']));
       expect(
         find.text(t.videoLibrary.history),
         findsOneWidget,
@@ -131,7 +135,7 @@ void main() {
             .items,
         hasLength(3),
       );
-      expect(requests, 0);
+      expect(requests, unorderedEquals(['movie:Hid0', 'movie:Hid2']));
       expect(tester.takeException(), isNull);
     },
   );

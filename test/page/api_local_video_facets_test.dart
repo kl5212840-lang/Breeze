@@ -10,7 +10,7 @@ import 'package:zephyr/widgets/app_interface_style.dart';
 
 void main() {
   testWidgets(
-    'local favorites applies, cancels and clears actual metadata facets without fetching details',
+    'local favorites filters saved metadata without repeating cover lookups',
     (tester) async {
       final store = VideoLibraryStore(
         deviceId: 'facets-test',
@@ -22,19 +22,22 @@ void main() {
       await tester.runAsync(() async {
         SharedPreferences.setMockInitialValues({});
         await store.importFavorites('unknown-plugin', [
-          for (var i = 0; i < 2; i++)
+          for (var i = 0; i < 3; i++)
             ApiVideoItem(
               id: '$i',
               title: 'Work $i',
               detailUrl: Uri.parse(
                 'https://video.test/voddetail/${i + 1}.html',
               ),
+              coverUrl: i == 2
+                  ? Uri.parse('https://video.test/cover.jpg')
+                  : null,
               genres: i == 0 ? 'Action' : 'Drama',
               year: i == 0 ? '2024' : '2025',
             ),
         ]);
       });
-      var requests = 0;
+      final requests = <String>[];
       await tester.pumpWidget(
         AppInterfaceStyleScope(
           style: style,
@@ -46,7 +49,7 @@ void main() {
                 mode: ApiVideoView.grid,
                 onOpen: (_) async {},
                 loadDetail: (item) async {
-                  requests++;
+                  requests.add(item.id);
                   return item;
                 },
               ),
@@ -55,6 +58,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      expect(requests, unorderedEquals(['0', '1']));
       Future<void> choose() async {
         await tester.tap(find.byKey(const ValueKey('local-favorites.filter')));
         await tester.pumpAndSettle();
@@ -73,7 +77,7 @@ void main() {
         tester
             .widget<ApiVideoCollection>(find.byType(ApiVideoCollection))
             .items,
-        hasLength(2),
+        hasLength(3),
       );
       await choose();
       await tester.tap(find.byKey(const ValueKey('shelf-filter-apply')));
@@ -94,9 +98,9 @@ void main() {
         tester
             .widget<ApiVideoCollection>(find.byType(ApiVideoCollection))
             .items,
-        hasLength(2),
+        hasLength(3),
       );
-      expect(requests, 0);
+      expect(requests, unorderedEquals(['0', '1']));
       expect(tester.takeException(), isNull);
     },
   );
