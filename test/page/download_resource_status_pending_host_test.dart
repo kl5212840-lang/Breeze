@@ -9,6 +9,8 @@ import 'package:zephyr/page/donwload_task/view/download_task.dart';
 import 'package:zephyr/page/donwload_task/service/download_center_resources.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/page/video/video_export_records.dart';
+import 'package:zephyr/page/video/video_download_retry.dart';
+import 'package:zephyr/page/video/video_episode_download_queue.dart';
 import 'package:zephyr/page/video/video_local_resources.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/page/video/video_hls_assets.dart';
@@ -133,6 +135,134 @@ void main() {
     }
     return value;
   }
+
+  testWidgets(
+    'bulk video retry reports queued, waiting for network and source recovery',
+    (tester) => runHost(tester, () async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const connectivity = MethodChannel(
+        'dev.fluttercommunity.plus/connectivity',
+      );
+      const connectivityStatus = MethodChannel(
+        'dev.fluttercommunity.plus/connectivity_status',
+      );
+      messenger.setMockMethodCallHandler(connectivity, (_) async => ['wifi']);
+      messenger.setMockMethodCallHandler(connectivityStatus, (_) async => null);
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(connectivity, null);
+        messenger.setMockMethodCallHandler(connectivityStatus, null);
+      });
+      const source = 'batch-retry-test';
+      final detail = Uri.parse('https://fixture.test/voddetail/42.html');
+      final episodes = [
+        for (final id in ['1', '2', '3'])
+          ApiVideoEpisode(
+            id: id,
+            title: 'Episode $id',
+            url: null,
+            watchUrl: detail.replace(
+              queryParameters: {'line': 'main', 'episode': id},
+            ),
+          ),
+      ];
+      final work = ApiVideoItem(
+        id: '42',
+        title: 'Batch retry work',
+        detailUrl: detail,
+        lines: [ApiVideoLine(id: 'main', label: 'Main', episodes: episodes)],
+      );
+      final keys = await finishOperation(tester, () async {
+        await VideoDownloadedDetails.captureItem(
+          source,
+          work,
+          work.episodeCards('main'),
+        );
+        final keys = <String>[];
+        for (final (index, episode) in episodes.indexed) {
+          final task = await VideoExportRecords.beginTransfer(
+            source: source,
+            video: episode.watchUrl,
+            title: episode.title,
+            quality: '720p',
+          );
+          keys.add(task);
+          await VideoExportRecords.updateTransfer(
+            task,
+            received: null,
+            status: 'failed',
+            terminal: true,
+            failureReason: [
+              'httpForbidden',
+              DownloadNetworkWait.wifi.code,
+              'sourceVisitRequired',
+            ][index],
+          );
+        }
+        return keys;
+      }, stage: 'create a work with three different failed episodes');
+      VideoExportRecords.retainNetworkWait(keys[1], 1);
+
+      final lease = VideoDownloadRetry.register(
+        source,
+        (_) async => throw const VideoDownloadRetryFailure('httpForbidden'),
+        current: () => true,
+      );
+      try {
+        await tester.pumpWidget(const MaterialApp(home: DownloadTaskPage()));
+        await settleHost(tester);
+        final card = tester.widget<DownloadVideoWorkCard>(
+          find.byType(DownloadVideoWorkCard),
+        );
+        final retry = find.byKey(
+          ValueKey('download-work-retry.${card.work.key}'),
+        );
+        expect(retry, findsOneWidget);
+        await tester.tap(retry);
+        final summary = find.text(
+          'Queued: 1 · Waiting for network: 1 · Needs source page: 1',
+        );
+        final feedback = find.textContaining(
+          RegExp(
+            'Queued: |Waiting for network: |Needs source page: |Could not retry: |Status changed: ',
+          ),
+        );
+        final elapsed = Stopwatch()..start();
+        while (feedback.evaluate().isEmpty &&
+            elapsed.elapsed < const Duration(seconds: 5)) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 5)),
+          );
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+        expect(
+          summary,
+          findsOneWidget,
+          reason:
+              'The feedback was ${feedback.evaluate().map((element) => (element.widget as Text).data).toList()}',
+        );
+        expect(find.byType(DownloadTaskPage), findsOneWidget);
+        final persisted = await finishOperation(
+          tester,
+          VideoExportRecords.readTasks,
+          stage: 'read all original tasks after retry',
+        );
+        final rows = {for (final row in persisted) row['key']: row};
+        expect(rows[keys[0]]?['attempt'], 2);
+        expect(rows[keys[1]]?['attempt'], 1);
+        expect(rows[keys[2]]?['attempt'], 1);
+      } finally {
+        await finishOperation(
+          tester,
+          VideoEpisodeDownloadQueue.flush,
+          stage: 'retire batch queue work',
+        );
+        VideoDownloadRetry.unregister(source, lease);
+        VideoExportRecords.releaseNetworkWait(keys[1], 1);
+        await tester.pump(const Duration(seconds: 8));
+      }
+    }),
+  );
 
   for (final styleName in ['system', 'breeze']) {
     testWidgets(

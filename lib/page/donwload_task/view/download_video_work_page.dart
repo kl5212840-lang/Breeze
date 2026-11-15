@@ -283,7 +283,8 @@ class DownloadVideoWorkCard extends StatelessWidget {
               maintainSize: true,
               child: IconButton(
                 key: ValueKey('download-work-retry.${work.key}'),
-                tooltip: '${t.common.retry} (${_retryFailedCount(live)})',
+                tooltip:
+                    '${t.download.retryEpisodeDownload} (${_retryFailedCount(live)})',
                 onPressed: enabled ? () => onRetryFailed!(live) : null,
                 icon: const Icon(Icons.refresh_rounded),
               ),
