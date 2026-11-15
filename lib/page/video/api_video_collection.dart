@@ -42,6 +42,7 @@ class ApiVideoCollection extends StatefulWidget {
     this.loading = false,
     this.emptyState,
     this.loadDetail,
+    this.gridCoverCache,
     this.detailsActive = true,
     this.onDetailLoaded,
     this.detailGeneration,
@@ -92,6 +93,9 @@ class ApiVideoCollection extends StatefulWidget {
   /// Called for visible detailed rows and grid cards without a source poster.
   final Future<ApiVideoItem> Function(ApiVideoItem)? loadDetail;
 
+  /// Lets a record page keep cover lookups when its filtered list is rebuilt.
+  final ApiVideoGridCoverCache? gridCoverCache;
+
   /// IndexedStack pages must stop requesting details while hidden.
   final bool detailsActive;
   final ValueChanged<ApiVideoItem>? onDetailLoaded;
@@ -114,20 +118,32 @@ class ApiVideoCollection extends StatefulWidget {
   State<ApiVideoCollection> createState() => _ApiVideoCollectionState();
 }
 
-class _ApiVideoCollectionState extends State<ApiVideoCollection> {
-  final _gridCoverLoads = <String, Future<ApiVideoItem>>{};
+class ApiVideoGridCoverCache {
+  final _loads = <(String, Uri), Future<ApiVideoItem>>{};
 
-  Future<ApiVideoItem> _loadGridCover(ApiVideoItem item) {
-    final key = '${item.id}|${item.detailUrl}';
-    final existing = _gridCoverLoads.remove(key);
-    if (existing != null) return _gridCoverLoads[key] = existing;
-    final result = widget.loadDetail!(item);
-    _gridCoverLoads[key] = result;
-    while (_gridCoverLoads.length > 128) {
-      _gridCoverLoads.remove(_gridCoverLoads.keys.first);
+  Future<ApiVideoItem> _load(
+    ApiVideoItem item,
+    Future<ApiVideoItem> Function(ApiVideoItem) loadDetail,
+  ) {
+    final key = (item.id, item.detailUrl);
+    final result = _loads.remove(key) ?? loadDetail(item);
+    _loads[key] = result;
+    if (_loads.length > 128) {
+      _loads.remove(_loads.keys.first);
     }
     return result;
   }
+
+  void clear() => _loads.clear();
+}
+
+class _ApiVideoCollectionState extends State<ApiVideoCollection> {
+  late final _localGridCoverCache = ApiVideoGridCoverCache();
+  ApiVideoGridCoverCache get _gridCoverCache =>
+      widget.gridCoverCache ?? _localGridCoverCache;
+
+  Future<ApiVideoItem> _loadGridCover(ApiVideoItem item) =>
+      _gridCoverCache._load(item, widget.loadDetail!);
 
   final _scroll = ScrollController();
   final _headerSliverKey = GlobalKey();
@@ -186,7 +202,7 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
     if (oldWidget.detailGeneration != widget.detailGeneration ||
         (widget.retryMissingCoverDetailsOnRefresh &&
             oldWidget.imageRefreshToken != widget.imageRefreshToken)) {
-      _gridCoverLoads.clear();
+      _gridCoverCache.clear();
     }
     if (oldWidget.storageKey != widget.storageKey) {
       _invalidateAnchor();

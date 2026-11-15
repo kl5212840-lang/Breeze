@@ -52,6 +52,9 @@ jobs:
         run: |
           flutter test --no-pub --reporter expanded \
             test/service/app_update_reminder_test.dart \
+            test/page/api_local_video_facets_test.dart \
+            test/page/api_video_history_facets_test.dart \
+            test/page/api_video_missing_covers_test.dart \
             test/plugin/cloud_catalog_fallback_test.dart \
             test/comic_read/reader_system_status_bar_test.dart \
             test/comic_read/reader_system_ui_handoff_test.dart

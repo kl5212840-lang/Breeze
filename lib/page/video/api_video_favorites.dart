@@ -78,6 +78,7 @@ class _ApiVideoFavoritesState extends State<ApiVideoFavorites> {
   ) => snapshot.itemsFor(widget.source, home: widget.repository?.home);
 
   VideoLibrarySnapshot? _snapshot;
+  final _gridCoverCache = ApiVideoGridCoverCache();
   final _input = TextEditingController();
   final _searchFocus = FocusNode();
   final _selected = <String>{};
@@ -131,6 +132,7 @@ class _ApiVideoFavoritesState extends State<ApiVideoFavorites> {
         oldWidget.store != widget.store ||
         oldWidget.repository?.capabilities.itemNamespace !=
             widget.repository?.capabilities.itemNamespace) {
+      _gridCoverCache.clear();
       (oldWidget.store ?? VideoLibraryStore.shared).removeListener(_read);
       _store.addListener(_read);
       _snapshot = null;
@@ -1206,6 +1208,7 @@ class _ApiVideoFavoritesState extends State<ApiVideoFavorites> {
                         : 0,
                     imageRefreshToken: _imageRefreshToken,
                     retryMissingCoverDetailsOnRefresh: false,
+                    gridCoverCache: _gridCoverCache,
                     posterAspectRatio:
                         widget.repository?.capabilities.posterAspectRatio ??
                         2 / 3,
