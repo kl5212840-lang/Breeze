@@ -44,7 +44,9 @@ jobs:
       - name: Install native test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libclang-dev
+          sudo apt-get install -y --no-install-recommends \
+            libclang-dev libgtk-3-dev libx11-dev libxi-dev
+          pkg-config --exists gtk+-3.0 x11 xi
 
       - name: Run mobile regression tests
         run: |
