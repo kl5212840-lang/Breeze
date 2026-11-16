@@ -29,22 +29,45 @@ String videoPersonalRecentScript(Uri page, Map<String, String> selectors) =>
       if (owners.size !== 1 || !owners.has(root) || !document.querySelector('.user-nav-bar')) return {status:'unavailable'};
       const config = ${jsonEncode(selectors)};
       $videoCardExtractionScript
-      const roots = Array.from(document.querySelectorAll(config.cards + ', .content-padding-new div[class^="video-item-container"], div[class^="user-tab-item-wrapper"]')).slice(0,160);
+      const playlistPage = target.pathname.endsWith('/playlists');
+      const roots = Array.from(document.querySelectorAll(config.cards + ', .content-padding-new div[class^="video-item-container"], div[class^="user-tab-item-wrapper"]')).slice(0,161);
       const seen = new Set();
-      const cards = roots.map(card).filter(item => item.href && !seen.has(item.href) && seen.add(item.href)).slice(0,4);
-      const playlists = target.pathname.endsWith('/playlists') ? Array.from(document.querySelectorAll(
-        '.user-tab-item-wrapper, .playlist-item-wrapper, .playlist-card')).slice(0,4).map(node => ({
+      const allCards = playlistPage ? [] : roots.map(card)
+        .filter(item => item.href && !seen.has(item.href) && seen.add(item.href));
+      const allPlaylists = playlistPage ? Array.from(document.querySelectorAll(
+        '.user-tab-item-wrapper, .playlist-item-wrapper, .playlist-card')).slice(0,161).map(node => ({
         title: node.querySelector('.title, .playlist-title')?.textContent?.trim() || '',
         url: node.querySelector('a[href*="playlist?list="]')?.getAttribute('href') || '',
         coverUrl: imageUrl(node.querySelector('img.main-thumb, img')),
         subtitle: node.querySelector('.playlist-count, .stat-item')?.textContent?.trim() || ''
-      })).filter(item => item.title && item.url) : [];
-      if (!cards.length && !playlists.length) {
+      })).filter(item => {
+        if (!item.title || !item.url) return false;
+        try {
+          const page = new URL(item.url, target), id = page.searchParams.get('list');
+          if (page.origin !== target.origin || page.username || page.password ||
+              page.pathname !== '/playlist' || !/^[A-Za-z0-9_-]{1,80}\$/.test(id || '') ||
+              seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        } catch (_) { return false; }
+      }) : [];
+      if (!allCards.length && !allPlaylists.length) {
         const empty = Array.from(document.querySelectorAll('.empty-state, .user-empty-hint, .content-padding p, .content-padding-new p')).slice(0,32)
-          .some(node => /^(?:没有观看记录|沒有觀看紀錄|暂无观看记录|暫無觀看紀錄|尚無觀看紀錄|no watch history(?: yet)?)[。.!！\\s]*\$/.test(node.textContent?.trim().toLowerCase() || ''));
+          .some(node => /^(?:(?:没有|沒有|暂无|暫無|尚無)(?:观看记录|觀看紀錄|播放清单|播放清單|稍后观看|稍後觀看|收藏|点赞|點讚)(?:记录|紀錄)?|no (?:watch history|playlists|saved videos|liked videos)(?: yet)?)[。.!！\\s]*\$/i.test(node.textContent?.trim() || ''));
         if (!empty) return {status:'unavailable'};
       }
-      return {status:'ok', snapshot:{cards, playlists, personalPageReady:true}};
+      const count = allCards.length + allPlaylists.length;
+      const partial = roots.length >= 161 || count >= 161 || Array.from(
+        document.querySelectorAll('ul.pagination a[href], a[rel="next"]')).some(node => {
+        try {
+          const next = new URL(node.getAttribute('href'), target);
+          return next.origin === target.origin && next.pathname === target.pathname &&
+            (node.rel === 'next' || Number(next.searchParams.get('page')) > 1);
+        } catch (_) { return false; }
+      });
+      return {status:'ok', count, complete: !partial, snapshot:{
+        cards: allCards.slice(0,4), playlists: allPlaylists.slice(0,4), personalPageReady:true
+      }};
     } catch (_) { return {status:'unavailable'}; }
     finally { clearTimeout(timer); }
   })();

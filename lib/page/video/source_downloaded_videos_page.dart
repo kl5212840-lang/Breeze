@@ -1,3 +1,5 @@
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
+import 'package:zephyr/page/video/hanime_work_facts.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
@@ -75,6 +77,9 @@ class SourceDownloadedVideosPage extends StatefulWidget {
 class _SourceDownloadedVideosPageState
     extends State<SourceDownloadedVideosPage> {
   late Future<List<Map<String, dynamic>>> _rows;
+  late final _hanimeFacts = widget.source == hanimeSourceId
+      ? HanimeWorkFactsStore.read()
+      : null;
   String _query = '', _sort = 'recent';
   KeywordSearchScope _keywordScope = KeywordSearchScope.all;
   bool get _titleOnly => _keywordScope == KeywordSearchScope.title;
@@ -481,6 +486,7 @@ class _SourceDownloadedVideosPageState
                           if (work == null)
                             return SourceDownloadedEpisodeRow(
                               item: entry.item,
+                              hanimeFacts: _hanimeFacts,
                               selecting: _managing,
                               selected: _selected.contains(entry.item.key),
                               onSelect: () => _toggleItems([entry.item]),
@@ -489,6 +495,7 @@ class _SourceDownloadedVideosPageState
                           return SourceDownloadedWorkCard(
                             key: ValueKey('source-download-work.${work.key}'),
                             work: work,
+                            hanimeFacts: _hanimeFacts,
                             selecting: _managing,
                             selected: _selected.containsAll(
                               work.episodes.map((item) => item.key),
@@ -565,6 +572,11 @@ class _SourceDownloadedVideosPageState
                                         ).textTheme.bodySmall,
                                       ),
                                     ],
+                                    if (_hanimeFacts != null)
+                                      HanimeCachedWorkStatistics(
+                                        facts: _hanimeFacts,
+                                        url: row['url'],
+                                      ),
                                   ],
                                 ),
                               ),

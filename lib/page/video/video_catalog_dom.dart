@@ -279,6 +279,7 @@ String videoDetailSnapshotScript(
   Map<String, String> selectors, {
   String? documentExpression,
   String? locationExpression,
+  bool publicFactsOnly = false,
 }) =>
     '''
   (() => {
@@ -289,20 +290,6 @@ String videoDetailSnapshotScript(
     const video = document.querySelector(config.video);
     const titleElement = document.querySelector(config.detailTitle);
     const coverElement = document.querySelector(config.detailCover);
-    const artist = document.querySelector('#video-artist-name');
-    const uploader = document.querySelector('.video-description-panel a[href*="/user/"]');
-    const artistScope = artist?.parentElement?.parentElement?.parentElement;
-    const artistProfiles = Array.from(artistScope?.querySelectorAll('a[href]') || []).filter(node => {
-      const target = creatorHref(node);
-      return target && new URL(target).pathname.startsWith('/user/') && !!node.querySelector('img');
-    });
-    const artistProfile = artistProfiles.length === 1 ? artistProfiles[0] : null;
-    const artistProfileUrl = creatorHref(artistProfile);
-    const subscribeForms = Array.from(document.forms).filter(form => {
-      try { const u = new URL(form.getAttribute('action') || '', location.href); return u.origin === location.origin && u.pathname === '/subscribe' &&
-        form.querySelectorAll('[name="subscribe-artist-id"]').length === 1; } catch (_) { return false; }
-    });
-    const artistId = subscribeForms.length === 1 ? subscribeForms[0].querySelector('[name="subscribe-artist-id"]')?.value || '' : '';
     const mainTitle = consistentMetric(Array.from(document.querySelectorAll('#shareBtn-title')).slice(0, 4).map(metricText));
     const primaryStats = Array.from(document.querySelectorAll('.video-details-wrapper.hidden-sm.hidden-md.hidden-lg.hidden-xl, .video-description-panel > .hidden-xs')).slice(0, 4)
       .flatMap(node => Array.from(node.childNodes).filter(child => child.nodeType === 3).map(child => child.textContent.replace(/\\s+/g, ' ').trim()).filter(Boolean));
@@ -326,6 +313,29 @@ String videoDetailSnapshotScript(
       });
       return values.length && values.every(value => value != null && value === values[0]) ? values[0] : null;
     };
+    const publicFacts = {
+      viewCountRaw, viewCount:metricCount(viewCountRaw, 'views'), publishedDate,
+      ratingPercentRaw, ratingPercent:metricPercent(ratingPercentRaw), totalVotes:exactMetricInteger(totalVotesRaw),
+      positiveVotes:voteCount('likes-count'), negativeVotes:voteCount('unlikes-count'),
+      tagsObserved: Boolean(document.querySelector('.video-tags-wrapper')),
+      tags: Array.from(document.querySelectorAll(config.detailTags)).slice(0, 40)
+        .map(item => item.textContent?.trim() || '').filter(tag => tag && !['add', 'remove'].includes(tag.toLowerCase()))
+    };
+    ${publicFactsOnly ? 'return mainTitle || video ? publicFacts : null;' : ''}
+    const artist = document.querySelector('#video-artist-name');
+    const uploader = document.querySelector('.video-description-panel a[href*="/user/"]');
+    const artistScope = artist?.parentElement?.parentElement?.parentElement;
+    const artistProfiles = Array.from(artistScope?.querySelectorAll('a[href]') || []).filter(node => {
+      const target = creatorHref(node);
+      return target && new URL(target).pathname.startsWith('/user/') && !!node.querySelector('img');
+    });
+    const artistProfile = artistProfiles.length === 1 ? artistProfiles[0] : null;
+    const artistProfileUrl = creatorHref(artistProfile);
+    const subscribeForms = Array.from(document.forms).filter(form => {
+      try { const u = new URL(form.getAttribute('action') || '', location.href); return u.origin === location.origin && u.pathname === '/subscribe' &&
+        form.querySelectorAll('[name="subscribe-artist-id"]').length === 1; } catch (_) { return false; }
+    });
+    const artistId = subscribeForms.length === 1 ? subscribeForms[0].querySelector('[name="subscribe-artist-id"]')?.value || '' : '';
     const detailCard = element => {
       const parent = element.parentElement;
       return card(element.matches('.related-video-margin-bottom') && parent &&
@@ -335,9 +345,7 @@ String videoDetailSnapshotScript(
       documentUrl: location.href,
       title: mainTitle || titleElement?.getAttribute('content') || document.title,
       coverUrl: video?.getAttribute('poster') || coverElement?.getAttribute('content') || '',
-      viewCountRaw, viewCount:metricCount(viewCountRaw, 'views'), publishedDate,
-      ratingPercentRaw, ratingPercent:metricPercent(ratingPercentRaw), totalVotes:exactMetricInteger(totalVotesRaw),
-      positiveVotes:voteCount('likes-count'), negativeVotes:voteCount('unlikes-count'),
+      ...publicFacts,
       creator: { role:'artist', name: artist?.textContent?.trim() || '',
         profileUrl:artistProfileUrl, artistId,
         profileId:artistProfileUrl ? new URL(artistProfileUrl).pathname.split('/')[2] : '',
@@ -349,8 +357,6 @@ String videoDetailSnapshotScript(
       description: document.querySelector(config.detailDescription)?.textContent?.trim() || '',
       tagFilters: Array.from(document.querySelectorAll(config.detailTags)).slice(0, 80)
         .map(item => ({label: item.textContent?.trim() || '', href: item.getAttribute('href') || ''})),
-      tags: Array.from(document.querySelectorAll(config.detailTags)).slice(0, 40)
-        .map(item => item.textContent?.trim() || '').filter(tag => tag && !['add', 'remove'].includes(tag.toLowerCase())),
       episodes: Array.from(document.querySelectorAll(config.episodes)).slice(0, 100).map(card),
       related: Array.from(document.querySelectorAll(config.related)).slice(0, 80).map(detailCard),
       video: video && {
@@ -362,4 +368,38 @@ String videoDetailSnapshotScript(
       }
     });
   })()
+''';
+
+/// Read an ordinary, same-origin work document. The detached document never
+/// executes scripts. The bridge receives only allowlisted public fields.
+String hanimePublicFactsScript(Uri page, Map<String, String> selectors) =>
+    '''
+(async () => {
+  const breezePublicWork = ${jsonEncode(page.toString())};
+  const target = new URL(breezePublicWork);
+  if (target.origin !== location.origin || target.origin !== 'https://hanime1.me' ||
+      target.username || target.password || !/^\\/watch\\?v=[0-9]+\$/.test(target.pathname + target.search)) {
+    return {status:'unavailable'};
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5500);
+  try {
+    const response = await fetch(target.href, {
+      credentials:'same-origin', redirect:'error', signal:controller.signal,
+    });
+    if ([401, 403, 429, 503].includes(response.status)) return {status:'blocked'};
+    if ([404, 410].includes(response.status)) return {status:'missing'};
+    if (!response.ok || response.url !== target.href) return {status:'unavailable'};
+    const html = await response.text();
+    if (html.length > 3000000) return {status:'unavailable'};
+    const detailDocument = new DOMParser().parseFromString(html, 'text/html');
+    if (detailDocument.querySelector('#challenge-form, #cf-challenge-running')) return {status:'blocked'};
+    const facts = ${videoDetailSnapshotScript(selectors, documentExpression: 'detailDocument', locationExpression: 'target', publicFactsOnly: true)};
+    return facts ? {status:'ok', url:target.href, facts} : {status:'unavailable'};
+  } catch (_) {
+    return {status:'unavailable'};
+  } finally {
+    clearTimeout(timer);
+  }
+})()
 ''';

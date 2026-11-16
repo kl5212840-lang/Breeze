@@ -133,7 +133,13 @@ void main() {
       await tester.pumpAndSettle();
       await tap(find.byTooltip(t.common.clear));
       expect(tester.getTopLeft(first), initialPosition);
-      await tap(find.text(t.videoFilters.anyMatch));
+      await tap(find.byKey(const ValueKey('hanime-filter.match-mode')));
+      await tap(
+        find.widgetWithText(
+          CheckedPopupMenuItem<bool>,
+          t.videoFilters.anyMatch,
+        ),
+      );
       await tap(find.widgetWithText(Tab, t.videoFilters.date));
       expect(
         find.byKey(const ValueKey('hanime-filter.custom-date')),

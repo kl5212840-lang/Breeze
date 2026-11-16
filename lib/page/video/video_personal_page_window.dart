@@ -38,10 +38,25 @@ class VideoPersonalPageWindow {
 
   Iterable<MapEntry<Uri, Map<String, dynamic>>> get _ordered {
     final pages = _pages.entries.toList();
-    int number(Uri page) =>
-        int.tryParse(page.queryParameters['page'] ?? '1') ?? 1;
-    pages.sort((a, b) => number(a.key).compareTo(number(b.key)));
+    pages.sort((a, b) => _number(a.key).compareTo(_number(b.key)));
     return pages;
+  }
+
+  int _number(Uri page) =>
+      int.tryParse(page.queryParameters['page'] ?? '1') ?? 1;
+
+  bool get complete {
+    final pages = _ordered.toList();
+    if (pages.isEmpty || ('${paging['nextUrl'] ?? ''}').isNotEmpty)
+      return false;
+    final declared = int.tryParse('${paging['totalPages'] ?? ''}');
+    if (declared != null && declared > pages.length) return false;
+    for (var i = 0; i < pages.length; i++) {
+      if (_number(pages[i].key) != i + 1 ||
+          (pages[i].value['videos'] as List?)?.length == 160)
+        return false;
+    }
+    return true;
   }
 
   Map<String, dynamic> get paging {

@@ -1,3 +1,5 @@
+import 'package:zephyr/page/video/hanime_work_facts.dart';
+import 'package:zephyr/page/video/video_public_metadata.dart';
 import 'package:zephyr/page/video/api_video_collection.dart';
 import 'package:zephyr/page/video/video_personal_snapshot_store.dart';
 import 'package:zephyr/service/collection_view_preferences.dart';
@@ -130,6 +132,8 @@ class _WebPlatform extends InAppWebViewPlatform {
   final _documentsByOwner = <Object, _WebPlatform>{};
   bool hangSnapshot = false;
   Map<String, dynamic> domSnapshot = {};
+  final publicWorkReads = <Uri>[];
+  Map<String, dynamic>? publicWorkFacts;
   Map<String, dynamic>? creatorDirectory;
   Map<String, dynamic>? resolvedCreator;
   Future<dynamic>? nextCreatorRead;
@@ -329,6 +333,18 @@ class _WebController extends PlatformInAppWebViewController
     required String source,
     ContentWorld? contentWorld,
   }) async {
+    if (source.contains('const breezePublicWork')) {
+      final match = RegExp(
+        r'const breezePublicWork = "([^"]+)"',
+      ).firstMatch(source);
+      final page = Uri.parse(match!.group(1)!);
+      host.publicWorkReads.add(page);
+      return {
+        'status': host.publicWorkFacts == null ? 'missing' : 'ok',
+        'url': page.toString(),
+        'facts': host.publicWorkFacts,
+      };
+    }
     if (source.contains('const operation = "state", payload =')) {
       host.siteInteractionReads++;
       return host.siteInteraction;
@@ -511,6 +527,7 @@ Future<void> _mount(
   bool nestedRoot = false,
   bool returnToCallerAfterPlayback = false,
   bool structuredHanime = false,
+  Map<String, String> selectors = const {},
   Uri? initialUrl,
   KeywordSearchScope? initialKeywordScope,
   PluginAccountSyncCoordinator? accountSyncCoordinator,
@@ -558,7 +575,7 @@ Future<void> _mount(
           catalogFnPath: 'catalog',
           detailFnPath: 'detail',
           playbackFnPath: 'playback',
-          selectors: const {},
+          selectors: selectors,
           nativeAccount: nativePersonal,
           nativeSubscriptions: nativePersonal,
           nativeAuth: nativeAuth,
@@ -763,16 +780,21 @@ void main() {
   testWidgets(
     'Hanime category and rank own their destinations and public filter sections',
     (tester) async {
-      plugin.catalog = (_) async => {
+      plugin.catalog = (core) async => {
         'data': {
           ..._catalog('Work with statistics')['data'] as Map<String, dynamic>,
           'videos': [
             {
               'title': 'Work with statistics',
               'watchUrl': 'https://hanime1.me/watch?v=2',
-              'ratingPercentRaw': '93%',
-              'viewCountRaw': '1.2万次',
-              'positiveVotes': 120,
+              'creatorName': 'Fixture creator',
+              if (!Uri.parse(
+                core['pageUrl'] as String,
+              ).queryParameters.containsKey('genre')) ...{
+                'ratingPercentRaw': '93%',
+                'viewCountRaw': '1.2万次',
+                'positiveVotes': 120,
+              },
             },
           ],
         },
@@ -781,6 +803,7 @@ void main() {
         tester,
         plugin,
         structuredHanime: true,
+        selectors: const {'video': 'video', 'detailTitle': '#shareBtn-title'},
         filters: _filters,
         categories: [
           NativeCatalogCategory(
@@ -859,11 +882,32 @@ void main() {
       await _pump(tester);
       await tester.tap(find.byKey(const ValueKey('hanime.category.Animation')));
       await _pump(tester);
-      final categoryWeb = web.documents.single;
+      final categoryWeb = web.documents.single
+        ..publicWorkFacts = {
+          'viewCountRaw': '4.3万次',
+          'ratingPercentRaw': '98%',
+          'positiveVotes': 203,
+          'tags': ['Fixture tag'],
+        };
       categoryWeb.finishLastLoad();
       await _pump(tester);
       expect(categoryWeb.loads.last.queryParameters['genre'], 'Animation');
       expect(categoryWeb.loads.last.queryParameters['sort'], isNull);
+      tester.widget<NativeVideoMenu>(layout).onSelected('detail');
+      await _pump(tester);
+      final likes = find.text(t.videoMetadata.positiveVotes(count: 203));
+      expect(likes, findsOneWidget);
+      expect(find.text(t.videoMetadata.views(value: '4.3万次')), findsOneWidget);
+      final cover = find.byKey(
+        const ValueKey('video-list.cover.https://hanime1.me/watch?v=2'),
+      );
+      expect(
+        tester.getBottomLeft(likes).dy,
+        lessThanOrEqualTo(tester.getBottomLeft(cover).dy),
+      );
+      expect(categoryWeb.publicWorkReads, [
+        Uri.parse('https://hanime1.me/watch?v=2'),
+      ]);
       final sort = find.byKey(const ValueKey('hanime-results.sort'));
       expect(tester.widget<NativeVideoMenu>(sort).label, 'Default');
       tester.widget<NativeVideoMenu>(sort).onSelected('views');
@@ -873,6 +917,8 @@ void main() {
       expect(categoryWeb.loads.last.queryParameters['sort'], 'views');
       expect(tester.widget<NativeVideoMenu>(sort).label, 'Views');
       expect(tester.widget<NativeVideoMenu>(sort).selected, 'views');
+      expect(likes, findsOneWidget);
+      expect(categoryWeb.publicWorkReads, hasLength(1));
       await tester.tap(find.byKey(const ValueKey('hanime-results.filter')));
       await _pump(tester);
       final panel = tester.widget<VideoSearchFilterPanel>(
@@ -899,6 +945,10 @@ void main() {
         saves.replace(queryParameters: const <String, String>{}, fragment: ''),
       );
       await CollectionViewPreferences.write(scope, 'grid');
+      await HanimeWorkFactsStore.write(
+        Uri.parse('https://hanime1.me/watch?v=2'),
+        HanimeWorkFacts(const VideoPublicMetadata(), ['Fixture tag']),
+      );
       plugin.catalog = (_) async => {
         'data': {
           ..._catalog('Saved works')['data'] as Map<String, dynamic>,
@@ -964,6 +1014,11 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('personal-records.filter')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('shelf-facet-author')), findsOneWidget);
+      final tags = find.byKey(const ValueKey('shelf-facet-tags'));
+      expect(tags, findsOneWidget);
+      await tester.tap(tags);
+      await tester.pumpAndSettle();
+      expect(find.text('Fixture tag'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('shelf-facet-duration')));
       await tester.pumpAndSettle();
       await tester.tap(

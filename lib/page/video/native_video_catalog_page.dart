@@ -67,7 +67,7 @@ import 'package:zephyr/page/video/video_back_gesture.dart';
 import 'package:zephyr/page/video/video_site_presentation.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/page/video/video_public_metadata.dart';
-import 'package:zephyr/page/video/video_playback_identity.dart';
+import 'package:zephyr/page/video/hanime_work_facts.dart';
 import 'package:zephyr/page/video/video_card_metadata.dart';
 import 'package:zephyr/page/video/video_playback_preferences.dart';
 import 'package:zephyr/page/video/video_library_view.dart';
@@ -635,6 +635,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       _hanimeLayoutRead = true;
       CollectionViewPreferences.changes.addListener(_readHanimeLayout);
       unawaited(_readHanimeLayout());
+      _storedHanimeFacts = _readHanimeFacts();
     }
   }
 
@@ -648,24 +649,158 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     'grid',
     'list',
   };
-  final _hanimeDetailFacts = <Uri, VideoPublicMetadata>{};
+  final _hanimeDetailFacts = <Uri, HanimeWorkFacts>{};
+  Future<void>? _storedHanimeFacts;
+  Future<void> _hanimeFactsQueue = Future.value();
+  final _hanimeReads = <(int, Uri), Future<void>>{};
+  int _hanimeAttemptEpoch = -1;
+  final _hanimeAttempted = <Uri>{};
+  DateTime? _lastHanimeRead;
+  int _hanimeReadFailures = 0;
+  VoidCallback? _updatePersonalFilterFacts;
 
-  VideoPublicMetadata? _knownHanimeFacts(Uri target) =>
-      _hanimeDetailFacts[videoPlaybackIdentity(target)];
+  HanimeWorkFacts? _knownHanimeFacts(Uri? target) =>
+      _hanimeDetailFacts[hanimeWorkPage(target)];
 
-  void _rememberHanimeFacts(NativePlaybackSession session) {
-    if (!widget.structuredHanime ||
-        !_isFirstParty(session.watchUrl) ||
-        session.metadata.isEmpty) {
-      return;
+  Future<void> _readHanimeFacts() async {
+    try {
+      final stored = await HanimeWorkFactsStore.read();
+      if (!mounted || stored.isEmpty) return;
+      setState(() {
+        for (final entry in stored.entries) {
+          _hanimeDetailFacts.putIfAbsent(entry.key, () => entry.value);
+        }
+      });
+      _updatePersonalFilterFacts?.call();
+    } catch (_) {
+      // Reading a local metadata cache is optional for the catalog.
     }
-    final key = videoPlaybackIdentity(session.watchUrl);
-    if (key == null) return;
-    _hanimeDetailFacts.remove(key);
-    _hanimeDetailFacts[key] = session.metadata;
-    if (_hanimeDetailFacts.length > 128) {
+  }
+
+  void _rememberHanimeFacts(
+    NativePlaybackSession session, {
+    required bool tagsObserved,
+  }) {
+    if (!widget.structuredHanime) return;
+    final page = hanimeWorkPage(session.watchUrl);
+    if (page == null) return;
+    final data = HanimeWorkFacts(
+      session.metadata,
+      session.tags,
+      tagsObserved: tagsObserved,
+    );
+    if (data.metadata.isEmpty && !data.hasTagsInfo) return;
+    _saveHanimeFacts(page, data);
+  }
+
+  void _saveHanimeFacts(Uri page, HanimeWorkFacts data) {
+    // A response with partial markup must not erase facts already observed.
+    final previous = _hanimeDetailFacts.remove(page);
+    final facts = HanimeWorkFacts(
+      VideoPublicMetadata.fromWire({
+        ...?previous?.metadata.toWire(),
+        ...data.metadata.toWire(),
+      }),
+      data.hasTagsInfo ? data.tags : previous?.tags ?? const [],
+      tagsObserved: data.hasTagsInfo || previous?.hasTagsInfo == true,
+    );
+    _hanimeDetailFacts[page] = facts;
+    if (_hanimeDetailFacts.length > HanimeWorkFactsStore.capacity) {
       _hanimeDetailFacts.remove(_hanimeDetailFacts.keys.first);
     }
+    _updatePersonalFilterFacts?.call();
+    unawaited(
+      HanimeWorkFactsStore.write(page, facts).catchError((Object _) {}),
+    );
+  }
+
+  bool get _canReadHanimeWork =>
+      widget.structuredHanime &&
+      (widget.selectors['video']?.isNotEmpty ?? false) &&
+      (widget.selectors['detailTitle']?.isNotEmpty ?? false);
+
+  Future<void> _readHanimeWork(Uri? target, {bool needTags = false}) async {
+    final page = hanimeWorkPage(target);
+    final web = _web;
+    if (page == null || web == null || !_canReadHanimeWork) return;
+    final epoch = _loadEpoch, account = _accountGeneration;
+    bool current() =>
+        mounted &&
+        epoch == _loadEpoch &&
+        account == _accountGeneration &&
+        !_websiteVisible &&
+        !_documentLoading &&
+        !_busy &&
+        !_verificationVisible;
+    await _storedHanimeFacts;
+    final cached = _hanimeDetailFacts[page];
+    if (!current() || (needTags ? cached?.hasTagsInfo == true : cached != null))
+      return;
+    final key = (epoch, page);
+    if (_hanimeReads[key] case final pending?) return pending;
+    if (_hanimeReads.length >= 12) return;
+    if (_hanimeAttemptEpoch != epoch) {
+      _hanimeAttemptEpoch = epoch;
+      _hanimeAttempted.clear();
+      _hanimeReadFailures = 0;
+    }
+    if (!_hanimeAttempted.add(page)) return;
+    final read = _hanimeFactsQueue.then((_) async {
+      if (!current() ||
+          _hanimeReadFailures >= 2 ||
+          (HanimeWorkFactsStore.blockedUntil?.isAfter(DateTime.now()) ??
+              false)) {
+        return;
+      }
+      final last = _lastHanimeRead;
+      if (last != null) {
+        final pause =
+            const Duration(milliseconds: 500) - DateTime.now().difference(last);
+        if (pause > Duration.zero) await Future<void>.delayed(pause);
+      }
+      if (!current()) return;
+      _lastHanimeRead = DateTime.now();
+      try {
+        final raw = await videoBrowserReadAsync(
+          web,
+          hanimePublicFactsScript(page, widget.selectors),
+        ).timeout(const Duration(seconds: 7));
+        if (!current()) return;
+        final result = asJsonMap(raw is String ? jsonDecode(raw) : raw);
+        if (result['status'] == 'blocked') {
+          HanimeWorkFactsStore.blockedUntil = DateTime.now().add(
+            const Duration(minutes: 2),
+          );
+          return;
+        }
+        if (result['status'] == 'missing') return;
+        if (result['status'] != 'ok' || result['url'] != page.toString()) {
+          _hanimeReadFailures++;
+          return;
+        }
+        final facts = HanimeWorkFacts.fromWire(asJsonMap(result['facts']));
+        if (facts.metadata.isEmpty && !facts.hasTagsInfo) {
+          _hanimeReadFailures++;
+          return;
+        }
+        _hanimeReadFailures = 0;
+        setState(() => _saveHanimeFacts(page, facts));
+      } catch (_) {
+        if (current()) _hanimeReadFailures++;
+      }
+    });
+    _hanimeReads[key] = read;
+    _hanimeFactsQueue = read;
+    try {
+      await read;
+    } finally {
+      _hanimeReads.remove(key);
+    }
+  }
+
+  Future<ApiVideoItem> _hydrateHanimeRow(ApiVideoItem item) async {
+    await _readHanimeWork(item.detailUrl);
+    return item;
   }
 
   String get _hanimeLayoutScope => '${widget.source}.catalog-layout';
@@ -2413,6 +2548,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   void _invalidateCatalogCaches() {
     _catalogCache.clear();
     _personalRecentCache.clear();
+    _personalPreviewCounts.clear();
     _personalSnapshots.invalidate();
     _creatorDirectoryGeneration++;
     _creatorDirectoryReader?.dispose();
@@ -2437,9 +2573,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   }
 
   void _resetPersonalCollections() {
-    _hanimeDetailFacts.clear();
     _subscriptionQuery = '';
     _personalPageWindow.clear();
+    _personalPreviewCounts.clear();
     _personalContinuationTarget = null;
     _personalContinuationFailed = false;
     _personalPreferencesLoaded.clear();
@@ -3140,6 +3276,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       if (!mounted) return;
       result = await showVideoTaskSheet<VideoSearchFilters>(
         context: context,
+        portraitHeightFraction: widget.structuredHanime ? .94 : .82,
+        portraitMaxHeight: widget.structuredHanime ? 680 : 600,
         builder: (_) => VideoSearchFilterPanel(
           source: widget.source,
           initial: initial,
@@ -3828,7 +3966,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         _detailVisible = true;
         _siteVerificationRequired.value = false;
         _rememberCreator(session.creator);
-        _rememberHanimeFacts(session);
+        _rememberHanimeFacts(
+          session,
+          tagsObserved: detailSnapshot?['tagsObserved'] == true,
+        );
         bool currentDetail() =>
             mounted && epoch == _loadEpoch && _detailVisible;
         final initialMedia = () async {
@@ -4345,6 +4486,12 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       );
       _videos = _personalPageWindow.videos;
       _paging = _personalPageWindow.paging;
+      if (widget.structuredHanime) {
+        _personalPreviewCounts[_personalScope(_requestedUrl)] = (
+          count: _videos.length,
+          complete: _personalPageWindow.complete,
+        );
+      }
     }
     _catalogTitle = data['title']?.toString() ?? '';
     _websiteVisible = false;
@@ -4515,6 +4662,47 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         _ => tab.title,
       };
 
+  final _personalPreviewCounts = <Uri, ({int count, bool complete})>{};
+
+  String? _personalCountLabel(Uri page) {
+    final known = _personalPreviewCounts[_personalScope(page)];
+    if (known == null) return null;
+    final count = known.count;
+    final playlists = page.path.endsWith('/playlists');
+    final unit = playlists
+        ? _hanimeLabel('$count 个', '$count lists')
+        : t.videoLibrary.results(count: count);
+    return known.complete ? unit : _hanimeLabel('已载入 $unit', 'Loaded $unit');
+  }
+
+  void _rememberPersonalCount(
+    Uri page,
+    Map<String, dynamic> data, {
+    bool preview = false,
+  }) {
+    final scope = _personalScope(page);
+    if (data['previewCount'] case final int count
+        when count >= 0 && count <= 161) {
+      _personalPreviewCounts[scope] = (
+        count: count,
+        complete: data['previewComplete'] == true,
+      );
+      return;
+    }
+    final rows = asJsonList(data['videos']);
+    if (preview || rows.length >= 160) return;
+    final pageInfo = asJsonMap(data['paging']);
+    final current = int.tryParse(
+      '${pageInfo['currentPage'] ?? pageInfo['page'] ?? 1}',
+    );
+    final total = int.tryParse('${pageInfo['totalPages'] ?? 1}');
+    if (current != 1) return;
+    final complete = total == 1 && '${pageInfo['nextUrl'] ?? ''}'.isEmpty;
+    if (rows.isNotEmpty || complete && pageInfo.isNotEmpty) {
+      _personalPreviewCounts[scope] = (count: rows.length, complete: complete);
+    }
+  }
+
   Future<List<Map<String, dynamic>>?> _readCachedPersonalRecent(
     Uri page,
   ) async {
@@ -4532,9 +4720,15 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         generation != _accountGeneration ||
         owner != _ownIdentityRoot)
       return null;
-    return value == null
-        ? null
-        : asJsonList(value['videos']).map(asJsonMap).take(4).toList();
+    if (value == null) return null;
+    if (widget.structuredHanime) {
+      _rememberPersonalCount(
+        page,
+        value,
+        preview: asJsonMap(value['paging']).isEmpty,
+      );
+    }
+    return asJsonList(value['videos']).map(asJsonMap).take(4).toList();
   }
 
   Future<List<Map<String, dynamic>>> _readPersonalRecent(Uri history) async {
@@ -4562,6 +4756,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     final key = _catalogKey(history);
     final full = _cachedCatalog(history);
     if (full != null && _catalogCache.isFresh(key)) {
+      if (widget.structuredHanime) _rememberPersonalCount(history, full);
       return asJsonList(full['videos'])
           .map(asJsonMap)
           .where((card) => card['watchUrl'] != null || card['pageUrl'] != null)
@@ -4578,6 +4773,13 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         await _personalSnapshots.read('$snapshotScope|preview');
     if (!current()) throw const PluginSessionChanged();
     if (persistent != null && _personalSnapshots.fresh(persistent)) {
+      if (widget.structuredHanime) {
+        _rememberPersonalCount(
+          history,
+          persistent,
+          preview: asJsonMap(persistent['paging']).isEmpty,
+        );
+      }
       return asJsonList(persistent['videos']).map(asJsonMap).take(4).toList();
     }
     final script = videoPersonalRecentScript(history, widget.selectors);
@@ -4601,9 +4803,18 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         .take(4)
         .toList();
     _personalRecentCache[history] = (readAt: DateTime.now(), videos: videos);
-    await _personalSnapshots.write('$snapshotScope|preview', {
+    final preview = <String, dynamic>{
       'videos': videos,
-    }, cacheGeneration);
+      if (data['count'] is int) 'previewCount': data['count'],
+      if (data['complete'] is bool) 'previewComplete': data['complete'],
+    };
+    if (widget.structuredHanime)
+      _rememberPersonalCount(history, preview, preview: true);
+    await _personalSnapshots.write(
+      '$snapshotScope|preview',
+      preview,
+      cacheGeneration,
+    );
     if (!current()) throw const PluginSessionChanged();
     return videos;
   }
@@ -4720,10 +4931,16 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         : raw is String && raw.trim().isNotEmpty
         ? {raw.trim()}
         : <String>{};
+    final cached = widget.structuredHanime
+        ? _knownHanimeFacts(
+            Uri.tryParse('${row['watchUrl'] ?? row['pageUrl'] ?? ''}'),
+          )
+        : null;
     final metadata = widget.structuredHanime
         ? VideoPublicMetadata.fromWire(row)
         : null;
-    final publishedDate = metadata?.publishedDate;
+    final publishedDate =
+        metadata?.publishedDate ?? cached?.metadata.publishedDate;
     final duration = metadata?.durationSeconds;
     final durationBand = switch (duration) {
       null => null,
@@ -4733,7 +4950,11 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       _ => '60-or-more',
     };
     final fields = <String, Set<String>>{
-      'tags': {...values(row['tags']), ...values(row['genres'])},
+      'tags': {
+        ...values(row['tags']),
+        ...values(row['genres']),
+        ...?cached?.tags,
+      },
       'category': values(row['category']),
       'author': values(row['creatorName']),
       'year': {
@@ -4753,22 +4974,29 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     );
   }
 
+  bool _personalKeywordMatches(
+    Map<String, dynamic> row,
+    ShelfFacetEntry entry,
+    Uri scope,
+    String query,
+  ) =>
+      query.isEmpty ||
+      normalizePublicSearchText(
+        _personalKeywordScopes[scope] == KeywordSearchScope.title
+            ? '${row['title'] ?? ''}'
+            : entry.searchText,
+      ).contains(query);
+
   List<Map<String, dynamic>> _personalFiltered(
     List<Map<String, dynamic>> rows,
     Uri page,
   ) {
-    final scope = _personalScope(page),
-        query = normalizePublicSearchText(
-          _personalQueries[_personalScope(page)] ?? '',
-        );
+    final scope = _personalScope(page);
+    final query = normalizePublicSearchText(_personalQueries[scope] ?? '');
     final facets = _personalFacets[scope] ?? const ShelfFacetSelection();
-    final searchAll = _personalKeywordScopes[scope] != KeywordSearchScope.title;
     final result = rows.where((row) {
       final entry = _personalFacet(row);
-      return (query.isEmpty ||
-              normalizePublicSearchText(
-                searchAll ? entry.searchText : '${row['title'] ?? ''}',
-              ).contains(query)) &&
+      return _personalKeywordMatches(row, entry, scope, query) &&
           shelfFacetMatches(entry, facets, currentFolder: null);
     }).toList();
     if (_personalSorts[scope] == 'title') {
@@ -4787,32 +5015,129 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     _personalFilterOpen = true;
     _personalSearchFocus.unfocus();
     final scope = _personalScope(page), owner = _ownIdentityRoot;
-    final partial =
-        widget.structuredHanime && _searchPage(_paging['nextUrl']) != null;
+    final epoch = _loadEpoch, account = _accountGeneration;
+    final query = normalizePublicSearchText(_personalQueries[scope] ?? '');
+    final hanime = widget.structuredHanime;
+    final partial = hanime && _searchPage(_paging['nextUrl']) != null;
+    bool current() =>
+        mounted &&
+        owner == _ownIdentityRoot &&
+        epoch == _loadEpoch &&
+        account == _accountGeneration &&
+        scope == _personalScope(_requestedUrl);
+    final works = <Uri, Map<String, dynamic>>{
+      if (hanime)
+        for (final row in rows)
+          if (hanimeWorkPage(Uri.tryParse('${row['watchUrl'] ?? ''}'))
+              case final target?)
+            target: row,
+    };
+    bool knownTags(MapEntry<Uri, Map<String, dynamic>> row) =>
+        _knownHanimeFacts(row.key)?.hasTagsInfo == true ||
+        ['tags', 'genres'].any((field) {
+          final raw = row.value[field];
+          return raw is String && raw.trim().isNotEmpty ||
+              raw is Iterable && raw.isNotEmpty;
+        });
+    var loading = false;
+    ShelfFilterSnapshot read() {
+      final candidates = [
+        for (final row in rows)
+          if (_personalFacet(row) case final entry
+              when !hanime || _personalKeywordMatches(row, entry, scope, query))
+            entry,
+      ];
+      final known = works.entries.where(knownTags).length;
+      final note = [
+        if (partial) _hanimeLabel('仅已载入的作品', 'Loaded works only'),
+        if (known < works.length)
+          _hanimeLabel(
+            '标签资料 $known/${works.length}',
+            'Tags for $known of ${works.length} works',
+          ),
+      ].join(' · ');
+      final canLoad = works.entries.any(
+        (row) =>
+            !knownTags(row) &&
+            (_hanimeAttemptEpoch != epoch ||
+                !_hanimeAttempted.contains(row.key)),
+      );
+      return (
+        entries: candidates,
+        scopeLabel: note,
+        loadingMetadata: loading,
+        canLoadMetadata:
+            _canReadHanimeWork &&
+            !loading &&
+            canLoad &&
+            _hanimeReadFailures < 2 &&
+            !(HanimeWorkFactsStore.blockedUntil?.isAfter(DateTime.now()) ??
+                false),
+      );
+    }
+
+    final initial = read();
+    final snapshot = ValueNotifier(initial);
+    var open = true;
+    void update() {
+      if (open && current()) snapshot.value = read();
+    }
+
+    Future<void> loadTags(int limit) async {
+      if (loading || !current() || !open) return;
+      loading = true;
+      update();
+      try {
+        final targets = works.entries
+            .where(
+              (row) =>
+                  !knownTags(row) &&
+                  (_hanimeAttemptEpoch != epoch ||
+                      !_hanimeAttempted.contains(row.key)),
+            )
+            .take(limit)
+            .map((row) => row.key)
+            .toList();
+        for (final target in targets) {
+          if (!open ||
+              !current() ||
+              _hanimeReadFailures >= 2 ||
+              (HanimeWorkFactsStore.blockedUntil?.isAfter(DateTime.now()) ??
+                  false))
+            break;
+          await _readHanimeWork(target, needTags: true);
+        }
+      } finally {
+        loading = false;
+        update();
+      }
+    }
+
     try {
-      final selected = await showShelfFilterSheet(
+      if (hanime) _updatePersonalFilterFacts = update;
+      final selection = showShelfFilterSheet(
         context,
-        entries: rows.map(_personalFacet).toList(),
+        entries: initial.entries,
         initial: _personalFacets[scope] ?? const ShelfFacetSelection(),
         preferenceKey: _personalPreferenceScope(page),
-        scopeLabel: partial
-            ? _hanimeLabel('仅筛选已载入的作品', 'Filters loaded works')
-            : t.videoLibrary.localCatalogSearchHint,
+        scopeLabel: initial.scopeLabel,
         currentFolder: null,
         hierarchical: false,
-        focusedLayout: !partial,
+        focusedLayout: !partial && works.isEmpty,
         showAllRecordsLabel: false,
-        nativeMaterial: widget.structuredHanime,
+        nativeMaterial: hanime,
+        liveSnapshot: hanime ? snapshot : null,
+        onLoadMetadata: hanime ? () => unawaited(loadTags(12)) : null,
       );
-      if (!mounted ||
-          owner != _ownIdentityRoot ||
-          scope != _personalScope(_requestedUrl) ||
-          selected == null) {
-        return;
-      }
+      if (initial.canLoadMetadata) unawaited(loadTags(4));
+      final selected = await selection;
+      if (!current() || selected == null) return;
       setState(() => _personalFacets[scope] = selected);
       _savePersonalPreferences(page);
     } finally {
+      open = false;
+      _updatePersonalFilterFacts = null;
+      snapshot.dispose();
       _personalFilterOpen = false;
     }
   }
@@ -5091,6 +5416,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                       ? () => unawaited(_openAccountSettings())
                       : null,
                   showPrivacyAction: false,
+                  landscapeWorks: widget.structuredHanime,
+                  countLabel: widget.structuredHanime
+                      ? _personalCountLabel
+                      : null,
                   localRecords: SourceProfileLocalVideoPreviews(
                     source: widget.source,
                     readDownloads: widget.readLocalDownloads,
@@ -5098,6 +5427,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                         !_websiteVisible &&
                         ModalRoute.of(context)?.isCurrent != false,
                     responsivePreview: true,
+                    posterAspectRatio: widget.structuredHanime ? 16 / 9 : 2 / 3,
                     groupDownloads: true,
                     showPrivacyAction: false,
                     onHistory: () => unawaited(_showPersonal()),
@@ -5488,6 +5818,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       final scope = _personalScope(currentPage);
       final hanime = widget.structuredHanime;
       final layout = _hanimePersonalLayout(scope);
+      final playlistIndex = hanime && currentPage.path.endsWith('/playlists');
       final facts = <Uri, VideoPublicMetadata>{};
       final items = <ApiVideoItem>[];
       for (final row in videos) {
@@ -5506,7 +5837,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
             description: '${row['creatorName'] ?? row['subtitle'] ?? ''}',
             sourceViews: metadata.viewCount,
             sourceDuration:
-                metadata.duration ?? _knownHanimeFacts(target)?.duration ?? '',
+                metadata.duration ??
+                _knownHanimeFacts(target)?.metadata.duration ??
+                '',
             year: '${row['year'] ?? ''}',
             area: '${row['area'] ?? ''}',
             language: '${row['language'] ?? ''}',
@@ -5524,21 +5857,46 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           ),
           items: items,
           mode:
-              (hanime
-                  ? layout == HanimeCatalogLayout.detail
-                  : _personalViews[scope] == 'list')
+              (playlistIndex ||
+                  (hanime
+                      ? layout == HanimeCatalogLayout.detail
+                      : _personalViews[scope] == 'list'))
               ? ApiVideoView.list
               : ApiVideoView.grid,
           storageKey:
               'hanime-personal.${_personalPreferenceScope(currentPage)}',
           gridColumns: hanime && layout == HanimeCatalogLayout.large ? 2 : 3,
           posterAspectRatio: hanime ? 16 / 9 : 2 / 3,
-          statisticsBuilder: _hanimeHasStatistics(facts, layout)
-              ? (context, item) => _hanimeStatistics(
+          compactDetails: hanime,
+          listTileBuilder: playlistIndex
+              ? (context, item) => SourceProfilePlaylistRow(
+                  title: item.title,
+                  count: playlistWorkCount(item.description),
+                  cover: VideoCardCover(
+                    url: item.coverUrl?.toString() ?? '',
+                    referrer: currentPage,
+                    metadata: const VideoPublicMetadata(),
+                  ),
+                )
+              : null,
+          loadDetail:
+              hanime &&
+                  !playlistIndex &&
+                  layout == HanimeCatalogLayout.detail &&
+                  preview == null
+              ? _hydrateHanimeRow
+              : null,
+          detailsActive: !_documentLoading && !_busy && !_websiteVisible,
+          detailGeneration: _loadEpoch,
+          statisticsBuilder:
+              hanime &&
+                  (layout == HanimeCatalogLayout.detail ||
+                      _hanimeHasStatistics(facts, layout))
+              ? (context, item) => hanimeWorkStatistics(
                   context,
-                  item,
                   facts[item.detailUrl]!,
                   layout,
+                  known: _knownHanimeFacts(item.detailUrl)?.metadata,
                 )
               : null,
           onOpen: (item) => unawaited(_load(item.detailUrl)),
@@ -5570,24 +5928,26 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                     currentPage,
                     _personalViews[scope] == 'list' ? 'grid' : 'list',
                   ),
-            layout: hanime
+            layout: hanime && !playlistIndex
                 ? _hanimeLayoutMenu(
                     layout,
                     (value) => _setPersonalView(currentPage, value.name),
                     keyPrefix: 'personal-records',
                   )
                 : null,
-            filter: SourceFilterIconButton(
-              key: const ValueKey('personal-records.filter'),
-              bare: false,
-              tooltip: (_personalFacets[scope]?.isActive ?? false)
-                  ? t.videoFilters.active
-                  : t.videoFilters.title,
-              active: _personalFacets[scope]?.isActive ?? false,
-              onPressed: _personalFilterOpen
-                  ? null
-                  : () => _personalFilter(unfilteredVideos, currentPage),
-            ),
+            filter: playlistIndex
+                ? null
+                : SourceFilterIconButton(
+                    key: const ValueKey('personal-records.filter'),
+                    bare: false,
+                    tooltip: (_personalFacets[scope]?.isActive ?? false)
+                        ? t.videoFilters.active
+                        : t.videoFilters.title,
+                    active: _personalFacets[scope]?.isActive ?? false,
+                    onPressed: _personalFilterOpen
+                        ? null
+                        : () => _personalFilter(unfilteredVideos, currentPage),
+                  ),
           ),
           emptyState: Center(
             child: Text(
@@ -5736,30 +6096,6 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                             widget.nativeAuth && profile['status'] != 'signedIn'
                             ? () => _load(widget.homeUrl.resolve('/register'))
                             : null,
-                      ),
-                    if (widget.structuredHanime &&
-                        subscriptions &&
-                        profile['status'] == 'signedIn')
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: TextFormField(
-                          key: ValueKey(
-                            'hanime.subscriptions.lookup.$_accountGeneration',
-                          ),
-                          initialValue: _subscriptionQuery,
-                          onChanged: preview != null
-                              ? null
-                              : (value) {
-                                  setState(() => _subscriptionQuery = value);
-                                },
-                          decoration: InputDecoration(
-                            prefixIcon: const Icon(Icons.search_rounded),
-                            hintText: _hanimeLabel(
-                              '查找已载入的订阅',
-                              'Find in loaded subscriptions',
-                            ),
-                          ),
-                        ),
                       ),
                     if (subscriptionQuery.isNotEmpty &&
                         groups.isEmpty &&
@@ -6457,49 +6793,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     return facts.entries.any(
       (entry) =>
           hasStatistics(entry.value) ||
-          hasStatistics(_knownHanimeFacts(entry.key)),
-    );
-  }
-
-  Widget? _hanimeStatistics(
-    BuildContext context,
-    ApiVideoItem item,
-    VideoPublicMetadata metadata,
-    HanimeCatalogLayout layout,
-  ) {
-    final known = _knownHanimeFacts(item.detailUrl);
-    final rating = metadata.ratingLabel ?? known?.ratingLabel;
-    final views = metadata.viewsLabel ?? known?.viewsLabel;
-    final likes = metadata.positiveVotes ?? known?.positiveVotes;
-    final values = [
-      if (rating != null) t.videoMetadata.rating(value: rating),
-      if (views != null &&
-          (layout != HanimeCatalogLayout.compact || rating == null))
-        t.videoMetadata.views(value: views),
-      if (layout == HanimeCatalogLayout.detail && likes != null)
-        t.videoMetadata.positiveVotes(count: likes),
-    ];
-    if (values.isEmpty) return null;
-    final theme = Theme.of(context);
-    final style = theme.textTheme.labelSmall?.copyWith(
-      color: theme.colorScheme.onSurfaceVariant,
-    );
-    if (layout == HanimeCatalogLayout.detail) {
-      return Wrap(
-        spacing: 9,
-        runSpacing: 2,
-        children: [for (final value in values) Text(value, style: style)],
-      );
-    }
-    final label = values.join(' · ');
-    return Tooltip(
-      message: label,
-      child: Text(
-        label,
-        style: style,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
+          hasStatistics(_knownHanimeFacts(entry.key)?.metadata),
     );
   }
 
@@ -6614,12 +6908,20 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           : ApiVideoView.grid,
       gridColumns: _hanimeLayout == HanimeCatalogLayout.large ? 2 : 3,
       posterAspectRatio: 16 / 9,
-      statisticsBuilder: _hanimeHasStatistics(facts, _hanimeLayout)
-          ? (context, item) => _hanimeStatistics(
+      compactDetails: true,
+      loadDetail: _hanimeLayout == HanimeCatalogLayout.detail && !preview
+          ? _hydrateHanimeRow
+          : null,
+      detailsActive: !_documentLoading && !_busy && !_websiteVisible,
+      detailGeneration: _loadEpoch,
+      statisticsBuilder:
+          (_hanimeLayout == HanimeCatalogLayout.detail ||
+              _hanimeHasStatistics(facts, _hanimeLayout))
+          ? (context, item) => hanimeWorkStatistics(
               context,
-              item,
               facts[item.detailUrl]!,
               _hanimeLayout,
+              known: _knownHanimeFacts(item.detailUrl)?.metadata,
             )
           : null,
       gridMainAxisSpacing: 10,
@@ -6648,6 +6950,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
               }),
               filter: SourceFilterIconButton(
                 key: const ValueKey('hanime-results.filter'),
+                bare: false,
                 tooltip: t.videoFilters.title,
                 active: active,
                 onPressed: preview
@@ -7116,10 +7419,31 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                         ),
                         titleSpacing: 0,
                         title:
-                            !_verificationVisible &&
+                            widget.structuredHanime &&
+                                _requestedUrl.path == '/subscriptions' &&
                                 !_websiteVisible &&
-                                !_isPersonalContext &&
-                                _creatorContext == null
+                                !_verificationVisible
+                            ? _profile['status'] == 'signedIn'
+                                  ? SearchQueryField(
+                                      key: ValueKey(
+                                        'hanime.subscriptions.lookup.$_accountGeneration',
+                                      ),
+                                      query: _subscriptionQuery,
+                                      inline: true,
+                                      closeOnSubmit: false,
+                                      hintText: _hanimeLabel(
+                                        '查找已载入的订阅',
+                                        'Find in loaded subscriptions',
+                                      ),
+                                      onChanged: (value) => setState(
+                                        () => _subscriptionQuery = value,
+                                      ),
+                                    )
+                                  : Text(t.videoCommunity.followedCreators)
+                            : !_verificationVisible &&
+                                  !_websiteVisible &&
+                                  !_isPersonalContext &&
+                                  _creatorContext == null
                             ? VideoSearchEntry(
                                 query:
                                     widget.structuredHanime &&
@@ -7162,9 +7486,11 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                                           : t.videoPersonal.my
                                     : _creatorContext?.name ?? widget.title,
                               ),
-                        actionsPadding: const EdgeInsetsDirectional.only(
-                          start: 8,
-                          end: 8,
+                        actionsPadding: EdgeInsetsDirectional.only(
+                          start: widget.structuredHanime ? 4 : 8,
+                          end: widget.structuredHanime
+                              ? sourceVideoCollectionInset
+                              : 8,
                         ),
                         actions: [
                           if (!_verificationVisible &&
@@ -7206,7 +7532,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                             symbol: 'ellipsis',
                             icon: Icons.more_horiz_rounded,
                             options: {
-                              if (!_websiteVisible &&
+                              if (!widget.structuredHanime &&
+                                  !_websiteVisible &&
                                   !_verificationVisible &&
                                   (_personalVisible ||
                                       _hasPersonalShell ||

@@ -438,20 +438,19 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
     final count = _draft.tags.length;
     final browsingGroups = !_selectedOnly && _tagSearch.text.trim().isEmpty;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _tagSearchField(context),
-          const SizedBox(height: 4),
           SingleChildScrollView(
+            key: const PageStorageKey('hanime.filter.groups'),
             scrollDirection: Axis.horizontal,
             child: Row(
-              spacing: 8,
+              spacing: 6,
               children: [
                 FilterChip(
                   key: const ValueKey('video-filter.selected'),
-                  avatar: const Icon(Icons.checklist_rounded, size: 18),
                   label: Text(t.videoFilters.selected(count: count)),
                   selected: _selectedOnly,
                   showCheckmark: false,
@@ -462,47 +461,58 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                           setState(() => _selectedOnly = value);
                         },
                 ),
-                Visibility(
-                  visible: count > 1,
-                  maintainState: true,
-                  maintainAnimation: true,
-                  maintainSize: true,
-                  child: Row(
-                    spacing: 8,
-                    children: _tagMatchChoices(context).toList(),
+                if (count > 1)
+                  PopupMenuButton<bool>(
+                    tooltip: _draft.anyTag
+                        ? t.videoFilters.anyMatch
+                        : t.videoFilters.allMatch,
+                    padding: EdgeInsets.zero,
+                    onSelected: (any) => setState(
+                      () => _draft = _draft.copyWith(anyTag: any, page: 1),
+                    ),
+                    itemBuilder: (_) => [
+                      for (final any in [false, true])
+                        CheckedPopupMenuItem(
+                          value: any,
+                          checked: any == _draft.anyTag,
+                          child: Text(
+                            any
+                                ? t.videoFilters.anyMatch
+                                : t.videoFilters.allMatch,
+                          ),
+                        ),
+                    ],
+                    child: SizedBox.square(
+                      key: const ValueKey('hanime-filter.match-mode'),
+                      dimension: 44,
+                      child: Icon(
+                        _draft.anyTag
+                            ? Icons.difference_outlined
+                            : Icons.rule_rounded,
+                        size: 20,
+                      ),
+                    ),
                   ),
-                ),
+                for (final name in groups.keys)
+                  ChoiceChip(
+                    label: Text(name),
+                    selected: browsingGroups && group == name,
+                    showCheckmark: false,
+                    chipAnimationStyle: _chipMotion(context),
+                    onSelected: (_) {
+                      _tagSearch.clear();
+                      FocusScope.of(context).unfocus();
+                      setState(() {
+                        _selectedOnly = false;
+                        _group = name;
+                      });
+                      if (_structuredScroll.hasClients)
+                        _structuredScroll.jumpTo(0);
+                    },
+                  ),
               ],
             ),
           ),
-          if (groups.isNotEmpty)
-            SingleChildScrollView(
-              key: const PageStorageKey('hanime.filter.groups'),
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                spacing: 8,
-                children: [
-                  for (final name in groups.keys)
-                    ChoiceChip(
-                      label: Text(name),
-                      selected: browsingGroups && group == name,
-                      showCheckmark: false,
-                      chipAnimationStyle: _chipMotion(context),
-                      onSelected: (_) {
-                        _tagSearch.clear();
-                        FocusScope.of(context).unfocus();
-                        setState(() {
-                          _selectedOnly = false;
-                          _group = name;
-                        });
-                        if (_structuredScroll.hasClients) {
-                          _structuredScroll.jumpTo(0);
-                        }
-                      },
-                    ),
-                ],
-              ),
-            ),
         ],
       ),
     );
@@ -561,7 +571,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
             sliver: SliverGrid.builder(
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: columns,
-                mainAxisExtent: scale * 2.8 + 16,
+                mainAxisExtent: (scale * 2.5 + 12).clamp(48.0, double.infinity),
                 crossAxisSpacing: 8,
                 mainAxisSpacing: 8,
               ),
@@ -660,6 +670,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
       top: false,
       child: FacetFilterBody(
         scrollKey: const ValueKey('hanime.filter.options'),
+        maxHeight: 680,
         scrollController: _structuredScroll,
         header: Padding(
           padding: const EdgeInsetsDirectional.only(start: 16, end: 8),
@@ -728,7 +739,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                 ),
               ),
         footer: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
           child: SizedBox(
             width: double.infinity,
             child: FilledButton(
@@ -1184,7 +1195,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
           if (widget.structuredLayout) {
             return SizedBox(
               key: const ValueKey('video-filter.panel'),
-              height: constraints.maxHeight.clamp(0.0, 600.0),
+              height: constraints.maxHeight.clamp(0.0, 680.0),
               child: _structuredPanel(context, constraints.maxWidth),
             );
           }

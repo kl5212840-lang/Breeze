@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/api_video_collection.dart';
 import 'package:zephyr/page/video/api_video_history.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
 import 'package:zephyr/service/collection_view_preferences.dart';
 import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/page/video/video_browse_theme.dart';
@@ -135,7 +136,7 @@ class _VideoLibraryViewState extends State<VideoLibraryView> {
           allowStandaloneWatch: true,
           headerLeading: SourceBackButton(onPressed: widget.onBack),
           compactHeader: true,
-          posterAspectRatio: 2 / 3,
+          posterAspectRatio: widget.source == hanimeSourceId ? 16 / 9 : 2 / 3,
           mode: _mode,
           onToggleView: _saving ? null : () => unawaited(_toggleView()),
           onOpen: (_, watch) async => widget.onOpenVideo(watch),

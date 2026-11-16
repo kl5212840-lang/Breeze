@@ -174,6 +174,7 @@ class SourceVideoResultsToolbar extends StatelessWidget {
     child: Padding(
       padding: EdgeInsetsDirectional.symmetric(horizontal: horizontalInset),
       child: Row(
+        spacing: showSortValue ? 4 : 0,
         children: [
           Expanded(
             child: Text(

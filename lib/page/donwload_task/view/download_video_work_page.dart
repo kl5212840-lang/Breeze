@@ -540,6 +540,7 @@ class DownloadEpisodePlayRow extends StatelessWidget {
     required this.onPlay,
     this.bytes,
     this.resumeAt,
+    this.additionalMetadata,
     this.onManage,
     this.selecting = false,
     this.selected = false,
@@ -548,6 +549,7 @@ class DownloadEpisodePlayRow extends StatelessWidget {
   final String title, variant;
   final int? bytes;
   final Duration? resumeAt;
+  final Widget? additionalMetadata;
   final VoidCallback? onPlay;
   final VoidCallback? onManage;
   final bool selecting, selected;
@@ -624,6 +626,7 @@ class DownloadEpisodePlayRow extends StatelessWidget {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
+                      ?additionalMetadata,
                       if (variant.isNotEmpty || fileBytes != null)
                         Row(
                           crossAxisAlignment: CrossAxisAlignment.baseline,

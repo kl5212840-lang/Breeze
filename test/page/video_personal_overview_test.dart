@@ -108,6 +108,51 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+  testWidgets(
+    'Hanime shows collections first and counts independently of preview length',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final opened = <Uri>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: VideoPersonalOverview(
+              account: const {'status': 'signedIn', 'name': 'Account'},
+              page: _page,
+              tabs: _tabs,
+              landscapeWorks: true,
+              countLabel: (url) =>
+                  url.path.endsWith('/playlists') ? '6 lists' : '54 works',
+              onTab: opened.add,
+              onVideo: opened.add,
+              readRecent: (url) async => [
+                for (final card in _cards(url.pathSegments.last))
+                  {...card, 'subtitle': '12 videos'},
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.getTopLeft(_section('playlists')).dy,
+        lessThan(tester.getTopLeft(_section('saves')).dy),
+      );
+      expect(
+        tester.getTopLeft(_section('saves')).dy,
+        lessThan(tester.getTopLeft(_section('histories')).dy),
+      );
+      expect(find.byType(SourceProfilePlaylistRow), findsNWidgets(3));
+      expect(find.text('6 lists'), findsOneWidget);
+      expect(_rail(tester, 'saves').posterAspectRatio, 16 / 9);
+      expect(_rail(tester, 'saves').countLabel, '54 works');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('cached cards render while the document is still preparing', (
     tester,
   ) async {

@@ -27,6 +27,10 @@ void main(List<String> args) {
       'filterSchema':
           '(() => { $videoFilterSchemaExtraction return filterSchema(document); })()',
       'detail': videoDetailSnapshotScript(selectors),
+      'hanimeWorkFacts': hanimePublicFactsScript(
+        Uri.parse('https://hanime1.me/watch?v=42'),
+        selectors,
+      ),
       'episodeReadStart': videoEpisodeReadStartScript(
         Uri.parse('https://hanime1.me/watch?v=42'),
         'episode-test',

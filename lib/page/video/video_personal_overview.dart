@@ -126,9 +126,12 @@ class VideoPersonalOverview extends StatefulWidget {
     this.onAccountSettings,
     this.localRecords,
     this.showPrivacyAction = true,
+    this.landscapeWorks = false,
+    this.countLabel,
   });
   final Widget? localRecords;
-  final bool showPrivacyAction;
+  final bool showPrivacyAction, landscapeWorks;
+  final String? Function(Uri)? countLabel;
   final Map<String, dynamic> account;
   final Uri page;
   final List<({String title, Uri url})> tabs;
@@ -147,19 +150,31 @@ class _VideoPersonalOverviewState extends State<VideoPersonalOverview> {
   final _loading = <Uri>{}, _failed = <Uri>{};
   final _requests = <Uri, int>{};
   int _generation = 0;
-  List<({String title, Uri url})> get _tabs => widget.tabs
-      .where(
-        (tab) =>
-            tab.url.origin == widget.page.origin &&
-            _sections.any(
-              (kind) =>
-                  tab.url.path ==
-                  '${widget.page.path.replaceFirst(RegExp(r'/$'), '')}/$kind',
-            ) &&
-            !tab.url.hasQuery &&
-            !tab.url.hasFragment,
-      )
-      .toList();
+  List<({String title, Uri url})> get _tabs {
+    final tabs = widget.tabs
+        .where(
+          (tab) =>
+              tab.url.origin == widget.page.origin &&
+              _sections.any(
+                (kind) =>
+                    tab.url.path ==
+                    '${widget.page.path.replaceFirst(RegExp(r'/$'), '')}/$kind',
+              ) &&
+              !tab.url.hasQuery &&
+              !tab.url.hasFragment,
+        )
+        .toList();
+    if (widget.landscapeWorks) {
+      const order = ['playlists', 'saves', 'histories', 'likes'];
+      tabs.sort(
+        (a, b) => order
+            .indexOf(a.url.pathSegments.last)
+            .compareTo(order.indexOf(b.url.pathSegments.last)),
+      );
+    }
+    return tabs;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -266,7 +281,9 @@ class _VideoPersonalOverviewState extends State<VideoPersonalOverview> {
         title: _title(kind),
         icon: _icon(kind),
         responsivePreview: true,
-        posterAspectRatio: 2 / 3,
+        posterAspectRatio: widget.landscapeWorks ? 16 / 9 : 2 / 3,
+        playlistRows: widget.landscapeWorks && kind == 'playlists',
+        countLabel: widget.countLabel?.call(tab.url),
         loading:
             (!_rows.containsKey(tab.url)) &&
             (!widget.readReady || _loading.contains(tab.url)),
@@ -279,7 +296,9 @@ class _VideoPersonalOverviewState extends State<VideoPersonalOverview> {
               SourceProfileVideoPreviewItem(
                 id: target.toString(),
                 title: '${row['title'] ?? ''}',
-                note: '${row['creatorName'] ?? row['subtitle'] ?? ''}',
+                note: widget.landscapeWorks && kind == 'playlists'
+                    ? playlistWorkCount('${row['subtitle'] ?? ''}')
+                    : '${row['creatorName'] ?? row['subtitle'] ?? ''}',
                 cover: VideoCardCover(
                   url: '${row['coverUrl'] ?? ''}',
                   referrer: widget.page,

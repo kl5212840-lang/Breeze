@@ -1,3 +1,6 @@
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
+import 'package:zephyr/page/video/hanime_work_facts.dart';
+import 'package:zephyr/page/video/video_public_metadata.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
@@ -238,6 +241,9 @@ class ApiVideoHistory extends StatefulWidget {
 
 class _ApiVideoHistoryState extends State<ApiVideoHistory> {
   List<VideoWatchRecord>? _records;
+  Map<Uri, HanimeWorkFacts> _hanimeFacts = const {};
+  bool get _isHanime => widget.source == hanimeSourceId;
+
   bool _failed = false, _selecting = false, _working = false;
   final _selectedPaths = <String>{};
   final _searchFocus = FocusNode();
@@ -403,8 +409,14 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
     final allowStandaloneWatch = widget.allowStandaloneWatch;
     try {
       final records = await VideoWatchHistory.read(source);
+      final facts = _isHanime
+          ? await HanimeWorkFactsStore.read().catchError(
+              (Object _) => <Uri, HanimeWorkFacts>{},
+            )
+          : const <Uri, HanimeWorkFacts>{};
       if (mounted && epoch == _epoch) {
         setState(() {
+          _hanimeFacts = facts;
           _records = records
               .where(
                 (e) =>
@@ -650,6 +662,7 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
         ),
     ];
     return CollectionCoverPrivacyScope(
+      replacementFit: _isHanime ? BoxFit.contain : BoxFit.cover,
       child: BookshelfFloatingSelectionActions(
         selecting: widget.compactHeader && _selecting,
         selectedCount: visibleSelected.length,
@@ -796,6 +809,7 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
                                         : t.common.loading)
                                   : t.videoLibrary.results(count: rows.length),
                               sort: _sort,
+                              showSortValue: _isHanime,
                               sortOptions: _sortOptions(),
                               onSort: _working || allRows.isEmpty
                                   ? null
@@ -1012,6 +1026,18 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
                           gridCoverCache: _gridCoverCache,
                           posterAspectRatio: widget.posterAspectRatio,
                           loadDetail: widget.loadDetail,
+                          compactDetails: _isHanime,
+                          statisticsBuilder: !_isHanime || _hanimeFacts.isEmpty
+                              ? null
+                              : (context, item) => hanimeWorkStatistics(
+                                  context,
+                                  _hanimeFacts[hanimeWorkPage(item.detailUrl)]
+                                          ?.metadata ??
+                                      const VideoPublicMetadata(),
+                                  widget.mode == ApiVideoView.list
+                                      ? HanimeCatalogLayout.detail
+                                      : HanimeCatalogLayout.compact,
+                                ),
                           recordNoteBuilder: (initial) => initial.remarks,
                           onDetailLoaded: widget.onDetailLoaded,
                           detailsActive: widget.active && !_selecting,

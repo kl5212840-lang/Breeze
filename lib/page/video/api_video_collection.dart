@@ -60,6 +60,7 @@ class ApiVideoCollection extends StatefulWidget {
     this.contentPadding = const EdgeInsets.fromLTRB(16, 8, 16, 8),
     this.gridCaptionBuilder,
     this.statisticsBuilder,
+    this.compactDetails = false,
     this.leadingItems = const [],
     this.leadingListExtent = 132,
     this.posterRadius = 10,
@@ -90,6 +91,7 @@ class ApiVideoCollection extends StatefulWidget {
   final EdgeInsets contentPadding;
   final Widget Function(BuildContext, ApiVideoItem)? gridCaptionBuilder;
   final Widget? Function(BuildContext, ApiVideoItem)? statisticsBuilder;
+  final bool compactDetails;
   final List<Widget> leadingItems;
 
   /// Called for visible detailed rows and grid cards without a source poster.
@@ -859,6 +861,9 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
+            key: widget.compactDetails
+                ? ValueKey('video-list.cover.${item.id}')
+                : null,
             width: poster.width,
             height: poster.height,
             child: ClipRRect(
@@ -894,10 +899,22 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
                   const SizedBox(height: 7),
                   CollectionRecordTimeLine(text: recordNote),
                 ],
-                if (description.isNotEmpty ||
-                    status == _DetailRowStatus.ready ||
-                    status == _DetailRowStatus.loading ||
-                    status == _DetailRowStatus.failed) ...[
+                if (widget.compactDetails && description.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    description,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+                if (!widget.compactDetails &&
+                    (description.isNotEmpty ||
+                        status == _DetailRowStatus.ready ||
+                        status == _DetailRowStatus.loading ||
+                        status == _DetailRowStatus.failed)) ...[
                   const SizedBox(height: 7),
                   SizedBox(
                     height: math.max(
@@ -980,7 +997,7 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
                   ),
                 ],
                 if (statistics != null) ...[
-                  const SizedBox(height: 5),
+                  SizedBox(height: widget.compactDetails ? 4 : 5),
                   statistics,
                 ] else if (widget.statisticsBuilder == null &&
                     item.sourceViews != null) ...[

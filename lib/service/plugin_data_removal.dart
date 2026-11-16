@@ -1,4 +1,6 @@
 import 'package:zephyr/page/comic_list/cubit/jm_collection_snapshots.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
+import 'package:zephyr/page/video/hanime_work_facts.dart';
 import 'package:zephyr/page/video/video_personal_snapshot_store.dart';
 import 'package:zephyr/service/temporary_data_cache.dart';
 import 'dart:io';
@@ -159,6 +161,7 @@ Future<PluginDataRemovalResult> _clearStopped(
     await recovery.markCommitted();
     TemporaryDataCaches.clear(source: source);
     await VideoPersonalSnapshotStore.clearDisk(source: source);
+    if (source == hanimeSourceId) await HanimeWorkFactsStore.clear();
     await JmCollectionSnapshots.instance.clearDisk(source: source);
     await images?.finish(committed: true);
     final videoClean = await videos?.finish(committed: true) ?? true;
