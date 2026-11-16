@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_search_filter_panel.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
 import 'package:zephyr/page/video/video_search_filters.dart';
 import 'package:zephyr/page/video/video_site_action_models.dart';
 import 'package:zephyr/page/video/video_interaction.dart';
@@ -46,6 +47,85 @@ const schema = VideoFilterSchema(
 Future<VideoSiteResult<VideoFilterSchema>> read() async =>
     (status: VideoSiteStatus.ok, value: schema, writeUnconfirmed: false);
 void main() {
+  testWidgets(
+    'structured Hanime filters fit narrow large-text controls and apply one draft',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(320, 720);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      SharedPreferences.setMockInitialValues({});
+      VideoSearchFilters? applied;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(1.4)),
+            child: child!,
+          ),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () async {
+                  applied = await showVideoTaskSheet<VideoSearchFilters>(
+                    context: context,
+                    builder: (_) => const VideoSearchFilterPanel(
+                      initial: VideoSearchFilters(
+                        query: 'Animation',
+                        genre: '3DCG',
+                        sort: 'views',
+                      ),
+                      schema: schema,
+                      source: 'hanime-ui-test',
+                      readSchema: read,
+                      structuredLayout: true,
+                      sections: hanimeResultFilters,
+                      initialSection: VideoFilterSection.tags,
+                    ),
+                  );
+                },
+                child: const Text('Open filters'),
+              ),
+            ),
+          ),
+        ),
+      );
+      Future<void> tap(Finder finder) async {
+        await tester.ensureVisible(finder);
+        await tester.tap(finder);
+        await tester.pumpAndSettle();
+      }
+
+      await tap(find.text('Open filters'));
+      expect(find.byKey(const ValueKey('video-filter.selected')), findsNothing);
+      expect(find.text(t.videoFilters.anyMatch), findsNothing);
+      await tap(find.byKey(const ValueKey('hanime-filter.tag.1080p')));
+      await tap(find.byKey(const ValueKey('hanime-filter.tag.60FPS')));
+      await tap(find.text(t.videoFilters.anyMatch));
+      await tap(find.widgetWithText(Tab, t.videoFilters.date));
+      expect(
+        find.byKey(const ValueKey('hanime-filter.custom-date')),
+        findsOneWidget,
+      );
+      await tap(find.byKey(const ValueKey('video-filter.date.past')));
+      await tap(find.byKey(const ValueKey('video-filter.apply')));
+      expect(
+        applied,
+        const VideoSearchFilters(
+          query: 'Animation',
+          genre: '3DCG',
+          sort: 'views',
+          tags: ['1080p', '60FPS'],
+          anyTag: true,
+          date: 'past',
+        ),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets(
     'fixed controls omit stars while tag favorites survive draft cancel',
     (tester) async {

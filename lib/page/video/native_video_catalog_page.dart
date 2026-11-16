@@ -3117,6 +3117,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           initial: initial,
           schema: base,
           initialSection: section,
+          structuredLayout: widget.structuredHanime,
           sections: widget.structuredHanime
               ? hanimeResultFilters
               : VideoFilterSection.values,
@@ -6174,40 +6175,139 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   }
 
   Widget _hanimeCategoryDirectory() {
-    final categories = [
-      if (_categories.every(
-        (category) => category.url.queryParameters['genre']?.isNotEmpty == true,
-      ))
-        NativeCatalogCategory(
-          title: _hanimeLabel('全部作品', 'All works'),
-          url: widget.homeUrl.resolve('/search'),
-        ),
-      ..._categories,
-    ];
+    final categories = _categories
+        .where(
+          (entry) => entry.url.queryParameters['genre']?.isNotEmpty == true,
+        )
+        .toList();
+    final all = NativeCatalogCategory(
+      title: _hanimeLabel('全部作品', 'All works'),
+      url: widget.homeUrl.resolve('/search'),
+    );
+    final theme = Theme.of(context);
     return ListView(
       key: const PageStorageKey('hanime.categories'),
       padding: EdgeInsets.fromLTRB(
         16,
-        8,
+        16,
         16,
         NativeNavigationInset.scrollBottom(context) + 16,
       ),
       children: [
-        for (final category in categories)
-          ListTile(
-            key: ValueKey(
-              'hanime.category.${category.url.queryParameters['genre'] ?? ''}',
+        _hanimeCategoryTile(all, prominent: true),
+        if (categories.isNotEmpty) ...[
+          Padding(
+            padding: const EdgeInsets.only(top: 24, bottom: 12),
+            child: Text(
+              _hanimeLabel('作品类型', 'Work types'),
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
             ),
-            title: Text(
-              category.url.queryParameters['genre'] == null
-                  ? _hanimeLabel('全部作品', 'All works')
-                  : category.title,
-            ),
-            trailing: const Icon(Icons.chevron_right_rounded),
-            onTap: () =>
-                unawaited(_pushContentPage(category.url, category: category)),
           ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+              final twoColumns = constraints.maxWidth >= 310 * scale;
+              final width = twoColumns
+                  ? (constraints.maxWidth - 12) / 2
+                  : constraints.maxWidth;
+              return Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  for (final category in categories)
+                    SizedBox(
+                      width: width,
+                      child: _hanimeCategoryTile(category),
+                    ),
+                ],
+              );
+            },
+          ),
+        ],
       ],
+    );
+  }
+
+  Widget _hanimeCategoryTile(
+    NativeCatalogCategory category, {
+    bool prominent = false,
+  }) {
+    final genre = category.url.queryParameters['genre'] ?? '';
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final icon = switch (genre) {
+      '' => Icons.video_library_outlined,
+      '3DCG' => Icons.view_in_ar_outlined,
+      '2.5D' => Icons.layers_outlined,
+      '2D動畫' => Icons.animation_rounded,
+      'Motion Anime' => Icons.slideshow_rounded,
+      'MMD' => Icons.directions_run_rounded,
+      'AI生成' => Icons.auto_awesome_outlined,
+      '新番預告' => Icons.upcoming_outlined,
+      '泡麵番' => Icons.timelapse_rounded,
+      'Cosplay' => Icons.theater_comedy_outlined,
+      _ => Icons.movie_outlined,
+    };
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(16),
+      side: prominent
+          ? BorderSide.none
+          : BorderSide(color: colors.outlineVariant),
+    );
+    final foreground = prominent ? colors.onPrimaryContainer : colors.onSurface;
+    return Material(
+      color: prominent ? colors.primaryContainer : colors.surfaceContainerLow,
+      shape: shape,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: ValueKey('hanime.category.$genre'),
+        onTap: () =>
+            unawaited(_pushContentPage(category.url, category: category)),
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: prominent ? 16 : 12,
+            vertical: prominent ? 16 : 12,
+          ),
+          child: Row(
+            children: [
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: prominent ? colors.primary : colors.secondaryContainer,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: SizedBox.square(
+                  dimension: prominent ? 44 : 36,
+                  child: Icon(
+                    icon,
+                    size: prominent ? 24 : 20,
+                    color: prominent
+                        ? colors.onPrimary
+                        : colors.onSecondaryContainer,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  category.title,
+                  style:
+                      (prominent
+                              ? theme.textTheme.titleMedium
+                              : theme.textTheme.titleSmall)
+                          ?.copyWith(
+                            color: foreground,
+                            fontWeight: FontWeight.w600,
+                          ),
+                ),
+              ),
+              if (prominent)
+                Icon(Icons.chevron_right_rounded, color: foreground),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -6317,7 +6417,6 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         children: [
           SourceVideoResultsToolbar(
             keyPrefix: 'hanime-results',
-            horizontalInset: 0,
             count: _hanimeResultLabel(filters, ranking: ranking),
             sort: filters.sort,
             sortOptions: {
