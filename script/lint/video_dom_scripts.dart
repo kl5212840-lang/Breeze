@@ -15,6 +15,11 @@ void main(List<String> args) {
   stdout.write(
     jsonEncode({
       'catalog': videoCatalogSnapshotScript(selectors, includeFilters: true),
+      'personalFullPage': videoPersonalRecentScript(
+        Uri.parse('https://hanime1.me/user/42/histories?page=2'),
+        selectors,
+        fullPage: true,
+      ),
       'personalRecent': videoPersonalRecentScript(
         Uri.parse('https://hanime1.me/user/42/histories'),
         selectors,

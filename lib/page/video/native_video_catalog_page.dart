@@ -4939,32 +4939,39 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         );
         final cached = await _personalSnapshots.read(key);
         if (!current()) return;
-        Map<String, dynamic> data;
-        if (cached != null && _personalSnapshots.fresh(cached)) {
-          data = cached;
-        } else {
-          final raw = await videoBrowserReadAsync(
-            web,
-            videoPersonalRecentScript(next, widget.selectors, fullPage: true),
-          ).timeout(const Duration(seconds: 9));
-          if (!current()) return;
-          final result = asJsonMap(raw is String ? jsonDecode(raw) : raw);
-          if (result['status'] != 'ok') break;
-          final parsed = await _callPlugin(widget.catalogFnPath, {
-            'pageUrl': next.toString(),
-            'snapshot': asJsonMap(result['snapshot']),
-          });
-          if (!current()) return;
-          data = asJsonMap(parsed['data']);
-          if (data['videos'] is! List) break;
-          unawaited(
-            _personalSnapshots
-                .write(key, data, generation)
-                .catchError((Object _) {}),
-          );
+        var data = cached;
+        if (cached == null || !_personalSnapshots.fresh(cached)) {
+          try {
+            final raw = await videoBrowserReadAsync(
+              web,
+              videoPersonalRecentScript(next, widget.selectors, fullPage: true),
+            ).timeout(const Duration(seconds: 9));
+            if (!current()) return;
+            final result = asJsonMap(raw is String ? jsonDecode(raw) : raw);
+            if (result['status'] == 'ok') {
+              final parsed = await _callPlugin(widget.catalogFnPath, {
+                'pageUrl': next.toString(),
+                'snapshot': asJsonMap(result['snapshot']),
+              });
+              if (!current()) return;
+              final fresh = asJsonMap(parsed['data']);
+              if (fresh['videos'] is List) {
+                data = fresh;
+                unawaited(
+                  _personalSnapshots
+                      .write(key, fresh, generation)
+                      .catchError((Object _) {}),
+                );
+              }
+            }
+          } catch (_) {
+            // A failed refresh must not discard an existing page.
+          }
         }
+        final pageData = data;
+        if (pageData == null || !current()) break;
         setState(() {
-          _personalPageWindow.put(preferences, next, data);
+          _personalPageWindow.put(preferences, next, pageData);
           _videos = _personalPageWindow.videos;
           _paging = _personalPageWindow.paging;
           _personalPreviewCounts[scope] = (

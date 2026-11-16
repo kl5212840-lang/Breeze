@@ -16,7 +16,7 @@ String videoPersonalRecentScript(
   const fullPage = $fullPage;
   const root = target.pathname.split('/').slice(0, 3).join('/');
   if (target.origin !== location.origin || target.username || target.password ||
-      (target.search && (!fullPage || !/^\?page=[1-9][0-9]{0,3}\$/.test(target.search))) || target.hash || !new RegExp('^/user/[0-9]+/(?:histories|saves|likes|playlists)\$').test(target.pathname)) return {status:'unsupported'};
+      (target.search && (!fullPage || !/^[?]page=[1-9][0-9]{0,3}\$/.test(target.search))) || target.hash || !new RegExp('^/user/[0-9]+/(?:histories|saves|likes|playlists)\$').test(target.pathname)) return {status:'unsupported'};
   return (async () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 7000);
