@@ -663,8 +663,8 @@ void main() {
           matching: find.byType(SourceChromeIconButton),
         ),
       );
-      expect(viewButton.icon, Icons.view_list_outlined);
-      expect(viewButton.symbol, 'list.bullet');
+      expect(viewButton.icon, Icons.grid_view_outlined);
+      expect(viewButton.symbol, 'square.grid.2x2');
       expect(find.byType(PluginComicGridSliver), findsOneWidget);
       final cubit = tester
           .element(find.byType(PluginComicGridSliver))

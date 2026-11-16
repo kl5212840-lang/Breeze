@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/applied_filter_bar.dart';
 import 'package:zephyr/page/bookshelf/widgets/facet_filter_body.dart';
 import 'package:zephyr/widgets/native_material_surface.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
@@ -634,6 +635,35 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
     final colors = Theme.of(context).colorScheme;
     final scrollTabs =
         width - 32 < 295 * MediaQuery.textScalerOf(context).scale(14) / 14;
+    double labelWidth(String label, TextStyle? style) {
+      final painter = TextPainter(
+        text: TextSpan(text: label, style: style),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+      )..layout();
+      final width = painter.width;
+      painter.dispose();
+      return width;
+    }
+
+    final theme = Theme.of(context);
+    final match = Wrap(
+      key: const ValueKey('hanime-filter.match-mode'),
+      spacing: 4,
+      children: _tagMatchChoices(context, showCheckmark: false).toList(),
+    );
+    final fits =
+        width >=
+        24 +
+            44 +
+            62 +
+            labelWidth(t.videoFilters.title, theme.textTheme.titleMedium) +
+            labelWidth(
+              t.videoFilters.clearFilters,
+              theme.textTheme.labelLarge,
+            ) +
+            labelWidth(t.videoFilters.allMatch, theme.textTheme.labelLarge) +
+            labelWidth(t.videoFilters.anyMatch, theme.textTheme.labelLarge);
     return SafeArea(
       top: false,
       child: FacetFilterBody(
@@ -642,41 +672,43 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
         scrollController: _structuredScroll,
         header: Padding(
           padding: const EdgeInsetsDirectional.only(start: 16, end: 8),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: Text(
-                  t.videoFilters.title,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
+              Row(
+                children: [
+                  Text(
+                    t.videoFilters.title,
+                    style: theme.textTheme.titleMedium,
+                  ),
+                  if (fits) ...[
+                    const SizedBox(width: 6),
+                    Expanded(child: match),
+                  ] else
+                    const Spacer(),
+                  TextButton(
+                    key: const ValueKey('video-filter.reset'),
+                    onPressed: _reset,
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(0, 44),
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                    ),
+                    child: Text(t.videoFilters.clearFilters),
+                  ),
+                  IconButton(
+                    tooltip: t.common.cancel,
+                    onPressed: _cancel,
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
               ),
-              TextButton(
-                key: const ValueKey('video-filter.reset'),
-                onPressed: _reset,
-                child: Text(t.videoFilters.clearFilters),
-              ),
-              IconButton(
-                tooltip: t.common.cancel,
-                onPressed: _cancel,
-                icon: const Icon(Icons.close_rounded),
-              ),
+              if (!fits) match,
             ],
           ),
         ),
         controls: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-              child: Wrap(
-                key: const ValueKey('hanime-filter.match-mode'),
-                spacing: 8,
-                children: _tagMatchChoices(
-                  context,
-                  showCheckmark: false,
-                ).toList(),
-              ),
-            ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: DecoratedBox(
@@ -1592,17 +1624,18 @@ class VideoActiveFilters extends StatelessWidget {
   Widget build(BuildContext context) {
     final entries =
         <
-          ({String label, VideoSearchFilters next, VideoFilterSection section})
+          ({
+            String id,
+            String label,
+            VideoSearchFilters next,
+            VideoFilterSection section,
+          })
         >[];
     for (final section in [
-      VideoFilterSection.genre,
-      VideoFilterSection.sort,
       VideoFilterSection.date,
       VideoFilterSection.duration,
     ]) {
       final value = switch (section) {
-        VideoFilterSection.genre => filters.genre,
-        VideoFilterSection.sort => filters.sort,
         VideoFilterSection.date => filters.date,
         _ => filters.duration,
       };
@@ -1614,7 +1647,10 @@ class VideoActiveFilters extends StatelessWidget {
               ?.label ??
           value;
       entries.add((
-        label: '${videoFilterTitle(section)}: $label',
+        id: section.name,
+        label: section == VideoFilterSection.duration
+            ? label
+            : '${videoFilterTitle(section)}: $label',
         next: filters.change(section, ''),
         section: section,
       ));
@@ -1623,8 +1659,11 @@ class VideoActiveFilters extends StatelessWidget {
       entries.addAll(
         filters.tags.map(
           (tag) => (
+            id: 'tag.$tag',
             label: tag,
-            next: filters.removeTag(tag),
+            next: filters
+                .removeTag(tag)
+                .copyWith(anyTag: filters.anyTag && filters.tags.length > 2),
             section: VideoFilterSection.tags,
           ),
         ),
@@ -1632,6 +1671,7 @@ class VideoActiveFilters extends StatelessWidget {
     }
     if (filters.author && sections.contains(VideoFilterSection.query)) {
       entries.add((
+        id: 'author',
         label: t.videoFilters.authors,
         next: filters.copyWith(author: false, page: 1),
         section: VideoFilterSection.query,
@@ -1639,51 +1679,38 @@ class VideoActiveFilters extends StatelessWidget {
     }
     if (filters.anyTag && sections.contains(VideoFilterSection.tags)) {
       entries.add((
+        id: 'any',
         label: t.videoFilters.anyMatch,
         next: filters.copyWith(anyTag: false, page: 1),
         section: VideoFilterSection.tags,
       ));
     }
-    if (entries.isEmpty) return const SizedBox.shrink();
-    return Semantics(
-      label: t.videoFilters.active,
-      child: SizedBox(
-        height: MediaQuery.textScalerOf(context).scale(14) * 1.5 + 28,
-        child: ListView.builder(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          itemCount: entries.length + 1,
-          itemBuilder: (_, index) => Padding(
-            padding: const EdgeInsetsDirectional.only(end: 8),
-            child: Center(
-              child: index == 0
-                  ? TextButton(
-                      onPressed: () => onChanged(
-                        onEdit == null
-                            ? filters.clearFilters()
-                            : filters.copyWith(
-                                tags: const [],
-                                anyTag: false,
-                                date: '',
-                                duration: '',
-                                page: 1,
-                              ),
-                      ),
-                      child: Text(t.videoFilters.clearFilters),
-                    )
-                  : onEdit != null
-                  ? ActionChip(
-                      label: Text(entries[index - 1].label),
-                      onPressed: () => onEdit!(entries[index - 1].section),
-                    )
-                  : InputChip(
-                      label: Text(entries[index - 1].label),
-                      chipAnimationStyle: VideoMotion.chip(context),
-                      deleteButtonTooltipMessage: t.videoFilters.removeFilter,
-                      onDeleted: () => onChanged(entries[index - 1].next),
-                    ),
-            ),
+    return AppliedFilterBar(
+      entries: [
+        for (final entry in entries)
+          (
+            id: entry.id,
+            label: entry.label,
+            remove: () => onChanged(entry.next),
+            edit: onEdit == null ? null : () => onEdit!(entry.section),
           ),
+      ],
+      onClearAll: () => onChanged(
+        filters.copyWith(
+          tags: sections.contains(VideoFilterSection.tags)
+              ? const []
+              : filters.tags,
+          anyTag: sections.contains(VideoFilterSection.tags)
+              ? false
+              : filters.anyTag,
+          date: sections.contains(VideoFilterSection.date) ? '' : filters.date,
+          duration: sections.contains(VideoFilterSection.duration)
+              ? ''
+              : filters.duration,
+          author: sections.contains(VideoFilterSection.query)
+              ? false
+              : filters.author,
+          page: 1,
         ),
       ),
     );

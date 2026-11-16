@@ -354,11 +354,11 @@ class JmCollectionResultsRow extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        ?viewAction,
         SizedBox.square(
           dimension: CollectionToolbarMetrics.actionExtent,
           child: filterButton,
         ),
+        ?viewAction,
       ],
     ),
   );

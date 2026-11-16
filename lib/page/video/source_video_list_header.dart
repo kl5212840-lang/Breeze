@@ -221,24 +221,16 @@ class SourceVideoResultsToolbar extends StatelessWidget {
                 icon: CollectionCommandIcons.sort.icon,
                 symbol: CollectionCommandIcons.sort.symbol,
               ),
+          ?filter,
           if (gridView case final grid?)
             SourceChromeIconButton(
               key: ValueKey('$keyPrefix.view'),
               tooltip: grid ? t.videoLibrary.detailList : t.videoLibrary.grid,
               onPressed: onToggleView,
-              icon:
-                  (grid
-                          ? CollectionCommandIcons.list
-                          : CollectionCommandIcons.grid)
-                      .icon,
-              symbol:
-                  (grid
-                          ? CollectionCommandIcons.list
-                          : CollectionCommandIcons.grid)
-                      .symbol,
+              icon: CollectionCommandIcons.grid.icon,
+              symbol: CollectionCommandIcons.grid.symbol,
             ),
           ?layout,
-          ?filter,
         ],
       ),
     ),

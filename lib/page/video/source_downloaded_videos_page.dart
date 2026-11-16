@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/collection_command_icons.dart';
 import 'package:zephyr/page/video/hanime_catalog_scope.dart';
 import 'package:zephyr/page/video/hanime_work_facts.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
@@ -415,13 +416,12 @@ class _SourceDownloadedVideosPageState
                           SourceChromeIconButton(
                             key: const ValueKey('source-downloads.filters'),
                             tooltip: t.videoFilters.title,
-                            symbol: _facets.isActive
-                                ? 'line.3.horizontal.decrease.circle.fill'
-                                : 'line.3.horizontal.decrease.circle',
+                            symbol: CollectionCommandIcons.filter.symbol,
+                            selected: _facets.isActive,
                             onPressed: _openingFilters || _busy
                                 ? null
                                 : _editFilters,
-                            icon: Icons.filter_list_rounded,
+                            icon: CollectionCommandIcons.filter.icon,
                           ),
                         ],
                       );

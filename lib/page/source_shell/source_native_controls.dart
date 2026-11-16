@@ -119,8 +119,8 @@ class SourceFilterIconButton extends SourceChromeIconButton {
     bool active = false,
     super.bare = true,
   }) : super(
-         icon: Icons.filter_list_rounded,
-         symbol: 'line.3.horizontal.decrease',
+         icon: CollectionCommandIcons.filterIcon,
+         symbol: CollectionCommandIcons.filterSymbol,
          selected: active,
        );
 }

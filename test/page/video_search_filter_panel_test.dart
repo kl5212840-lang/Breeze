@@ -48,6 +48,115 @@ Future<VideoSiteResult<VideoFilterSchema>> read() async =>
     (status: VideoSiteStatus.ok, value: schema, writeUnconfirmed: false);
 void main() {
   testWidgets(
+    'applied filters reveal a fixed-size remove button and confirm bulk clearing',
+    (tester) async {
+      var filters = const VideoSearchFilters(
+        query: 'Fixture',
+        genre: '3DCG',
+        sort: 'views',
+        duration: 'short',
+        tags: ['1080p', '60FPS'],
+        anyTag: true,
+        page: 3,
+      );
+      var edits = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (context, setState) => VideoActiveFilters(
+                filters: filters,
+                schema: schema,
+                sections: hanimeResultFilters,
+                onEdit: (_) => edits++,
+                onChanged: (value) => setState(() => filters = value),
+              ),
+            ),
+          ),
+        ),
+      );
+      final tag = find.widgetWithText(ActionChip, '1080p');
+      final beside = find.widgetWithText(ActionChip, '60FPS');
+      expect(find.widgetWithText(ActionChip, 'Short'), findsOneWidget);
+      final rect = tester.getRect(tag);
+      final besideRect = tester.getRect(beside);
+      await tester.tap(tag);
+      expect(edits, 1);
+      await tester.longPress(tag);
+      await tester.pump();
+      final remove = find.byKey(
+        const ValueKey('applied-filter.remove.tag.1080p'),
+      );
+      expect(remove, findsOneWidget);
+      expect(tester.getRect(tag), rect);
+      expect(tester.getRect(beside), besideRect);
+      expect(tester.getRect(tag).contains(tester.getCenter(remove)), isTrue);
+      await tester.tap(remove);
+      await tester.pumpAndSettle();
+      expect(filters.tags, ['60FPS']);
+      expect(filters.anyTag, isFalse);
+      final clear = find.byKey(const ValueKey('applied-filter.clear-all'));
+      Future<void> confirm(String label) async {
+        await tester.tap(clear);
+        await tester.pumpAndSettle();
+        final dialog = find.byType(AlertDialog);
+        expect(filters.tags, ['60FPS']);
+        await tester.tap(
+          find.descendant(of: dialog, matching: find.text(label)),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await confirm(t.common.cancel);
+      expect(filters.duration, 'short');
+      await confirm(t.common.clear);
+      expect(
+        filters,
+        const VideoSearchFilters(
+          query: 'Fixture',
+          genre: '3DCG',
+          sort: 'views',
+        ),
+      );
+    },
+  );
+
+  testWidgets('Hanime match choices share the title row at phone width', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(410, 820);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: VideoSearchFilterPanel(
+            initial: const VideoSearchFilters(),
+            schema: schema,
+            readSchema: read,
+            structuredLayout: true,
+            sections: hanimeResultFilters,
+            initialSection: VideoFilterSection.tags,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final title = find.text(t.videoFilters.title);
+    final all = find.widgetWithText(ChoiceChip, t.videoFilters.allMatch);
+    final any = find.widgetWithText(ChoiceChip, t.videoFilters.anyMatch);
+    final reset = find.byKey(const ValueKey('video-filter.reset'));
+    expect(tester.getCenter(all).dy, closeTo(tester.getCenter(title).dy, 2));
+    expect(tester.getCenter(any).dy, closeTo(tester.getCenter(title).dy, 2));
+    expect(
+      tester.getTopLeft(all).dx,
+      greaterThan(tester.getTopRight(title).dx),
+    );
+    expect(tester.getTopRight(any).dx, lessThan(tester.getTopLeft(reset).dx));
+  });
+
+  testWidgets(
     'structured Hanime filters fit narrow large-text controls and apply one draft',
     (tester) async {
       tester.view.devicePixelRatio = 1;

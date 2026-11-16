@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/collection_command_icons.dart';
 import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
 import 'package:zephyr/page/video/video_personal_page_window.dart';
 import 'package:zephyr/page/video/video_personal_snapshot_store.dart';
@@ -6770,12 +6771,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       HanimeCatalogLayout.large.name: _hanimeLabel('双列大图', 'Large grid'),
       HanimeCatalogLayout.compact.name: _hanimeLabel('三列网格', 'Compact grid'),
     },
-    icon: layout == HanimeCatalogLayout.detail
-        ? Icons.view_list_outlined
-        : Icons.grid_view_rounded,
-    symbol: layout == HanimeCatalogLayout.detail
-        ? 'list.bullet'
-        : 'square.grid.2x2',
+    icon: CollectionCommandIcons.grid.icon,
+    symbol: CollectionCommandIcons.grid.symbol,
     hostPresentation: true,
     width: 44,
     onSelected: (value) => onSelected(HanimeCatalogLayout.values.byName(value)),

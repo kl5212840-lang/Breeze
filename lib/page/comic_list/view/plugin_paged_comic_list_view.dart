@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/applied_filter_bar.dart';
 import 'package:zephyr/widgets/read_recovery_scope.dart';
 import 'package:zephyr/widgets/pull_refresh_feedback.dart';
 import 'package:auto_route/auto_route.dart';
@@ -94,6 +95,8 @@ class PluginPagedComicListView extends StatelessWidget {
           onActiveChanged: context
               .read<PluginPagedComicListCubit>()
               .setReadActive,
+          keepActiveWhileCovered: () =>
+              AppliedFilterBar.confirmationIsCovering(context),
           child: _PluginPagedComicListBody(
             pluginId: pluginId,
             fnPath: fnPath,
@@ -231,7 +234,8 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
     final visible =
         ReadRecoveryScope.activeOf(context) &&
         TickerMode.of(context) &&
-        ModalRoute.of(context)?.isCurrent != false &&
+        (ModalRoute.of(context)?.isCurrent != false ||
+            AppliedFilterBar.confirmationIsCovering(context)) &&
         (lifecycle == null || lifecycle == AppLifecycleState.resumed);
     final becameVisible = visible && !_wasVisible;
     _wasVisible = visible;

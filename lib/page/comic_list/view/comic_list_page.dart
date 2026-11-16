@@ -1,3 +1,5 @@
+import 'package:zephyr/widgets/applied_filter_bar.dart';
+import 'package:zephyr/widgets/collection_command_icons.dart';
 import 'package:zephyr/widgets/read_recovery_scope.dart';
 import 'package:zephyr/page/source_shell/view/jm_collection_toolbar.dart';
 import 'dart:async';
@@ -209,19 +211,19 @@ class _ComicListViewState extends State<_ComicListView>
                     child: _cloudFolderChoice(state),
                   ),
                 ),
+                SourceChromeIconButton(
+                  key: const ValueKey('jm-cloud-remote-filter'),
+                  tooltip: t.comicList.filter,
+                  icon: CollectionCommandIcons.filter.icon,
+                  symbol: CollectionCommandIcons.filter.symbol,
+                  onPressed: _filterOpening
+                      ? null
+                      : () => _openFilterDialog(context),
+                ),
                 SourceListViewToggle(
                   key: const ValueKey('jm-cloud-view'),
                   detailed: detailed,
                   onChanged: onViewChanged,
-                ),
-                SourceChromeIconButton(
-                  key: const ValueKey('jm-cloud-remote-filter'),
-                  tooltip: t.comicList.filter,
-                  icon: Icons.filter_list_rounded,
-                  symbol: 'line.3.horizontal.decrease',
-                  onPressed: _filterOpening
-                      ? null
-                      : () => _openFilterDialog(context),
                 ),
               ],
             ),
@@ -528,8 +530,8 @@ class _ComicListViewState extends State<_ComicListView>
                               ))
                       ? SourceChromeIconButton(
                           tooltip: t.comicList.filter,
-                          icon: Icons.filter_list_rounded,
-                          symbol: 'line.3.horizontal.decrease',
+                          icon: CollectionCommandIcons.filter.icon,
+                          symbol: CollectionCommandIcons.filter.symbol,
                           onPressed: _filterOpening
                               ? null
                               : () => _openFilterDialog(context),
@@ -717,7 +719,21 @@ class _ComicListViewState extends State<_ComicListView>
   }) {
     final bundle = state.filterBundle;
     if (bundle == null) return const SizedBox.shrink();
-    final selected = <String>[];
+    final selected = <AppliedFilter>[];
+    final cubit = context.read<ComicListCubit>();
+    final defaults = bundle.defaultSelections;
+    void clearFields(Iterable<String> fields) {
+      final next = {...cubit.state.filterSelections};
+      for (final field in fields) {
+        if (defaults[field] case final value?) {
+          next[field] = value;
+        } else {
+          next.remove(field);
+        }
+      }
+      cubit.applyFilterSelections(next);
+    }
+
     for (final field in bundle.scheme.fields) {
       // The period segmented control already expresses this exact condition.
       // Keep any additional user-selected conditions in the summary.
@@ -732,41 +748,18 @@ class _ComicListViewState extends State<_ComicListView>
       }
       final option = field.findOptionByValue(value);
       if (option != null && option.value.isNotEmpty) {
-        selected.add('${field.label} · ${option.label}');
+        selected.add((
+          id: field.key,
+          label: convertChineseForDisplay('${field.label} · ${option.label}'),
+          edit: _filterOpening ? null : () => _openFilterDialog(context),
+          remove: () => clearFields([field.key]),
+        ));
       }
     }
-    if (selected.isEmpty) return const SizedBox.shrink();
-    return SizedBox(
-      height: 48,
-      child: Row(
-        children: [
-          Expanded(
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              padding: EdgeInsetsDirectional.only(start: inset, end: 4),
-              itemCount: selected.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 8),
-              itemBuilder: (context, index) => Center(
-                child: ActionChip(
-                  label: Text(convertChineseForDisplay(selected[index])),
-                  onPressed: _filterOpening
-                      ? null
-                      : () => _openFilterDialog(context),
-                ),
-              ),
-            ),
-          ),
-          SourceChromeIconButton(
-            tooltip: t.comicList.clearFilters,
-            icon: Icons.filter_alt_off_outlined,
-            symbol: 'xmark',
-            onPressed: () => context
-                .read<ComicListCubit>()
-                .applyFilterSelections(bundle.defaultSelections),
-          ),
-          SizedBox(width: inset),
-        ],
-      ),
+    return AppliedFilterBar(
+      entries: selected,
+      inset: inset,
+      onClearAll: () => clearFields(selected.map((entry) => entry.id)),
     );
   }
 
