@@ -935,6 +935,91 @@ void main() {
   );
 
   testWidgets(
+    'Hanime multiple tags keep their identity and leave filters editable',
+    (tester) async {
+      final home = Uri.https('hanime1.me', '/');
+      final initial = Uri.https('hanime1.me', '/search', {'tags[]': 'A'});
+      plugin.catalog = (core) async {
+        final url = Uri.parse(core['pageUrl'] as String);
+        final tags = url.queryParametersAll['tags[]'] ?? [];
+        if (tags.length > 1 && url.queryParameters['broad'] == null) {
+          return {
+            'data': {
+              'videos': <Object>[],
+              'sections': <Object>[],
+              'paging': <String, dynamic>{},
+            },
+          };
+        }
+        return _catalog(tags.length == 1 ? 'Single match' : 'Any match');
+      };
+      await _mount(
+        tester,
+        plugin,
+        structuredHanime: true,
+        filters: _filters,
+        initialUrl: initial,
+      );
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.text('Single match'), findsOneWidget);
+
+      final filter = find.byKey(const ValueKey('hanime-results.filter'));
+      await tester.tap(filter);
+      await _pump(tester);
+      await tester.tap(find.byKey(const ValueKey('hanime-filter.tag.B')));
+      await _pump(tester);
+      await tester.tap(find.byKey(const ValueKey('video-filter.apply')));
+      await _pump(tester);
+      expect(web.loads.last.queryParametersAll['tags[]'], ['A', 'B']);
+      web.finishWebsiteNavigation(
+        home.resolve('/search?tags%5B0%5D=B&tags%5B1%5D=A'),
+      );
+      await _pump(tester, 15);
+      expect(find.text(t.search.noResults), findsOneWidget);
+      expect(find.text(t.videoPlayback.catalogFallback), findsNothing);
+
+      await tester.tap(filter);
+      await _pump(tester);
+      await tester.tap(
+        find.widgetWithText(ChoiceChip, t.videoFilters.anyMatch),
+      );
+      await _pump(tester);
+      await tester.tap(find.byKey(const ValueKey('video-filter.apply')));
+      await _pump(tester);
+      expect(web.loads.last.queryParameters['broad'], 'on');
+      web.finishWebsiteNavigation(
+        home.resolve('/search?tags%5B0%5D=A&tags%5B1%5D=B&broad=on'),
+      );
+      await _pump(tester, 15);
+      expect(find.text('Any match'), findsOneWidget);
+      plugin.catalog = (_) async =>
+          throw const FormatException('Fixture site error');
+      tester
+          .widget<NativeVideoMenu>(
+            find.byKey(const ValueKey('hanime-results.sort')),
+          )
+          .onSelected('views');
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester, 24);
+      final changeFilters = find.byKey(
+        const ValueKey('hanime-results.edit-failed-filters'),
+      );
+      expect(changeFilters, findsOneWidget);
+      await tester.tap(changeFilters);
+      await _pump(tester);
+      final draft = tester
+          .widget<VideoSearchFilterPanel>(find.byType(VideoSearchFilterPanel))
+          .initial;
+      expect(draft.tags, ['A', 'B']);
+      expect(draft.anyTag, isTrue);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
     'Hanime personal collections preserve saved layout and filter observed durations',
     (tester) async {
       final owner = Uri.https('hanime1.me', '/user/42');

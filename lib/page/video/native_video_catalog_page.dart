@@ -8093,6 +8093,26 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                                             : _load(_requestedUrl),
                                         child: Text(t.common.retry),
                                       ),
+                                      if (widget.structuredHanime &&
+                                          _hanimeWorks(_requestedUrl) &&
+                                          !_websiteVisible)
+                                        OutlinedButton(
+                                          key: const ValueKey(
+                                            'hanime-results.edit-failed-filters',
+                                          ),
+                                          onPressed: () => unawaited(
+                                            _openFilters(
+                                              VideoFilterSection.tags,
+                                              advanced: true,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            _hanimeLabel(
+                                              '调整筛选',
+                                              'Edit filters',
+                                            ),
+                                          ),
+                                        ),
                                       OutlinedButton(
                                         onPressed: () => _openWebsitePage(
                                           _requestedUrl,

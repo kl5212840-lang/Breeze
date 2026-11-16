@@ -42,9 +42,11 @@ const String videoSearchDiscoveryScript = r'''
     if (roots.length || artists) return { roots, state: 'content' };
     // A header/search form says nothing about whether results have arrived.
     if (document.readyState !== 'complete') return { roots, state: 'waiting' };
-    const messages = Array.from((content || wrappers[0])?.querySelectorAll('p, .alert, .empty-state, .text-muted') || []).slice(0, 32);
+    const resultScope = content || wrappers[0];
+    const messages = Array.from(resultScope?.querySelectorAll(
+      'p, h1, h2, h3, h4, .alert, .empty-state, .text-muted') || []).slice(0, 48);
     const emptyMessage = messages.some(node => !node.closest('form, nav, .modal') &&
-      /^(?:(?:沒有|没有|未找到|找不到|無|无)(?:找到|任何|相關|相关|符合條件的|符合条件的)?(?:影片|视频|結果|结果|資料|资料)|no (?:results|videos|matches)(?: found)?)[。.!！\s]*$/i.test(node.textContent?.trim() || ''));
+      /^(?:(?:沒有|没有|未找到|找不到|無法找到|无法找到|沒有找到|没有找到|未能找到|無|无)(?:找到)?(?:任何)?(?:符合(?:搜尋|搜索|篩選|筛选)?(?:條件|条件)(?:的)?|(?:相關|相关))?(?:影片|視頻|视频|結果|结果|資料|资料)|(?:搜尋|搜索|篩選|筛选)(?:結果|结果)?(?:為|为)\s*0(?:\s*(?:部|筆|笔|個|个))?|no (?:results|videos|matches)(?: (?:were )?found)?(?: (?:matching|for) (?:your|the) (?:search|filters))?)[。.!！\s]*$/i.test(node.textContent?.trim() || ''));
     const emptyWrappers = wrappers.length > 0 && wrappers.every(node => !node.children.length && !node.textContent?.trim());
     return { roots, state: emptyMessage || emptyWrappers ? 'empty' : content || wrappers.length ? 'unrecognized' : 'waiting' };
   };

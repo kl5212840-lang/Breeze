@@ -461,38 +461,6 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                           setState(() => _selectedOnly = value);
                         },
                 ),
-                if (count > 1)
-                  PopupMenuButton<bool>(
-                    tooltip: _draft.anyTag
-                        ? t.videoFilters.anyMatch
-                        : t.videoFilters.allMatch,
-                    padding: EdgeInsets.zero,
-                    onSelected: (any) => setState(
-                      () => _draft = _draft.copyWith(anyTag: any, page: 1),
-                    ),
-                    itemBuilder: (_) => [
-                      for (final any in [false, true])
-                        CheckedPopupMenuItem(
-                          value: any,
-                          checked: any == _draft.anyTag,
-                          child: Text(
-                            any
-                                ? t.videoFilters.anyMatch
-                                : t.videoFilters.allMatch,
-                          ),
-                        ),
-                    ],
-                    child: SizedBox.square(
-                      key: const ValueKey('hanime-filter.match-mode'),
-                      dimension: 44,
-                      child: Icon(
-                        _draft.anyTag
-                            ? Icons.difference_outlined
-                            : Icons.rule_rounded,
-                        size: 20,
-                      ),
-                    ),
-                  ),
                 for (final name in groups.keys)
                   ChoiceChip(
                     label: Text(name),
@@ -698,6 +666,17 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
         controls: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+              child: Wrap(
+                key: const ValueKey('hanime-filter.match-mode'),
+                spacing: 8,
+                children: _tagMatchChoices(
+                  context,
+                  showCheckmark: false,
+                ).toList(),
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: DecoratedBox(
@@ -1088,12 +1067,16 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
     );
   }
 
-  Iterable<Widget> _tagMatchChoices(BuildContext context) sync* {
+  Iterable<Widget> _tagMatchChoices(
+    BuildContext context, {
+    bool showCheckmark = true,
+  }) sync* {
     // Match mode is a fixed control, distinct from collectible tag values.
     for (final any in [false, true]) {
       yield ChoiceChip(
         label: Text(any ? t.videoFilters.anyMatch : t.videoFilters.allMatch),
         selected: _draft.anyTag == any,
+        showCheckmark: showCheckmark,
         onSelected: (_) =>
             setState(() => _draft = _draft.copyWith(anyTag: any, page: 1)),
         chipAnimationStyle: _chipMotion(context),

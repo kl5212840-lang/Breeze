@@ -2,9 +2,41 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zephyr/page/video/video_site_access.dart';
+import 'package:zephyr/page/video/video_catalog_dom.dart';
 
 void main() {
   final home = Uri.parse('https://hanime1.me/');
+  test(
+    'explicit multi-tag empty results are distinct from busy or unknown content',
+    () async {
+      const harness = r'''
+const assert = require('node:assert/strict'), vm = require('node:vm');
+const script = JSON.parse(process.argv[1]);
+function read(text, {busy=false, form=false}={}) {
+  const heading = {textContent:text, closest:() => form ? {} : null};
+  const area = {getAttribute:() => String(busy), querySelectorAll:() => [heading]};
+  const document = {readyState:'complete', querySelectorAll:() => [],
+    querySelector:selector => selector.includes('.content-padding') ? area : null};
+  const ctx = {document, config:{cards:'.card'}, location:new URL('https://hanime1.me/search?tags%5B%5D=A&tags%5B%5D=B'), URL};
+  return vm.runInNewContext(script, ctx);
+}
+assert.equal(read('找不到符合搜尋條件的影片。'), 'empty');
+assert.equal(read('No videos matching your filters'), 'empty');
+assert.equal(read('沒有影片', {busy:true}), 'waiting');
+assert.equal(read('沒有影片', {form:true}), 'unrecognized');
+assert.equal(read('Unexpected markup'), 'unrecognized');
+''';
+      final result = await Process.run('node', [
+        '-e',
+        harness,
+        jsonEncode(
+          '(() => { $videoSearchDiscoveryScript return videoSearchResults().state; })()',
+        ),
+      ]);
+      expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+    },
+  );
+
   test(
     'actual document script distinguishes provider block markup from challenges and ordinary content',
     () async {

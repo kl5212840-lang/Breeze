@@ -105,8 +105,14 @@ void main() {
       final apply = find.byKey(const ValueKey('video-filter.apply'));
       final applyPosition = tester.getTopLeft(apply);
       expect(tester.widget<FilterChip>(selected).onSelected, isNull);
-      expect(find.text(t.videoFilters.anyMatch).hitTestable(), findsNothing);
+      final anyMatch = find.widgetWithText(ChoiceChip, t.videoFilters.anyMatch);
+      final allMatch = find.widgetWithText(ChoiceChip, t.videoFilters.allMatch);
+      final matchPosition = tester.getTopLeft(anyMatch);
+      expect(allMatch.hitTestable(), findsOneWidget);
+      expect(anyMatch.hitTestable(), findsOneWidget);
+      await tap(anyMatch);
       await tap(first);
+      expect(tester.getTopLeft(anyMatch), matchPosition);
       expect(tester.getTopLeft(first), initialPosition);
       await tap(find.byKey(const ValueKey('hanime-filter.tag.60FPS')));
       expect(tester.getTopLeft(first), initialPosition);
@@ -133,14 +139,10 @@ void main() {
       await tester.pumpAndSettle();
       await tap(find.byTooltip(t.common.clear));
       expect(tester.getTopLeft(first), initialPosition);
-      await tap(find.byKey(const ValueKey('hanime-filter.match-mode')));
-      await tap(
-        find.widgetWithText(
-          CheckedPopupMenuItem<bool>,
-          t.videoFilters.anyMatch,
-        ),
-      );
+      expect(tester.getTopLeft(anyMatch), matchPosition);
+      expect(tester.widget<ChoiceChip>(anyMatch).selected, isTrue);
       await tap(find.widgetWithText(Tab, t.videoFilters.date));
+      expect(tester.getTopLeft(anyMatch), matchPosition);
       expect(
         find.byKey(const ValueKey('hanime-filter.custom-date')),
         findsOneWidget,
