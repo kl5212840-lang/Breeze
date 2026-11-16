@@ -157,6 +157,8 @@ class _WebPlatform extends InAppWebViewPlatform {
   Completer<bool>? verificationWindowResult;
   Future<void>? nextStop;
   Future<String?>? nextEmptySearch;
+  Future<Map<String, dynamic>?>? catalogContinuation;
+  int catalogContinuations = 0;
   String profileHref = '';
   bool signedOutEntry = true;
   int accountReads = 0;
@@ -335,6 +337,10 @@ class _WebController extends PlatformInAppWebViewController
     required String source,
     ContentWorld? contentWorld,
   }) async {
+    if (source.contains('videoSearchResults(false, true)')) {
+      host.catalogContinuations++;
+      return await host.catalogContinuation;
+    }
     if (source.contains('videoSearchResults(true, true)')) {
       final pending = host.nextEmptySearch;
       host.nextEmptySearch = null;
@@ -3567,6 +3573,82 @@ void main() {
   );
 
   testWidgets(
+    'Hanime keeps the controls fixed and appends only new works after retry',
+    (tester) async {
+      final page = Uri.https('hanime1.me', '/search', {'genre': 'Fixture'});
+      final next = page.replace(
+        queryParameters: {...page.queryParameters, 'page': '2'},
+      );
+      Map<String, dynamic> work(int id) => {
+        'title': 'Fixture work $id',
+        'watchUrl': 'https://hanime1.me/watch?v=$id',
+        'portraitCover': id < 30,
+      };
+      plugin.catalog = (core) async => {
+        'data': {
+          'sections': [],
+          'videos': core['pageUrl'] == next.toString()
+              ? [work(12), work(30)]
+              : [for (var i = 1; i <= 12; i++) work(i)],
+          'paging': core['pageUrl'] == next.toString()
+              ? {'page': 2}
+              : {'page': 1, 'nextUrl': next.toString()},
+        },
+      };
+      final pending = Completer<Map<String, dynamic>?>();
+      web.catalogContinuation = pending.future;
+      await _mount(
+        tester,
+        plugin,
+        structuredHanime: true,
+        filters: _filters,
+        initialUrl: page,
+      );
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.text(t.common.nextPage), findsNothing);
+      expect(web.catalogContinuations, 0);
+      final filter = find.byKey(const ValueKey('hanime-results.filter'));
+      final toolbar = tester.getRect(filter);
+      final collection = find.byType(ApiVideoCollection);
+      final scrollable = find
+          .descendant(of: collection, matching: find.byType(Scrollable))
+          .first;
+      final position = tester.state<ScrollableState>(scrollable).position;
+      position.jumpTo(position.maxScrollExtent);
+      await _pump(tester, 2);
+      expect(tester.getRect(filter), toolbar);
+      expect(web.catalogContinuations, 1);
+      expect(web.loads, hasLength(1));
+      expect(
+        tester.widget<ApiVideoCollection>(collection).items,
+        hasLength(12),
+      );
+      pending.complete(null);
+      await _pump(tester);
+      final retry = find.widgetWithText(TextButton, t.common.retry);
+      expect(retry, findsOneWidget);
+      web.catalogContinuation = Future.value({'searchPageReady': true});
+      position.jumpTo(position.maxScrollExtent);
+      await _pump(tester, 2);
+      expect(retry.hitTestable(), findsOneWidget);
+      await tester.tap(retry);
+      await _pump(tester);
+      final result = tester.widget<ApiVideoCollection>(collection);
+      expect(result.items.map((item) => item.title), [
+        for (var i = 1; i <= 12; i++) 'Fixture work $i',
+        'Fixture work 30',
+      ]);
+      expect(result.posterAspectRatio, 2 / 3);
+      expect(tester.getRect(filter), toolbar);
+      expect(web.catalogContinuations, 2);
+      expect(web.loads, hasLength(1));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
     'top search has external spacing from More and both retain phone touch targets',
     (tester) async {
       tester.view.physicalSize = const Size(320, 844);
@@ -3583,6 +3665,8 @@ void main() {
       expect(more.width, greaterThanOrEqualTo(44));
       expect(more.height, greaterThanOrEqualTo(44));
       expect(search.height, greaterThanOrEqualTo(44));
+      expect(search.height, more.height);
+      expect(search.center.dy, more.center.dy);
       expect(search.width, greaterThanOrEqualTo(190));
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());

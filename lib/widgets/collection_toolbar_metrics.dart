@@ -2,6 +2,9 @@
 abstract final class CollectionToolbarMetrics {
   static const horizontalInset = 12.0;
   static const actionExtent = 44.0;
+  static const actionPlateInset = 4.0;
+  static const actionPlateExtent = actionExtent - actionPlateInset * 2;
+  static const searchControlGap = 8.0;
   static const sourceContentInset = 16.0;
   static const sourceLeadingExtent = 56.0;
 }

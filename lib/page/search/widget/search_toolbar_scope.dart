@@ -1,8 +1,7 @@
 import 'package:material_ui/material_ui.dart';
-import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 
-/// Centers Breeze search fields and neighbouring controls on one line.
-/// Ordinary toolbars and UIKit controls keep their own dimensions.
+/// Gives the search surface and its neighbouring controls one row height.
 class SearchToolbarScope extends InheritedWidget {
   const SearchToolbarScope({
     required this.extent,
@@ -15,10 +14,10 @@ class SearchToolbarScope extends InheritedWidget {
   static double? of(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<SearchToolbarScope>()?.extent;
 
-  static const actionExtent = 44.0;
+  static const actionExtent = CollectionToolbarMetrics.actionExtent;
+  static const fieldActionWidth = 48.0;
 
-  static double? breezeExtent(BuildContext context) {
-    if (AppInterfaceStyleScope.usesSystem(context)) return null;
+  static double fieldExtent(BuildContext context) {
     final painter = TextPainter(
       text: TextSpan(text: 'Ag', style: Theme.of(context).textTheme.bodyLarge),
       textDirection: Directionality.of(context),
@@ -26,7 +25,7 @@ class SearchToolbarScope extends InheritedWidget {
       maxLines: 1,
     )..layout();
     final extent = (painter.height.ceilToDouble() + 18).clamp(
-      actionExtent,
+      fieldActionWidth,
       double.infinity,
     );
     painter.dispose();
@@ -38,16 +37,18 @@ class SearchToolbarScope extends InheritedWidget {
     PreferredSizeWidget Function(double? toolbarHeight) build, {
     bool searching = true,
   }) {
-    final extent = searching ? breezeExtent(context) : null;
-    final bar = build(extent == null ? null : extent + 8);
-    if (extent == null) return bar;
-    return PreferredSize(
-      preferredSize: bar.preferredSize,
-      child: SearchToolbarScope(extent: extent, child: bar),
-    );
+    final extent = searching ? fieldExtent(context) : null;
+    return build(extent == null ? null : extent + 8).withSearchToolbar(extent);
   }
 
   @override
   bool updateShouldNotify(SearchToolbarScope oldWidget) =>
       extent != oldWidget.extent;
+}
+
+extension SearchToolbarBar on PreferredSizeWidget {
+  PreferredSizeWidget withSearchToolbar(double? extent) => PreferredSize(
+    preferredSize: preferredSize,
+    child: SearchToolbarScope(extent: extent, child: this),
+  );
 }

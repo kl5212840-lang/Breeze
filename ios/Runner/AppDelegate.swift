@@ -612,15 +612,35 @@ private final class VideoControlFactory: NSObject, FlutterPlatformViewFactory {
 /// Uses the system selector's material and selection animation without adding
 /// a separate glass background. Flutter chooses a multiline fallback if titles
 /// cannot fit, and owns the scaled font and minimum 44pt layout height.
+private final class ToolbarSegmentedControl: UISegmentedControl {
+  var verticalHitInset: CGFloat = 0
+
+  override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+    bounds.insetBy(dx: 0, dy: -verticalHitInset).contains(point)
+  }
+}
+
 private final class VideoSegmentedControlView: NSObject, FlutterPlatformView {
-  private let control = UISegmentedControl(items: [])
+  private let container = UIView()
+  private let control = ToolbarSegmentedControl(items: [])
+  private var top: NSLayoutConstraint!
+  private var bottom: NSLayoutConstraint!
   private let channel: FlutterMethodChannel
   private var definitions: [[String: String]] = []
 
   init(frame: CGRect, id: Int64, arguments: Any?, messenger: FlutterBinaryMessenger) {
     channel = FlutterMethodChannel(name: "breeze.video.control.\(id)", binaryMessenger: messenger)
     super.init()
-    control.frame = frame
+    container.frame = frame
+    control.translatesAutoresizingMaskIntoConstraints = false
+    container.addSubview(control)
+    top = control.topAnchor.constraint(equalTo: container.topAnchor)
+    bottom = control.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+    NSLayoutConstraint.activate([
+      top, bottom,
+      control.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+      control.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+    ])
     control.isMomentary = false
     control.apportionsSegmentWidthsByContent = false
     control.addAction(UIAction { [weak self] _ in
@@ -637,9 +657,13 @@ private final class VideoSegmentedControlView: NSObject, FlutterPlatformView {
     }
   }
 
-  func view() -> UIView { control }
+  func view() -> UIView { container }
 
   private func configure(_ args: [String: Any]) {
+    let inset = CGFloat((args["verticalInset"] as? NSNumber)?.doubleValue ?? 0)
+    top.constant = inset
+    bottom.constant = -inset
+    control.verticalHitInset = inset
     control.overrideUserInterfaceStyle = args["dark"] as? Bool == true ? .dark : .light
     control.selectedSegmentTintColor = videoThemeColor(args["selectedBackground"])
     control.semanticContentAttribute = args["rtl"] as? Bool == true ? .forceRightToLeft : .forceLeftToRight

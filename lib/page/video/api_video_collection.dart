@@ -38,6 +38,9 @@ class ApiVideoCollection extends StatefulWidget {
     this.footer,
     this.badges = const {},
     this.header,
+    this.pinHeader = false,
+    this.onRefresh,
+    this.continuationKey,
     this.compactAnime = false,
     this.loading = false,
     this.emptyState,
@@ -79,6 +82,9 @@ class ApiVideoCollection extends StatefulWidget {
   final Widget? footer;
   final Map<String, String> badges;
   final Widget? header;
+  final bool pinHeader;
+  final Future<void> Function()? onRefresh;
+  final Object? continuationKey;
   final bool compactAnime;
   final bool loading;
   final double contentBottomPadding;
@@ -190,9 +196,19 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
     binding.ensureVisualUpdate();
   }
 
+  void _checkShortPage() {
+    if (widget.continuationKey == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _scroll.hasClients && _scroll.position.extentAfter < 500) {
+        widget.onNearEnd?.call();
+      }
+    });
+  }
+
   @override
   void initState() {
     super.initState();
+    _checkShortPage();
     _scroll.addListener(() {
       if (_scroll.hasClients && _scroll.position.extentAfter < 500) {
         widget.onNearEnd?.call();
@@ -203,6 +219,7 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
   @override
   void didUpdateWidget(covariant ApiVideoCollection oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.continuationKey != widget.continuationKey) _checkShortPage();
     if (oldWidget.detailGeneration != widget.detailGeneration ||
         (widget.retryMissingCoverDetailsOnRefresh &&
             oldWidget.imageRefreshToken != widget.imageRefreshToken)) {
@@ -466,7 +483,7 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
         return content(initial);
       }
 
-      return CustomScrollView(
+      final scroll = CustomScrollView(
         key: PageStorageKey(widget.storageKey),
         controller: _scroll,
         // Detail reads belong to visible rows, not the next offscreen page.
@@ -476,7 +493,7 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
         physics: const AlwaysScrollableScrollPhysics(),
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         slivers: [
-          if (widget.header != null)
+          if (widget.header != null && !widget.pinHeader)
             SliverToBoxAdapter(key: _headerSliverKey, child: widget.header),
           if (!grid && widget.leadingItems.isNotEmpty)
             SliverPadding(
@@ -550,6 +567,17 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
                   MediaQuery.paddingOf(context).bottom,
             ),
           ),
+        ],
+      );
+      final body = widget.onRefresh == null
+          ? scroll
+          : RefreshIndicator(onRefresh: widget.onRefresh!, child: scroll);
+      if (!widget.pinHeader || widget.header == null) return body;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          widget.header!,
+          Expanded(child: body),
         ],
       );
     },

@@ -225,6 +225,7 @@ const String videoCardExtractionScript =
 String videoCatalogSnapshotScript(
   Map<String, String> selectors, {
   bool includeFilters = false,
+  bool detached = false,
 }) =>
     '''
   (() => {
@@ -243,7 +244,7 @@ String videoCatalogSnapshotScript(
     }));
     const normal = Array.from(document.querySelectorAll(config.cards +
       ', .content-padding-new div[class^="video-item-container"], div[class^="user-tab-item-wrapper"], .playlist-video-list > div.user-tab-item-wrapper'));
-    const searchResult = location.pathname === '/search' ? videoSearchResults() : null;
+    const searchResult = location.pathname === '/search' ? videoSearchResults(${detached ? 'false, true' : ''}) : null;
     const cards = (searchResult?.roots || [...new Set(normal)].slice(0, 160)).map(card);
     const categoryLinks = Array.from(document.querySelectorAll('a[href*="genre="]')).slice(0, 60)
       .map((node) => ({ title: label(node), url: node.getAttribute('href') || '' }));
@@ -338,6 +339,39 @@ String videoCatalogSnapshotScript(
       pageTitle: document.querySelector('.playlist-title')?.textContent?.trim() || '',
       resultCardCount: searchResult ? searchResult.roots.length : normal.length });
   })()
+''';
+
+/// Read the next native list page without replacing the live WebView.
+String hanimeCatalogContinuationScript(
+  Uri page,
+  Map<String, String> selectors,
+) =>
+    '''
+(async () => {
+  const target = new URL(${jsonEncode(page.toString())});
+  if (target.origin !== globalThis.location.origin ||
+      target.origin !== 'https://hanime1.me' ||
+      target.username || target.password) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 7000);
+  try {
+    const response = await fetch(target.href, {
+      credentials:'same-origin', redirect:'error', signal:controller.signal,
+    });
+    if (!response.ok || response.headers.get('cf-mitigated') === 'challenge') return null;
+    const location = new URL(response.url);
+    if (location.href !== target.href) return null;
+    const html = await response.text();
+    if (html.length > 3000000) return null;
+    const document = new DOMParser().parseFromString(html, 'text/html');
+    if (document.querySelector('#challenge-form, #cf-challenge-running, #cf-error-details')) return null;
+    return ${videoCatalogSnapshotScript(selectors, detached: true)};
+  } catch (_) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+})()
 ''';
 
 String videoDetailSnapshotScript(

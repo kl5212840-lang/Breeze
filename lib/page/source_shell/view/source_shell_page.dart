@@ -947,7 +947,7 @@ class _SourceShellPageState extends State<_SourceShellBody> {
               ),
               const SizedBox(height: 24),
               SearchToolbarScope(
-                extent: SearchToolbarScope.breezeExtent(context),
+                extent: SearchToolbarScope.fieldExtent(context),
                 child: Row(
                   children: [
                     Expanded(

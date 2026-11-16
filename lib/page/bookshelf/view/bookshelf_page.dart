@@ -1,3 +1,4 @@
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_navigation_bar.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
@@ -532,12 +533,16 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
       _refreshAll();
     },
     child: Scaffold(
-      appBar: AppBar(
-        automaticallyImplyLeading: false,
-        titleSpacing: CollectionToolbarMetrics.sourceContentInset,
-        scrolledUnderElevation: 0,
-        toolbarHeight: _headerHeight(context),
-        title: _buildHeader(),
+      appBar: SearchToolbarScope.appBar(
+        context,
+        (height) => AppBar(
+          automaticallyImplyLeading: false,
+          titleSpacing: CollectionToolbarMetrics.sourceContentInset,
+          scrolledUnderElevation: 0,
+          toolbarHeight: height ?? _headerHeight(context),
+          title: _buildHeader(),
+        ),
+        searching: _isSearchExpanded,
       ),
       body: Column(
         children: [
@@ -767,7 +772,6 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
   }
 
   Widget _buildHeader() {
-    const extent = CollectionToolbarMetrics.actionExtent;
     return ListenableBuilder(
       key: const ValueKey('bookshelf.main-header'),
       listenable: _header,
@@ -776,9 +780,14 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
         final slots = _header.slots;
         final theme = Theme.of(context);
         final subtitle = slots?.subtitle ?? '';
+        final extent =
+            SearchToolbarScope.of(context) ??
+            CollectionToolbarMetrics.actionExtent;
         return Row(
           children: [
             Expanded(child: field ?? _buildHeading(context, theme, subtitle)),
+            if (field != null)
+              const SizedBox(width: CollectionToolbarMetrics.searchControlGap),
             BlocSelector<BookshelfSearchCubit, BookshelfSearchState, String>(
               bloc: _activeSearch,
               selector: (state) => state.stateOf(_mode).keyword,
@@ -805,8 +814,11 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
               key: ValueKey('bookshelf.cover-privacy'),
               emphasizeProtected: true,
             ),
-            SizedBox.square(
-              dimension: extent,
+            SizedBox(
+              height: extent,
+              width: field == null
+                  ? extent
+                  : SearchToolbarScope.fieldActionWidth,
               child: _scopeLocked || slots?.more == null
                   ? null
                   : KeyedSubtree(

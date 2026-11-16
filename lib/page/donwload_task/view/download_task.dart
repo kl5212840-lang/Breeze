@@ -1,3 +1,4 @@
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/page/donwload_task/service/download_interaction_trace.dart';
 import 'package:zephyr/network/sync/portable_preferences.dart';
@@ -297,7 +298,10 @@ class _DownloadHeader extends StatelessWidget {
         }
 
         final title = measure(t.common.download, titleStyle, titleWidth);
-        var headerHeight = extent;
+        final searchExtent = searching
+            ? SearchToolbarScope.fieldExtent(context)
+            : null;
+        var headerHeight = searchExtent ?? extent;
         // Reserve both modes' labels so filtering/selection/search cannot move
         // the content. Large text wraps within this same header, never shrinks.
         for (final count in [
@@ -318,7 +322,7 @@ class _DownloadHeader extends StatelessWidget {
         final searchStart = titleWidth < 160
             ? (searchWidth < 160 ? searchWidth : 160.0)
             : titleWidth;
-        return SizedBox(
+        final header = SizedBox(
           key: const ValueKey('download-header'),
           height: headerHeight,
           child: TweenAnimationBuilder<double>(
@@ -499,6 +503,7 @@ class _DownloadHeader extends StatelessWidget {
             ),
           ),
         );
+        return SearchToolbarScope(extent: searchExtent, child: header);
       },
     ),
   );

@@ -1,3 +1,4 @@
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/widgets/collection_command_icons.dart';
 import 'package:zephyr/page/video/hanime_catalog_scope.dart';
 import 'package:zephyr/page/video/hanime_work_facts.dart';
@@ -310,10 +311,11 @@ class _SourceDownloadedVideosPageState
     },
     child: Scaffold(
       appBar: AppBar(
-        toolbarHeight:
-            widget.groupDownloads &&
-                _managing &&
-                MediaQuery.textScalerOf(context).scale(16) > 22
+        toolbarHeight: widget.groupDownloads && !_managing && _searching
+            ? SearchToolbarScope.fieldExtent(context) + 8
+            : widget.groupDownloads &&
+                  _managing &&
+                  MediaQuery.textScalerOf(context).scale(16) > 22
             ? 80
             : 56,
         automaticallyImplyLeading: !widget.groupDownloads,

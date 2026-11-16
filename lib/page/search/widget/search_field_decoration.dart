@@ -15,7 +15,7 @@ InputDecoration searchFieldDecoration(
 }) {
   final colors = Theme.of(context).colorScheme;
   final system = usesSystemSearchSurface(context);
-  final inBreezeToolbar = SearchToolbarScope.of(context) != null;
+  final inSearchToolbar = SearchToolbarScope.of(context) != null;
   final shape = OutlineInputBorder(
     borderRadius: searchFieldRadius(context),
     borderSide: BorderSide.none,
@@ -40,7 +40,7 @@ InputDecoration searchFieldDecoration(
     hintStyle: TextStyle(color: colors.onSurfaceVariant),
     contentPadding: EdgeInsets.symmetric(
       horizontal: 12,
-      vertical: inBreezeToolbar ? 9 : 12,
+      vertical: inSearchToolbar ? 9 : 12,
     ),
     prefixIcon:
         prefixIcon ??
@@ -51,7 +51,7 @@ InputDecoration searchFieldDecoration(
         ),
     prefixIconConstraints: BoxConstraints(
       minWidth: 44,
-      minHeight: inBreezeToolbar ? 44 : 48,
+      minHeight: inSearchToolbar ? 44 : 48,
     ),
     suffixIconConstraints: const BoxConstraints(minWidth: 44, minHeight: 44),
     suffixIcon: SizedBox(width: 44, child: suffixIcon),

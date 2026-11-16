@@ -2801,7 +2801,7 @@ class _ApiCatalogState extends State<_ApiCatalog> {
                 SearchToolbarScope(
                   extent: widget.siteSearchInHeader
                       ? null
-                      : SearchToolbarScope.breezeExtent(context),
+                      : SearchToolbarScope.fieldExtent(context),
                   child: Row(
                     children: [
                       Expanded(

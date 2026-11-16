@@ -1,3 +1,4 @@
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/page/navigation/main_navigation_layout.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'dart:async';
@@ -62,11 +63,17 @@ class SourceChromeIconButton extends StatelessWidget {
     final system = usesNativeSourceChrome(context);
     final breeze = !AppInterfaceStyleScope.usesSystem(context);
     final colors = Theme.of(context).colorScheme;
-    final fallback = SizedBox.square(
-      dimension: 44,
+    final searchExtent = SearchToolbarScope.of(context);
+    final extent = searchExtent ?? SearchToolbarScope.actionExtent;
+    final width = searchExtent == null
+        ? extent
+        : SearchToolbarScope.fieldActionWidth;
+    final fallback = SizedBox(
+      height: extent,
+      width: width,
       child: IconButton(
         tooltip: tooltip,
-        constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+        constraints: BoxConstraints.tightFor(width: width, height: extent),
         padding: EdgeInsets.zero,
         isSelected: selected,
         style: selected == true
@@ -90,8 +97,9 @@ class SourceChromeIconButton extends StatelessWidget {
     return Center(
       widthFactor: 1,
       heightFactor: 1,
-      child: SizedBox.square(
-        dimension: 44,
+      child: SizedBox(
+        height: extent,
+        width: width,
         child: system || breeze
             ? VideoControlAppearance(
                 systemControls: system,
