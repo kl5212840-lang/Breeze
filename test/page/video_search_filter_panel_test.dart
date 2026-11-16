@@ -99,16 +99,50 @@ void main() {
       }
 
       await tap(find.text('Open filters'));
-      expect(find.byKey(const ValueKey('video-filter.selected')), findsNothing);
-      expect(find.text(t.videoFilters.anyMatch), findsNothing);
-      await tap(find.byKey(const ValueKey('hanime-filter.tag.1080p')));
+      final selected = find.byKey(const ValueKey('video-filter.selected'));
+      final first = find.byKey(const ValueKey('hanime-filter.tag.1080p'));
+      final initialPosition = tester.getTopLeft(first);
+      final apply = find.byKey(const ValueKey('video-filter.apply'));
+      final applyPosition = tester.getTopLeft(apply);
+      expect(tester.widget<FilterChip>(selected).onSelected, isNull);
+      expect(find.text(t.videoFilters.anyMatch).hitTestable(), findsNothing);
+      await tap(first);
+      expect(tester.getTopLeft(first), initialPosition);
       await tap(find.byKey(const ValueKey('hanime-filter.tag.60FPS')));
+      expect(tester.getTopLeft(first), initialPosition);
+      expect(tester.getTopLeft(apply), applyPosition);
+      final search = find.byType(TextField);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.enterText(search, '1080');
+      tester.view.viewInsets = const FakeViewPadding(bottom: 360);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<EditableText>(find.byType(EditableText))
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
+      expect(
+        find.byKey(const ValueKey('hanime-filter.tag.60FPS')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+      FocusManager.instance.primaryFocus?.unfocus();
+      tester.view.resetViewInsets();
+      await tester.pumpAndSettle();
+      await tap(find.byTooltip(t.common.clear));
+      expect(tester.getTopLeft(first), initialPosition);
       await tap(find.text(t.videoFilters.anyMatch));
       await tap(find.widgetWithText(Tab, t.videoFilters.date));
       expect(
         find.byKey(const ValueKey('hanime-filter.custom-date')),
         findsOneWidget,
       );
+      await tap(find.widgetWithText(Tab, t.videoFilters.tags));
+      expect(find.text(t.videoFilters.selected(count: 2)), findsOneWidget);
+      expect(tester.getTopLeft(first), initialPosition);
+      await tap(find.widgetWithText(Tab, t.videoFilters.date));
       await tap(find.byKey(const ValueKey('video-filter.date.past')));
       await tap(find.byKey(const ValueKey('video-filter.apply')));
       expect(

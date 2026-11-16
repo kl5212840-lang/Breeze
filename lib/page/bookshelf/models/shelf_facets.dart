@@ -29,6 +29,7 @@ const shelfFacetDimensions = [
   'language',
   'author',
   'quality',
+  'duration',
 ];
 
 enum ShelfFacetScope { current, descendants, all }

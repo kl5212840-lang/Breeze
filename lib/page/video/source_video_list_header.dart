@@ -154,6 +154,8 @@ class SourceVideoResultsToolbar extends StatelessWidget {
     this.gridView,
     this.onToggleView,
     this.filter,
+    this.layout,
+    this.showSortValue = false,
     this.horizontalInset = sourceVideoCollectionInset,
   });
 
@@ -162,7 +164,8 @@ class SourceVideoResultsToolbar extends StatelessWidget {
   final ValueChanged<String>? onSort;
   final bool? gridView;
   final VoidCallback? onToggleView;
-  final Widget? filter;
+  final Widget? filter, layout;
+  final bool showSortValue;
   final double horizontalInset;
 
   @override
@@ -177,22 +180,32 @@ class SourceVideoResultsToolbar extends StatelessWidget {
               count,
               key: ValueKey('$keyPrefix.count'),
               style: Theme.of(context).textTheme.bodySmall,
+              maxLines: showSortValue ? 1 : null,
+              overflow: showSortValue ? TextOverflow.ellipsis : null,
             ),
           ),
           if (sortOptions.length > 1)
             if (onSort case final choose?)
               NativeVideoMenu(
                 key: ValueKey('$keyPrefix.sort'),
-                label: '',
+                label: showSortValue
+                    ? (sortOptions[sort] ?? t.videoLibrary.sort)
+                    : '',
                 tooltip: sortOptions[sort] == null
                     ? t.videoLibrary.sort
                     : '${t.videoLibrary.sort} · ${sortOptions[sort]}',
                 selected: sort,
                 options: sortOptions,
-                width: CollectionToolbarMetrics.actionExtent,
+                width: showSortValue
+                    ? (94 * MediaQuery.textScalerOf(context).scale(1)).clamp(
+                        94.0,
+                        144.0,
+                      )
+                    : CollectionToolbarMetrics.actionExtent,
                 hostPresentation: true,
-                icon: CollectionCommandIcons.sort.icon,
-                symbol: CollectionCommandIcons.sort.symbol,
+                compactTextChoice: showSortValue,
+                icon: showSortValue ? null : CollectionCommandIcons.sort.icon,
+                symbol: showSortValue ? '' : CollectionCommandIcons.sort.symbol,
                 onSelected: (value) {
                   if (value != sort && sortOptions.containsKey(value)) {
                     choose(value);
@@ -223,6 +236,7 @@ class SourceVideoResultsToolbar extends StatelessWidget {
                           : CollectionCommandIcons.grid)
                       .symbol,
             ),
+          ?layout,
           ?filter,
         ],
       ),

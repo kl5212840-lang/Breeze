@@ -763,6 +763,20 @@ void main() {
   testWidgets(
     'Hanime category and rank own their destinations and public filter sections',
     (tester) async {
+      plugin.catalog = (_) async => {
+        'data': {
+          ..._catalog('Work with statistics')['data'] as Map<String, dynamic>,
+          'videos': [
+            {
+              'title': 'Work with statistics',
+              'watchUrl': 'https://hanime1.me/watch?v=2',
+              'ratingPercentRaw': '93%',
+              'viewCountRaw': '1.2万次',
+              'positiveVotes': 120,
+            },
+          ],
+        },
+      };
       await _mount(
         tester,
         plugin,
@@ -777,6 +791,13 @@ void main() {
       );
       web.finishLastLoad();
       await _pump(tester);
+      final sourceMenu = tester.widget<NativeVideoMenu>(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is NativeVideoMenu && widget.options.containsKey('tools'),
+        ),
+      );
+      expect(sourceMenu.options.keys, unorderedEquals(['website', 'tools']));
       expect(find.byKey(const ValueKey('hanime-results.filter')), findsNothing);
 
       await tester.tap(find.text('排行'));
@@ -785,6 +806,43 @@ void main() {
       await _pump(tester);
       expect(web.loads.last.queryParameters['sort'], '本日排行');
       expect(find.byKey(const ValueKey('hanime-results.filter')), findsNothing);
+      final layout = find.byKey(const ValueKey('hanime-results.layout'));
+      expect(find.byKey(const ValueKey('hanime-results.count')), findsNothing);
+      expect(
+        tester.getCenter(layout).dy,
+        tester.getCenter(find.byKey(const ValueKey('hanime.ranking.today'))).dy,
+      );
+      tester.widget<NativeVideoMenu>(layout).onSelected('detail');
+      await _pump(tester);
+      expect(find.text(t.videoMetadata.rating(value: '93%')), findsOneWidget);
+      expect(find.text(t.videoMetadata.views(value: '1.2万次')), findsOneWidget);
+      expect(
+        find.text(t.videoMetadata.positiveVotes(count: 120)),
+        findsOneWidget,
+      );
+      tester.widget<NativeVideoMenu>(layout).onSelected('large');
+      await _pump(tester);
+      expect(
+        tester
+            .widget<ApiVideoCollection>(find.byType(ApiVideoCollection))
+            .gridColumns,
+        2,
+      );
+      expect(
+        find.textContaining(t.videoMetadata.rating(value: '93%')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(t.videoMetadata.positiveVotes(count: 120)),
+        findsNothing,
+      );
+      tester.widget<NativeVideoMenu>(layout).onSelected('compact');
+      await _pump(tester);
+      expect(find.text(t.videoMetadata.rating(value: '93%')), findsOneWidget);
+      expect(
+        find.textContaining(t.videoMetadata.views(value: '1.2万次')),
+        findsNothing,
+      );
       await tester.tap(find.byKey(const ValueKey('hanime.ranking.week')));
       await _pump(tester);
       web.finishLastLoad();
@@ -806,6 +864,15 @@ void main() {
       await _pump(tester);
       expect(categoryWeb.loads.last.queryParameters['genre'], 'Animation');
       expect(categoryWeb.loads.last.queryParameters['sort'], isNull);
+      final sort = find.byKey(const ValueKey('hanime-results.sort'));
+      expect(tester.widget<NativeVideoMenu>(sort).label, 'Default');
+      tester.widget<NativeVideoMenu>(sort).onSelected('views');
+      await _pump(tester);
+      categoryWeb.finishLastLoad();
+      await _pump(tester);
+      expect(categoryWeb.loads.last.queryParameters['sort'], 'views');
+      expect(tester.widget<NativeVideoMenu>(sort).label, 'Views');
+      expect(tester.widget<NativeVideoMenu>(sort).selected, 'views');
       await tester.tap(find.byKey(const ValueKey('hanime-results.filter')));
       await _pump(tester);
       final panel = tester.widget<VideoSearchFilterPanel>(
@@ -817,6 +884,96 @@ void main() {
         VideoFilterSection.duration,
       ]);
       expect(panel.initial.genre, 'Animation');
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'Hanime personal collections preserve saved layout and filter observed durations',
+    (tester) async {
+      final owner = Uri.https('hanime1.me', '/user/42');
+      final saves = owner.replace(path: '${owner.path}/saves');
+      final scope = VideoPersonalSnapshotStore.scope(
+        'hanime-test',
+        owner,
+        saves.replace(queryParameters: const <String, String>{}, fragment: ''),
+      );
+      await CollectionViewPreferences.write(scope, 'grid');
+      plugin.catalog = (_) async => {
+        'data': {
+          ..._catalog('Saved works')['data'] as Map<String, dynamic>,
+          'videos': [
+            {
+              'title': 'Short work',
+              'watchUrl': 'https://hanime1.me/watch?v=2',
+              'creatorName': 'First author',
+              'duration': '8:15',
+            },
+            {
+              'title': 'Unspecified work',
+              'watchUrl': 'https://hanime1.me/watch?v=3',
+              'creatorName': 'Second author',
+            },
+          ],
+          'account': {
+            'status': 'signedIn',
+            'isOwnProfile': true,
+            'profileUrl': '$owner',
+            'links': [
+              for (final kind in ['histories', 'saves', 'likes', 'playlists'])
+                {'title': kind, 'url': '$owner/$kind'},
+            ],
+          },
+        },
+      };
+      await _mount(
+        tester,
+        plugin,
+        nativePersonal: true,
+        structuredHanime: true,
+        filters: _filters,
+      );
+      web.finishLastLoad();
+      await _pump(tester);
+      web.profileHref = '/user/42';
+      await tester.tap(find.text('我的'));
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      await _openPersonalLibrary(tester, 'saves');
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+
+      ApiVideoCollection collection() =>
+          tester.widget(find.byType(ApiVideoCollection));
+      expect(collection().posterAspectRatio, 16 / 9);
+      expect(collection().gridColumns, 3);
+      final layout = tester.widget<NativeVideoMenu>(
+        find.byKey(const ValueKey('personal-records.layout')),
+      );
+      expect(layout.selected, 'compact');
+      layout.onSelected('large');
+      await _pump(tester);
+      expect(collection().gridColumns, 2);
+      expect(
+        await CollectionViewPreferences.read(scope, supportedViews: {'large'}),
+        'large',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('personal-records.filter')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('shelf-facet-author')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('shelf-facet-duration')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('shelf-option-duration-less-than-10')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('shelf-filter-apply')));
+      await tester.pumpAndSettle();
+      expect(collection().items.map((item) => item.title), ['Short work']);
+      expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );

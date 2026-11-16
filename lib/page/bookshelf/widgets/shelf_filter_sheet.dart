@@ -157,6 +157,7 @@ class _ShelfFilterSheetState extends State<_ShelfFilterSheet>
     'language': t.bookshelf.facets.language,
     'author': t.bookshelf.facets.author,
     'quality': t.bookshelf.facets.quality,
+    'duration': t.videoFilters.duration,
   };
 
   @override
@@ -521,7 +522,7 @@ class _ShelfFilterSheetState extends State<_ShelfFilterSheet>
           selected: selected,
           onToggle: (value) => _toggle(dimension!, value),
           optionKey: (value) => ValueKey('shelf-option-$dimension-$value'),
-          label: _label,
+          label: (value) => _label(dimension, value),
           reorderController: _reorder,
           trailing: !_supportsFacetFavorites(dimension)
               ? null
@@ -536,7 +537,7 @@ class _ShelfFilterSheetState extends State<_ShelfFilterSheet>
                       ? null
                       : ShelfTagPinButton.optionTooltip(
                           context,
-                          label: _label(value),
+                          label: _label(dimension, value),
                           pinned: pinned.contains(value),
                         ),
                   onPressed: !_saving && preferenceError == null
@@ -584,5 +585,12 @@ class _ShelfFilterSheetState extends State<_ShelfFilterSheet>
     );
   }
 
-  String _label(String value) => shelfFacetDisplayValue(value);
+  String _label(String? dimension, String value) =>
+      switch ((dimension, value)) {
+        ('duration', 'less-than-10') => t.download.durationShort,
+        ('duration', '10-to-30') => t.download.durationMedium,
+        ('duration', '30-to-60') => t.download.durationLong,
+        ('duration', '60-or-more') => t.download.durationHour,
+        _ => shelfFacetDisplayValue(value),
+      };
 }

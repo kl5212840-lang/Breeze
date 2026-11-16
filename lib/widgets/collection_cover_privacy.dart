@@ -114,16 +114,19 @@ class CollectionCoverPrivacyScope extends InheritedWidget {
     super.key,
     required super.child,
     this.enabled = true,
+    this.replacementFit = BoxFit.cover,
   });
   final bool enabled;
-  static bool contains(BuildContext context) =>
-      context
-          .dependOnInheritedWidgetOfExactType<CollectionCoverPrivacyScope>()
-          ?.enabled ??
-      false;
+  final BoxFit replacementFit;
+  static CollectionCoverPrivacyScope? of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<CollectionCoverPrivacyScope>();
+
+  static bool contains(BuildContext context) => of(context)?.enabled ?? false;
+
   @override
   bool updateShouldNotify(CollectionCoverPrivacyScope oldWidget) =>
-      enabled != oldWidget.enabled;
+      enabled != oldWidget.enabled ||
+      replacementFit != oldWidget.replacementFit;
 }
 
 class CollectionCoverPrivacy extends StatelessWidget {
@@ -159,7 +162,8 @@ class CollectionCoverPrivacy extends StatelessWidget {
         ),
       );
     }
-    if (!enabled || !CollectionCoverPrivacyScope.contains(context)) {
+    final scope = CollectionCoverPrivacyScope.of(context);
+    if (!enabled || scope == null || !scope.enabled) {
       return child;
     }
     final controller = CollectionCoverPrivacyController.instance;
@@ -199,7 +203,10 @@ class CollectionCoverPrivacy extends StatelessWidget {
                   Positioned.fill(
                     child: IgnorePointer(
                       child: hasArtwork
-                          ? _ReplacementCover(path: path)
+                          ? _ReplacementCover(
+                              path: path,
+                              fit: scope.replacementFit,
+                            )
                           : mosaic
                           ? _MosaicCover(
                               image: this.image,
@@ -340,9 +347,10 @@ class _MosaicCoverState extends State<_MosaicCover> {
 }
 
 class _ReplacementCover extends StatelessWidget {
-  const _ReplacementCover({required this.path});
+  const _ReplacementCover({required this.path, required this.fit});
 
   final String path;
+  final BoxFit fit;
 
   @override
   Widget build(BuildContext context) => ColoredBox(
@@ -361,7 +369,7 @@ class _ReplacementCover extends StatelessWidget {
             height: limit,
             policy: ResizeImagePolicy.fit,
           ),
-          fit: BoxFit.cover,
+          fit: fit,
           errorBuilder: (_, _, _) => const SizedBox.shrink(),
         );
       },

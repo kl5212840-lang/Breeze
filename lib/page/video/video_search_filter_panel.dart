@@ -1,3 +1,4 @@
+import 'package:zephyr/page/bookshelf/widgets/facet_filter_body.dart';
 import 'package:zephyr/widgets/native_material_surface.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/page/search/widget/search_field_decoration.dart';
@@ -60,6 +61,8 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
   Duration? _tabDuration;
   late final _query = TextEditingController(text: _draft.query);
   final _tagSearch = TextEditingController();
+  final _structuredScroll = ScrollController();
+  final _structuredOffsets = <int, double>{};
   late final _year = TextEditingController();
   int? _month;
   bool _customDate = false, _loading = false;
@@ -122,6 +125,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
     _tabs.dispose();
     _query.dispose();
     _tagSearch.dispose();
+    _structuredScroll.dispose();
     _year.dispose();
     super.dispose();
   }
@@ -132,7 +136,28 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
 
   void _tabChanged() {
     if (_visibleSection != _tabs.index) {
-      setState(() => _visibleSection = _tabs.index);
+      final previous = _visibleSection, next = _tabs.index;
+      if (widget.structuredLayout &&
+          previous != null &&
+          _structuredScroll.hasClients) {
+        _structuredOffsets[previous] = _structuredScroll.offset;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted ||
+              _tabs.index != next ||
+              !_structuredScroll.hasClients) {
+            return;
+          }
+          final position = _structuredScroll.position;
+          if (!position.hasContentDimensions) return;
+          _structuredScroll.jumpTo(
+            (_structuredOffsets[next] ?? 0).clamp(
+              position.minScrollExtent,
+              position.maxScrollExtent,
+            ),
+          );
+        });
+      }
+      setState(() => _visibleSection = next);
     }
     if (widget.sections[_tabs.index] == VideoFilterSection.tags &&
         _schema.tagGroups.isEmpty &&
@@ -407,214 +432,314 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
         choices;
   }
 
-  Widget _structuredTags() {
-    final query = _tagSearch.text.trim();
+  Widget _structuredTagControls(BuildContext context) {
     final groups = _schema.tagGroups;
     final group = groups.containsKey(_group) ? _group : groups.keys.firstOrNull;
+    final count = _draft.tags.length;
+    final browsingGroups = !_selectedOnly && _tagSearch.text.trim().isEmpty;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _tagSearchField(context),
+          const SizedBox(height: 4),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              spacing: 8,
+              children: [
+                FilterChip(
+                  key: const ValueKey('video-filter.selected'),
+                  avatar: const Icon(Icons.checklist_rounded, size: 18),
+                  label: Text(t.videoFilters.selected(count: count)),
+                  selected: _selectedOnly,
+                  showCheckmark: false,
+                  onSelected: count == 0 && !_selectedOnly
+                      ? null
+                      : (value) {
+                          _tagSearch.clear();
+                          setState(() => _selectedOnly = value);
+                        },
+                ),
+                Visibility(
+                  visible: count > 1,
+                  maintainState: true,
+                  maintainAnimation: true,
+                  maintainSize: true,
+                  child: Row(
+                    spacing: 8,
+                    children: _tagMatchChoices(context).toList(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (groups.isNotEmpty)
+            SingleChildScrollView(
+              key: const PageStorageKey('hanime.filter.groups'),
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                spacing: 8,
+                children: [
+                  for (final name in groups.keys)
+                    ChoiceChip(
+                      label: Text(name),
+                      selected: browsingGroups && group == name,
+                      showCheckmark: false,
+                      chipAnimationStyle: _chipMotion(context),
+                      onSelected: (_) {
+                        _tagSearch.clear();
+                        FocusScope.of(context).unfocus();
+                        setState(() {
+                          _selectedOnly = false;
+                          _group = name;
+                        });
+                        if (_structuredScroll.hasClients) {
+                          _structuredScroll.jumpTo(0);
+                        }
+                      },
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _structuredTagOptions(BuildContext context, double width) {
     final choices = _tagChoices();
     final favorites = _favorites;
     final known = _selectedOnly
         ? {
-            for (final items in groups.values)
+            for (final items in _schema.tagGroups.values)
               for (final item in items) item.value,
           }
         : null;
-    final count = _draft.tags.length;
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final scale = MediaQuery.textScalerOf(context).scale(14);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final columns = constraints.maxWidth - 32 >= 320 * scale / 14 ? 2 : 1;
-        return CustomScrollView(
-          key: const PageStorageKey('hanime.filter.tags'),
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          slivers: [
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                child: _tagSearchField(context),
+    final columns = width - 32 >= 320 * scale / 14 ? 2 : 1;
+    return SliverMainAxisGroup(
+      slivers: [
+        if (_loading)
+          const SliverToBoxAdapter(
+            child: LinearProgressIndicator(minHeight: 2),
+          ),
+        if (_error != null && choices.isEmpty)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Semantics(liveRegion: true, child: Text(_error!)),
+                  TextButton(onPressed: _read, child: Text(t.common.retry)),
+                ],
               ),
             ),
-            if (count > 0 || _selectedOnly)
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Wrap(
-                    spacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      FilterChip(
-                        key: const ValueKey('video-filter.selected'),
-                        avatar: const Icon(Icons.checklist_rounded, size: 18),
-                        label: Text(t.videoFilters.selected(count: count)),
-                        selected: _selectedOnly,
-                        showCheckmark: false,
-                        onSelected: (value) {
-                          _tagSearch.clear();
-                          setState(() => _selectedOnly = value);
-                        },
-                      ),
-                      if (count > 1) ..._tagMatchChoices(context),
-                    ],
-                  ),
+          )
+        else if (choices.isEmpty && !_loading)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+              child: Text(
+                _selectedOnly
+                    ? t.videoFilters.noSelection
+                    : t.videoFilters.noMatchingTags,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colors.onSurfaceVariant,
                 ),
               ),
-            if (!_selectedOnly && query.isEmpty && groups.isNotEmpty)
-              SliverToBoxAdapter(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-                  child: Row(
-                    spacing: 8,
-                    children: [
-                      for (final name in groups.keys)
-                        ChoiceChip(
-                          label: Text(name),
-                          selected: group == name,
-                          showCheckmark: false,
-                          chipAnimationStyle: _chipMotion(context),
-                          onSelected: (_) => setState(() => _group = name),
-                        ),
-                    ],
-                  ),
-                ),
+            ),
+          )
+        else
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+            sliver: SliverGrid.builder(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: columns,
+                mainAxisExtent: scale * 2.8 + 16,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
               ),
-            if (_loading)
-              const SliverToBoxAdapter(
-                child: LinearProgressIndicator(minHeight: 2),
-              ),
-            if (_error != null && choices.isEmpty)
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Semantics(liveRegion: true, child: Text(_error!)),
-                      TextButton(onPressed: _read, child: Text(t.common.retry)),
-                    ],
-                  ),
-                ),
-              )
-            else if (choices.isEmpty && !_loading)
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 24,
-                  ),
-                  child: Text(
-                    _selectedOnly
-                        ? t.videoFilters.noSelection
-                        : t.videoFilters.noMatchingTags,
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: colors.onSurfaceVariant,
+              itemCount: choices.length,
+              itemBuilder: (context, index) {
+                final choice = choices[index];
+                final selected = _draft.tags.contains(choice.value);
+                return Material(
+                  color: selected
+                      ? colors.secondaryContainer
+                      : colors.surfaceContainerLow,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(
+                      color: selected ? colors.primary : colors.outlineVariant,
                     ),
                   ),
-                ),
-              )
-            else
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                sliver: SliverGrid.builder(
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: columns,
-                    mainAxisExtent: scale * 2.8 + 16,
-                    crossAxisSpacing: 8,
-                    mainAxisSpacing: 8,
-                  ),
-                  itemCount: choices.length,
-                  itemBuilder: (context, index) {
-                    final choice = choices[index];
-                    final selected = _draft.tags.contains(choice.value);
-                    return Material(
-                      color: selected
-                          ? colors.secondaryContainer
-                          : colors.surfaceContainerLow,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        side: BorderSide(
-                          color: selected
-                              ? colors.primary
-                              : colors.outlineVariant,
-                        ),
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(
-                            child: Semantics(
-                              selected: selected,
-                              button: true,
-                              child: InkWell(
-                                key: ValueKey(
-                                  'hanime-filter.tag.${choice.value}',
-                                ),
-                                onTap: () => setState(
-                                  () => _draft = selected
-                                      ? _draft.removeTag(choice.value)
-                                      : _draft.change(
-                                          VideoFilterSection.tags,
-                                          choice.value,
-                                        ),
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsetsDirectional.only(
-                                    start: 10,
-                                    end: 4,
+                  clipBehavior: Clip.antiAlias,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: Semantics(
+                          selected: selected,
+                          button: true,
+                          child: InkWell(
+                            key: ValueKey('hanime-filter.tag.${choice.value}'),
+                            onTap: () => setState(
+                              () => _draft = selected
+                                  ? _draft.removeTag(choice.value)
+                                  : _draft.change(
+                                      VideoFilterSection.tags,
+                                      choice.value,
+                                    ),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsetsDirectional.only(
+                                start: 10,
+                                end: 4,
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    selected
+                                        ? Icons.check_circle_rounded
+                                        : Icons.circle_outlined,
+                                    size: 17,
+                                    color: selected
+                                        ? colors.primary
+                                        : colors.onSurfaceVariant,
                                   ),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        selected
-                                            ? Icons.check_circle_rounded
-                                            : Icons.circle_outlined,
-                                        size: 17,
-                                        color: selected
-                                            ? colors.primary
-                                            : colors.onSurfaceVariant,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Text(
-                                          choice.label,
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: theme.textTheme.labelLarge
-                                              ?.copyWith(
-                                                color: selected
-                                                    ? colors
-                                                          .onSecondaryContainer
-                                                    : colors.onSurface,
-                                              ),
-                                        ),
-                                      ),
-                                    ],
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      choice.label,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.labelLarge
+                                          ?.copyWith(
+                                            color: selected
+                                                ? colors.onSecondaryContainer
+                                                : colors.onSurface,
+                                          ),
+                                    ),
                                   ),
-                                ),
+                                ],
                               ),
                             ),
                           ),
-                          if (favorites != null &&
-                              (known?.contains(choice.value) ?? true))
-                            favorites.star(
-                              context,
-                              'tags',
-                              choice.value,
-                              choice.label,
-                            ),
-                        ],
+                        ),
                       ),
-                    );
-                  },
+                      if (favorites != null &&
+                          (known?.contains(choice.value) ?? true))
+                        favorites.star(
+                          context,
+                          'tags',
+                          choice.value,
+                          choice.label,
+                        ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _structuredPanel(BuildContext context, double width) {
+    final section = widget.sections[_tabs.index];
+    final colors = Theme.of(context).colorScheme;
+    final scrollTabs =
+        width - 32 < 295 * MediaQuery.textScalerOf(context).scale(14) / 14;
+    return SafeArea(
+      top: false,
+      child: FacetFilterBody(
+        scrollKey: const ValueKey('hanime.filter.options'),
+        scrollController: _structuredScroll,
+        header: Padding(
+          padding: const EdgeInsetsDirectional.only(start: 16, end: 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  t.videoFilters.title,
+                  style: Theme.of(context).textTheme.titleMedium,
                 ),
               ),
+              TextButton(
+                key: const ValueKey('video-filter.reset'),
+                onPressed: _reset,
+                child: Text(t.videoFilters.clearFilters),
+              ),
+              IconButton(
+                tooltip: t.common.cancel,
+                onPressed: _cancel,
+                icon: const Icon(Icons.close_rounded),
+              ),
+            ],
+          ),
+        ),
+        controls: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: colors.surfaceContainerLow,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: TabBar(
+                  controller: _tabs,
+                  isScrollable: scrollTabs,
+                  tabAlignment: scrollTabs
+                      ? TabAlignment.start
+                      : TabAlignment.fill,
+                  dividerColor: Colors.transparent,
+                  indicatorSize: TabBarIndicatorSize.tab,
+                  indicatorPadding: const EdgeInsets.all(3),
+                  indicator: BoxDecoration(
+                    color: colors.primaryContainer,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  labelColor: colors.onPrimaryContainer,
+                  tabs: [
+                    for (final value in widget.sections)
+                      Tab(text: videoFilterTitle(value)),
+                  ],
+                ),
+              ),
+            ),
+            if (section == VideoFilterSection.tags)
+              _structuredTagControls(context),
           ],
-        );
-      },
+        ),
+        options: section == VideoFilterSection.tags
+            ? _structuredTagOptions(context, width)
+            : SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: _single(context, section),
+                ),
+              ),
+        footer: Padding(
+          padding: const EdgeInsets.all(12),
+          child: SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              key: const ValueKey('video-filter.apply'),
+              style: FilledButton.styleFrom(minimumSize: const Size(44, 44)),
+              onPressed: _invalidYear ? null : _apply,
+              child: Text(t.videoFilters.apply),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1056,23 +1181,21 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
       child: LayoutBuilder(
         builder: (context, constraints) {
           final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
-          final structured = widget.structuredLayout;
-          final scrollTabs = !structured || constraints.maxWidth < 295 * scale;
-          final colors = Theme.of(context).colorScheme;
+          if (widget.structuredLayout) {
+            return SizedBox(
+              key: const ValueKey('video-filter.panel'),
+              height: constraints.maxHeight.clamp(0.0, 600.0),
+              child: _structuredPanel(context, constraints.maxWidth),
+            );
+          }
           final section = widget.sections[_tabs.index];
           final tags = section == VideoFilterSection.tags;
-          final grid = structured
-              ? null
-              : _tagGrid(context, constraints.maxWidth, _tagChoices());
-          // Small groups should not stretch to a nearly full-screen sheet. Large
-          // groups still get the available viewport and retain lazy grid scrolling.
-          final desired = structured
-              ? 560 * scale
-              : tags
-              ? 340 * scale + grid!.rows * (grid.extent + 8) + 40
+          final grid = _tagGrid(context, constraints.maxWidth, _tagChoices());
+          final desired = tags
+              ? 340 * scale + grid.rows * (grid.extent + 8) + 40
               : (_customDate && section == VideoFilterSection.date
-                        ? 640.0
-                        : 420.0) *
+                        ? 640
+                        : 420) *
                     scale;
           return SizedBox(
             key: const ValueKey('video-filter.panel'),
@@ -1160,52 +1283,19 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                       ),
                     ),
                     if (!keyboard)
-                      Padding(
-                        padding: structured
-                            ? const EdgeInsets.fromLTRB(16, 2, 16, 4)
-                            : EdgeInsets.zero,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: structured
-                                ? colors.surfaceContainerLow
-                                : null,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: TabBar(
-                            controller: _tabs,
-                            isScrollable: scrollTabs,
-                            tabAlignment: scrollTabs
-                                ? TabAlignment.start
-                                : TabAlignment.fill,
-                            dividerColor: structured
-                                ? Colors.transparent
-                                : null,
-                            indicatorSize: structured
-                                ? TabBarIndicatorSize.tab
-                                : null,
-                            indicatorPadding: structured
-                                ? const EdgeInsets.all(3)
-                                : EdgeInsets.zero,
-                            indicator: structured
-                                ? BoxDecoration(
-                                    color: colors.primaryContainer,
-                                    borderRadius: BorderRadius.circular(10),
-                                  )
-                                : null,
-                            labelColor: structured
-                                ? colors.onPrimaryContainer
-                                : null,
-                            labelStyle: Theme.of(context).textTheme.labelLarge
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                            unselectedLabelStyle: Theme.of(
-                              context,
-                            ).textTheme.labelLarge,
-                            tabs: [
-                              for (final section in widget.sections)
-                                Tab(text: videoFilterTitle(section)),
-                            ],
-                          ),
-                        ),
+                      TabBar(
+                        controller: _tabs,
+                        isScrollable: true,
+                        tabAlignment: TabAlignment.start,
+                        labelStyle: Theme.of(context).textTheme.labelLarge
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                        unselectedLabelStyle: Theme.of(
+                          context,
+                        ).textTheme.labelLarge,
+                        tabs: [
+                          for (final section in widget.sections)
+                            Tab(text: videoFilterTitle(section)),
+                        ],
                       ),
                     Expanded(
                       child: NativeMaterialSurface(
@@ -1221,7 +1311,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                           children: [
                             for (final section in widget.sections)
                               section == VideoFilterSection.tags
-                                  ? (structured ? _structuredTags() : _tags())
+                                  ? _tags()
                                   : ListView(
                                       key: PageStorageKey(
                                         'video-filter.${section.name}',

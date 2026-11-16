@@ -12,10 +12,12 @@ class FacetFilterBody extends StatefulWidget {
     required this.footer,
     required this.scrollKey,
     this.hasScope = false,
+    this.scrollController,
   });
   final Widget header, controls, options, footer;
   final Key scrollKey;
   final bool hasScope;
+  final ScrollController? scrollController;
   @override
   State<FacetFilterBody> createState() => _FacetFilterBodyState();
 }
@@ -89,6 +91,7 @@ class _FacetFilterBodyState extends State<FacetFilterBody> {
                 },
                 child: CustomScrollView(
                   key: _viewportKey,
+                  controller: widget.scrollController,
                   primary: false,
                   scrollBehavior: ScrollConfiguration.of(
                     context,
