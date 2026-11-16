@@ -155,6 +155,7 @@ class _WebPlatform extends InAppWebViewPlatform {
   final verificationWindows = <Uri>[];
   Completer<bool>? verificationWindowResult;
   Future<void>? nextStop;
+  Future<String?>? nextEmptySearch;
   String profileHref = '';
   bool signedOutEntry = true;
   int accountReads = 0;
@@ -333,6 +334,11 @@ class _WebController extends PlatformInAppWebViewController
     required String source,
     ContentWorld? contentWorld,
   }) async {
+    if (source.contains('videoSearchResults(true, true)')) {
+      final pending = host.nextEmptySearch;
+      host.nextEmptySearch = null;
+      return pending;
+    }
     if (source.contains('const breezePublicWork')) {
       final match = RegExp(
         r'const breezePublicWork = "([^"]+)"',
@@ -1014,6 +1020,75 @@ void main() {
           .initial;
       expect(draft.tags, ['A', 'B']);
       expect(draft.anyTag, isTrue);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'Hanime filters stay usable during pending and timed-out searches',
+    (tester) async {
+      final home = Uri.https('hanime1.me', '/');
+      final initial = VideoSearchFilters(tags: ['A']).toUri(home);
+      final all = VideoSearchFilters(tags: ['A', 'B']).toUri(home);
+      final any = VideoSearchFilters(
+        tags: ['A', 'B'],
+        anyTag: true,
+      ).toUri(home);
+      await _mount(
+        tester,
+        plugin,
+        structuredHanime: true,
+        filters: _filters,
+        initialUrl: initial,
+      );
+      web.finishLastLoad();
+      await _pump(tester);
+      final filter = find.byKey(const ValueKey('hanime-results.filter'));
+      final apply = find.byKey(const ValueKey('video-filter.apply'));
+      final first = Completer<String?>();
+      web.nextEmptySearch = first.future;
+      await tester.tap(filter);
+      await _pump(tester);
+      await tester.tap(find.byKey(const ValueKey('hanime-filter.tag.B')));
+      await tester.tap(apply);
+      await _pump(tester);
+      expect(web.loads, [initial]);
+      expect(find.text(t.common.loading), findsOneWidget);
+      expect(filter, findsOneWidget);
+
+      await tester.tap(filter);
+      await _pump(tester);
+      await tester.tap(
+        find.widgetWithText(ChoiceChip, t.videoFilters.anyMatch),
+      );
+      await tester.tap(apply);
+      await _pump(tester);
+      expect(web.loads.last, any);
+      first.complete(all.toString());
+      await _pump(tester);
+      expect(find.text(t.search.noResults), findsNothing);
+
+      await tester.pump(const Duration(seconds: 9));
+      await _pump(tester);
+      expect(filter, findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('hanime-results.edit-failed-filters')),
+        findsOneWidget,
+      );
+      expect(find.text(t.search.noResults), findsNothing);
+
+      web.nextEmptySearch = Future.value(all.toString());
+      await tester.tap(filter);
+      await _pump(tester);
+      await tester.tap(
+        find.widgetWithText(ChoiceChip, t.videoFilters.allMatch),
+      );
+      await tester.tap(apply);
+      await _pump(tester, 15);
+      expect(web.loads.last, any);
+      expect(find.text(t.search.noResults), findsOneWidget);
+      expect(filter, findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     },

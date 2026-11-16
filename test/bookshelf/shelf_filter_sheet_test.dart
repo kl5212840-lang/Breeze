@@ -79,6 +79,44 @@ Future<void> _mount(
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  testWidgets('shelf filter reopens on its applied facet with outlined chips', (
+    tester,
+  ) async {
+    final style = ValueNotifier('breeze');
+    addTearDown(style.dispose);
+    await _mount(
+      tester,
+      style: style,
+      initial: const ShelfFacetSelection(
+        values: {
+          'author': {'Y'},
+        },
+      ),
+      onResult: (_) {},
+    );
+    final author = find.byKey(const ValueKey('shelf-facet-author'));
+    final applied = find.byKey(const ValueKey('shelf-option-author-Y'));
+    final other = find.byKey(const ValueKey('shelf-option-author-X'));
+    expect(tester.widget<ChoiceChip>(author).selected, isTrue);
+    expect(
+      tester.getTopLeft(applied).dy,
+      lessThan(tester.getTopLeft(other).dy),
+    );
+    final side = ChipTheme.of(tester.element(author)).side;
+    expect(side, isA<WidgetStateBorderSide>());
+    expect(
+      (side as WidgetStateBorderSide).resolve({WidgetState.selected})?.style,
+      BorderStyle.solid,
+    );
+    await tester.tap(other);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getTopLeft(applied).dy,
+      lessThan(tester.getTopLeft(other).dy),
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   for (final styleName in ['system', 'breeze']) {
     for (final brightness in Brightness.values) {
       for (final large in [false, true]) {

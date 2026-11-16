@@ -15,8 +15,8 @@ class SourceListViewToggle extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SourceChromeIconButton(
     tooltip: detailed ? t.comicList.switchToGrid : t.comicList.switchToList,
-    icon: CollectionCommandIcons.grid.icon,
-    symbol: CollectionCommandIcons.grid.symbol,
+    icon: CollectionCommandIcons.toggleTarget(!detailed).icon,
+    symbol: CollectionCommandIcons.toggleTarget(!detailed).symbol,
     onPressed: () => onChanged(!detailed),
   );
 }

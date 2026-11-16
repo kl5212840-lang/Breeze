@@ -11,6 +11,8 @@ abstract final class CollectionCommandIcons {
     symbol: 'square.grid.2x2',
   );
   static const list = (icon: Icons.view_list_outlined, symbol: 'list.bullet');
+  static ({IconData icon, String symbol}) toggleTarget(bool currentlyGrid) =>
+      currentlyGrid ? list : grid;
   static const filterIcon = Icons.tune_rounded;
   static const filterSymbol = 'slider.horizontal.3';
   static const filter = (icon: filterIcon, symbol: filterSymbol);

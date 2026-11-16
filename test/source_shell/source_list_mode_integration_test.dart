@@ -657,14 +657,15 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byType(SourceListViewToggle), findsOneWidget);
-      final viewButton = tester.widget<SourceChromeIconButton>(
-        find.descendant(
-          of: find.byType(SourceListViewToggle),
-          matching: find.byType(SourceChromeIconButton),
-        ),
+      final view = find.descendant(
+        of: find.byType(SourceListViewToggle),
+        matching: find.byType(SourceChromeIconButton),
       );
-      expect(viewButton.icon, Icons.grid_view_outlined);
-      expect(viewButton.symbol, 'square.grid.2x2');
+      expect(
+        tester.widget<SourceChromeIconButton>(view).icon,
+        Icons.view_list_outlined,
+      );
+      expect(tester.widget<SourceChromeIconButton>(view).symbol, 'list.bullet');
       expect(find.byType(PluginComicGridSliver), findsOneWidget);
       final cubit = tester
           .element(find.byType(PluginComicGridSliver))
@@ -679,6 +680,14 @@ void main() {
       await tester.tap(find.byType(SourceListViewToggle));
       await tester.pumpAndSettle();
       expect(find.byType(SourceSearchDetailList), findsOneWidget);
+      expect(
+        tester.widget<SourceChromeIconButton>(view).icon,
+        Icons.grid_view_outlined,
+      );
+      expect(
+        tester.widget<SourceChromeIconButton>(view).symbol,
+        'square.grid.2x2',
+      );
       final after = tester
           .element(find.byType(SourceSearchDetailList))
           .read<PluginPagedComicListCubit>();

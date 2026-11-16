@@ -51,7 +51,23 @@ class _FacetFilterBodyState extends State<FacetFilterBody> {
   }
 
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return ChipTheme(
+      data: ChipTheme.of(context).copyWith(
+        side: WidgetStateBorderSide.resolveWith(
+          (states) => BorderSide(
+            color: states.contains(WidgetState.selected)
+                ? colors.primary.withValues(alpha: .55)
+                : colors.outlineVariant,
+          ),
+        ),
+      ),
+      child: _layout(),
+    );
+  }
+
+  Widget _layout() => LayoutBuilder(
     builder: (context, bounds) {
       final height = math.max(
         0.0,

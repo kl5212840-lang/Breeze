@@ -236,8 +236,8 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
     return SourceChromeIconButton(
       key: const ValueKey('api-catalog.view-mode'),
       tooltip: grid ? t.videoLibrary.detailList : t.videoLibrary.grid,
-      icon: CollectionCommandIcons.grid.icon,
-      symbol: CollectionCommandIcons.grid.symbol,
+      icon: CollectionCommandIcons.toggleTarget(grid).icon,
+      symbol: CollectionCommandIcons.toggleTarget(grid).symbol,
       onPressed: _savingViews.contains('library')
           ? null
           : () => unawaited(_toggleView('library')),
@@ -1221,8 +1221,12 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                                   tooltip: _mode == ApiVideoView.grid
                                       ? t.videoLibrary.detailList
                                       : t.videoLibrary.grid,
-                                  symbol: CollectionCommandIcons.grid.symbol,
-                                  icon: CollectionCommandIcons.grid.icon,
+                                  symbol: CollectionCommandIcons.toggleTarget(
+                                    _mode == ApiVideoView.grid,
+                                  ).symbol,
+                                  icon: CollectionCommandIcons.toggleTarget(
+                                    _mode == ApiVideoView.grid,
+                                  ).icon,
                                   onPressed: _savingView ? null : _toggleView,
                                 ),
                               if (_omo && _tab == _omoAccountIndex)
@@ -1249,9 +1253,14 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                                         label: _mode == ApiVideoView.grid
                                             ? t.videoLibrary.detailList
                                             : t.videoLibrary.grid,
-                                        icon: CollectionCommandIcons.grid.icon,
+                                        icon:
+                                            CollectionCommandIcons.toggleTarget(
+                                              _mode == ApiVideoView.grid,
+                                            ).icon,
                                         symbol:
-                                            CollectionCommandIcons.grid.symbol,
+                                            CollectionCommandIcons.toggleTarget(
+                                              _mode == ApiVideoView.grid,
+                                            ).symbol,
                                         onSelected: () =>
                                             unawaited(_toggleView()),
                                       ),

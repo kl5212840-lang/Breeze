@@ -313,7 +313,10 @@ class _ShelfFilterSheetState extends State<_ShelfFilterSheet>
     int count,
     double inset,
   ) {
-    final dimensions = options.keys.toList();
+    final dimensions = facetOptionsAppliedFirst(options.keys.toList(), {
+      for (final entry in widget.initial.values.entries)
+        if (entry.value.isNotEmpty) entry.key,
+    });
     final dimension = dimensions.contains(_expanded)
         ? _expanded
         : dimensions.firstOrNull;
@@ -331,12 +334,16 @@ class _ShelfFilterSheetState extends State<_ShelfFilterSheet>
                   : t.bookshelf.facets.loadFailed
             : null);
     final pinned = favorites ?? const <String>{};
-    final values = {...counts.keys, ...selected}.toList()
+    final ordered = {...counts.keys, ...selected}.toList()
       ..sort((a, b) {
         final rank =
             (pinned.contains(b) ? 1 : 0) - (pinned.contains(a) ? 1 : 0);
         return rank != 0 ? rank : a.compareTo(b);
       });
+    final values = facetOptionsAppliedFirst(
+      ordered,
+      widget.initial.values[dimension] ?? const {},
+    );
     final header = Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
       child: Row(

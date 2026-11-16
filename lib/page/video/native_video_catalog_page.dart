@@ -607,6 +607,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       widget.structuredHanime &&
       uri.path == '/search' &&
       uri.queryParameters['type'] != 'artist';
+  bool get _nativeHanimeResults =>
+      !_websiteVisible && _hanimeWorks(_requestedUrl);
+  bool _multiTagHanimeSearch(Uri uri) =>
+      _hanimeWorks(uri) && VideoSearchFilters.fromUri(uri).tags.length > 1;
   HanimeCatalogLayout _hanimeLayout = HanimeCatalogLayout.large;
   HanimeRanking _hanimeRanking = HanimeRanking.today;
   final _hanimeRankPages = <HanimeRanking, Uri>{};
@@ -2225,23 +2229,26 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   void _startLoadWatchdog(Uri? uri) {
     _loadWatchdog?.cancel();
     if (!_isFirstParty(uri) || _refreshCompleter != null) return;
+    final expected = uri!;
     final epoch = _loadEpoch;
     if (_deadlineEpoch != epoch) {
       _loadDeadline?.cancel();
       _deadlineEpoch = epoch;
-      _loadDeadline = Timer(
-        Duration(seconds: _sourceOptions.parseTimeoutSeconds),
-        () {
-          if (mounted && epoch == _loadEpoch && (_busy || _refreshingCatalog)) {
-            _showLoadError(
-              reason: 'dom-not-ready-${_sourceOptions.parseTimeoutSeconds}s',
-              path: uri!.path,
-            );
-          }
-        },
-      );
+      final multiTagSearch =
+          !_websiteVisible && _multiTagHanimeSearch(expected);
+      final seconds = multiTagSearch ? 9 : _sourceOptions.parseTimeoutSeconds;
+      _loadDeadline = Timer(Duration(seconds: seconds), () {
+        if (mounted && epoch == _loadEpoch && (_busy || _refreshingCatalog)) {
+          _showLoadError(
+            reason: multiTagSearch
+                ? 'filter-results-timeout'
+                : 'dom-not-ready-${seconds}s',
+            path: expected.path,
+          );
+        }
+      });
     }
-    _scheduleDomProbe(uri!, epoch, 1);
+    _scheduleDomProbe(expected, epoch, 1);
   }
 
   void _scheduleDomProbe(Uri expected, int epoch, int attempt) {
@@ -2316,7 +2323,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         (transport
             ? const SocketException('Web document connection failed')
             : StateError(reason));
-    if (_automaticCatalogAllowed)
+    if (_automaticCatalogAllowed && !_multiTagHanimeSearch(_requestedUrl))
       _readRecovery.failed(failure);
     else
       _readRecovery.reset();
@@ -2342,6 +2349,11 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                 : 'The site refused this visit (HTTP 403). This page has no verification to complete. Try later or check the official site in your browser.')
           : _websiteVisible
           ? t.webview.loadFailed
+          : reason == 'filter-results-timeout'
+          ? _hanimeLabel(
+              '站点暂未返回筛选结果，可以调整条件或重试。',
+              'The site has not returned results. Edit your filters or retry.',
+            )
           : t.videoPlayback.catalogFallback;
       _diagnostic =
           'Hanime1 native catalog\npath: ${videoSiteDiagnosticPath(Uri(path: path))}\nfailure: $reason';
@@ -2448,6 +2460,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
             personalSnapshot != null &&
                 _personalSnapshots.fresh(personalSnapshot));
     final wasLoading = _documentLoading;
+    final canProbeForEmptySearch =
+        _multiTagHanimeSearch(uri) &&
+        _isFirstParty(_lastDocumentUrl) &&
+        !_verificationVisible;
     if (_creatorDirectoryPending != null) {
       _creatorDirectoryReader?.dispose();
       _creatorDirectoryReader = null;
@@ -2504,6 +2520,26 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     try {
       await web.stopLoading().timeout(const Duration(seconds: 5));
       if (!mounted || epoch != _loadEpoch) return;
+      if (canProbeForEmptySearch) {
+        final empty = await _probeEmptyHanimeSearch(web, uri);
+        if (!mounted || epoch != _loadEpoch || _siteLoadFailed) return;
+        if (empty && _currentAccountDocument) {
+          _clearVerification();
+          _readRecovery.succeeded();
+          _completeAutomaticRead();
+          setState(() {
+            _sections = const [];
+            _videos = const [];
+            _paging = const {};
+            _busy = false;
+            _documentLoading = false;
+            _awaitingCommit = false;
+            _refreshingCatalog = false;
+          });
+          _recordCatalogFrame('confirmed-empty-search');
+          return;
+        }
+      }
       _browserDiagnostics.requested('native-navigation');
       _clearDocumentFailureEvidence();
       await web
@@ -2517,6 +2553,22 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           error: error,
         );
       }
+    }
+  }
+
+  Future<bool> _probeEmptyHanimeSearch(
+    InAppWebViewController web,
+    Uri target,
+  ) async {
+    try {
+      final raw = await videoBrowserReadAsync(
+        web,
+        hanimeEmptySearchProbeScript(target, widget.selectors),
+      ).timeout(const Duration(seconds: 4));
+      return raw is String &&
+          videoSiteDocumentMatches(target, Uri.tryParse(raw));
+    } catch (_) {
+      return false;
     }
   }
 
@@ -3309,9 +3361,11 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       }
       if (!widget.structuredHanime ||
           result.copyWith(page: 1) != initial.copyWith(page: 1)) {
-        await _load(
-          result.toUri(widget.homeUrl, pageNumber: 1),
-          rememberHistory: !widget.structuredHanime,
+        unawaited(
+          _load(
+            result.toUri(widget.homeUrl, pageNumber: 1),
+            rememberHistory: !widget.structuredHanime,
+          ),
         );
       }
     } finally {
@@ -5683,11 +5737,81 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     );
   }
 
+  Widget _catalogLoadError() => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.sync_problem_rounded, size: 36),
+          const SizedBox(height: 12),
+          Text(_message ?? t.webview.loadFailed, textAlign: TextAlign.center),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 12,
+            alignment: WrapAlignment.center,
+            children: [
+              FilledButton.tonal(
+                onPressed: () => _websiteVisible
+                    ? _openWebsitePage(
+                        _requestedUrl,
+                        fallback: videoSiteDocumentMatches(
+                          _websiteFallbackUrl,
+                          _requestedUrl,
+                        ),
+                      )
+                    : _load(_requestedUrl),
+                child: Text(t.common.retry),
+              ),
+              if (widget.structuredHanime &&
+                  _hanimeWorks(_requestedUrl) &&
+                  !_websiteVisible)
+                OutlinedButton(
+                  key: const ValueKey('hanime-results.edit-failed-filters'),
+                  onPressed: () => unawaited(
+                    _openFilters(VideoFilterSection.tags, advanced: true),
+                  ),
+                  child: Text(_hanimeLabel('调整筛选', 'Edit filters')),
+                ),
+              OutlinedButton(
+                onPressed: () => _openWebsitePage(
+                  _requestedUrl,
+                  fallback: true,
+                  userChoice: true,
+                ),
+                child: Text(t.videoPlayback.website),
+              ),
+            ],
+          ),
+          if (_diagnosticToolsEnabled && _diagnostic != null)
+            TextButton(
+              onPressed: _copyDiagnostic,
+              child: Text(t.videoPlayback.copyDiagnostic),
+            ),
+        ],
+      ),
+    ),
+  );
+
   Widget _nativeContent({
     Map<String, dynamic>? preview,
     Uri? page,
     bool contentOnly = false,
   }) {
+    if (preview == null && _nativeHanimeResults && (_busy || _siteLoadFailed)) {
+      return _hanimeResults(
+        _requestedUrl,
+        const [],
+        const {},
+        preview: false,
+        exactTag: null,
+        titleOnly: false,
+        resultState: _siteLoadFailed
+            ? _catalogLoadError()
+            : Center(child: Text(t.common.loading)),
+        loading: _busy,
+      );
+    }
     if (_siteLoadFailed && preview == null) {
       // A failed new destination must not expose the preceding home/profile
       // beneath the recovery layer, including through accessibility semantics.
@@ -6849,6 +6973,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     required bool preview,
     required VideoFilterChoice? exactTag,
     required bool titleOnly,
+    Widget? resultState,
+    bool loading = false,
   }) {
     final filters = VideoSearchFilters.fromUri(page);
     final ranking = _hanimeRank;
@@ -6979,7 +7105,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                 label: Text('${t.videoFilters.searchTags} · ${exactTag.label}'),
               ),
             ),
-          if (_refreshingCatalog && !preview)
+          if (loading || _refreshingCatalog && !preview)
             const LinearProgressIndicator(minHeight: 2),
           if (_catalogRefreshFailed && !preview)
             TextButton(
@@ -6988,13 +7114,15 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
             ),
         ],
       ),
-      emptyState: Center(
-        child: Text(
-          titleOnly && next != null
-              ? _hanimeLabel('本页无标题匹配', 'No matching titles on this page')
-              : t.search.noResults,
-        ),
-      ),
+      emptyState:
+          resultState ??
+          Center(
+            child: Text(
+              titleOnly && next != null
+                  ? _hanimeLabel('本页无标题匹配', 'No matching titles on this page')
+                  : t.search.noResults,
+            ),
+          ),
       footer: previous == null && next == null
           ? null
           : Padding(
@@ -8053,85 +8181,13 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                           ),
                         ),
                       ),
-                    if (_siteLoadFailed && !_hasPersonalShell)
+                    if (_siteLoadFailed &&
+                        !_hasPersonalShell &&
+                        !_nativeHanimeResults)
                       Positioned.fill(
                         child: ColoredBox(
                           color: Theme.of(context).colorScheme.surface,
-                          child: Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.sync_problem_rounded,
-                                    size: 36,
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    _message ?? t.webview.loadFailed,
-                                    textAlign: TextAlign.center,
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Wrap(
-                                    spacing: 12,
-                                    alignment: WrapAlignment.center,
-                                    children: [
-                                      FilledButton.tonal(
-                                        onPressed: () => _websiteVisible
-                                            ? _openWebsitePage(
-                                                _requestedUrl,
-                                                fallback:
-                                                    videoSiteDocumentMatches(
-                                                      _websiteFallbackUrl,
-                                                      _requestedUrl,
-                                                    ),
-                                              )
-                                            : _load(_requestedUrl),
-                                        child: Text(t.common.retry),
-                                      ),
-                                      if (widget.structuredHanime &&
-                                          _hanimeWorks(_requestedUrl) &&
-                                          !_websiteVisible)
-                                        OutlinedButton(
-                                          key: const ValueKey(
-                                            'hanime-results.edit-failed-filters',
-                                          ),
-                                          onPressed: () => unawaited(
-                                            _openFilters(
-                                              VideoFilterSection.tags,
-                                              advanced: true,
-                                            ),
-                                          ),
-                                          child: Text(
-                                            _hanimeLabel(
-                                              '调整筛选',
-                                              'Edit filters',
-                                            ),
-                                          ),
-                                        ),
-                                      OutlinedButton(
-                                        onPressed: () => _openWebsitePage(
-                                          _requestedUrl,
-                                          fallback: true,
-                                          userChoice: true,
-                                        ),
-                                        child: Text(t.videoPlayback.website),
-                                      ),
-                                    ],
-                                  ),
-                                  if (_diagnosticToolsEnabled &&
-                                      _diagnostic != null)
-                                    TextButton(
-                                      onPressed: _copyDiagnostic,
-                                      child: Text(
-                                        t.videoPlayback.copyDiagnostic,
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
+                          child: _catalogLoadError(),
                         ),
                       ),
                     if (_websiteVisible && _message != null && !_siteLoadFailed)

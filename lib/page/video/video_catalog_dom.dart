@@ -44,7 +44,7 @@ const String videoSearchDiscoveryScript = r'''
       } catch (_) { return false; }
     });
   };
-  const videoSearchResults = (firstOnly = false) => {
+  const videoSearchResults = (firstOnly = false, detached = false) => {
     const wrappers = Array.from(document.querySelectorAll('.home-rows-videos-wrapper')).slice(0, 160);
     const normal = Array.from(document.querySelectorAll(config.cards)).slice(0, 160);
     const compact = [];
@@ -78,8 +78,40 @@ const String videoSearchDiscoveryScript = r'''
     const emptyMessage = messages.some(node => !node.closest('form, nav, .modal') &&
       /^(?:(?:沒有|没有|未找到|找不到|無法找到|无法找到|沒有找到|没有找到|未能找到|無|无)(?:找到)?(?:任何)?(?:符合(?:搜尋|搜索|篩選|筛选)?(?:條件|条件)(?:的)?|(?:相關|相关))?(?:影片|視頻|视频|結果|结果|資料|资料)|(?:搜尋|搜索|篩選|筛选)(?:結果|结果)?(?:為|为)\s*0(?:\s*(?:部|筆|笔|個|个))?|no (?:results|videos|matches)(?: (?:were )?found)?(?: (?:matching|for) (?:your|the) (?:search|filters))?)[。.!！\s]*$/i.test(node.textContent?.trim() || ''));
     const emptyWrappers = wrappers.length > 0 && wrappers.every(node => !node.children.length && !node.textContent?.trim());
-    return { roots, state: emptyMessage || emptyWrappers ? 'empty' : content || wrappers.length ? 'unrecognized' : 'waiting' };
+    return { roots, state: emptyMessage || (!detached && emptyWrappers) ? 'empty' : content || wrappers.length ? 'unrecognized' : 'waiting' };
   };
+''';
+
+/// Confirm an empty multi-tag search in the same session without waiting for
+/// main-frame navigation or for the result page's subresources.
+String hanimeEmptySearchProbeScript(Uri page, Map<String, String> selectors) =>
+    '''
+(async () => {
+  const target = new URL(${jsonEncode(page.toString())});
+  if (target.origin !== globalThis.location.origin || target.origin !== 'https://hanime1.me' ||
+      target.pathname !== '/search' || target.username || target.password) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3400);
+  try {
+    const response = await fetch(target.href, {
+      credentials:'same-origin', redirect:'error', signal:controller.signal,
+    });
+    if (!response.ok || response.headers.get('cf-mitigated') === 'challenge') return null;
+    const html = await response.text();
+    if (html.length > 1500000) return null;
+    const location = new URL(response.url);
+    if (location.origin !== target.origin || location.pathname !== target.pathname) return null;
+    const document = new DOMParser().parseFromString(html, 'text/html');
+    if (document.querySelector('#challenge-form, #cf-challenge-running, #cf-error-details')) return null;
+    const config = ${jsonEncode(selectors)};
+    $videoSearchDiscoveryScript
+    return videoSearchResults(true, true).state === 'empty' ? location.href : null;
+  } catch (_) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+})()
 ''';
 
 const String videoCreatorExtractionScript = r'''

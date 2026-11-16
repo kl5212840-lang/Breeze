@@ -39,8 +39,9 @@ assert.equal(read('Unexpected markup'), 'unrecognized');
   test('ad-only search results settle before subresources finish', () async {
     const harness = r'''
 const assert = require('node:assert/strict'), vm = require('node:vm');
-const script = JSON.parse(process.argv[1]);
-function read({readyState='interactive', busy=false, href='https://ads.example/offer',
+const [script, probe] = JSON.parse(process.argv[1]);
+const page = new URL('https://hanime1.me/search?genre=Animation&tags%5B%5D=A&tags%5B%5D=B');
+function fixture({readyState='interactive', busy=false, href='https://ads.example/offer',
   pageLink=false, unknown=false, normalCard=false}={}) {
   const node = ({tagName='DIV', classes=[], attrs={}, children=[]}={}) => ({
     tagName, children, firstElementChild:children[0], classList:{contains:c => classes.includes(c)},
@@ -56,11 +57,12 @@ function read({readyState='interactive', busy=false, href='https://ads.example/o
   wrapper.nextElementSibling = node({classes:['search-pagination']});
   const card = node({attrs:{'data-id':'123'}});
   const form = node();
-  const document = {readyState, title:'Search', querySelectorAll:selector =>
+  return {readyState, title:'Search', querySelectorAll:selector =>
     selector === '.home-rows-videos-wrapper' ? [wrapper] : normalCard && selector === '.card' ? [card] : [],
     querySelector:selector => selector === 'form[action$="/search"]' ? form : null};
-  return JSON.parse(vm.runInNewContext(script, {document, window:{},
-    location:new URL('https://hanime1.me/search?genre=Animation&tags%5B%5D=A&tags%5B%5D=B'), URL}));
+}
+function read(options) {
+  return JSON.parse(vm.runInNewContext(script, {document:fixture(options), window:{}, location:page, URL}));
 }
 assert.equal(read().searchState,'empty');
 assert.equal(read().nativeContent,true);
@@ -71,16 +73,44 @@ assert.equal(read({pageLink:true}).searchState,'waiting');
 assert.equal(read({href:'/watch?v=123'}).searchState,'waiting');
 assert.equal(read({unknown:true}).searchState,'waiting');
 assert.equal(read({normalCard:true}).searchState,'content');
+async function confirm({status=200, destination=page.href, location=page, ...options}={}) {
+  return vm.runInNewContext(probe, {
+    URL, location, AbortController, setTimeout, clearTimeout,
+    fetch: async (url, init) => {
+      assert.equal(url, page.href);
+      assert.equal(init.credentials, 'same-origin');
+      assert.equal(init.redirect, 'error');
+      return {ok:status === 200, url:destination, headers:new Map(), text:async () => 'fixture'};
+    },
+    DOMParser: class { parseFromString() { return fixture({readyState:'complete', ...options}); } },
+  });
+}
+(async () => {
+  assert.equal(await confirm(), page.href);
+  assert.equal(await confirm({normalCard:true}), null);
+  assert.equal(await confirm({unknown:true}), null);
+  assert.equal(await confirm({status:503}), null);
+  assert.equal(await confirm({destination:'https://other.example/search'}), null);
+  assert.equal(await confirm({location:new URL('https://other.example/')}), null);
+})().catch(error => { console.error(error); process.exitCode = 1; });
 ''';
+    const selectors = {'cards': '.card', 'cardLink': 'a[href*="/watch"]'};
     final result = await Process.run('node', [
       '-e',
       harness,
-      jsonEncode(
-        videoSiteStateScript({
-          'cards': '.card',
-          'cardLink': 'a[href*="/watch"]',
-        }, diagnostics: false),
-      ),
+      jsonEncode([
+        videoSiteStateScript(selectors, diagnostics: false),
+        hanimeEmptySearchProbeScript(
+          home.replace(
+            path: '/search',
+            queryParameters: {
+              'genre': 'Animation',
+              'tags[]': ['A', 'B'],
+            },
+          ),
+          selectors,
+        ),
+      ]),
     ]);
     expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
   });

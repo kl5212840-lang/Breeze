@@ -150,8 +150,12 @@ class BookshelfContentToolbar extends StatelessWidget {
         ),
       SourceChromeIconButton(
         key: ValueKey('$keyPrefix.view'),
-        icon: CollectionCommandIcons.grid.icon,
-        symbol: CollectionCommandIcons.grid.symbol,
+        icon: CollectionCommandIcons.toggleTarget(
+          view == BookshelfContentView.grid,
+        ).icon,
+        symbol: CollectionCommandIcons.toggleTarget(
+          view == BookshelfContentView.grid,
+        ).symbol,
         tooltip: view == BookshelfContentView.grid
             ? t.videoLibrary.detailList
             : t.videoLibrary.grid,

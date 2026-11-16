@@ -1,6 +1,17 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/bookshelf/widgets/facet_reorder_motion.dart';
 
+/// Keep the order stable while the current draft is being edited.
+List<String> facetOptionsAppliedFirst(
+  List<String> options,
+  Set<String> applied,
+) => [
+  for (final option in options)
+    if (applied.contains(option)) option,
+  for (final option in options)
+    if (!applied.contains(option)) option,
+];
+
 /// Bounded, lazy checkbox rows shared by bookshelf and download facets.
 /// Selected zero-count values remain actionable so a draft can be cleared.
 class FacetOptionList extends StatelessWidget {
@@ -107,8 +118,10 @@ class FacetOptionSliver extends StatelessWidget {
       itemBuilder: (context, index) {
         final value = values[index];
         final extra = trailing?.call(value);
+        final checked = selected.contains(value);
+        final colors = Theme.of(context).colorScheme;
         final row = Semantics(
-          selected: selected.contains(value),
+          selected: checked,
           child: Row(
             children: [
               Expanded(
@@ -117,15 +130,20 @@ class FacetOptionSliver extends StatelessWidget {
                   style: TextButton.styleFrom(
                     minimumSize: const Size(44, 44),
                     alignment: Alignment.centerLeft,
+                    backgroundColor: checked ? colors.secondaryContainer : null,
+                    side: checked
+                        ? BorderSide(
+                            color: colors.primary.withValues(alpha: .55),
+                          )
+                        : null,
                   ),
-                  onPressed:
-                      (counts[value] ?? 0) > 0 || selected.contains(value)
+                  onPressed: (counts[value] ?? 0) > 0 || checked
                       ? () => onToggle(value)
                       : null,
                   child: Row(
                     children: [
                       Icon(
-                        selected.contains(value)
+                        checked
                             ? Icons.check_box_outlined
                             : Icons.check_box_outline_blank,
                         size: 20,
