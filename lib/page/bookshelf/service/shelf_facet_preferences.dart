@@ -116,6 +116,17 @@ class ShelfFacetPreferences {
     return _serialize(preferenceKey, () => _write(preferenceKey, snapshot));
   }
 
+  static Future<void> normalizeTags(
+    String preferenceKey,
+    String Function(String) normalize,
+  ) => _serialize(preferenceKey, () async {
+    final before = await _read(preferenceKey);
+    final next = before.map(normalize).toSet();
+    if (next.length != before.length || !next.containsAll(before)) {
+      await _write(preferenceKey, next);
+    }
+  });
+
   /// Mutate the current persisted set, never an open sheet's old snapshot.
   static Future<Set<String>> toggle(String preferenceKey, String tag) {
     final value = tag.trim();

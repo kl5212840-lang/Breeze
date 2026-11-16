@@ -1,3 +1,4 @@
+import 'package:zephyr/page/bookshelf/service/shelf_facet_preferences.dart';
 import 'package:zephyr/widgets/collection_command_icons.dart';
 import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
 import 'package:zephyr/page/video/video_personal_page_window.dart';
@@ -4303,17 +4304,27 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       }
       final authentication = _isAuthenticationPage(uri);
       if (!authentication && !_currentAccountDocument) return;
-      final result = await _onceAfterDomSettles(() async {
+      final (result, portraitCards) = await _onceAfterDomSettles(() async {
         final snapshot = await _snapshot(false);
         if (!mounted ||
             epoch != _loadEpoch ||
             accountGeneration != _accountGeneration) {
           throw const PluginSessionChanged();
         }
-        return _callPlugin(widget.catalogFnPath, {
+        final result = await _callPlugin(widget.catalogFnPath, {
           'pageUrl': uri.toString(),
           'snapshot': snapshot,
         });
+        final portraitCards = {
+          if (_hanimeWorks(uri) &&
+              uri.queryParameters['genre']?.isNotEmpty == true)
+            for (final raw in asJsonList(snapshot['cards']).map(asJsonMap))
+              if (raw['portraitCover'] == true)
+                if (hanimeWorkPage(Uri.tryParse('${raw['href'] ?? ''}'))
+                    case final page?)
+                  page,
+        };
+        return (result, portraitCards);
       }, epoch);
       if (!mounted ||
           epoch != _loadEpoch ||
@@ -4321,6 +4332,17 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           !authentication && !_currentAccountDocument)
         return;
       final data = Map<String, dynamic>.from(asJsonMap(result['data']));
+      if (portraitCards.isNotEmpty) {
+        data['videos'] = [
+          for (final raw in asJsonList(data['videos']).map(asJsonMap))
+            if (portraitCards.contains(
+              hanimeWorkPage(Uri.tryParse('${raw['watchUrl'] ?? ''}')),
+            ))
+              {...raw, 'portraitCover': true}
+            else
+              raw,
+        ];
+      }
       if (_accountEntryTabId == _activeTab) {
         _accountEntryTabId = null;
         final account = asJsonMap(data['account']);
@@ -5104,6 +5126,36 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         : const <String, String>{},
     fragment: '',
   );
+  String _hanimePersonalTag(String label) {
+    final base = label.replaceFirst(RegExp(r'\s*[(（][0-9]+[)）]$'), '').trim();
+    if (base == label || base.isEmpty) return label;
+    final choices = (_siteFilters ?? widget.searchFilters)?.tagGroups.values
+        .expand((group) => group);
+    if (choices?.any((tag) => tag.value == label || tag.label == label) == true)
+      return label;
+    if (base == '1080p' ||
+        choices?.any((tag) => tag.value == base || tag.label == base) == true)
+      return base;
+    return label;
+  }
+
+  String _normalizeHanimeFacetTag(String value) => value == shelfFacetUnknown
+      ? value
+      : shelfFacetEncodeValue(
+          _hanimePersonalTag(shelfFacetDisplayValue(value)),
+        );
+
+  ShelfFacetSelection _personalTagSelection(ShelfFacetSelection selection) {
+    final tags = selection.values['tags'];
+    if (!widget.structuredHanime || tags == null) return selection;
+    return selection.copyWith(
+      values: {
+        ...selection.values,
+        'tags': tags.map(_normalizeHanimeFacetTag).toSet(),
+      },
+    );
+  }
+
   ShelfFacetEntry _personalFacet(Map<String, dynamic> row) {
     Set<String> values(Object? raw) => raw is Iterable
         ? raw
@@ -5148,6 +5200,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       'language': values(row['language']),
       if (durationBand != null) 'duration': {durationBand},
     }..removeWhere((_, values) => values.isEmpty);
+    if (fields['tags'] case final tags? when widget.structuredHanime) {
+      fields['tags'] = tags.map(_hanimePersonalTag).toSet();
+    }
     return ShelfFacetEntry(
       key: '${row['watchUrl'] ?? row['pageUrl'] ?? ''}',
       source: widget.source,
@@ -5176,7 +5231,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   ) {
     final scope = _personalScope(page);
     final query = normalizePublicSearchText(_personalQueries[scope] ?? '');
-    final facets = _personalFacets[scope] ?? const ShelfFacetSelection();
+    final facets = _personalTagSelection(
+      _personalFacets[scope] ?? const ShelfFacetSelection(),
+    );
     final result = rows.where((row) {
       final entry = _personalFacet(row);
       return _personalKeywordMatches(row, entry, scope, query) &&
@@ -5248,11 +5305,21 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     }
 
     try {
-      if (hanime) _updatePersonalFilterFacts = update;
+      if (hanime) {
+        await ShelfFacetPreferences.normalizeTags(
+          _personalPreferenceScope(page),
+          _normalizeHanimeFacetTag,
+        ).catchError((Object _) {});
+        if (!current()) return;
+        _updatePersonalFilterFacts = update;
+        snapshot.value = read();
+      }
       final selection = showShelfFilterSheet(
         context,
         entries: initial.entries,
-        initial: _personalFacets[scope] ?? const ShelfFacetSelection(),
+        initial: _personalTagSelection(
+          _personalFacets[scope] ?? const ShelfFacetSelection(),
+        ),
         preferenceKey: _personalPreferenceScope(page),
         scopeLabel: initial.scopeLabel,
         currentFolder: null,
@@ -7055,6 +7122,11 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   }) {
     final filters = VideoSearchFilters.fromUri(page);
     final ranking = _hanimeRank;
+    final portraitPage =
+        !ranking &&
+        filters.genre.isNotEmpty &&
+        videos.isNotEmpty &&
+        videos.every((row) => row['portraitCover'] == true);
     final schema = _siteFilters ?? widget.searchFilters!;
     final active =
         filters.tags.isNotEmpty ||
@@ -7107,7 +7179,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           ? ApiVideoView.list
           : ApiVideoView.grid,
       gridColumns: _hanimeLayout == HanimeCatalogLayout.large ? 2 : 3,
-      posterAspectRatio: 16 / 9,
+      posterAspectRatio: portraitPage ? 2 / 3 : 16 / 9,
       compactDetails: true,
       loadDetail: _hanimeLayout == HanimeCatalogLayout.detail && !preview
           ? _hydrateHanimeRow
@@ -7713,6 +7785,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                             hostPresentation: true,
                             selectAfterDismissal: const {
                               collectionCoverSettingsAction,
+                              'exit',
                             },
                             // UIKit and the Breeze fallback each own outside-tap
                             // dismissal; the page must not add a second barrier.
@@ -7778,8 +7851,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                                   officialWebsite != null)
                                 'officialWebsite':
                                     t.sourceShell.openOfficialWebsite,
-                              if (!widget.structuredHanime)
-                                'exit': t.sourceShell.exitPlugin,
+                              'exit': t.sourceShell.exitPlugin,
                             },
                             groups: const [
                               [

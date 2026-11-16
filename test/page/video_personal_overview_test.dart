@@ -1,3 +1,4 @@
+import 'package:zephyr/page/video/video_thumbnail.dart';
 import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -146,6 +147,17 @@ void main() {
         lessThan(tester.getTopLeft(_section('histories')).dy),
       );
       expect(find.byType(SourceProfilePlaylistRow), findsNWidgets(3));
+      expect(
+        tester
+            .widgetList<VideoThumbnail>(
+              find.descendant(
+                of: find.byType(SourceProfilePlaylistRow),
+                matching: find.byType(VideoThumbnail),
+              ),
+            )
+            .every((cover) => cover.isPoster),
+        isTrue,
+      );
       expect(find.text('6 lists'), findsOneWidget);
       expect(_rail(tester, 'saves').posterAspectRatio, 16 / 9);
       expect(_rail(tester, 'saves').countLabel, '54 works');

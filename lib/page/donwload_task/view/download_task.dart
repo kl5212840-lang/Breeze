@@ -2506,7 +2506,7 @@ class _DownloadCenterState extends State<_DownloadCenter> {
                 selected: [if (_source != null) _source!],
                 showManage: true,
                 classicChips: true,
-                quietChips: true,
+                scrollSafeChips: true,
                 allLabel: _label(context, '全部来源', 'All sources'),
                 horizontalInset: _downloadContentInset,
                 onManage: !inventoryReady || _working || _sourceManagerOpen

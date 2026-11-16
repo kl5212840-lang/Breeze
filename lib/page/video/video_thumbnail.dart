@@ -30,6 +30,7 @@ class VideoThumbnail extends StatefulWidget {
     this.source,
     this.fit = BoxFit.cover,
     this.containBackground = false,
+    this.isPoster = false,
   });
   final String url;
   final String? source;
@@ -46,7 +47,7 @@ class VideoThumbnail extends StatefulWidget {
   final bool retryOnTap;
   final Uri referrer;
   final BoxFit fit;
-  final bool containBackground;
+  final bool containBackground, isPoster;
   @override
   State<VideoThumbnail> createState() => _VideoThumbnailState();
 }
@@ -234,6 +235,7 @@ class _VideoThumbnailState extends State<VideoThumbnail> {
   }
 
   bool get _isPoster =>
+      widget.isPoster ||
       context.findAncestorWidgetOfExactType<VideoCoverOverlay>() != null ||
       widget.placeholderIcon == Icons.play_arrow_rounded;
 

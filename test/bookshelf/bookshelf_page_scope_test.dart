@@ -693,7 +693,7 @@ void main() {
         'the alternate video source',
       );
       final lateSourceSelection = tester
-          .widget<NativeVideoTextButton>(alternateSource)
+          .widget<TextButton>(alternateSource)
           .onPressed;
       await waitFor(
         () => videoMore.hitTestable().evaluate().isNotEmpty,

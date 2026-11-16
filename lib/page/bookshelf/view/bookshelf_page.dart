@@ -646,9 +646,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
         _selectRecords(ShelfPageMode.values.byName(value).index);
       },
     );
-    Widget sources({
-      bool scrollSafe = false,
-    }) => BlocBuilder<BookshelfSearchCubit, BookshelfSearchState>(
+    Widget sources() => BlocBuilder<BookshelfSearchCubit, BookshelfSearchState>(
       bloc: _activeSearch,
       builder: (context, state) {
         final medium = _sourceMedium, mode = _mode, cubit = _activeSearch;
@@ -658,7 +656,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
             horizontalInset: CollectionToolbarMetrics.sourceContentInset,
             showManage: true,
             classicChips: true,
-            scrollSafeChips: scrollSafe,
+            scrollSafeChips: true,
             sources: _sourceControlsReady
                 ? _sourcePreferences[medium]!.arrange(_allLabelSources(medium))
                 : const {},
@@ -731,7 +729,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
                   const SizedBox(width: leadingPadding),
                   SizedBox(width: recordWidth, child: records),
                   const SizedBox(width: 8),
-                  Expanded(child: sources(scrollSafe: true)),
+                  Expanded(child: sources()),
                 ],
               )
             else ...[

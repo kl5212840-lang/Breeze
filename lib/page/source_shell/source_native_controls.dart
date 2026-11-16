@@ -1,3 +1,4 @@
+import 'package:zephyr/page/navigation/main_navigation_layout.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'dart:async';
 
@@ -29,9 +30,13 @@ bool usesNativeSourceChrome(BuildContext context) {
 /// Explicit exit disposes every source route on the way back to Discover.
 void exitSourceToDiscover(BuildContext context) {
   FocusManager.instance.primaryFocus?.unfocus();
-  Navigator.of(context, rootNavigator: true).popUntil(
+  final root = Navigator.of(context, rootNavigator: true);
+  final nearest = Navigator.of(context);
+  if (!identical(root, nearest)) nearest.popUntil((route) => route.isFirst);
+  root.popUntil(
     (route) => route.isFirst || route.settings.name == 'NavigationBar',
   );
+  DiscoverNavigation.select();
 }
 
 class SourceChromeIconButton extends StatelessWidget {

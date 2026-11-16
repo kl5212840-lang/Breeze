@@ -830,7 +830,10 @@ void main() {
               widget is NativeVideoMenu && widget.options.containsKey('tools'),
         ),
       );
-      expect(sourceMenu.options.keys, unorderedEquals(['website', 'tools']));
+      expect(
+        sourceMenu.options.keys,
+        unorderedEquals(['website', 'tools', 'exit']),
+      );
       expect(find.byKey(const ValueKey('hanime-results.filter')), findsNothing);
 
       await tester.tap(find.text('排行'));
@@ -838,6 +841,12 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       expect(web.loads.last.queryParameters['sort'], '本日排行');
+      expect(
+        tester
+            .widget<ApiVideoCollection>(find.byType(ApiVideoCollection))
+            .posterAspectRatio,
+        16 / 9,
+      );
       expect(find.byKey(const ValueKey('hanime-results.filter')), findsNothing);
       final layout = find.byKey(const ValueKey('hanime-results.layout'));
       expect(find.byKey(const ValueKey('hanime-results.count')), findsNothing);
@@ -893,6 +902,11 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('hanime.category.Animation')));
       await _pump(tester);
       final categoryWeb = web.documents.single
+        ..domSnapshot = {
+          'cards': [
+            {'href': 'https://hanime1.me/watch?v=2', 'portraitCover': true},
+          ],
+        }
         ..publicWorkFacts = {
           'viewCountRaw': '4.3万次',
           'ratingPercentRaw': '98%',
@@ -903,6 +917,12 @@ void main() {
       await _pump(tester);
       expect(categoryWeb.loads.last.queryParameters['genre'], 'Animation');
       expect(categoryWeb.loads.last.queryParameters['sort'], isNull);
+      expect(
+        tester
+            .widget<ApiVideoCollection>(find.byType(ApiVideoCollection))
+            .posterAspectRatio,
+        2 / 3,
+      );
       tester.widget<NativeVideoMenu>(layout).onSelected('detail');
       await _pump(tester);
       final likes = find.text(t.videoMetadata.positiveVotes(count: 203));

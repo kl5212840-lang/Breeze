@@ -208,6 +208,7 @@ const String videoCardExtractionScript =
       title: titleNode?.getAttribute('title')?.trim() || root.getAttribute('title')?.trim() ||
         titleNode?.textContent?.trim() || image?.getAttribute('alt') || '',
       coverUrl: imageUrl(image),
+      portraitCover: Boolean(image?.closest('.video-card-inner')),
       subtitle: creatorNode?.textContent?.trim() || '',
       creatorUrl: creatorHref(creatorLink),
       creatorProfileUrl: (() => { const href = creatorHref(creatorLink); try { return /^\/user\/[0-9]+\/?$/.test(new URL(href).pathname) ? href : ''; } catch (_) { return ''; } })(),
@@ -377,13 +378,28 @@ String videoDetailSnapshotScript(
       });
       return values.length && values.every(value => value != null && value === values[0]) ? values[0] : null;
     };
+    const detailTags = Array.from(document.querySelectorAll(config.detailTags)).slice(0, 80).flatMap(item => {
+      const label = item.textContent?.trim() || '';
+      try {
+        const href = new URL(item.getAttribute('href') || '', location.href);
+        if (href.origin !== location.origin || href.username || href.password ||
+            href.pathname !== '/search') return [];
+        const values = href.searchParams.getAll('tags[]');
+        if (values.length !== 1 || !values[0].trim()) return [];
+        const value = values[0].trim();
+        const base = label.replace(/\\s*[(（][0-9]+[)）]\$/, '').trim();
+        return [{label: base !== label ? value : label || value, value, href:href.href}];
+      } catch (_) { return []; }
+    });
     const publicFacts = {
       viewCountRaw, viewCount:metricCount(viewCountRaw, 'views'), publishedDate,
       ratingPercentRaw, ratingPercent:metricPercent(ratingPercentRaw), totalVotes:exactMetricInteger(totalVotesRaw),
       positiveVotes:voteCount('likes-count'), negativeVotes:voteCount('unlikes-count'),
-      tagsObserved: Boolean(document.querySelector('.video-tags-wrapper')),
-      tags: Array.from(document.querySelectorAll(config.detailTags)).slice(0, 40)
-        .map(item => item.textContent?.trim() || '').filter(tag => tag && !['add', 'remove'].includes(tag.toLowerCase()))
+      tagsObserved: location.hostname === 'hanime1.me' ? detailTags.length > 0 : Boolean(document.querySelector('.video-tags-wrapper')),
+      tags: location.hostname === 'hanime1.me'
+        ? Array.from(new Set(detailTags.map(tag => tag.label))).slice(0, 40)
+        : Array.from(document.querySelectorAll(config.detailTags)).slice(0,40)
+            .map(item => item.textContent?.trim() || '').filter(tag => tag && !['add', 'remove'].includes(tag.toLowerCase()))
     };
     ${publicFactsOnly ? 'return mainTitle || video ? publicFacts : null;' : ''}
     const artist = document.querySelector('#video-artist-name');
@@ -419,8 +435,9 @@ String videoDetailSnapshotScript(
         profileUrl:creatorHref(uploader), avatarUrl:avatarImageUrl(uploader),
         identityEvidence:'watch-description-uploader-anchor', url:creatorHref(uploader) },
       description: document.querySelector(config.detailDescription)?.textContent?.trim() || '',
-      tagFilters: Array.from(document.querySelectorAll(config.detailTags)).slice(0, 80)
-        .map(item => ({label: item.textContent?.trim() || '', href: item.getAttribute('href') || ''})),
+      tagFilters: location.hostname === 'hanime1.me' ? detailTags
+        : Array.from(document.querySelectorAll(config.detailTags)).slice(0,80)
+            .map(item => ({label:item.textContent?.trim() || '', href:item.getAttribute('href') || ''})),
       episodes: Array.from(document.querySelectorAll(config.episodes)).slice(0, 100).map(card),
       related: Array.from(document.querySelectorAll(config.related)).slice(0, 80).map(detailCard),
       video: video && {

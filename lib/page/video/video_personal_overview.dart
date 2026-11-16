@@ -301,6 +301,7 @@ class _VideoPersonalOverviewState extends State<VideoPersonalOverview> {
                     : '${row['creatorName'] ?? row['subtitle'] ?? ''}',
                 cover: kind == 'playlists'
                     ? VideoThumbnail(
+                        isPoster: true,
                         url: '${row['coverUrl'] ?? ''}',
                         referrer: widget.page,
                       )
