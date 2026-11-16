@@ -13,7 +13,7 @@ abstract final class CollectionViewPreferences {
 
   static String keyFor(String scope) => '$prefix${Uri.encodeComponent(scope)}';
 
-  static bool _valid(Object? value) => value == 'grid' || value == 'list';
+  static const _standardViews = {'grid', 'list'};
 
   /// Legacy values are read-only defaults, so the first new choice remains
   /// independent of other hosts that used the older, broader scope.
@@ -21,6 +21,7 @@ abstract final class CollectionViewPreferences {
     String scope, {
     String? legacyKey,
     String? legacyDetailedKey,
+    Set<String> supportedViews = _standardViews,
   }) async {
     if (scope.isEmpty) return null;
     while (true) {
@@ -29,19 +30,24 @@ abstract final class CollectionViewPreferences {
       final store = await SharedPreferences.getInstance();
       if (epoch != (_epochs[scope] ?? 0)) continue;
       final value = store.get(keyFor(scope));
-      if (_valid(value)) return value as String;
+      if (supportedViews.contains(value)) return value as String;
       final legacy = legacyKey == null ? null : store.get(legacyKey);
-      if (_valid(legacy)) return legacy as String;
+      if (supportedViews.contains(legacy)) return legacy as String;
       final detailed = legacyDetailedKey == null
           ? null
           : store.get(legacyDetailedKey);
-      return detailed is bool ? (detailed ? 'list' : 'grid') : null;
+      final legacyView = detailed is bool ? (detailed ? 'list' : 'grid') : null;
+      return supportedViews.contains(legacyView) ? legacyView : null;
     }
   }
 
-  static Future<void> write(String scope, String view) {
-    if (scope.isEmpty || !_valid(view)) {
-      throw ArgumentError('A collection scope and grid/list view are required');
+  static Future<void> write(
+    String scope,
+    String view, {
+    Set<String> supportedViews = _standardViews,
+  }) {
+    if (scope.isEmpty || !supportedViews.contains(view)) {
+      throw ArgumentError('A collection scope and supported view are required');
     }
     _epochs[scope] = (_epochs[scope] ?? 0) + 1;
     final operation = (_writes[scope] ?? Future<void>.value()).then((_) async {

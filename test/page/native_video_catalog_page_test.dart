@@ -510,6 +510,7 @@ Future<void> _mount(
   Brightness brightness = Brightness.light,
   bool nestedRoot = false,
   bool returnToCallerAfterPlayback = false,
+  bool structuredHanime = false,
   Uri? initialUrl,
   KeywordSearchScope? initialKeywordScope,
   PluginAccountSyncCoordinator? accountSyncCoordinator,
@@ -551,6 +552,7 @@ Future<void> _mount(
           initialUrl: initialUrl,
           initialKeywordScope: initialKeywordScope,
           returnToCallerAfterPlayback: returnToCallerAfterPlayback,
+          structuredHanime: structuredHanime,
           accountSyncCoordinator: accountSyncCoordinator,
           accountCookies: accountCookies,
           catalogFnPath: 'catalog',
@@ -757,6 +759,67 @@ void main() {
       () => InAppWebViewPlatform.instance = original ?? _WebPlatform(),
     );
   });
+
+  testWidgets(
+    'Hanime category and rank own their destinations and public filter sections',
+    (tester) async {
+      await _mount(
+        tester,
+        plugin,
+        structuredHanime: true,
+        filters: _filters,
+        categories: [
+          NativeCatalogCategory(
+            title: 'Animation',
+            url: Uri.https('hanime1.me', '/search', {'genre': 'Animation'}),
+          ),
+        ],
+      );
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(find.byKey(const ValueKey('hanime-results.filter')), findsNothing);
+
+      await tester.tap(find.text('排行'));
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(web.loads.last.queryParameters['sort'], '本日排行');
+      expect(find.byKey(const ValueKey('hanime-results.filter')), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('hanime.ranking.week')));
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(web.loads.last.queryParameters['sort'], '本週排行');
+
+      await tester.tap(
+        find.text(
+          LocaleSettings.currentLocale.languageCode == 'zh'
+              ? '分类'
+              : 'Categories',
+        ),
+      );
+      await _pump(tester);
+      await tester.tap(find.byKey(const ValueKey('hanime.category.Animation')));
+      await _pump(tester);
+      final categoryWeb = web.documents.single;
+      categoryWeb.finishLastLoad();
+      await _pump(tester);
+      expect(categoryWeb.loads.last.queryParameters['genre'], 'Animation');
+      expect(categoryWeb.loads.last.queryParameters['sort'], isNull);
+      await tester.tap(find.byKey(const ValueKey('hanime-results.filter')));
+      await _pump(tester);
+      final panel = tester.widget<VideoSearchFilterPanel>(
+        find.byType(VideoSearchFilterPanel),
+      );
+      expect(panel.sections, [
+        VideoFilterSection.tags,
+        VideoFilterSection.date,
+        VideoFilterSection.duration,
+      ]);
+      expect(panel.initial.genre, 'Animation');
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets(
     'official website opens reviewed home externally without changing the current page',

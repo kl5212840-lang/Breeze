@@ -208,7 +208,8 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
       _invalidateAnchor();
       return;
     }
-    if (oldWidget.mode != widget.mode) {
+    if (oldWidget.mode != widget.mode ||
+        oldWidget.gridColumns != widget.gridColumns) {
       final previousAnchor = _activeAnchor ?? _pendingAnchor;
       _invalidateAnchor(stopScroll: true);
       if (previousAnchor != null) {

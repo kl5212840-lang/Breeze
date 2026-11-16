@@ -33,6 +33,7 @@ class VideoSearchFilterPanel extends StatefulWidget {
     required this.readSchema,
     this.source,
     this.initialSection = VideoFilterSection.genre,
+    this.sections = VideoFilterSection.values,
     this.onSchema,
     this.onCancelRead,
   });
@@ -40,6 +41,7 @@ class VideoSearchFilterPanel extends StatefulWidget {
   final VideoSearchFilters initial;
   final VideoFilterSchema schema;
   final VideoFilterSection initialSection;
+  final List<VideoFilterSection> sections;
   final Future<VideoSiteResult<VideoFilterSchema>> Function() readSchema;
   final ValueChanged<VideoFilterSchema>? onSchema;
   final VoidCallback? onCancelRead;
@@ -96,12 +98,14 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
     final duration = VideoMotion.feedback(context);
     if (_tabDuration == duration) return;
     final index = _tabDuration == null
-        ? widget.initialSection.index
+        ? widget.sections
+              .indexOf(widget.initialSection)
+              .clamp(0, widget.sections.length - 1)
         : _tabs.index;
     if (_tabDuration != null) _tabs.dispose();
     _tabDuration = duration;
     _tabs = TabController(
-      length: VideoFilterSection.values.length,
+      length: widget.sections.length,
       vsync: this,
       initialIndex: index,
       animationDuration: duration,
@@ -128,7 +132,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
     if (_visibleSection != _tabs.index) {
       setState(() => _visibleSection = _tabs.index);
     }
-    if (_tabs.index == VideoFilterSection.tags.index &&
+    if (widget.sections[_tabs.index] == VideoFilterSection.tags &&
         _schema.tagGroups.isEmpty &&
         !_loading &&
         _error == null) {
@@ -749,8 +753,25 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
   );
 
   void _reset({bool all = false}) => setState(() {
-    _draft = all ? const VideoSearchFilters() : _draft.clearFilters();
-    if (all) _query.clear();
+    final resetQuery =
+        all && widget.sections.contains(VideoFilterSection.query);
+    _draft = resetQuery
+        ? const VideoSearchFilters()
+        : _draft.copyWith(
+            genre: widget.sections.contains(VideoFilterSection.genre)
+                ? ''
+                : _draft.genre,
+            sort: widget.sections.contains(VideoFilterSection.sort)
+                ? ''
+                : _draft.sort,
+            date: '',
+            duration: '',
+            tags: const [],
+            anyTag: false,
+            completed: false,
+            page: 1,
+          );
+    if (resetQuery) _query.clear();
     _tagSearch.clear();
     _year.clear();
     _month = null;
@@ -777,13 +798,14 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
       child: LayoutBuilder(
         builder: (context, constraints) {
           final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
-          final tags = _tabs.index == VideoFilterSection.tags.index;
+          final section = widget.sections[_tabs.index];
+          final tags = section == VideoFilterSection.tags;
           final grid = _tagGrid(context, constraints.maxWidth, _tagChoices());
           // Small groups should not stretch to a nearly full-screen sheet. Large
           // groups still get the available viewport and retain lazy grid scrolling.
           final desired = tags
               ? 340 * scale + grid.rows * (grid.extent + 8) + 40
-              : (_customDate && _tabs.index == VideoFilterSection.date.index
+              : (_customDate && section == VideoFilterSection.date
                         ? 640.0
                         : 420.0) *
                     scale;
@@ -807,12 +829,13 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                                 ? PopupMenuButton<VideoFilterSection>(
                                     tooltip: t.videoFilters.allFilters,
                                     onSelected: (section) {
-                                      _tabs.index = section.index;
+                                      _tabs.index = widget.sections.indexOf(
+                                        section,
+                                      );
                                       setState(() {});
                                     },
                                     itemBuilder: (_) => [
-                                      for (final section
-                                          in VideoFilterSection.values)
+                                      for (final section in widget.sections)
                                         PopupMenuItem(
                                           value: section,
                                           child: Text(
@@ -827,8 +850,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                                       ),
                                       child: Text(
                                         videoFilterTitle(
-                                          VideoFilterSection.values[_tabs
-                                              .index],
+                                          widget.sections[_tabs.index],
                                         ),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
@@ -854,7 +876,9 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                               onPressed: () => FocusScope.of(context).unfocus(),
                               icon: const Icon(Icons.keyboard_hide_rounded),
                             )
-                          else
+                          else if (widget.sections.contains(
+                            VideoFilterSection.query,
+                          ))
                             Tooltip(
                               message: t.videoFilters.clearAll,
                               child: TextButton(
@@ -881,7 +905,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                           context,
                         ).textTheme.labelLarge,
                         tabs: [
-                          for (final section in VideoFilterSection.values)
+                          for (final section in widget.sections)
                             Tab(text: videoFilterTitle(section)),
                         ],
                       ),
@@ -897,7 +921,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                               : null,
                           controller: _tabs,
                           children: [
-                            for (final section in VideoFilterSection.values)
+                            for (final section in widget.sections)
                               section == VideoFilterSection.tags
                                   ? _tags()
                                   : ListView(
@@ -1173,14 +1197,21 @@ class VideoActiveFilters extends StatelessWidget {
     required this.filters,
     required this.schema,
     required this.onChanged,
+    this.sections = VideoFilterSection.values,
+    this.onEdit,
   });
   final VideoSearchFilters filters;
   final VideoFilterSchema schema;
   final ValueChanged<VideoSearchFilters> onChanged;
+  final List<VideoFilterSection> sections;
+  final ValueChanged<VideoFilterSection>? onEdit;
 
   @override
   Widget build(BuildContext context) {
-    final entries = <({String label, VideoSearchFilters next})>[];
+    final entries =
+        <
+          ({String label, VideoSearchFilters next, VideoFilterSection section})
+        >[];
     for (final section in [
       VideoFilterSection.genre,
       VideoFilterSection.sort,
@@ -1193,7 +1224,7 @@ class VideoActiveFilters extends StatelessWidget {
         VideoFilterSection.date => filters.date,
         _ => filters.duration,
       };
-      if (value.isEmpty) continue;
+      if (value.isEmpty || !sections.contains(section)) continue;
       final label =
           schema.options[section.name]
               ?.where((choice) => choice.value == value)
@@ -1203,21 +1234,32 @@ class VideoActiveFilters extends StatelessWidget {
       entries.add((
         label: '${videoFilterTitle(section)}: $label',
         next: filters.change(section, ''),
+        section: section,
       ));
     }
-    entries.addAll(
-      filters.tags.map((tag) => (label: tag, next: filters.removeTag(tag))),
-    );
-    if (filters.author) {
+    if (sections.contains(VideoFilterSection.tags)) {
+      entries.addAll(
+        filters.tags.map(
+          (tag) => (
+            label: tag,
+            next: filters.removeTag(tag),
+            section: VideoFilterSection.tags,
+          ),
+        ),
+      );
+    }
+    if (filters.author && sections.contains(VideoFilterSection.query)) {
       entries.add((
         label: t.videoFilters.authors,
         next: filters.copyWith(author: false, page: 1),
+        section: VideoFilterSection.query,
       ));
     }
-    if (filters.anyTag) {
+    if (filters.anyTag && sections.contains(VideoFilterSection.tags)) {
       entries.add((
         label: t.videoFilters.anyMatch,
         next: filters.copyWith(anyTag: false, page: 1),
+        section: VideoFilterSection.tags,
       ));
     }
     if (entries.isEmpty) return const SizedBox.shrink();
@@ -1234,8 +1276,23 @@ class VideoActiveFilters extends StatelessWidget {
             child: Center(
               child: index == 0
                   ? TextButton(
-                      onPressed: () => onChanged(filters.clearFilters()),
+                      onPressed: () => onChanged(
+                        onEdit == null
+                            ? filters.clearFilters()
+                            : filters.copyWith(
+                                tags: const [],
+                                anyTag: false,
+                                date: '',
+                                duration: '',
+                                page: 1,
+                              ),
+                      ),
                       child: Text(t.videoFilters.clearFilters),
+                    )
+                  : onEdit != null
+                  ? ActionChip(
+                      label: Text(entries[index - 1].label),
+                      onPressed: () => onEdit!(entries[index - 1].section),
                     )
                   : InputChip(
                       label: Text(entries[index - 1].label),

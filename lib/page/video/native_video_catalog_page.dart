@@ -84,6 +84,7 @@ import 'package:zephyr/page/video/video_site_operations.dart';
 import 'package:zephyr/page/video/video_playlist_editor.dart';
 import 'package:zephyr/page/video/video_comment_drafts.dart';
 import 'package:zephyr/page/video/video_search_filters.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
 import 'package:zephyr/page/video/video_search_filter_panel.dart';
 import 'package:zephyr/page/video/video_filter_schema_reader.dart';
 import 'package:zephyr/page/video/video_interaction.dart';
@@ -164,6 +165,8 @@ class NativeVideoCatalogPage extends StatefulWidget {
     this.accountCookies,
     this.readLocalDownloads,
     this.returnToCallerAfterPlayback = false,
+    this.structuredHanime = false,
+    this.hanimeCategory,
   });
 
   final Uri? initialUrl;
@@ -174,6 +177,8 @@ class NativeVideoCatalogPage extends StatefulWidget {
   final VideoAccountCookies? accountCookies;
   final Future<List<Map<String, dynamic>>> Function()? readLocalDownloads;
   final bool returnToCallerAfterPlayback;
+  final bool structuredHanime;
+  final NativeCatalogCategory? hanimeCategory;
 
   final String source;
   final String title;
@@ -591,6 +596,92 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   bool _filterPanelOpen = false;
   bool _returning = false;
   bool _animateCatalogArrival = true;
+  static const _categoryTab = 'categories';
+  bool get _categoryDirectory =>
+      widget.structuredHanime && _activeTab == _categoryTab;
+  bool get _hanimeRank => widget.structuredHanime && _activeTab == 'ranking';
+  bool _hanimeWorks(Uri uri) =>
+      widget.structuredHanime &&
+      uri.path == '/search' &&
+      uri.queryParameters['type'] != 'artist';
+  HanimeCatalogLayout _hanimeLayout = HanimeCatalogLayout.large;
+  HanimeRanking _hanimeRanking = HanimeRanking.today;
+  final _hanimeRankPages = <HanimeRanking, Uri>{};
+  late KeywordSearchScope _hanimeResultKeywordScope =
+      widget.initialKeywordScope ?? KeywordSearchScope.all;
+  late final List<NativeCatalogTab> _hanimeTabs = [
+    for (final tab in widget.tabs) ...[
+      tab,
+      if (tab.id == 'recommend')
+        NativeCatalogTab(
+          id: _categoryTab,
+          title: _hanimeLabel('分类', 'Categories'),
+          url: widget.homeUrl,
+          mode: _categoryTab,
+        ),
+    ],
+  ];
+  List<NativeCatalogTab> get _tabs =>
+      widget.structuredHanime ? _hanimeTabs : widget.tabs;
+  String _hanimeLabel(String zh, String en) =>
+      LocaleSettings.currentLocale.languageCode == 'zh' ? zh : en;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (widget.structuredHanime && !_hanimeLayoutRead) {
+      _hanimeLayoutRead = true;
+      CollectionViewPreferences.changes.addListener(_readHanimeLayout);
+      unawaited(_readHanimeLayout());
+    }
+  }
+
+  bool _hanimeLayoutRead = false;
+  String _subscriptionQuery = '';
+  static final _hanimeLayoutValues = HanimeCatalogLayout.values
+      .map((mode) => mode.name)
+      .toSet();
+  String get _hanimeLayoutScope => '${widget.source}.catalog-layout';
+  Future<void> _readHanimeLayout() async {
+    final revision = ++_hanimeLayoutRevision;
+    final String? saved;
+    try {
+      saved = await CollectionViewPreferences.read(
+        _hanimeLayoutScope,
+        supportedViews: _hanimeLayoutValues,
+      );
+    } catch (_) {
+      return;
+    }
+    if (!mounted || revision != _hanimeLayoutRevision || saved == null) return;
+    final layout = HanimeCatalogLayout.values
+        .where((mode) => mode.name == saved)
+        .firstOrNull;
+    if (layout != null && layout != _hanimeLayout) {
+      setState(() => _hanimeLayout = layout);
+    }
+  }
+
+  int _hanimeLayoutRevision = 0;
+  Future<void> _setHanimeLayout(HanimeCatalogLayout layout) async {
+    if (_hanimeLayout == layout) return;
+    final revision = ++_hanimeLayoutRevision;
+    final previous = _hanimeLayout;
+    setState(() => _hanimeLayout = layout);
+    try {
+      await CollectionViewPreferences.write(
+        _hanimeLayoutScope,
+        layout.name,
+        supportedViews: _hanimeLayoutValues,
+      );
+    } catch (_) {
+      if (mounted && revision == _hanimeLayoutRevision) {
+        setState(() => _hanimeLayout = previous);
+        showErrorToast(t.videoLibrary.saveFailed);
+      }
+    }
+  }
+
   final _modeMenu = NativeVideoMenuController();
   NativeVideoMenuController? _openNativeMenu;
   Size? _menuPhysicalSize;
@@ -606,12 +697,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       SourceReturnPreferences.includesTabHistory && _previousTab != null;
 
   NativeCatalogTab? get _previousTab =>
-      widget.tabs
-          .where((tab) => tab.id == _tabHistory.lastOrNull)
-          .firstOrNull ??
-      (widget.tabs.isNotEmpty && _activeTab != widget.tabs.first.id
-          ? widget.tabs.first
-          : null);
+      _tabs.where((tab) => tab.id == _tabHistory.lastOrNull).firstOrNull ??
+      (_tabs.isNotEmpty && _activeTab != _tabs.first.id ? _tabs.first : null);
 
   _VideoLocation get _location => (
     uri: videoSiteDocumentUrl(_requestedUrl),
@@ -1352,7 +1439,13 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     }
     if (_searchVisible || _verificationVisible) return;
     final epoch = _loadEpoch;
-    final searchUrl = _listUrl ?? widget.homeUrl;
+    final inHanimeResults =
+        widget.structuredHanime &&
+        widget.tabs.isEmpty &&
+        _requestedUrl.path == '/search';
+    final searchUrl = widget.structuredHanime && !inHanimeResults
+        ? widget.homeUrl
+        : _listUrl ?? widget.homeUrl;
     var scope = _keywordScopeFor(searchUrl) ?? KeywordSearchScope.all;
     setState(() => _searchVisible = true);
     final result = await Navigator.of(context).push<VideoSearchFilters>(
@@ -1368,7 +1461,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                       '',
                 )
               : VideoSearchFilters.fromUri(searchUrl),
-          authorEnabled: widget.searchFilters != null,
+          authorEnabled:
+              widget.searchFilters != null && widget.hanimeCategory == null,
+          scopeHint: widget.hanimeCategory?.title,
           initialScope: scope,
           onSubmitScope: (value) => scope = value,
         ),
@@ -1383,20 +1478,15 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       ).showSnackBar(SnackBar(content: Text(t.videoSearch.contextChanged)));
       return;
     }
-    if (!result.author) {
-      _keywordScopes.remove(result.query);
-      _keywordScopes[result.query] = scope;
-      if (_keywordScopes.length > VideoSearchHistory.limit) {
-        _keywordScopes.remove(_keywordScopes.keys.first);
-      }
-    }
-    _rememberLocation();
-    final tab = widget.tabs.where((tab) => tab.mode == 'catalog').firstOrNull;
-    if (tab != null) {
-      _activeTab = tab.id;
-      _nativeTab = tab.id;
-    }
-    _returnToPersonal = false;
+    final queryResult = widget.structuredHanime
+        ? hanimeKeywordQuery(
+            VideoSearchFilters.fromUri(searchUrl),
+            result,
+            inResults: inHanimeResults,
+            genre: widget.hanimeCategory?.url.queryParameters['genre'],
+          )
+        : result;
+    final target = queryResult.toUri(widget.homeUrl);
     unawaited(
       VideoSearchHistory.add(widget.source, result.query).catchError((
         Object _,
@@ -1408,12 +1498,32 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         }
       }),
     );
+    if (widget.structuredHanime && !inHanimeResults) {
+      await _pushContentPage(target, keywordScope: scope);
+      return;
+    }
+    if (widget.structuredHanime) {
+      _hanimeResultKeywordScope = scope;
+    } else if (!result.author) {
+      _keywordScopes.remove(result.query);
+      _keywordScopes[result.query] = scope;
+      if (_keywordScopes.length > VideoSearchHistory.limit) {
+        _keywordScopes.remove(_keywordScopes.keys.first);
+      }
+    }
+    if (!widget.structuredHanime) _rememberLocation();
+    final tab = widget.tabs.where((tab) => tab.mode == 'catalog').firstOrNull;
+    if (tab != null) {
+      _activeTab = tab.id;
+      _nativeTab = tab.id;
+    }
+    _returnToPersonal = false;
     await _load(
       widget.searchFilters == null
           ? widget.homeUrl
                 .resolve('/search')
                 .replace(queryParameters: {'query': result.query})
-          : result.toUri(widget.homeUrl),
+          : target,
       rememberHistory: false,
     );
   }
@@ -1427,6 +1537,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     final filters = VideoSearchFilters.fromUri(
       url,
     ).copyWith(query: '', author: false, page: 1);
+    if (widget.structuredHanime) {
+      unawaited(_load(filters.toUri(widget.homeUrl), rememberHistory: false));
+      return;
+    }
     unawaited(
       _load(
         filters.activeCount == 0
@@ -1441,6 +1555,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       return null;
     final query = url.queryParameters['query'];
     if (query == null || query.isEmpty) return null;
+    if (widget.structuredHanime && widget.tabs.isEmpty) {
+      return _hanimeResultKeywordScope;
+    }
     return _keywordScopes[query] ??
         (query == widget.initialUrl?.queryParameters['query']
             ? widget.initialKeywordScope
@@ -1654,6 +1771,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
 
   @override
   void dispose() {
+    if (_hanimeLayoutRead) {
+      CollectionViewPreferences.changes.removeListener(_readHanimeLayout);
+    }
     unawaited(_accountChanges?.cancel());
     _readRecovery.dispose();
     _completeAutomaticRead();
@@ -2290,6 +2410,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   }
 
   void _resetPersonalCollections() {
+    _subscriptionQuery = '';
     _personalPageWindow.clear();
     _personalContinuationTarget = null;
     _personalContinuationFailed = false;
@@ -2526,6 +2647,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     Uri target, {
     VideoCreatorReference? creator,
     BuildContext? navigatorContext,
+    KeywordSearchScope? keywordScope,
+    NativeCatalogCategory? category,
   }) async {
     await Navigator.of(navigatorContext ?? context).push<void>(
       videoPageRoute<void>(
@@ -2549,7 +2672,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           nativeSiteActions: widget.nativeSiteActions,
           externalAuthenticationEntries: widget.externalAuthenticationEntries,
           searchFilters: widget.searchFilters,
+          structuredHanime: widget.structuredHanime,
+          hanimeCategory: category,
           initialUrl: target,
+          initialKeywordScope: keywordScope,
           initialCreator: creator,
           returnToCallerAfterPlayback:
               navigatorContext != null && target.path == '/watch',
@@ -2808,12 +2934,25 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       _activeTab = tab.id;
       _searchVisible = false;
     });
+    if (tab.id == _categoryTab && widget.structuredHanime) {
+      _loadEpoch++;
+      _siteLoadFailed = false;
+      _personalVisible = false;
+      _busy = false;
+      return;
+    }
     if (tab.mode == 'catalog') {
       _nativeTab = tab.id;
+      final target = _hanimeRank
+          ? _hanimeRankPages[_hanimeRanking] ??
+                VideoSearchFilters(
+                  sort: _hanimeRanking.wireValue,
+                ).toUri(widget.homeUrl)
+          : tab.url;
       if (_catalogWebsite) {
         await _openWebsitePage(tab.url, rememberHistory: false);
       } else {
-        await _load(tab.url, rememberHistory: false, reuseFresh: !sameTab);
+        await _load(target, rememberHistory: false, reuseFresh: !sameTab);
       }
       return;
     }
@@ -2978,6 +3117,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           initial: initial,
           schema: base,
           initialSection: section,
+          sections: widget.structuredHanime
+              ? hanimeResultFilters
+              : VideoFilterSection.values,
           readSchema: reader.read,
           onCancelRead: reader.dispose,
           onSchema: (schema) {
@@ -2997,7 +3139,13 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         ).showSnackBar(SnackBar(content: Text(t.videoFilters.contextChanged)));
         return;
       }
-      await _load(result.toUri(widget.homeUrl, pageNumber: 1));
+      if (!widget.structuredHanime ||
+          result.copyWith(page: 1) != initial.copyWith(page: 1)) {
+        await _load(
+          result.toUri(widget.homeUrl, pageNumber: 1),
+          rememberHistory: !widget.structuredHanime,
+        );
+      }
     } finally {
       reader.dispose();
       _filterPanelOpen = false;
@@ -3005,6 +3153,19 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   }
 
   Future<void> _queueTagFilter({String? tag, Uri? target}) async {
+    if (widget.structuredHanime) {
+      final linkedTags =
+          target != null && _isFirstParty(target) && target.path == '/search'
+          ? VideoSearchFilters.fromUri(target).tags
+          : const <String>[];
+      final tags = linkedTags.isNotEmpty ? linkedTags : [if (tag != null) tag];
+      if (tags.isNotEmpty) {
+        await _pushContentPage(
+          VideoSearchFilters(tags: tags).toUri(widget.homeUrl),
+        );
+      }
+      return;
+    }
     late final Uri next;
     if (widget.searchFilters == null) {
       next = widget.homeUrl
@@ -5363,9 +5524,25 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     final personal =
         widget.nativeAccount &&
         (currentPage.path == '/login' || currentPage.path.startsWith('/user/'));
+    if (_hanimeWorks(currentPage) && sections.isEmpty) {
+      return _hanimeResults(
+        currentPage,
+        videos,
+        paging,
+        preview: preview != null,
+        exactTag: exactTag,
+        titleOnly: titleOnly,
+      );
+    }
     final subscriptions =
         widget.nativeSubscriptions && currentPage.path == '/subscriptions';
-    final groups = subscriptions
+    final subscriptionQuery = widget.structuredHanime && subscriptions
+        ? normalizePublicSearchText(_subscriptionQuery)
+        : '';
+    bool subscriptionMatches(Object? value) => normalizePublicSearchText(
+      value?.toString() ?? '',
+    ).contains(subscriptionQuery);
+    final allGroups = subscriptions
         ? _subscriptionGroups(
             preview == null
                 ? _creatorGroups
@@ -5374,13 +5551,31 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           )
         : const <Map<String, dynamic>>[];
     final groupedVideos = {
-      for (final group in groups)
+      for (final group in allGroups)
         for (final card in asJsonList(group['videos']))
           asJsonMap(card)['watchUrl'],
     };
+    final groups = subscriptionQuery.isEmpty
+        ? allGroups
+        : [
+            for (final group in allGroups)
+              if (subscriptionMatches(asJsonMap(group['creator'])['name']))
+                group
+              else if (asJsonList(group['videos'])
+                      .where(
+                        (card) => subscriptionMatches(asJsonMap(card)['title']),
+                      )
+                      .toList()
+                  case final matched when matched.isNotEmpty)
+                {...group, 'videos': matched},
+          ];
     final unassignedVideos = subscriptions
         ? videos
-              .where((card) => !groupedVideos.contains(card['watchUrl']))
+              .where(
+                (card) =>
+                    !groupedVideos.contains(card['watchUrl']) &&
+                    subscriptionMatches(card['title']),
+              )
               .toList()
         : const <Map<String, dynamic>>[];
     final profileRoot =
@@ -5437,6 +5632,37 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                             widget.nativeAuth && profile['status'] != 'signedIn'
                             ? () => _load(widget.homeUrl.resolve('/register'))
                             : null,
+                      ),
+                    if (widget.structuredHanime &&
+                        subscriptions &&
+                        profile['status'] == 'signedIn')
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: TextFormField(
+                          key: ValueKey(
+                            'hanime.subscriptions.lookup.$_accountGeneration',
+                          ),
+                          initialValue: _subscriptionQuery,
+                          onChanged: preview != null
+                              ? null
+                              : (value) {
+                                  setState(() => _subscriptionQuery = value);
+                                },
+                          decoration: InputDecoration(
+                            prefixIcon: const Icon(Icons.search_rounded),
+                            hintText: _hanimeLabel(
+                              '查找已载入的订阅',
+                              'Find in loaded subscriptions',
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (subscriptionQuery.isNotEmpty &&
+                        groups.isEmpty &&
+                        unassignedVideos.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 20),
+                        child: Text(t.search.noResults),
                       ),
                     if (!contentOnly &&
                         personal &&
@@ -5722,7 +5948,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                                 )
                                 case final more? when _isFirstParty(more))
                               TextButton(
-                                onPressed: () => _load(more),
+                                onPressed: () => _openCatalogSection(more),
                                 child: const Icon(Icons.chevron_right_rounded),
                               ),
                           ],
@@ -5928,6 +6154,318 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     }
     if (current.path != '/search') return false;
     return current.queryParameters['genre'] == genre;
+  }
+
+  Future<void> _openCatalogSection(Uri target) async {
+    if (!widget.structuredHanime || target.path != '/search') {
+      await _load(target);
+      return;
+    }
+    final rank = HanimeRanking.fromUri(target);
+    final rankingTab = _tabs.where((tab) => tab.id == 'ranking').firstOrNull;
+    if (rank != null &&
+        rankingTab != null &&
+        target.queryParameters.length == 1) {
+      _hanimeRanking = rank;
+      await _openTab(rankingTab);
+      return;
+    }
+    await _pushContentPage(target);
+  }
+
+  Widget _hanimeCategoryDirectory() {
+    final categories = [
+      if (_categories.every(
+        (category) => category.url.queryParameters['genre']?.isNotEmpty == true,
+      ))
+        NativeCatalogCategory(
+          title: _hanimeLabel('全部作品', 'All works'),
+          url: widget.homeUrl.resolve('/search'),
+        ),
+      ..._categories,
+    ];
+    return ListView(
+      key: const PageStorageKey('hanime.categories'),
+      padding: EdgeInsets.fromLTRB(
+        16,
+        8,
+        16,
+        NativeNavigationInset.scrollBottom(context) + 16,
+      ),
+      children: [
+        for (final category in categories)
+          ListTile(
+            key: ValueKey(
+              'hanime.category.${category.url.queryParameters['genre'] ?? ''}',
+            ),
+            title: Text(
+              category.url.queryParameters['genre'] == null
+                  ? _hanimeLabel('全部作品', 'All works')
+                  : category.title,
+            ),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            onTap: () =>
+                unawaited(_pushContentPage(category.url, category: category)),
+          ),
+      ],
+    );
+  }
+
+  String _hanimeRankingLabel(HanimeRanking rank) => switch (rank) {
+    HanimeRanking.today => _hanimeLabel('今日', 'Today'),
+    HanimeRanking.week => _hanimeLabel('本周', 'This week'),
+    HanimeRanking.month => _hanimeLabel('本月', 'This month'),
+  };
+
+  Widget _hanimeRankingTabs() => SingleChildScrollView(
+    scrollDirection: Axis.horizontal,
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+    child: Row(
+      spacing: 8,
+      children: [
+        for (final rank in HanimeRanking.values)
+          ChoiceChip(
+            key: ValueKey('hanime.ranking.${rank.name}'),
+            label: Text(_hanimeRankingLabel(rank)),
+            showCheckmark: false,
+            selected: rank == _hanimeRanking,
+            onSelected: (selected) {
+              if (!selected || rank == _hanimeRanking) return;
+              setState(() => _hanimeRanking = rank);
+              unawaited(
+                _load(
+                  _hanimeRankPages[rank] ??
+                      VideoSearchFilters(
+                        sort: rank.wireValue,
+                      ).toUri(widget.homeUrl),
+                  rememberHistory: false,
+                  reuseFresh: true,
+                ),
+              );
+            },
+          ),
+      ],
+    ),
+  );
+
+  Widget _hanimeResults(
+    Uri page,
+    List<Map<String, dynamic>> videos,
+    Map<String, dynamic> paging, {
+    required bool preview,
+    required VideoFilterChoice? exactTag,
+    required bool titleOnly,
+  }) {
+    final filters = VideoSearchFilters.fromUri(page);
+    final ranking = _hanimeRank;
+    final schema = _siteFilters ?? widget.searchFilters!;
+    final active =
+        filters.tags.isNotEmpty ||
+        filters.date.isNotEmpty ||
+        filters.duration.isNotEmpty;
+    final cards = <String, ApiVideoItem>{};
+    for (final raw in videos) {
+      final target = Uri.tryParse('${raw['watchUrl'] ?? raw['pageUrl'] ?? ''}');
+      if (target == null || !_isFirstParty(target)) continue;
+      final metadata = VideoPublicMetadata.fromWire(raw);
+      cards.putIfAbsent(
+        target.toString(),
+        () => ApiVideoItem(
+          id: target.toString(),
+          title: '${raw['title'] ?? ''}',
+          detailUrl: target,
+          coverUrl: Uri.tryParse('${raw['coverUrl'] ?? ''}'),
+          description: metadata.byline(
+            creator: '${raw['creatorName'] ?? ''}',
+            fallback: '${raw['subtitle'] ?? ''}',
+          ),
+          releaseDate: metadata.publishedDate ?? '',
+          sourceDuration: metadata.duration ?? '',
+          sourceViews: metadata.viewCount,
+        ),
+      );
+    }
+    final previous = _searchPage(paging['previousUrl']);
+    final next = _searchPage(paging['nextUrl']);
+    void goToPage(Uri target) {
+      if (ranking) _hanimeRankPages[_hanimeRanking] = target;
+      unawaited(_load(target, rememberHistory: false, reuseFresh: true));
+    }
+
+    void update(VideoSearchFilters value) {
+      if (!preview) {
+        unawaited(_load(value.toUri(widget.homeUrl), rememberHistory: false));
+      }
+    }
+
+    final storageKey =
+        'hanime.works.$page.${_keywordScopeFor(page)?.name ?? ''}';
+    return ApiVideoCollection(
+      key: PageStorageKey(storageKey),
+      storageKey: storageKey,
+      items: cards.values.toList(),
+      mode: _hanimeLayout == HanimeCatalogLayout.detail
+          ? ApiVideoView.list
+          : ApiVideoView.grid,
+      gridColumns: _hanimeLayout == HanimeCatalogLayout.large ? 2 : 3,
+      posterAspectRatio: 16 / 9,
+      gridMainAxisSpacing: 10,
+      contentBottomPadding: NativeNavigationInset.scrollBottom(context) + 16,
+      onOpen: (item) => unawaited(_load(item.detailUrl)),
+      header: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SourceVideoResultsToolbar(
+            keyPrefix: 'hanime-results',
+            horizontalInset: 0,
+            count: _hanimeResultLabel(filters, ranking: ranking),
+            sort: filters.sort,
+            sortOptions: {
+              if (!ranking)
+                for (final choice
+                    in schema.options['sort'] ?? const <VideoFilterChoice>[])
+                  if (hanimeResultSort(choice.value))
+                    choice.value: choice.label,
+            },
+            onSort: preview
+                ? null
+                : (value) => update(filters.copyWith(sort: value, page: 1)),
+            filter: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!ranking)
+                  SourceFilterIconButton(
+                    key: const ValueKey('hanime-results.filter'),
+                    tooltip: t.videoFilters.title,
+                    active: active,
+                    onPressed: preview
+                        ? null
+                        : () => unawaited(
+                            _openFilters(
+                              VideoFilterSection.tags,
+                              advanced: true,
+                            ),
+                          ),
+                  ),
+                NativeVideoMenu(
+                  key: const ValueKey('hanime-results.layout'),
+                  label: '',
+                  tooltip: _hanimeLabel('作品布局', 'Work layout'),
+                  selected: _hanimeLayout.name,
+                  options: {
+                    HanimeCatalogLayout.detail.name: t.videoLibrary.detailList,
+                    HanimeCatalogLayout.large.name: _hanimeLabel(
+                      '双列大图',
+                      'Large grid',
+                    ),
+                    HanimeCatalogLayout.compact.name: _hanimeLabel(
+                      '三列网格',
+                      'Compact grid',
+                    ),
+                  },
+                  icon: _hanimeLayout == HanimeCatalogLayout.detail
+                      ? Icons.view_list_outlined
+                      : Icons.grid_view_rounded,
+                  symbol: _hanimeLayout == HanimeCatalogLayout.detail
+                      ? 'list.bullet'
+                      : 'square.grid.2x2',
+                  hostPresentation: true,
+                  width: 44,
+                  onSelected: (value) {
+                    if (!preview)
+                      unawaited(
+                        _setHanimeLayout(
+                          HanimeCatalogLayout.values.byName(value),
+                        ),
+                      );
+                  },
+                ),
+              ],
+            ),
+          ),
+          if (!ranking && active)
+            VideoActiveFilters(
+              filters: filters,
+              schema: schema,
+              sections: hanimeResultFilters,
+              onChanged: update,
+              onEdit: (section) {
+                if (!preview) unawaited(_openFilters(section, advanced: true));
+              },
+            ),
+          if (!ranking && exactTag != null)
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: TextButton.icon(
+                key: const ValueKey('video-search.exact-tag'),
+                onPressed: preview
+                    ? null
+                    : () => unawaited(_queueTagFilter(tag: exactTag.value)),
+                icon: const Icon(Icons.sell_outlined, size: 18),
+                label: Text('${t.videoFilters.searchTags} · ${exactTag.label}'),
+              ),
+            ),
+          if (_refreshingCatalog && !preview)
+            const LinearProgressIndicator(minHeight: 2),
+          if (_catalogRefreshFailed && !preview)
+            TextButton(
+              onPressed: () => unawaited(_load(page, rememberHistory: false)),
+              child: Text(t.videoPlayback.catalogRefreshFailed),
+            ),
+        ],
+      ),
+      emptyState: Center(
+        child: Text(
+          titleOnly && next != null
+              ? _hanimeLabel('本页无标题匹配', 'No matching titles on this page')
+              : t.search.noResults,
+        ),
+      ),
+      footer: previous == null && next == null
+          ? null
+          : Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  OutlinedButton(
+                    onPressed: preview || previous == null
+                        ? null
+                        : () => goToPage(previous),
+                    child: Text(t.common.previousPage),
+                  ),
+                  Text(t.searchResult.pageOnly(page: filters.page)),
+                  OutlinedButton(
+                    onPressed: preview || next == null
+                        ? null
+                        : () => goToPage(next),
+                    child: Text(t.common.nextPage),
+                  ),
+                ],
+              ),
+            ),
+    );
+  }
+
+  String _hanimeResultLabel(
+    VideoSearchFilters filters, {
+    required bool ranking,
+  }) {
+    if (ranking) return _hanimeLabel('排行榜', 'Rankings');
+    final scope = widget.hanimeCategory?.title;
+    if (scope != null) return scope;
+    if (filters.query.isNotEmpty) {
+      final keywordScope =
+          _hanimeResultKeywordScope == KeywordSearchScope.title;
+      return keywordScope
+          ? _hanimeLabel('仅标题', 'Title only')
+          : _hanimeLabel('视频结果', 'Video results');
+    }
+    if (filters.tags.length == 1) return filters.tags.single;
+    return _hanimeLabel('全部作品', 'All works');
   }
 
   List<NativeCatalogCategory> get _categories {
@@ -6243,7 +6781,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
 
   Widget _buildPage(BuildContext context) {
     final officialWebsite = sourceOfficialWebsite(widget.source);
-    final tabIndex = widget.tabs.indexWhere((tab) => tab.id == _activeTab);
+    final tabIndex = _tabs.indexWhere((tab) => tab.id == _activeTab);
     final android = defaultTargetPlatform == TargetPlatform.android;
     final internalBack = !_verificationVisible && _canGoBackInside;
     final verificationBack =
@@ -6313,9 +6851,24 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                                 !_isPersonalContext &&
                                 _creatorContext == null
                             ? VideoSearchEntry(
-                                query: VideoSearchFilters.fromUri(
-                                  _listUrl ?? widget.homeUrl,
-                                ).query,
+                                query:
+                                    widget.structuredHanime &&
+                                        widget.tabs.isNotEmpty
+                                    ? ''
+                                    : VideoSearchFilters.fromUri(
+                                        _listUrl ?? widget.homeUrl,
+                                      ).query,
+                                hint: !widget.structuredHanime
+                                    ? null
+                                    : widget.hanimeCategory != null
+                                    ? _hanimeLabel(
+                                        '在此分类搜索',
+                                        'Search this category',
+                                      )
+                                    : _hanimeLabel(
+                                        '搜索 Hanime',
+                                        'Search Hanime',
+                                      ),
                                 onTap: _openSearch,
                                 onClear: _clearCatalogSearch,
                               )
@@ -6853,14 +7406,20 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                               color: Theme.of(context).colorScheme.surface,
                               child: Column(
                                 children: [
-                                  if ((_categories.isNotEmpty ||
+                                  if (_hanimeRank) _hanimeRankingTabs(),
+                                  if (!widget.structuredHanime &&
+                                      (_categories.isNotEmpty ||
                                           widget.searchFilters != null) &&
                                       const {
                                         '/',
                                         '/search',
                                       }.contains(_requestedUrl.path))
                                     _categoryBar(),
-                                  Expanded(child: _catalogBody()),
+                                  Expanded(
+                                    child: _categoryDirectory
+                                        ? _hanimeCategoryDirectory()
+                                        : _catalogBody(),
+                                  ),
                                 ],
                               ),
                             ),
@@ -6963,7 +7522,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                   ],
                 ),
                 bottomNavigationBar:
-                    widget.tabs.isEmpty ||
+                    _tabs.isEmpty ||
                         _inPersonalLibrary ||
                         _personalVisible ||
                         _websiteVisible ||
@@ -6971,9 +7530,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                     ? null
                     : VideoNativeNavigation(
                         symbols: [
-                          for (final tab in widget.tabs)
+                          for (final tab in _tabs)
                             switch (tab.id) {
                               'recommend' => 'house',
+                              _categoryTab => 'square.grid.2x2',
                               'ranking' => 'chart.bar',
                               'subscriptions' => 'play.rectangle.on.rectangle',
                               _ => 'person.crop.circle',
@@ -6982,19 +7542,20 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                         currentIndex: tabIndex < 0 ? 0 : tabIndex,
                         onTap: _verificationVisible
                             ? null
-                            : (index) =>
-                                  unawaited(_openTab(widget.tabs[index])),
+                            : (index) => unawaited(_openTab(_tabs[index])),
                         items: [
-                          for (final tab in widget.tabs)
+                          for (final tab in _tabs)
                             BottomNavigationBarItem(
                               icon: Icon(switch (tab.id) {
                                 'recommend' => Icons.home_outlined,
+                                _categoryTab => Icons.category_outlined,
                                 'ranking' => Icons.leaderboard_outlined,
                                 'subscriptions' => Icons.subscriptions_outlined,
                                 _ => Icons.person_outline_rounded,
                               }),
                               activeIcon: Icon(switch (tab.id) {
                                 'recommend' => Icons.home_rounded,
+                                _categoryTab => Icons.category_rounded,
                                 'ranking' => Icons.leaderboard_rounded,
                                 'subscriptions' => Icons.subscriptions_rounded,
                                 _ => Icons.person_rounded,
