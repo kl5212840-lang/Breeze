@@ -384,7 +384,7 @@ class _SourceDownloadedVideosPageState
               ),
         actions: widget.groupDownloads
             ? null
-            : const [CollectionCoverPrivacyButton()],
+            : const [CollectionCoverPrivacyActions()],
       ),
       body: _selectionBody(
         Column(

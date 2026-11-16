@@ -71,6 +71,7 @@ class BookshelfSourceNavigation extends StatelessWidget {
     this.showManage = true,
     this.classicChips = false,
     this.quietChips = false,
+    this.scrollSafeChips = false,
     this.allLabel,
     this.horizontalInset = CollectionToolbarMetrics.horizontalInset,
     this.statusAction,
@@ -81,7 +82,7 @@ class BookshelfSourceNavigation extends StatelessWidget {
   final bool loading;
   final Set<String> hidden;
   final VoidCallback? onManage;
-  final bool showManage, classicChips, quietChips;
+  final bool showManage, classicChips, quietChips, scrollSafeChips;
   final String? allLabel;
   final double horizontalInset;
   final Widget? statusAction;
@@ -158,7 +159,7 @@ class BookshelfSourceNavigation extends StatelessWidget {
 
   Widget _buildClassicChips(BuildContext context, Map<String, String> options) {
     final active = selected.isEmpty ? {''} : selected.toSet();
-    if (!AppInterfaceStyleScope.usesSystem(context)) {
+    if (scrollSafeChips || !AppInterfaceStyleScope.usesSystem(context)) {
       return _ClassicBreezeSources(
         options: options,
         quiet: quietChips,

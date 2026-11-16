@@ -774,8 +774,8 @@ class _ApiVideoFavoritesState extends State<ApiVideoFavorites> {
         if (!widget.compactHeader) ...[
           const SizedBox(width: 8),
           _keywordMenu(),
-          const CollectionCoverPrivacyButton(
-            key: ValueKey('local-favorites.cover-privacy'),
+          const CollectionCoverPrivacyActions(
+            buttonKey: ValueKey('local-favorites.cover-privacy'),
           ),
         ],
       ],
@@ -813,7 +813,6 @@ class _ApiVideoFavoritesState extends State<ApiVideoFavorites> {
               title: t.videoSource.localFavorites,
               onSearch: null,
               options: const {},
-              reserveMoreSlot: _snapshot == null,
               onMore: (_) {},
             ),
             Expanded(child: empty),

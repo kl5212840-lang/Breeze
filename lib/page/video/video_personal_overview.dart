@@ -299,11 +299,16 @@ class _VideoPersonalOverviewState extends State<VideoPersonalOverview> {
                 note: widget.landscapeWorks && kind == 'playlists'
                     ? playlistWorkCount('${row['subtitle'] ?? ''}')
                     : '${row['creatorName'] ?? row['subtitle'] ?? ''}',
-                cover: VideoCardCover(
-                  url: '${row['coverUrl'] ?? ''}',
-                  referrer: widget.page,
-                  metadata: VideoPublicMetadata.fromWire(row),
-                ),
+                cover: kind == 'playlists'
+                    ? VideoThumbnail(
+                        url: '${row['coverUrl'] ?? ''}',
+                        referrer: widget.page,
+                      )
+                    : VideoCardCover(
+                        url: '${row['coverUrl'] ?? ''}',
+                        referrer: widget.page,
+                        metadata: VideoPublicMetadata.fromWire(row),
+                      ),
                 onOpen: () => kind == 'playlists'
                     ? widget.onTab(target)
                     : widget.onVideo(target),
@@ -320,8 +325,8 @@ class _VideoPersonalOverviewState extends State<VideoPersonalOverview> {
         if (widget.showPrivacyAction)
           const Align(
             alignment: AlignmentDirectional.centerEnd,
-            child: CollectionCoverPrivacyButton(
-              key: ValueKey('personal-overview.cover-privacy'),
+            child: CollectionCoverPrivacyActions(
+              buttonKey: ValueKey('personal-overview.cover-privacy'),
             ),
           ),
         Expanded(

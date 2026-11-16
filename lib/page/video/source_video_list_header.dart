@@ -1,3 +1,6 @@
+import 'package:zephyr/widgets/collection_cover_settings.dart';
+import 'dart:async';
+
 import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
@@ -48,7 +51,6 @@ class SourceVideoListHeader extends StatelessWidget {
     this.searchScope,
     this.leading,
     this.searching = false,
-    this.reserveMoreSlot = false,
     this.menuKey,
     this.keyPrefix = 'source-video-list',
     this.horizontalInset = sourceVideoCollectionInset,
@@ -56,7 +58,7 @@ class SourceVideoListHeader extends StatelessWidget {
   final String title, keyPrefix;
   final Key? menuKey;
   final double horizontalInset;
-  final bool searching, reserveMoreSlot;
+  final bool searching;
   final Widget? searchField, searchScope, leading;
   final VoidCallback? onSearch;
   final Map<String, String> options;
@@ -108,31 +110,42 @@ class SourceVideoListHeader extends StatelessWidget {
               CollectionCoverPrivacyButton(
                 key: ValueKey('$keyPrefix.cover-privacy'),
               ),
-              if (options.isNotEmpty)
-                NativeVideoMenu(
-                  key: menuKey ?? ValueKey('$keyPrefix.more'),
-                  hostPresentation: true,
-                  label: '',
-                  width: CollectionToolbarMetrics.actionExtent,
-                  tooltip: t.common.more,
-                  selected: '',
-                  icon: Icons.more_horiz_rounded,
-                  symbol: 'ellipsis',
-                  options: options,
-                  optionIcons: {
-                    for (final entry in options.entries)
-                      entry.key:
-                          entry.key.toLowerCase().contains('view') &&
-                              entry.value == t.videoLibrary.detailList
-                          ? CollectionCommandIcons.list
-                          : sourceVideoMenuIcon(entry.key),
-                  },
-                  onSelected: onMore,
-                )
-              else if (reserveMoreSlot)
-                const SizedBox.square(
-                  dimension: CollectionToolbarMetrics.actionExtent,
-                ),
+              NativeVideoMenu(
+                key: menuKey ?? ValueKey('$keyPrefix.more'),
+                hostPresentation: true,
+                label: '',
+                width: CollectionToolbarMetrics.actionExtent,
+                tooltip: t.common.more,
+                selected: '',
+                icon: Icons.more_horiz_rounded,
+                symbol: 'ellipsis',
+                options: {
+                  ...options,
+                  collectionCoverSettingsAction: collectionCoverSettingsLabel(
+                    context,
+                  ),
+                },
+                selectAfterDismissal: const {collectionCoverSettingsAction},
+                optionIcons: {
+                  collectionCoverSettingsAction: (
+                    icon: Icons.visibility_off_outlined,
+                    symbol: 'eye.slash',
+                  ),
+                  for (final entry in options.entries)
+                    entry.key:
+                        entry.key.toLowerCase().contains('view') &&
+                            entry.value == t.videoLibrary.detailList
+                        ? CollectionCommandIcons.list
+                        : sourceVideoMenuIcon(entry.key),
+                },
+                onSelected: (value) {
+                  if (value == collectionCoverSettingsAction) {
+                    unawaited(openCollectionCoverSettings(context));
+                  } else {
+                    onMore(value);
+                  }
+                },
+              ),
             ],
           ],
         ),

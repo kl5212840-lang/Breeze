@@ -646,7 +646,9 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
         _selectRecords(ShelfPageMode.values.byName(value).index);
       },
     );
-    final sources = BlocBuilder<BookshelfSearchCubit, BookshelfSearchState>(
+    Widget sources({
+      bool scrollSafe = false,
+    }) => BlocBuilder<BookshelfSearchCubit, BookshelfSearchState>(
       bloc: _activeSearch,
       builder: (context, state) {
         final medium = _sourceMedium, mode = _mode, cubit = _activeSearch;
@@ -656,6 +658,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
             horizontalInset: CollectionToolbarMetrics.sourceContentInset,
             showManage: true,
             classicChips: true,
+            scrollSafeChips: scrollSafe,
             sources: _sourceControlsReady
                 ? _sourcePreferences[medium]!.arrange(_allLabelSources(medium))
                 : const {},
@@ -718,7 +721,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
             (sourceFailed ? CollectionToolbarMetrics.actionExtent : 0);
         const leadingPadding = CollectionToolbarMetrics.sourceContentInset;
         final fits =
-            recordWidth + minimumSources + leadingPadding <=
+            recordWidth + minimumSources + leadingPadding + 8 <=
             constraints.maxWidth;
         return Column(
           children: [
@@ -727,7 +730,8 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
                 children: [
                   const SizedBox(width: leadingPadding),
                   SizedBox(width: recordWidth, child: records),
-                  Expanded(child: sources),
+                  const SizedBox(width: 8),
+                  Expanded(child: sources(scrollSafe: true)),
                 ],
               )
             else ...[
@@ -747,7 +751,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
                   ),
                 ),
               ),
-              sources,
+              sources(),
             ],
             const Padding(
               padding: EdgeInsets.fromLTRB(

@@ -19,8 +19,14 @@ class VideoPersonalPageWindow {
     }
   }
 
-  void put(String scope, Uri page, Map<String, dynamic> data) {
+  void put(
+    String scope,
+    Uri page,
+    Map<String, dynamic> data, {
+    bool replace = false,
+  }) {
     bind(scope);
+    if (replace) _pages.clear();
     _pages[page] = data;
   }
 

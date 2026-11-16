@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/collection_cover_settings.dart';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -419,4 +420,18 @@ class CollectionCoverPrivacyButton extends StatelessWidget {
       },
     );
   }
+}
+
+class CollectionCoverPrivacyActions extends StatelessWidget {
+  const CollectionCoverPrivacyActions({super.key, this.buttonKey});
+  final Key? buttonKey;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      CollectionCoverPrivacyButton(key: buttonKey),
+      const CollectionCoverSettingsMoreButton(),
+    ],
+  );
 }

@@ -134,6 +134,7 @@ class _WebPlatform extends InAppWebViewPlatform {
   Map<String, dynamic> domSnapshot = {};
   final publicWorkReads = <Uri>[];
   Map<String, dynamic>? publicWorkFacts;
+  Map<String, dynamic>? personalPageResponse;
   Map<String, dynamic>? creatorDirectory;
   Map<String, dynamic>? resolvedCreator;
   Future<dynamic>? nextCreatorRead;
@@ -338,6 +339,9 @@ class _WebController extends PlatformInAppWebViewController
       final pending = host.nextEmptySearch;
       host.nextEmptySearch = null;
       return pending;
+    }
+    if (source.contains('const fullPage = true;')) {
+      return host.personalPageResponse;
     }
     if (source.contains('const breezePublicWork')) {
       final match = RegExp(
@@ -4155,6 +4159,76 @@ void main() {
       expect(
         tester.widget<ApiVideoCollection>(find.byType(ApiVideoCollection)).mode,
         ApiVideoView.list,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'Hanime automatically appends a personal page without navigation',
+    (tester) async {
+      final owner = Uri.parse('https://hanime1.me/user/42');
+      final likes = owner.replace(path: '/user/42/likes');
+      var pageReads = 0;
+      web.personalPageResponse = {
+        'status': 'ok',
+        'snapshot': {'personalPageReady': true},
+      };
+      plugin.catalog = (core) async {
+        final uri = Uri.parse(core['pageUrl'] as String);
+        final next = uri.queryParameters['page'] == '2';
+        if (next) pageReads++;
+        return {
+          'data': {
+            'sections': [],
+            'videos': [
+              if (uri.path == likes.path)
+                {
+                  'title': next ? 'Second work' : 'First work',
+                  'watchUrl': 'https://hanime1.me/watch?v=${next ? 2 : 1}',
+                  'tags': ['Observed'],
+                },
+            ],
+            'paging': {if (uri == likes) 'nextUrl': '$likes?page=2'},
+            'account': {
+              'status': 'signedIn',
+              'profileUrl': '$owner',
+              'isOwnProfile': true,
+              'links': [
+                {'title': 'Likes', 'url': '$likes'},
+              ],
+            },
+          },
+        };
+      };
+      await _mount(
+        tester,
+        plugin,
+        structuredHanime: true,
+        filters: _filters,
+        nativePersonal: true,
+      );
+      web.finishLastLoad();
+      await _pump(tester);
+      web.profileHref = '/user/42';
+      await tester.tap(find.text('我的'));
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      await _openPersonalLibrary(tester, 'likes');
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester, 15);
+      expect(pageReads, 1);
+      expect(
+        web.loads.where((url) => url.queryParameters['page'] == '2'),
+        isEmpty,
+      );
+      expect(
+        tester
+            .widget<ApiVideoCollection>(find.byType(ApiVideoCollection))
+            .items,
+        hasLength(2),
       );
       await tester.pumpWidget(const SizedBox.shrink());
     },

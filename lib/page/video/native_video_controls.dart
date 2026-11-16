@@ -248,7 +248,10 @@ class NativeVideoMenu extends StatelessWidget {
             if (bare && label.isNotEmpty || icon != null && label.isEmpty)
               'pressFeedback': true,
             if (icon != null && label.isEmpty) 'iconPressFeedback': true,
-            if (!_usesIconMetrics) 'backgroundInset': 0.0,
+            if (!_usesIconMetrics)
+              'backgroundInset': compactTextChoice
+                  ? VideoControlMetrics.backgroundInset
+                  : 0.0,
             if (hostPresentation) 'choiceValues': const ['native', 'website'],
             if (compact) ...{
               'compactPopup': true,
@@ -521,7 +524,8 @@ class _HostVideoMenuState extends State<_HostVideoMenu> {
                     width: menu.width,
                     child: ConstrainedBox(
                       constraints: BoxConstraints(
-                        minHeight: searchExtent ?? 44,
+                        minHeight:
+                            searchExtent ?? (menu.compactTextChoice ? 36 : 44),
                       ),
                       child: Padding(
                         padding: EdgeInsets.symmetric(

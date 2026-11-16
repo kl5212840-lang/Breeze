@@ -711,8 +711,8 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
                       ),
                       const SizedBox(width: 8),
                       _keywordMenu(),
-                      const CollectionCoverPrivacyButton(
-                        key: ValueKey('api-history.cover-privacy'),
+                      const CollectionCoverPrivacyActions(
+                        buttonKey: ValueKey('api-history.cover-privacy'),
                       ),
                     ],
                   ),

@@ -1240,7 +1240,8 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                                             context,
                                           )?.source !=
                                           _repository.source,
-                                  showCoverSettings: false,
+                                  showCoverSettings:
+                                      _omo && _tab == _omoAccountIndex,
                                   actions: [
                                     if (_putCatalogViewInMore(context) ||
                                         _tab == 0 &&

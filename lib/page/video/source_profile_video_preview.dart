@@ -106,7 +106,7 @@ class _SourceProfileVideoPreviewState extends State<SourceProfileVideoPreview> {
             ),
           if (_expanded && widget.playlistRows && widget.items.isNotEmpty)
             CollectionCoverPrivacyScope(
-              replacementFit: BoxFit.contain,
+              replacementFit: BoxFit.cover,
               child: Column(
                 children: [
                   for (final item in widget.items.take(3))
@@ -121,9 +121,7 @@ class _SourceProfileVideoPreviewState extends State<SourceProfileVideoPreview> {
             ),
           if (_expanded && !widget.playlistRows && widget.items.isNotEmpty)
             CollectionCoverPrivacyScope(
-              replacementFit: widget.posterAspectRatio > 1
-                  ? BoxFit.contain
-                  : BoxFit.cover,
+              replacementFit: BoxFit.cover,
               child: CollectionCoverFitScope(
                 child: LayoutBuilder(
                   builder: (context, bounds) {
@@ -374,17 +372,15 @@ class SourceProfilePlaylistRow extends StatelessWidget {
                         ),
                       ),
                       PositionedDirectional(
-                        end: 5,
-                        bottom: 0,
+                        end: 8,
+                        bottom: 3,
                         child: DecoratedBox(
                           decoration: const BoxDecoration(
                             color: Colors.black54,
-                            borderRadius: BorderRadius.only(
-                              topLeft: Radius.circular(5),
-                            ),
+                            borderRadius: BorderRadius.all(Radius.circular(5)),
                           ),
-                          child: const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 4),
+                          child: const SizedBox.square(
+                            dimension: 22,
                             child: Icon(
                               Icons.playlist_play_rounded,
                               color: Colors.white,
@@ -557,7 +553,7 @@ class _SourceProfileLocalVideoPreviewsState
       if (widget.showPrivacyAction)
         const Align(
           alignment: AlignmentDirectional.centerEnd,
-          child: CollectionCoverPrivacyButton(),
+          child: CollectionCoverPrivacyActions(),
         ),
       SourceProfileVideoPreview(
         identity: 'local-history.${widget.source}',

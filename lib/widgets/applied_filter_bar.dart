@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
@@ -108,7 +109,9 @@ class _AppliedFilterBarState extends State<AppliedFilterBar> {
     return Semantics(
       label: t.videoFilters.active,
       child: Padding(
-        padding: EdgeInsetsDirectional.only(start: widget.inset),
+        padding: EdgeInsetsDirectional.only(
+          start: (widget.inset - 8).clamp(0.0, widget.inset),
+        ),
         child: SizedBox(
           height: height,
           child: Row(
@@ -145,8 +148,11 @@ class _AppliedFilterBarState extends State<AppliedFilterBar> {
                           ): entry.remove,
                         },
                         child: GestureDetector(
-                          onLongPress: () =>
-                              setState(() => _revealed = entry.id),
+                          onLongPress: () {
+                            if (_revealed == entry.id) return;
+                            HapticFeedback.selectionClick();
+                            setState(() => _revealed = entry.id);
+                          },
                           child: Stack(
                             alignment: AlignmentDirectional.centerEnd,
                             children: [

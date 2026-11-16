@@ -4,20 +4,25 @@ import 'package:zephyr/page/video/video_catalog_dom.dart';
 /// Read an explicitly declared own-library URL without navigating the active
 /// browser. Detached documents never execute scripts; only bounded video or
 /// playlist cards are returned, never form values, cookies or profile fields.
-String videoPersonalRecentScript(Uri page, Map<String, String> selectors) =>
+String videoPersonalRecentScript(
+  Uri page,
+  Map<String, String> selectors, {
+  bool fullPage = false,
+}) =>
     '''
 (() => {
   const breezePersonalRecent = ${jsonEncode(page.toString())};
   const target = new URL(breezePersonalRecent);
+  const fullPage = $fullPage;
   const root = target.pathname.split('/').slice(0, 3).join('/');
   if (target.origin !== location.origin || target.username || target.password ||
-      target.search || target.hash || !new RegExp('^/user/[0-9]+/(?:histories|saves|likes|playlists)\$').test(target.pathname)) return {status:'unsupported'};
+      (target.search && (!fullPage || !/^\?page=[1-9][0-9]{0,3}\$/.test(target.search))) || target.hash || !new RegExp('^/user/[0-9]+/(?:histories|saves|likes|playlists)\$').test(target.pathname)) return {status:'unsupported'};
   return (async () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 7000);
     try {
       const response = await fetch(target.href, {credentials:'same-origin', redirect:'error', signal:controller.signal});
-      if (!response.ok || new URL(response.url).pathname !== target.pathname) return {status:'unavailable'};
+      if (!response.ok || new URL(response.url).href !== target.href) return {status:'unavailable'};
       const html = await response.text();
       if (html.length > 3000000) return {status:'unavailable'};
       const document = new DOMParser().parseFromString(html, 'text/html');
@@ -66,7 +71,9 @@ String videoPersonalRecentScript(Uri page, Map<String, String> selectors) =>
         } catch (_) { return false; }
       });
       return {status:'ok', count, complete: !partial, snapshot:{
-        cards: allCards.slice(0,4), playlists: allPlaylists.slice(0,4), personalPageReady:true
+        cards: allCards.slice(0,fullPage ? 160 : 4), playlists: allPlaylists.slice(0,fullPage ? 160 : 4), personalPageReady:true,
+        ...(fullPage ? {pagination: Array.from(document.querySelectorAll('ul.pagination a[href], a[rel="next"]')).slice(0,30)
+          .map(node => ({href:node.getAttribute('href'), label:node.textContent.trim()}))} : {})
       }};
     } catch (_) { return {status:'unavailable'}; }
     finally { clearTimeout(timer); }
