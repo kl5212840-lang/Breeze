@@ -18,6 +18,32 @@ const String videoSearchDiscoveryScript = r'''
         url.pathname === '/watch' && /^[0-9]+$/.test(url.searchParams.get('v') || '') ? url.href : '';
     } catch (_) { return ''; }
   };
+  // Hanime renders empty desktop/mobile pagers around a result row that can
+  // contain an outbound advert with the same inner classes as a video card.
+  // Once the HTML is parsed, the row doesn't need to wait for advert loads.
+  const adOnlySearchRow = (wrapper) => {
+    const section = wrapper.parentElement;
+    const mobile = wrapper.previousElementSibling;
+    const desktop = wrapper.nextElementSibling;
+    if (!section?.classList.contains('search-rows-wrapper') ||
+        section.getAttribute('aria-busy') === 'true' ||
+        !mobile?.classList.contains('mobile-search-pagination') ||
+        !desktop?.classList.contains('search-pagination') ||
+        [mobile, desktop].some(pager => pager.querySelector('ul.pagination, a[href], [aria-busy="true"]'))) {
+      return false;
+    }
+    return Array.from(wrapper.children).every(link => {
+      const card = link.firstElementChild;
+      if (link.tagName !== 'A' || link.getAttribute('target') !== '_blank' ||
+          link.children.length !== 1 ||
+          !card?.classList.contains('home-rows-videos-div') ||
+          !card.classList.contains('search-videos')) return false;
+      try {
+        const target = new URL(link.getAttribute('href'), location.href);
+        return /^https?:$/.test(target.protocol) && target.origin !== location.origin;
+      } catch (_) { return false; }
+    });
+  };
   const videoSearchResults = (firstOnly = false) => {
     const wrappers = Array.from(document.querySelectorAll('.home-rows-videos-wrapper')).slice(0, 160);
     const normal = Array.from(document.querySelectorAll(config.cards)).slice(0, 160);
@@ -41,6 +67,10 @@ const String videoSearchDiscoveryScript = r'''
     if (busy) return { roots, state: 'waiting' };
     if (roots.length || artists) return { roots, state: 'content' };
     // A header/search form says nothing about whether results have arrived.
+    if (document.readyState !== 'loading' && wrappers.length === 1 &&
+        document.querySelector('form[action$="/search"]') && adOnlySearchRow(wrappers[0])) {
+      return { roots, state: 'empty' };
+    }
     if (document.readyState !== 'complete') return { roots, state: 'waiting' };
     const resultScope = content || wrappers[0];
     const messages = Array.from(resultScope?.querySelectorAll(

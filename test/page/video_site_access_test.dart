@@ -36,6 +36,54 @@ assert.equal(read('Unexpected markup'), 'unrecognized');
       expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
     },
   );
+  test('ad-only search results settle before subresources finish', () async {
+    const harness = r'''
+const assert = require('node:assert/strict'), vm = require('node:vm');
+const script = JSON.parse(process.argv[1]);
+function read({readyState='interactive', busy=false, href='https://ads.example/offer',
+  pageLink=false, unknown=false, normalCard=false}={}) {
+  const node = ({tagName='DIV', classes=[], attrs={}, children=[]}={}) => ({
+    tagName, children, firstElementChild:children[0], classList:{contains:c => classes.includes(c)},
+    getAttribute:key => attrs[key] || null, hasAttribute:key => key in attrs,
+    querySelector:s => (s === 'ul.pagination, a[href], [aria-busy="true"]' && pageLink) ? {} : null,
+    querySelectorAll:() => [], matches:() => false, textContent:'',
+  });
+  const ad = node({tagName:'A', attrs:{href,target:'_blank'},
+    children:[node({classes: unknown ? [] : ['search-videos', 'home-rows-videos-div']})]});
+  const wrapper = node({children:[ad], attrs:busy ? {'aria-busy':'true'} : {}});
+  wrapper.parentElement = node({classes:['search-rows-wrapper']});
+  wrapper.previousElementSibling = node({classes:['search-pagination', 'mobile-search-pagination']});
+  wrapper.nextElementSibling = node({classes:['search-pagination']});
+  const card = node({attrs:{'data-id':'123'}});
+  const form = node();
+  const document = {readyState, title:'Search', querySelectorAll:selector =>
+    selector === '.home-rows-videos-wrapper' ? [wrapper] : normalCard && selector === '.card' ? [card] : [],
+    querySelector:selector => selector === 'form[action$="/search"]' ? form : null};
+  return JSON.parse(vm.runInNewContext(script, {document, window:{},
+    location:new URL('https://hanime1.me/search?genre=Animation&tags%5B%5D=A&tags%5B%5D=B'), URL}));
+}
+assert.equal(read().searchState,'empty');
+assert.equal(read().nativeContent,true);
+assert.equal(read({readyState:'complete'}).searchState,'empty');
+assert.equal(read({readyState:'loading'}).searchState,'waiting');
+assert.equal(read({busy:true}).searchState,'waiting');
+assert.equal(read({pageLink:true}).searchState,'waiting');
+assert.equal(read({href:'/watch?v=123'}).searchState,'waiting');
+assert.equal(read({unknown:true}).searchState,'waiting');
+assert.equal(read({normalCard:true}).searchState,'content');
+''';
+    final result = await Process.run('node', [
+      '-e',
+      harness,
+      jsonEncode(
+        videoSiteStateScript({
+          'cards': '.card',
+          'cardLink': 'a[href*="/watch"]',
+        }, diagnostics: false),
+      ),
+    ]);
+    expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+  });
 
   test(
     'actual document script distinguishes provider block markup from challenges and ordinary content',
