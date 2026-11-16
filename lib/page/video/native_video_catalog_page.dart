@@ -33,6 +33,7 @@ import 'package:zephyr/page/video/video_page_analysis.dart';
 import 'package:zephyr/page/video/api_video_playback_diagnostics.dart';
 import 'package:zephyr/page/video/video_browse_theme.dart';
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'package:zephyr/service/read_recovery.dart';
@@ -7207,6 +7208,17 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                           onDocumentResponse: _onDocumentResponse,
                           configuration: InAppWebView(
                             key: ObjectKey(this),
+                            initialUserScripts:
+                                hanimePreviewCoverBlur(widget.homeUrl)
+                                ? UnmodifiableListView([
+                                    UserScript(
+                                      source: hanimePreviewCoverScript,
+                                      injectionTime: UserScriptInjectionTime
+                                          .AT_DOCUMENT_START,
+                                      forMainFrameOnly: true,
+                                    ),
+                                  ])
+                                : null,
                             initialSettings: InAppWebViewSettings(
                               javaScriptEnabled: true,
                               domStorageEnabled: true,

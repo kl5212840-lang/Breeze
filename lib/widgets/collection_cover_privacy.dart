@@ -134,12 +134,14 @@ class CollectionCoverPrivacy extends StatelessWidget {
     this.fit = BoxFit.cover,
     this.image,
     this.mosaicPlaceholder,
+    this.forceBlur = false,
   });
   final BoxFit fit;
   final ImageProvider? image;
   final Widget? mosaicPlaceholder;
   final Widget child;
   final bool enabled;
+  final bool forceBlur;
 
   ui.ImageFilter _filter(CollectionCoverStyle style) => ui.ImageFilter.blur(
     sigmaX: style == CollectionCoverStyle.glass ? 30 : 24,
@@ -149,6 +151,14 @@ class CollectionCoverPrivacy extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (enabled && forceBlur) {
+      return ClipRect(
+        child: ImageFiltered(
+          imageFilter: _filter(CollectionCoverStyle.blur),
+          child: child,
+        ),
+      );
+    }
     if (!enabled || !CollectionCoverPrivacyScope.contains(context)) {
       return child;
     }
