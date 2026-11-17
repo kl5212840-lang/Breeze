@@ -5416,9 +5416,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     return AppBar(
       automaticallyImplyLeading: false,
       titleSpacing: 0,
-      toolbarHeight: _personalSearching
-          ? SearchToolbarScope.fieldExtent(context) + 8
-          : null,
+      toolbarHeight: SearchToolbarScope.stableHeight(context, 56),
       title: SourceVideoListHeader(
         keyPrefix: 'personal-records',
         leading: SourceBackButton(onPressed: () => unawaited(_goBackInside())),

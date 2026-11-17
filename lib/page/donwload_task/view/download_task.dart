@@ -301,7 +301,7 @@ class _DownloadHeader extends StatelessWidget {
         final searchExtent = searching
             ? SearchToolbarScope.fieldExtent(context)
             : null;
-        var headerHeight = searchExtent ?? extent;
+        var headerHeight = SearchToolbarScope.fieldExtent(context) + 8;
         // Reserve both modes' labels so filtering/selection/search cannot move
         // the content. Large text wraps within this same header, never shrinks.
         for (final count in [
@@ -317,190 +317,157 @@ class _DownloadHeader extends StatelessWidget {
               : title.height + 2 + measured.height;
           if (height > headerHeight) headerHeight = height;
         }
-        final reduced = MediaQuery.disableAnimationsOf(context);
-        final searchWidth = constraints.maxWidth - extent;
-        final searchStart = titleWidth < 160
-            ? (searchWidth < 160 ? searchWidth : 160.0)
-            : titleWidth;
         final header = SizedBox(
           key: const ValueKey('download-header'),
           height: headerHeight,
-          child: TweenAnimationBuilder<double>(
-            tween: Tween(begin: 0, end: searching ? 1 : 0),
-            duration: reduced
-                ? Duration.zero
-                : const Duration(milliseconds: 160),
-            curve: Curves.easeOutCubic,
-            builder: (context, progress, _) => Row(
-              children: [
-                if (!searching && !embedded) const SourceBackButton(),
-                Expanded(
-                  child: Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: SizedBox(
-                      width: searching
-                          ? searchStart + (searchWidth - searchStart) * progress
-                          : titleWidth,
-                      child: searching
-                          ? SearchQueryField(
-                              key: const ValueKey('download-search-field'),
-                              query: query,
-                              focusNode: focusNode,
-                              inline: true,
-                              closeOnSubmit: false,
-                              hintText: _label(
-                                context,
-                                '查找下载',
-                                'Search downloads',
-                              ),
-                              onChanged: onQuery,
-                            )
-                          : Transform.translate(
-                              offset: Offset(0, -4 * progress),
-                              child: Wrap(
-                                spacing: 8,
-                                runSpacing: 2,
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                children: [
-                                  Text(t.common.download, style: titleStyle),
-                                  if (inventoryReady)
-                                    Semantics(
-                                      label: managing
-                                          ? t.bookshelf.selectedCount(
-                                              count: selectedCount,
-                                            )
-                                          : t.common.itemsCount(
-                                              count: rowCount,
-                                            ),
-                                      excludeSemantics: true,
-                                      child: Text(
-                                        managing
-                                            ? '$selectedCount/$selectableCount'
-                                            : t.common.itemsCount(
-                                                count: rowCount,
-                                              ),
-                                        key: const ValueKey('download-count'),
-                                        style: countStyle,
-                                      ),
-                                    ),
-                                ],
+          child: Row(
+            children: [
+              if (!searching && !embedded) const SourceBackButton(),
+              Expanded(
+                child: searching
+                    ? SearchQueryField(
+                        key: const ValueKey('download-search-field'),
+                        onClose: onSearch,
+                        closeKey: const ValueKey('download-search-close'),
+                        leadingControlWidth: KeywordScopeMenu.leadingWidth(
+                          context,
+                        ),
+                        leadingControl: KeywordScopeMenu(
+                          compact: true,
+                          scope: keywordScope,
+                          onChanged: onKeywordScope,
+                        ),
+                        query: query,
+                        focusNode: focusNode,
+                        inline: true,
+                        closeOnSubmit: false,
+                        hintText: _label(context, '查找下载', 'Search downloads'),
+                        onChanged: onQuery,
+                      )
+                    : Wrap(
+                        spacing: 8,
+                        runSpacing: 2,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(t.common.download, style: titleStyle),
+                          if (inventoryReady)
+                            Semantics(
+                              label: managing
+                                  ? t.bookshelf.selectedCount(
+                                      count: selectedCount,
+                                    )
+                                  : t.common.itemsCount(count: rowCount),
+                              excludeSemantics: true,
+                              child: Text(
+                                managing
+                                    ? '$selectedCount/$selectableCount'
+                                    : t.common.itemsCount(count: rowCount),
+                                key: const ValueKey('download-count'),
+                                style: countStyle,
                               ),
                             ),
+                        ],
+                      ),
+              ),
+              if (searching)
+                const SizedBox(
+                  width: CollectionToolbarMetrics.searchControlGap,
+                ),
+              if (!searching) ...[
+                SourceChromeIconButton(
+                  key: const ValueKey('download-search-action'),
+                  tooltip: !managing
+                      ? t.common.search
+                      : selectableCount > 0 && selectedCount == selectableCount
+                      ? t.bookshelf.deselectAll
+                      : t.common.selectAll,
+                  icon: managing ? Icons.select_all_rounded : Icons.search,
+                  symbol: managing ? 'checkmark.circle' : 'magnifyingglass',
+                  onPressed: working || managing && selectableCount == 0
+                      ? null
+                      : managing
+                      ? onSelectAll
+                      : onSearch,
+                ),
+                if (managing)
+                  SourceChromeIconButton(
+                    key: const ValueKey('download-manage-action'),
+                    tooltip: managing ? t.common.done : t.bookshelf.manage,
+                    icon: managing ? Icons.done_rounded : Icons.checklist,
+                    symbol: managing ? 'checkmark' : 'checklist',
+                    onPressed: working || !inventoryReady ? null : onManage,
+                  ),
+                if (!managing)
+                  const SizedBox.square(
+                    dimension: extent,
+                    child: CollectionCoverPrivacyButton(),
+                  ),
+              ],
+              if (!managing)
+                SizedBox(
+                  width: extent,
+                  height: searchExtent ?? extent,
+                  child: VideoControlAppearance(
+                    systemControls: usesNativeSourceChrome(context),
+                    child: NativeVideoMenu(
+                      key: const ValueKey('download-more'),
+                      width: extent,
+                      label: '',
+                      tooltip: t.common.more,
+                      selected: '',
+                      icon: Icons.more_horiz,
+                      symbol: 'ellipsis',
+                      hostPresentation: true,
+                      selectAfterDismissal: const {
+                        'manage',
+                        'download-settings',
+                        collectionCoverSettingsAction,
+                        'help',
+                      },
+                      options: {
+                        if (inventoryReady && !working)
+                          'manage': t.bookshelf.manage,
+                        'download-settings': t.download.settings,
+                        collectionCoverSettingsAction:
+                            collectionCoverSettingsLabel(context),
+                        'help': t.common.help,
+                      },
+                      optionIcons: {
+                        'manage': (icon: Icons.checklist, symbol: 'checklist'),
+                        'download-settings': (
+                          icon: Icons.settings_outlined,
+                          symbol: 'gearshape',
+                        ),
+                        collectionCoverSettingsAction: (
+                          icon: Icons.visibility_off_outlined,
+                          symbol: 'eye.slash',
+                        ),
+                        'help': (
+                          icon: Icons.help_outline_rounded,
+                          symbol: 'questionmark.circle',
+                        ),
+                      },
+                      groups: const [
+                        ['manage', 'download-settings'],
+                        [collectionCoverSettingsAction],
+                        ['help'],
+                      ],
+                      onSelected: (value) {
+                        if (working || !context.mounted) return;
+                        if (value == 'manage') {
+                          onManage();
+                        } else if (value == 'download-settings') {
+                          unawaited(openDownloadSettings(context));
+                        } else if (value == 'help') {
+                          unawaited(openDownloadHelp(context));
+                        } else if (value == collectionCoverSettingsAction) {
+                          unawaited(openCollectionCoverSettings(context));
+                        }
+                      },
                     ),
                   ),
                 ),
-                if (searching) ...[
-                  const SizedBox(width: 8),
-                  KeywordScopeMenu(
-                    scope: keywordScope,
-                    onChanged: onKeywordScope,
-                  ),
-                  SourceChromeIconButton(
-                    key: const ValueKey('download-search-close'),
-                    tooltip: _label(context, '关闭查找', 'Close search'),
-                    icon: Icons.close_rounded,
-                    symbol: 'xmark',
-                    onPressed: onSearch,
-                  ),
-                ] else ...[
-                  SourceChromeIconButton(
-                    key: const ValueKey('download-search-action'),
-                    tooltip: !managing
-                        ? t.common.search
-                        : selectableCount > 0 &&
-                              selectedCount == selectableCount
-                        ? t.bookshelf.deselectAll
-                        : t.common.selectAll,
-                    icon: managing ? Icons.select_all_rounded : Icons.search,
-                    symbol: managing ? 'checkmark.circle' : 'magnifyingglass',
-                    onPressed: working || managing && selectableCount == 0
-                        ? null
-                        : managing
-                        ? onSelectAll
-                        : onSearch,
-                  ),
-                  if (managing)
-                    SourceChromeIconButton(
-                      key: const ValueKey('download-manage-action'),
-                      tooltip: managing ? t.common.done : t.bookshelf.manage,
-                      icon: managing ? Icons.done_rounded : Icons.checklist,
-                      symbol: managing ? 'checkmark' : 'checklist',
-                      onPressed: working || !inventoryReady ? null : onManage,
-                    ),
-                  if (!managing) ...[
-                    const SizedBox.square(
-                      dimension: extent,
-                      child: CollectionCoverPrivacyButton(),
-                    ),
-                    SizedBox.square(
-                      dimension: extent,
-                      child: VideoControlAppearance(
-                        systemControls: usesNativeSourceChrome(context),
-                        child: NativeVideoMenu(
-                          key: const ValueKey('download-more'),
-                          width: extent,
-                          label: '',
-                          tooltip: t.common.more,
-                          selected: '',
-                          icon: Icons.more_horiz,
-                          symbol: 'ellipsis',
-                          hostPresentation: true,
-                          selectAfterDismissal: const {
-                            'manage',
-                            'download-settings',
-                            collectionCoverSettingsAction,
-                            'help',
-                          },
-                          options: {
-                            if (inventoryReady && !working)
-                              'manage': t.bookshelf.manage,
-                            'download-settings': t.download.settings,
-                            collectionCoverSettingsAction:
-                                collectionCoverSettingsLabel(context),
-                            'help': t.common.help,
-                          },
-                          optionIcons: {
-                            'manage': (
-                              icon: Icons.checklist,
-                              symbol: 'checklist',
-                            ),
-                            'download-settings': (
-                              icon: Icons.settings_outlined,
-                              symbol: 'gearshape',
-                            ),
-                            collectionCoverSettingsAction: (
-                              icon: Icons.visibility_off_outlined,
-                              symbol: 'eye.slash',
-                            ),
-                            'help': (
-                              icon: Icons.help_outline_rounded,
-                              symbol: 'questionmark.circle',
-                            ),
-                          },
-                          groups: const [
-                            ['manage', 'download-settings'],
-                            [collectionCoverSettingsAction],
-                            ['help'],
-                          ],
-                          onSelected: (value) {
-                            if (working || !context.mounted) return;
-                            if (value == 'manage') {
-                              onManage();
-                            } else if (value == 'download-settings') {
-                              unawaited(openDownloadSettings(context));
-                            } else if (value == 'help') {
-                              unawaited(openDownloadHelp(context));
-                            } else if (value == collectionCoverSettingsAction) {
-                              unawaited(openCollectionCoverSettings(context));
-                            }
-                          },
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ],
-            ),
+            ],
           ),
         );
         return SearchToolbarScope(extent: searchExtent, child: header);

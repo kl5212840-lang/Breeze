@@ -311,8 +311,8 @@ class _SourceDownloadedVideosPageState
     },
     child: Scaffold(
       appBar: AppBar(
-        toolbarHeight: widget.groupDownloads && !_managing && _searching
-            ? SearchToolbarScope.fieldExtent(context) + 8
+        toolbarHeight: widget.groupDownloads && !_managing
+            ? SearchToolbarScope.stableHeight(context, 56)
             : widget.groupDownloads &&
                   _managing &&
                   MediaQuery.textScalerOf(context).scale(16) > 22

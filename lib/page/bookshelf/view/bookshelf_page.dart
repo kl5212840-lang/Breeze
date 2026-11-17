@@ -535,11 +535,14 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
     child: Scaffold(
       appBar: SearchToolbarScope.appBar(
         context,
-        (height) => AppBar(
+        (_) => AppBar(
           automaticallyImplyLeading: false,
           titleSpacing: CollectionToolbarMetrics.sourceContentInset,
           scrolledUnderElevation: 0,
-          toolbarHeight: height ?? _headerHeight(context),
+          toolbarHeight: SearchToolbarScope.stableHeight(
+            context,
+            _headerHeight(context),
+          ),
           title: _buildHeader(),
         ),
         searching: _isSearchExpanded,
@@ -659,6 +662,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
           systemControls: usesNativeSourceChrome(context),
           child: BookshelfSourceNavigation(
             horizontalInset: CollectionToolbarMetrics.sourceContentInset,
+            scrollStartInset: 4,
             showManage: true,
             classicChips: true,
             scrollSafeChips: true,
@@ -788,37 +792,39 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
             Expanded(child: field ?? _buildHeading(context, theme, subtitle)),
             if (field != null)
               const SizedBox(width: CollectionToolbarMetrics.searchControlGap),
-            BlocSelector<BookshelfSearchCubit, BookshelfSearchState, String>(
-              bloc: _activeSearch,
-              selector: (state) => state.stateOf(_mode).keyword,
-              builder: (context, query) => Badge(
-                isLabelVisible: !_isSearchExpanded && query.isNotEmpty,
-                child: SourceChromeIconButton(
-                  key: const ValueKey('bookshelf.search'),
-                  icon: _isSearchExpanded ? Icons.close_rounded : Icons.search,
-                  symbol: _isSearchExpanded ? 'xmark' : 'magnifyingglass',
-                  tooltip: _isSearchExpanded
-                      ? t.common.close
-                      : query.isEmpty
-                      ? t.bookshelf.searchList
-                      : '${t.bookshelf.searchList} · $query',
-                  onPressed: _scopeLocked
-                      ? null
-                      : _isSearchExpanded
-                      ? _exitSearch
-                      : _openSearch,
+            if (field == null)
+              BlocSelector<BookshelfSearchCubit, BookshelfSearchState, String>(
+                bloc: _activeSearch,
+                selector: (state) => state.stateOf(_mode).keyword,
+                builder: (context, query) => Badge(
+                  isLabelVisible: !_isSearchExpanded && query.isNotEmpty,
+                  child: SourceChromeIconButton(
+                    key: const ValueKey('bookshelf.search'),
+                    icon: _isSearchExpanded
+                        ? Icons.close_rounded
+                        : Icons.search,
+                    symbol: _isSearchExpanded ? 'xmark' : 'magnifyingglass',
+                    tooltip: _isSearchExpanded
+                        ? t.common.close
+                        : query.isEmpty
+                        ? t.bookshelf.searchList
+                        : '${t.bookshelf.searchList} · $query',
+                    onPressed: _scopeLocked
+                        ? null
+                        : _isSearchExpanded
+                        ? _exitSearch
+                        : _openSearch,
+                  ),
                 ),
               ),
-            ),
-            const CollectionCoverPrivacyButton(
-              key: ValueKey('bookshelf.cover-privacy'),
-              emphasizeProtected: true,
-            ),
+            if (field == null)
+              const CollectionCoverPrivacyButton(
+                key: ValueKey('bookshelf.cover-privacy'),
+                emphasizeProtected: true,
+              ),
             SizedBox(
               height: extent,
-              width: field == null
-                  ? extent
-                  : SearchToolbarScope.fieldActionWidth,
+              width: CollectionToolbarMetrics.actionExtent,
               child: _scopeLocked || slots?.more == null
                   ? null
                   : KeyedSubtree(
@@ -996,6 +1002,8 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
             ignoring: _scopeLocked,
             child: SearchQueryField(
               key: ValueKey('shelf-search.$_showVideos.${mode.name}'),
+              onClose: _exitSearch,
+              closeKey: const ValueKey('bookshelf.search'),
               query: state.stateOf(mode).keyword,
               inline: true,
               focusNode: _searchFocusNode,

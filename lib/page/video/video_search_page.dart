@@ -24,6 +24,9 @@ class VideoSearchEntry extends StatelessWidget {
     required this.onTap,
     this.onSubmitted,
     this.onClear,
+    this.onClose,
+    this.leadingControl,
+    this.leadingControlWidth = 44,
     this.focusNode,
     this.queryRevision = 0,
     this.hint,
@@ -31,7 +34,9 @@ class VideoSearchEntry extends StatelessWidget {
   final String query;
   final VoidCallback onTap;
   final ValueChanged<String>? onSubmitted;
-  final VoidCallback? onClear;
+  final VoidCallback? onClear, onClose;
+  final Widget? leadingControl;
+  final double leadingControlWidth;
   final FocusNode? focusNode;
   final int queryRevision;
   final String? hint;
@@ -45,10 +50,13 @@ class VideoSearchEntry extends StatelessWidget {
     semanticLabel: t.videoPlayback.search,
     focusNode: focusNode,
     inline: onSubmitted != null,
-    showSubmit: onSubmitted != null,
+    showSubmit: onSubmitted != null && leadingControl == null,
     onTap: onTap,
     onSubmitted: onSubmitted,
     onClear: onClear,
+    onClose: onClose,
+    leadingControl: leadingControl,
+    leadingControlWidth: leadingControlWidth,
   );
 }
 

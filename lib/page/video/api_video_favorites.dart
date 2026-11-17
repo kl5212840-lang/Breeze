@@ -1,3 +1,4 @@
+import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
@@ -925,7 +926,18 @@ class _ApiVideoFavoritesState extends State<ApiVideoFavorites> {
                 menuKey: const ValueKey('local-favorites.manage'),
                 title: _query.isEmpty ? t.videoSource.localFavorites : _query,
                 searching: _searching,
-                searchField: _buildSearchRow(context),
+                searchField: SearchQueryField(
+                  query: _query,
+                  focusNode: _searchFocus,
+                  inline: true,
+                  closeOnSubmit: false,
+                  enabled: !_working,
+                  hintText: t.videoSource.searchLocal,
+                  onChanged: (value) => setState(() {
+                    _input.text = value;
+                    _query = value;
+                  }),
+                ),
                 searchScope: _keywordMenu(),
                 onSearch: _working
                     ? null

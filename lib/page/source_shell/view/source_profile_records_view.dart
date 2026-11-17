@@ -1,3 +1,4 @@
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/page/source_shell/view/jm_collection_toolbar.dart';
 import 'package:zephyr/widgets/work_list_divider.dart';
 import 'package:zephyr/page/search/widget/search_keyboard.dart';
@@ -766,6 +767,12 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
           unawaited(openCollectionCoverSettings(context));
       },
     );
+    final searchField = SearchToolbarScope(
+      extent: SearchToolbarScope.fieldExtent(context),
+      onClose: navigation.onSearch,
+      closeKey: const ValueKey('jm-record.search'),
+      child: chrome.searchField,
+    );
     final controller = widget.jmHeaderController;
     if (controller != null) {
       final signature =
@@ -780,7 +787,7 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
             controller.publish(
               _jmHeaderOwner,
               navigation,
-              searchField: _jmSearchOpen ? chrome.searchField : null,
+              searchField: _jmSearchOpen ? searchField : null,
             );
             if (opening) {
               final generation = pluginSessionWriteFence.generation(
@@ -812,28 +819,38 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
           Padding(
             padding: const EdgeInsets.only(left: 12),
             child: SizedBox(
-              height: (MediaQuery.textScalerOf(context).scale(14) * 1.5 + 20)
-                  .clamp(56.0, double.infinity),
-              child: Row(
-                children: [
-                  if (widget.showBackButton)
-                    SourceChromeIconButton(
-                      icon: Icons.chevron_left_rounded,
-                      symbol: 'chevron.left',
-                      tooltip: t.common.back,
-                      onPressed: widget.onBack,
+              height: SearchToolbarScope.stableHeight(
+                context,
+                (MediaQuery.textScalerOf(context).scale(14) * 1.5 + 20).clamp(
+                  56.0,
+                  double.infinity,
+                ),
+              ),
+              child: SearchToolbarScope(
+                extent: _jmSearchOpen
+                    ? SearchToolbarScope.fieldExtent(context)
+                    : null,
+                child: Row(
+                  children: [
+                    if (widget.showBackButton && !_jmSearchOpen)
+                      SourceChromeIconButton(
+                        icon: Icons.chevron_left_rounded,
+                        symbol: 'chevron.left',
+                        tooltip: t.common.back,
+                        onPressed: widget.onBack,
+                      ),
+                    Expanded(
+                      child: _jmSearchOpen
+                          ? searchField
+                          : Text(
+                              sourceProfileRecordLabel(widget.mode),
+                              maxLines: 2,
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
                     ),
-                  Expanded(
-                    child: _jmSearchOpen
-                        ? chrome.searchField
-                        : Text(
-                            sourceProfileRecordLabel(widget.mode),
-                            maxLines: 2,
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                  ),
-                  navigation,
-                ],
+                    navigation,
+                  ],
+                ),
               ),
             ),
           ),

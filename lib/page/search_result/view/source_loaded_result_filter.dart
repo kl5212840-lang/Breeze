@@ -1,3 +1,5 @@
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
+import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 import 'package:zephyr/widgets/applied_filter_bar.dart';
 import 'package:zephyr/widgets/collection_command_icons.dart';
 import 'dart:async';
@@ -556,33 +558,64 @@ class _SourceLoadedResultFilterState extends State<SourceLoadedResultFilter> {
           !_opening &&
           hasOptions &&
           (!widget.requireCompleteFacets || widget.complete);
-      final textField = SearchFieldSurface(
-        child: TextField(
-          key: const ValueKey('source-loaded.search'),
-          controller: _search,
-          autofocus: !widget.focusedFacets,
-          focusNode: _searchFocus,
-          onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
-          decoration: searchFieldDecoration(
-            context,
-            hintText: t.videoLibrary.localCatalogSearchHint,
-            suffixIcon: _search.text.isEmpty
-                ? null
-                : IconButton(
-                    tooltip: t.common.clear,
-                    onPressed: _search.clear,
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-          ),
-        ),
-      );
-      final searchField = Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Expanded(child: textField),
-          const SizedBox(width: 6),
-          _scopeMenu(),
-        ],
+      final searchField = Builder(
+        builder: (context) {
+          final toolbar = SearchToolbarScope.maybeOf(context);
+          final embedded = toolbar?.onClose != null;
+          final scope = _scopeMenu();
+          final menuWidth = KeywordScopeMenu.leadingWidth(context);
+          final textField = SearchFieldSurface(
+            child: TextField(
+              key: const ValueKey('source-loaded.search'),
+              controller: _search,
+              autofocus: !widget.focusedFacets,
+              focusNode: _searchFocus,
+              textAlignVertical: TextAlignVertical.center,
+              onTapOutside: (_) =>
+                  FocusManager.instance.primaryFocus?.unfocus(),
+              decoration: searchFieldDecoration(
+                context,
+                hintText: t.videoLibrary.localCatalogSearchHint,
+                prefixIcon: embedded ? SizedBox(width: menuWidth + 6) : null,
+                variableSuffixWidth: embedded,
+                suffixIcon: embedded
+                    ? SearchFieldCloseActions(
+                        hasText: _search.text.isNotEmpty,
+                        onClear: _search.clear,
+                        onClose: toolbar?.onClose,
+                        closeKey: toolbar?.closeKey,
+                      )
+                    : _search.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: t.common.clear,
+                        onPressed: _search.clear,
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+              ),
+            ),
+          );
+          return embedded
+              ? Stack(
+                  children: [
+                    textField,
+                    PositionedDirectional(
+                      start: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: menuWidth,
+                      child: Center(child: scope),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Expanded(child: textField),
+                    const SizedBox(width: 6),
+                    scope,
+                  ],
+                );
+        },
       );
       final filterButton = _compactFilterButton(
         enabled: enabled,

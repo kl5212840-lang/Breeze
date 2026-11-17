@@ -5,14 +5,30 @@ import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 class SearchToolbarScope extends InheritedWidget {
   const SearchToolbarScope({
     required this.extent,
+    this.onClose,
+    this.closeKey,
+    this.leadingControl,
+    this.leadingWidth = 64,
     required super.child,
     super.key,
   });
 
   final double? extent;
+  final VoidCallback? onClose;
+  final Key? closeKey;
+  final Widget? leadingControl;
+  final double leadingWidth;
 
-  static double? of(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<SearchToolbarScope>()?.extent;
+  static SearchToolbarScope? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<SearchToolbarScope>();
+
+  static double stableHeight(BuildContext context, double titleHeight) =>
+      (fieldExtent(context) + CollectionToolbarMetrics.searchControlGap).clamp(
+        titleHeight,
+        double.infinity,
+      );
+
+  static double? of(BuildContext context) => maybeOf(context)?.extent;
 
   static const actionExtent = CollectionToolbarMetrics.actionExtent;
   static const fieldActionWidth = 48.0;
@@ -43,7 +59,11 @@ class SearchToolbarScope extends InheritedWidget {
 
   @override
   bool updateShouldNotify(SearchToolbarScope oldWidget) =>
-      extent != oldWidget.extent;
+      extent != oldWidget.extent ||
+      onClose != oldWidget.onClose ||
+      closeKey != oldWidget.closeKey ||
+      leadingControl != oldWidget.leadingControl ||
+      leadingWidth != oldWidget.leadingWidth;
 }
 
 extension SearchToolbarBar on PreferredSizeWidget {

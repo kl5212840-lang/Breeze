@@ -715,6 +715,23 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
     });
   }
 
+  Widget _catalogScopeMenu(BuildContext context) => KeywordScopeMenu(
+    compact:
+        MediaQuery.sizeOf(context).width < 400 ||
+        MediaQuery.textScalerOf(context).scale(14) > 20,
+    scope: _editingCatalogSearch ? _draftKeywordScope : _keywordScope,
+    onChanged: (scope) => setState(() {
+      if (_editingCatalogSearch) {
+        _draftKeywordScope = scope;
+      } else {
+        _keywordScope = scope;
+        if (_siteSearchInHeader && !_websiteSearch) {
+          _remoteKeywordScope = scope;
+        }
+      }
+    }),
+  );
+
   void _endCatalogSearch() {
     if (!_editingCatalogSearch) return;
     _catalogSearchFocus.unfocus();
@@ -1100,17 +1117,27 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                       : SearchToolbarScope.appBar(
                           context,
                           (height) => AppBar(
-                            toolbarHeight: height,
+                            toolbarHeight: SearchToolbarScope.stableHeight(
+                              context,
+                              56,
+                            ),
                             leadingWidth: height == null ? null : 56,
-                            leading: _embedded
+                            leading: _editingCatalogSearch && !_remoteSearchTask
+                                ? null
+                                : _embedded
                                 ? widget.leading
                                 : SourceBackButton(
                                     onPressed: _remoteSearchTask
                                         ? () => Navigator.of(context).pop()
                                         : null,
                                   ),
-                            automaticallyImplyLeading: !_embedded,
-                            titleSpacing: 0,
+                            automaticallyImplyLeading:
+                                !_embedded &&
+                                (!_editingCatalogSearch || _remoteSearchTask),
+                            titleSpacing:
+                                _editingCatalogSearch && !_remoteSearchTask
+                                ? 16
+                                : 0,
                             title: _tab == 0 && _siteSearchInHeader
                                 ? VideoSearchEntry(
                                     query: _websiteSearch
@@ -1136,6 +1163,14 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                                         ? null
                                         : _clearCatalogQuery,
                                     focusNode: _catalogSearchFocus,
+                                    onClose: _editingCatalogSearch
+                                        ? _endCatalogSearch
+                                        : null,
+                                    leadingControl: _editingCatalogSearch
+                                        ? _catalogScopeMenu(context)
+                                        : null,
+                                    leadingControlWidth:
+                                        KeywordScopeMenu.leadingWidth(context),
                                     queryRevision: _catalogQueryRevision,
                                   )
                                 : _tab == 0 &&
@@ -1167,31 +1202,11 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                             actions: [
                               const SizedBox(width: 8),
                               if (_tab == 0 &&
+                                  !_editingCatalogSearch &&
                                   (_siteSearchInHeader ||
                                       _compactBrowsing &&
                                           _localCatalogSupported))
-                                KeywordScopeMenu(
-                                  compact:
-                                      MediaQuery.sizeOf(context).width < 400 ||
-                                      MediaQuery.textScalerOf(
-                                            context,
-                                          ).scale(14) >
-                                          20,
-                                  scope: _editingCatalogSearch
-                                      ? _draftKeywordScope
-                                      : _keywordScope,
-                                  onChanged: (scope) => setState(() {
-                                    if (_editingCatalogSearch) {
-                                      _draftKeywordScope = scope;
-                                    } else {
-                                      _keywordScope = scope;
-                                      if (_siteSearchInHeader &&
-                                          !_websiteSearch) {
-                                        _remoteKeywordScope = scope;
-                                      }
-                                    }
-                                  }),
-                                ),
+                                _catalogScopeMenu(context),
                               if (_tab == 0 &&
                                   !_editingCatalogSearch &&
                                   (!_remoteSearchTask || _query.isNotEmpty) &&
@@ -1212,10 +1227,11 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                                   onPressed: () =>
                                       _catalogKey.currentState?.editFilters(),
                                 ),
-                              if (_omoRecommendationActive ||
-                                  _showOmoRecommendations &&
-                                      _tab == 0 &&
-                                      !_putCatalogViewInMore(context))
+                              if (!_editingCatalogSearch &&
+                                  (_omoRecommendationActive ||
+                                      _showOmoRecommendations &&
+                                          _tab == 0 &&
+                                          !_putCatalogViewInMore(context)))
                                 SourceChromeIconButton(
                                   key: const ValueKey('api-library.view-mode'),
                                   tooltip: _mode == ApiVideoView.grid

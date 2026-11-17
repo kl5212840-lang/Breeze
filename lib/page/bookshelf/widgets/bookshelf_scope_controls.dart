@@ -75,6 +75,7 @@ class BookshelfSourceNavigation extends StatelessWidget {
     this.allLabel,
     this.horizontalInset = CollectionToolbarMetrics.horizontalInset,
     this.statusAction,
+    this.scrollStartInset,
   });
   final Map<String, String> sources;
   final List<String> selected;
@@ -85,6 +86,7 @@ class BookshelfSourceNavigation extends StatelessWidget {
   final bool showManage, classicChips, quietChips, scrollSafeChips;
   final String? allLabel;
   final double horizontalInset;
+  final double? scrollStartInset;
   final Widget? statusAction;
 
   @override
@@ -103,7 +105,7 @@ class BookshelfSourceNavigation extends StatelessWidget {
             key: const ValueKey('bookshelf.sources.scroll'),
             scrollDirection: Axis.horizontal,
             padding: EdgeInsetsDirectional.fromSTEB(
-              horizontalInset,
+              scrollStartInset ?? horizontalInset,
               0,
               classicChips ? 4 : horizontalInset,
               0,
@@ -135,7 +137,7 @@ class BookshelfSourceNavigation extends StatelessWidget {
             height: 20,
             child: VerticalDivider(
               key: const ValueKey('bookshelf.sources.divider'),
-              width: classicChips ? 6 : 12,
+              width: 12,
               thickness: 1,
             ),
           ),
@@ -315,57 +317,53 @@ class _ClassicBreezeSourcesState extends State<_ClassicBreezeSources>
               entry,
               (label) => Semantics(
                 selected: widget.active.contains(entry.key),
-                child: Tooltip(
-                  message: label,
-                  child: CollectionPressFeedback.builder(
-                    enabled: onChanged != null,
-                    pressedBuilder: (context, pressed) => TouchHoverIntent(
-                      identity: entry.key,
-                      builder: (context, hover) => TextButton(
-                        key: ValueKey('bookshelf.source.${entry.key}'),
-                        onPressed: onChanged == null
-                            ? null
-                            : () {
-                                if (widget.active.length == 1 &&
-                                    widget.active.contains(entry.key)) {
-                                  return;
-                                }
-                                onChanged(entry.key.isEmpty ? [] : [entry.key]);
-                              },
-                        style:
-                            TextButton.styleFrom(
-                              minimumSize: const Size(44, 44),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                              ),
-                              foregroundColor: colors.onSurfaceVariant,
-                              overlayColor: Colors.transparent,
-                              splashFactory: NoSplash.splashFactory,
-                              shape: const RoundedRectangleBorder(
-                                borderRadius: _classicChipRadius,
-                              ),
-                            ).copyWith(
-                              backgroundBuilder: (context, states, child) =>
-                                  _sourcePressPlate(
-                                    context,
-                                    states,
-                                    child,
-                                    pointerPressed: pressed,
-                                    hoverAllowed: hover.allowed,
-                                    radius: _classicChipRadius,
-                                    selected:
-                                        !widget.quiet &&
-                                        widget.active.contains(entry.key),
-                                  ),
+                label: entry.value,
+                child: CollectionPressFeedback.builder(
+                  enabled: onChanged != null,
+                  pressedBuilder: (context, pressed) => TouchHoverIntent(
+                    identity: entry.key,
+                    builder: (context, hover) => TextButton(
+                      key: ValueKey('bookshelf.source.${entry.key}'),
+                      onPressed: onChanged == null
+                          ? null
+                          : () {
+                              if (widget.active.length == 1 &&
+                                  widget.active.contains(entry.key)) {
+                                return;
+                              }
+                              onChanged(entry.key.isEmpty ? [] : [entry.key]);
+                            },
+                      style:
+                          TextButton.styleFrom(
+                            minimumSize: const Size(44, 44),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            foregroundColor: colors.onSurfaceVariant,
+                            overlayColor: Colors.transparent,
+                            splashFactory: NoSplash.splashFactory,
+                            shape: const RoundedRectangleBorder(
+                              borderRadius: _classicChipRadius,
                             ),
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 160),
-                          child: _label(
-                            entry.key,
-                            label,
-                            colors.onSurfaceVariant,
-                            selection.foreground,
+                          ).copyWith(
+                            backgroundBuilder: (context, states, child) =>
+                                _sourcePressPlate(
+                                  context,
+                                  states,
+                                  child,
+                                  pointerPressed: pressed,
+                                  hoverAllowed: hover.allowed,
+                                  radius: _classicChipRadius,
+                                  selected:
+                                      !widget.quiet &&
+                                      widget.active.contains(entry.key),
+                                ),
                           ),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 160),
+                        child: _label(
+                          entry.key,
+                          label,
+                          colors.onSurfaceVariant,
+                          selection.foreground,
                         ),
                       ),
                     ),
@@ -466,7 +464,14 @@ class _RenderSourceSelectionTrack extends RenderFlex {
       final selected = active.contains(id);
       final emphasis = single ? weight(id) : 0.0;
       if (!selected && emphasis == 0) continue;
-      final bounds = (offset + data.offset) & item.size;
+      final frame = (offset + data.offset) & item.size;
+      const inset = CollectionToolbarMetrics.actionPlateInset;
+      final bounds = Rect.fromLTRB(
+        frame.left,
+        frame.top + inset,
+        frame.right,
+        frame.bottom - inset,
+      );
       if (single) {
         if (selected) target = bounds;
         if (emphasis > 0) {

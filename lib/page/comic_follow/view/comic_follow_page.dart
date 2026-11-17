@@ -1,7 +1,6 @@
 import 'package:zephyr/widgets/collection_cover_fit.dart';
 import 'package:zephyr/widgets/work_list_divider.dart';
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -212,16 +211,21 @@ class _ComicFollowPageContentState extends State<_ComicFollowPageContent> {
         child: Scaffold(
           appBar: SearchToolbarScope.appBar(
             context,
-            (searchHeight) => AppBar(
+            (_) => AppBar(
               automaticallyImplyLeading: !widget.embedded && !_searching,
               leading: widget.embedded || _searching
                   ? null
                   : const SourceBackButton(),
               titleSpacing: _followContentInset,
-              toolbarHeight: math.max(toolbarHeight, searchHeight ?? 0.0),
+              toolbarHeight: SearchToolbarScope.stableHeight(
+                context,
+                toolbarHeight,
+              ),
               title: _searching
                   ? SearchQueryField(
                       key: const ValueKey('follow-search-input'),
+                      onClose: _toggleSearch,
+                      closeKey: const ValueKey('follow-search-toggle'),
                       query: _query,
                       inline: true,
                       focusNode: _searchFocus,
@@ -250,28 +254,37 @@ class _ComicFollowPageContentState extends State<_ComicFollowPageContent> {
                 end: outerInset + _followContentInset,
               ),
               actions: [
-                BlocSelector<ComicFollowCubit, ComicFollowState, bool>(
-                  selector: (state) => state.items.isNotEmpty,
-                  builder: (context, hasItems) => hasItems || _searching
-                      ? SourceChromeIconButton(
-                          key: const ValueKey('follow-search-toggle'),
-                          tooltip: _searching
-                              ? t.common.close
-                              : t.bookshelf.searchList,
-                          icon: _searching
-                              ? Icons.close_rounded
-                              : Icons.search_rounded,
-                          symbol: _searching ? 'xmark' : 'magnifyingglass',
-                          onPressed: _toggleSearch,
-                        )
-                      : const SizedBox(
-                          width: CollectionToolbarMetrics.actionExtent,
-                        ),
+                if (_searching)
+                  const SizedBox(
+                    width: CollectionToolbarMetrics.searchControlGap,
+                  ),
+                if (!_searching)
+                  BlocSelector<ComicFollowCubit, ComicFollowState, bool>(
+                    selector: (state) => state.items.isNotEmpty,
+                    builder: (context, hasItems) => hasItems || _searching
+                        ? SourceChromeIconButton(
+                            key: const ValueKey('follow-search-toggle'),
+                            tooltip: _searching
+                                ? t.common.close
+                                : t.bookshelf.searchList,
+                            icon: _searching
+                                ? Icons.close_rounded
+                                : Icons.search_rounded,
+                            symbol: _searching ? 'xmark' : 'magnifyingglass',
+                            onPressed: _toggleSearch,
+                          )
+                        : const SizedBox(
+                            width: CollectionToolbarMetrics.actionExtent,
+                          ),
+                  ),
+                if (!_searching)
+                  const CollectionCoverPrivacyButton(
+                    key: ValueKey('follow-cover-privacy'),
+                  ),
+                const SizedBox(
+                  width: CollectionToolbarMetrics.actionExtent,
+                  child: _FollowMoreButton(),
                 ),
-                const CollectionCoverPrivacyButton(
-                  key: ValueKey('follow-cover-privacy'),
-                ),
-                const _FollowMoreButton(),
               ],
             ),
             searching: _searching,

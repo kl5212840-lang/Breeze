@@ -190,9 +190,16 @@ void main() {
           final search = find.byKey(
             const ValueKey('api-history.search-toggle'),
           );
+          final resultBefore = tester.getRect(results);
+          final moreBefore = tester.getCenter(more);
           await tester.tap(search);
           await tester.pumpAndSettle();
-          expect(tester.getCenter(view).dx, tester.getCenter(search).dx);
+          expect(tester.getRect(results), resultBefore);
+          expect(tester.getCenter(more).dx, moreBefore.dx);
+          expect(
+            find.descendant(of: find.byType(TextField), matching: search),
+            findsOneWidget,
+          );
           expect(find.byType(TextField), findsOneWidget);
           expect(
             tester

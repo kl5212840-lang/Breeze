@@ -12,6 +12,7 @@ InputDecoration searchFieldDecoration(
   required String hintText,
   Widget? prefixIcon,
   Widget? suffixIcon,
+  bool variableSuffixWidth = false,
 }) {
   final colors = Theme.of(context).colorScheme;
   final system = usesSystemSearchSurface(context);
@@ -54,6 +55,8 @@ InputDecoration searchFieldDecoration(
       minHeight: inSearchToolbar ? 44 : 48,
     ),
     suffixIconConstraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-    suffixIcon: SizedBox(width: 44, child: suffixIcon),
+    suffixIcon: variableSuffixWidth
+        ? suffixIcon
+        : SizedBox(width: 44, child: suffixIcon),
   );
 }
