@@ -166,6 +166,9 @@ class VideoPersonalSnapshotStore implements TemporaryDataCache {
       'savedAt': DateTime.now().toIso8601String(),
       'title': data['title'] is String ? data['title'] : '',
       'videos': videos,
+      if (data['previewCount'] is int) 'previewCount': data['previewCount'],
+      if (data['previewComplete'] is bool)
+        'previewComplete': data['previewComplete'],
       'paging': {
         for (final key in const [
           'page',

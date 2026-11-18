@@ -445,6 +445,32 @@ void main() {
               );
             }
           }
+          final appBar = find.ancestor(
+            of: toolbar,
+            matching: find.byType(AppBar),
+          );
+          final headerBefore = tester.getRect(appBar);
+          final viewBefore = tester.getRect(view);
+          final labelsBefore = tester.getRect(labels);
+          final moreBefore = tester.getRect(more);
+          tester.widget<SourceChromeIconButton>(search).onPressed!();
+          await tester.pump();
+          final input = find.descendant(
+            of: toolbar,
+            matching: find.byType(TextField),
+          );
+          expect(input, findsOneWidget);
+          expect(privacy, findsNothing);
+          expect(find.descendant(of: input, matching: search), findsOneWidget);
+          expect(tester.getRect(appBar), headerBefore);
+          expect(tester.getRect(view), viewBefore);
+          expect(tester.getRect(labels), labelsBefore);
+          expect(tester.getCenter(more).dx, moreBefore.center.dx);
+          await tester.tap(search);
+          await tester.pump();
+          expect(tester.getRect(appBar), headerBefore);
+          expect(tester.getRect(view), viewBefore);
+          expect(tester.getRect(labels), labelsBefore);
           expect(tester.takeException(), isNull);
         }
       }
@@ -693,7 +719,7 @@ void main() {
         'the alternate video source',
       );
       final lateSourceSelection = tester
-          .widget<NativeVideoTextButton>(alternateSource)
+          .widget<TextButton>(alternateSource)
           .onPressed;
       await waitFor(
         () => videoMore.hitTestable().evaluate().isNotEmpty,

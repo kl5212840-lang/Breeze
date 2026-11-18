@@ -1,3 +1,7 @@
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
+import 'package:zephyr/page/search/widget/search_input_dialog.dart';
+import 'package:zephyr/widgets/applied_filter_bar.dart';
+import 'package:zephyr/widgets/collection_command_icons.dart';
 import 'dart:async';
 import 'package:zephyr/page/search_result/source_result_filter_preferences.dart';
 import 'package:zephyr/network/sync/portable_preferences.dart';
@@ -460,8 +464,8 @@ class _SourceLoadedResultFilterState extends State<SourceLoadedResultFilter> {
         tooltip: _filters.isActive
             ? t.videoFilters.active
             : t.videoLibrary.localCatalogFilters,
-        icon: Icons.filter_list_rounded,
-        symbol: 'line.3.horizontal.decrease',
+        icon: CollectionCommandIcons.filter.icon,
+        symbol: CollectionCommandIcons.filter.symbol,
         selected: _filters.isActive,
         busy: busy,
         onPressed: enabled ? _editFilters : null,
@@ -490,6 +494,44 @@ class _SourceLoadedResultFilterState extends State<SourceLoadedResultFilter> {
                     )),
         )
         .toList();
+    final applied = !_filters.isActive
+        ? null
+        : AppliedFilterBar(
+            key: const ValueKey('source-loaded.applied'),
+            clearKey: const ValueKey('source-loaded.reset'),
+            clearWhenEmpty: _filters.isActive,
+            entries: [
+              for (final group in _filters.values.entries)
+                for (final value in group.value)
+                  (
+                    id: 'source-loaded.applied.${group.key}.$value',
+                    label: value == shelfFacetUnknown
+                        ? t.bookshelf.facets.unknown
+                        : convertChineseForDisplay(
+                            shelfFacetDisplayValue(value),
+                          ),
+                    edit: _opening ? null : _editFilters,
+                    remove: () {
+                      final next = {
+                        for (final e in _filters.values.entries)
+                          e.key: {...e.value},
+                      };
+                      next[group.key]?.remove(value);
+                      _commitFilters(
+                        _filters.copyWith(
+                          values: next,
+                          applied: next.values.any(
+                            (values) => values.isNotEmpty,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+            ],
+            onClearAll: () => _commitFilters(
+              _filters.copyWith(values: const {}, applied: false),
+            ),
+          );
     final colors = Theme.of(context).colorScheme;
     if (widget.chromeBuilder != null) {
       final countLabel = !widget.publicBrowseFacets && _matchingScopeComplete
@@ -516,33 +558,64 @@ class _SourceLoadedResultFilterState extends State<SourceLoadedResultFilter> {
           !_opening &&
           hasOptions &&
           (!widget.requireCompleteFacets || widget.complete);
-      final textField = SearchFieldSurface(
-        child: TextField(
-          key: const ValueKey('source-loaded.search'),
-          controller: _search,
-          autofocus: !widget.focusedFacets,
-          focusNode: _searchFocus,
-          onTapOutside: (_) => FocusManager.instance.primaryFocus?.unfocus(),
-          decoration: searchFieldDecoration(
-            context,
-            hintText: t.videoLibrary.localCatalogSearchHint,
-            suffixIcon: _search.text.isEmpty
-                ? null
-                : IconButton(
-                    tooltip: t.common.clear,
-                    onPressed: _search.clear,
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-          ),
-        ),
-      );
-      final searchField = Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Expanded(child: textField),
-          const SizedBox(width: 6),
-          _scopeMenu(),
-        ],
+      final searchField = Builder(
+        builder: (context) {
+          final toolbar = SearchToolbarScope.maybeOf(context);
+          final embedded = toolbar?.onClose != null;
+          final scope = _scopeMenu();
+          final menuWidth = KeywordScopeMenu.leadingWidth(context);
+          final textField = SearchFieldSurface(
+            child: TextField(
+              key: const ValueKey('source-loaded.search'),
+              controller: _search,
+              autofocus: !widget.focusedFacets,
+              focusNode: _searchFocus,
+              textAlignVertical: TextAlignVertical.center,
+              onTapOutside: (_) =>
+                  FocusManager.instance.primaryFocus?.unfocus(),
+              decoration: searchFieldDecoration(
+                context,
+                hintText: t.videoLibrary.localCatalogSearchHint,
+                prefixIcon: embedded ? SizedBox(width: menuWidth + 6) : null,
+                variableSuffixWidth: embedded,
+                suffixIcon: embedded
+                    ? SearchFieldCloseActions(
+                        hasText: _search.text.isNotEmpty,
+                        onClear: _search.clear,
+                        onClose: toolbar?.onClose,
+                        closeKey: toolbar?.closeKey,
+                      )
+                    : _search.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: t.common.clear,
+                        onPressed: _search.clear,
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+              ),
+            ),
+          );
+          return embedded
+              ? Stack(
+                  children: [
+                    textField,
+                    PositionedDirectional(
+                      start: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: menuWidth,
+                      child: Center(child: scope),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Expanded(child: textField),
+                    const SizedBox(width: 6),
+                    scope,
+                  ],
+                );
+        },
       );
       final filterButton = _compactFilterButton(
         enabled: enabled,
@@ -553,84 +626,6 @@ class _SourceLoadedResultFilterState extends State<SourceLoadedResultFilter> {
             widget.requireCompleteFacets &&
             !widget.complete,
       );
-      final dimensions = {
-        'tags': t.bookshelf.facets.tags,
-        'category': t.bookshelf.facets.category,
-        'author': t.bookshelf.facets.author,
-        'year': t.bookshelf.facets.year,
-        'area': t.bookshelf.facets.area,
-        'language': t.bookshelf.facets.language,
-        'quality': t.bookshelf.facets.quality,
-      };
-      final applied = !_filters.isActive
-          ? null
-          : Row(
-              key: const ValueKey('source-loaded.applied'),
-              children: [
-                Expanded(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        for (final group in _filters.values.entries)
-                          for (final value in group.value)
-                            Padding(
-                              padding: const EdgeInsetsDirectional.only(end: 6),
-                              child: InputChip(
-                                visualDensity: const VisualDensity(
-                                  horizontal: -2,
-                                  vertical: -1,
-                                ),
-                                materialTapTargetSize:
-                                    MaterialTapTargetSize.padded,
-                                padding: EdgeInsets.zero,
-                                labelPadding: const EdgeInsetsDirectional.only(
-                                  start: 8,
-                                ),
-                                labelStyle: Theme.of(context)
-                                    .textTheme
-                                    .labelMedium
-                                    ?.copyWith(color: colors.onSurfaceVariant),
-                                backgroundColor: colors.surfaceContainerLow,
-                                side: BorderSide.none,
-                                deleteIcon: const Icon(
-                                  Icons.close_rounded,
-                                  size: 16,
-                                ),
-                                key: ValueKey(
-                                  'source-loaded.applied.${group.key}.$value',
-                                ),
-                                label: Text(
-                                  value == shelfFacetUnknown
-                                      ? '${dimensions[group.key] ?? group.key}: ${t.bookshelf.facets.unknown}'
-                                      : convertChineseForDisplay(
-                                          shelfFacetDisplayValue(value),
-                                        ),
-                                ),
-                                onDeleted: () {
-                                  final next = {
-                                    for (final e in _filters.values.entries)
-                                      e.key: {...e.value},
-                                  };
-                                  next[group.key]?.remove(value);
-                                  _commitFilters(
-                                    _filters.copyWith(values: next),
-                                  );
-                                },
-                              ),
-                            ),
-                      ],
-                    ),
-                  ),
-                ),
-                TextButton(
-                  onPressed: () {
-                    _commitFilters(const ShelfFacetSelection());
-                  },
-                  child: Text(t.common.clear),
-                ),
-              ],
-            );
       final chrome = SourceLoadedResultChrome(
         searchField: searchField,
         filterButton: filterButton,
@@ -701,37 +696,23 @@ class _SourceLoadedResultFilterState extends State<SourceLoadedResultFilter> {
             ],
           ),
           const SizedBox(height: 4),
-          if (!widget.compactControls || _filters.isActive)
-            Wrap(
-              spacing: 8,
-              runSpacing: 4,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                if (!widget.compactControls)
-                  FilledButton.tonalIcon(
-                    key: const ValueKey('source-loaded.filters'),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(44, 44),
-                    ),
-                    onPressed:
-                        _opening ||
-                            widget.entries.isEmpty ||
-                            widget.requireCompleteFacets && !widget.complete
-                        ? null
-                        : _editFilters,
-                    icon: const Icon(Icons.filter_list_rounded, size: 20),
-                    label: Text(t.videoLibrary.localCatalogFilters),
-                  ),
-                if (_filters.isActive)
-                  TextButton(
-                    key: const ValueKey('source-loaded.reset'),
-                    onPressed: () {
-                      _commitFilters(const ShelfFacetSelection());
-                    },
-                    child: Text(t.common.reset),
-                  ),
-              ],
+          if (!widget.compactControls)
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: FilledButton.tonalIcon(
+                key: const ValueKey('source-loaded.filters'),
+                style: FilledButton.styleFrom(minimumSize: const Size(44, 44)),
+                onPressed:
+                    _opening ||
+                        widget.entries.isEmpty ||
+                        widget.requireCompleteFacets && !widget.complete
+                    ? null
+                    : _editFilters,
+                icon: const Icon(Icons.tune_rounded, size: 20),
+                label: Text(t.videoLibrary.localCatalogFilters),
+              ),
             ),
+          ?applied,
           Text(
             _matchingScopeComplete
                 ? t.videoLibrary.results(count: visible.length)

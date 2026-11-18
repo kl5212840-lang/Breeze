@@ -10,6 +10,7 @@ import 'package:zephyr/main.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
 import 'package:zephyr/page/video/video_thumbnail.dart';
 import 'package:zephyr/page/video/video_cover_overlay.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
 import 'package:zephyr/widgets/collection_cover_privacy.dart';
 import 'package:zephyr/widgets/collection_cover_fit.dart';
 import 'package:zephyr/service/download/models/download_task_json.dart';
@@ -132,6 +133,7 @@ class DownloadVideoTaskCover extends StatelessWidget {
     localOnly: localOnly,
     builder: (context, localPath) => CollectionCoverFitBuilder(
       builder: (context, fit) {
+        final page = Uri.tryParse('${row['url']}');
         final totalMs = row['durationMs'];
         final durationText = totalMs is int && totalMs > 0
             ? formatKnownVideoDuration(Duration(milliseconds: totalMs))
@@ -151,6 +153,7 @@ class DownloadVideoTaskCover extends StatelessWidget {
             _overlay(
               durationText: durationText,
               child: CollectionCoverPrivacy(
+                forceBlur: hanimePreviewCoverBlur(page),
                 fit: fit,
                 image: image,
                 mosaicPlaceholder: Center(child: fallback),
@@ -173,7 +176,6 @@ class DownloadVideoTaskCover extends StatelessWidget {
         final image = raw is String && raw.length <= 4096
             ? Uri.tryParse(raw)
             : null;
-        final page = Uri.tryParse('${row['url']}');
         if (image?.scheme != 'https' ||
             image?.host.isNotEmpty != true ||
             image?.userInfo.isEmpty != true ||

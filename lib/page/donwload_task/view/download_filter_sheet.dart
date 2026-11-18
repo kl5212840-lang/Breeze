@@ -204,25 +204,36 @@ class _DownloadFilterSheetState extends State<DownloadFilterSheet>
     }
   }
 
-  String _group = 'tags';
-  String _activeGroup(List<String> available) =>
-      available.contains(_group) ? _group : available.firstOrNull ?? 'tags';
+  String? _group;
+  String _activeGroup(List<String> available) => switch (_group) {
+    final group? when available.contains(group) => group,
+    _ => available.firstOrNull ?? 'tags',
+  };
 
-  List<String> get _availableGroups => downloadFilterGroups
-      .where(
-        (group) =>
-            (_draft.values[group]?.isNotEmpty ?? false) ||
-            widget.entries.any(
-              (entry) => (entry.fields[group] ?? const <String>{}).any(
-                (value) => value.trim().isNotEmpty,
+  List<String> get _availableGroups => facetOptionsAppliedFirst(
+    downloadFilterGroups
+        .where(
+          (group) =>
+              (_draft.values[group]?.isNotEmpty ?? false) ||
+              widget.entries.any(
+                (entry) => (entry.fields[group] ?? const <String>{}).any(
+                  (value) => value.trim().isNotEmpty,
+                ),
               ),
-            ),
-      )
-      .toList();
+        )
+        .toList(),
+    {
+      for (final entry in widget.initial.values.entries)
+        if (entry.value.isNotEmpty) entry.key,
+    },
+  );
   @override
   void initState() {
     super.initState();
     _draft = widget.initial;
+    if (widget.initial.values.values.every((values) => values.isEmpty)) {
+      _group = 'tags';
+    }
     _sizeOrder = widget.initialSizeOrder;
     ShelfFacetPreferences.changes.addListener(_pinsChanged);
     PortablePreferences.changes.addListener(_pinsChanged);
@@ -274,9 +285,12 @@ class _DownloadFilterSheetState extends State<DownloadFilterSheet>
       ...pins.map(shelfFacetDisplayValue),
     });
     bool isPinned(String value) => pins.contains(shelfFacetEncodeValue(value));
-    final values = pins.isEmpty
-        ? ordered
-        : [...ordered.where(isPinned), ...ordered.where((v) => !isPinned(v))];
+    final values = facetOptionsAppliedFirst(
+      pins.isEmpty
+          ? ordered
+          : [...ordered.where(isPinned), ...ordered.where((v) => !isPinned(v))],
+      widget.initial.values[group] ?? const {},
+    );
     final count = widget.entries
         .where((entry) => downloadFacetMatches(entry, _draft))
         .length;

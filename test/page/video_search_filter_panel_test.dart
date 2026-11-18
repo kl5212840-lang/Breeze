@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_search_filter_panel.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
 import 'package:zephyr/page/video/video_search_filters.dart';
 import 'package:zephyr/page/video/video_site_action_models.dart';
 import 'package:zephyr/page/video/video_interaction.dart';
@@ -46,6 +47,236 @@ const schema = VideoFilterSchema(
 Future<VideoSiteResult<VideoFilterSchema>> read() async =>
     (status: VideoSiteStatus.ok, value: schema, writeUnconfirmed: false);
 void main() {
+  testWidgets(
+    'applied filters reveal a fixed-size remove button and confirm bulk clearing',
+    (tester) async {
+      var filters = const VideoSearchFilters(
+        query: 'Fixture',
+        genre: '3DCG',
+        sort: 'views',
+        duration: 'short',
+        tags: ['1080p', '60FPS'],
+        anyTag: true,
+        page: 3,
+      );
+      var edits = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (context, setState) => VideoActiveFilters(
+                filters: filters,
+                schema: schema,
+                sections: hanimeResultFilters,
+                onEdit: (_) => edits++,
+                onChanged: (value) => setState(() => filters = value),
+              ),
+            ),
+          ),
+        ),
+      );
+      final tag = find.widgetWithText(ActionChip, '1080p');
+      final beside = find.widgetWithText(ActionChip, '60FPS');
+      expect(find.widgetWithText(ActionChip, 'Short'), findsOneWidget);
+      final rect = tester.getRect(tag);
+      final besideRect = tester.getRect(beside);
+      await tester.tap(tag);
+      expect(edits, 1);
+      await tester.longPress(tag);
+      await tester.pump();
+      final remove = find.byKey(
+        const ValueKey('applied-filter.remove.tag.1080p'),
+      );
+      expect(remove, findsOneWidget);
+      expect(tester.getRect(tag), rect);
+      expect(tester.getRect(beside), besideRect);
+      expect(tester.getRect(tag).contains(tester.getCenter(remove)), isTrue);
+      await tester.tap(remove);
+      await tester.pumpAndSettle();
+      expect(filters.tags, ['60FPS']);
+      expect(filters.anyTag, isFalse);
+      final clear = find.byKey(const ValueKey('applied-filter.clear-all'));
+      Future<void> confirm(String label) async {
+        await tester.tap(clear);
+        await tester.pumpAndSettle();
+        final dialog = find.byType(AlertDialog);
+        expect(filters.tags, ['60FPS']);
+        await tester.tap(
+          find.descendant(of: dialog, matching: find.text(label)),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await confirm(t.common.cancel);
+      expect(filters.duration, 'short');
+      await confirm(t.common.clear);
+      expect(
+        filters,
+        const VideoSearchFilters(
+          query: 'Fixture',
+          genre: '3DCG',
+          sort: 'views',
+        ),
+      );
+    },
+  );
+
+  testWidgets('Hanime match choices share the title row at phone width', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(410, 820);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: VideoSearchFilterPanel(
+            initial: const VideoSearchFilters(),
+            schema: schema,
+            readSchema: read,
+            structuredLayout: true,
+            sections: hanimeResultFilters,
+            initialSection: VideoFilterSection.tags,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final title = find.text(t.videoFilters.title);
+    final all = find.widgetWithText(ChoiceChip, t.videoFilters.allMatch);
+    final any = find.widgetWithText(ChoiceChip, t.videoFilters.anyMatch);
+    final reset = find.byKey(const ValueKey('video-filter.reset'));
+    expect(tester.getCenter(all).dy, closeTo(tester.getCenter(title).dy, 2));
+    expect(tester.getCenter(any).dy, closeTo(tester.getCenter(title).dy, 2));
+    expect(
+      tester.getTopLeft(all).dx,
+      greaterThan(tester.getTopRight(title).dx),
+    );
+    expect(tester.getTopRight(any).dx, lessThan(tester.getTopLeft(reset).dx));
+  });
+
+  testWidgets(
+    'structured Hanime filters fit narrow large-text controls and apply one draft',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(320, 720);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      SharedPreferences.setMockInitialValues({});
+      VideoSearchFilters? applied;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(1.4)),
+            child: child!,
+          ),
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () async {
+                  applied = await showVideoTaskSheet<VideoSearchFilters>(
+                    context: context,
+                    builder: (_) => const VideoSearchFilterPanel(
+                      initial: VideoSearchFilters(
+                        query: 'Animation',
+                        genre: '3DCG',
+                        sort: 'views',
+                      ),
+                      schema: schema,
+                      source: 'hanime-ui-test',
+                      readSchema: read,
+                      structuredLayout: true,
+                      sections: hanimeResultFilters,
+                      initialSection: VideoFilterSection.tags,
+                    ),
+                  );
+                },
+                child: const Text('Open filters'),
+              ),
+            ),
+          ),
+        ),
+      );
+      Future<void> tap(Finder finder) async {
+        await tester.ensureVisible(finder);
+        await tester.tap(finder);
+        await tester.pumpAndSettle();
+      }
+
+      await tap(find.text('Open filters'));
+      final selected = find.byKey(const ValueKey('video-filter.selected'));
+      final first = find.byKey(const ValueKey('hanime-filter.tag.1080p'));
+      final initialPosition = tester.getTopLeft(first);
+      final apply = find.byKey(const ValueKey('video-filter.apply'));
+      final applyPosition = tester.getTopLeft(apply);
+      expect(tester.widget<FilterChip>(selected).onSelected, isNull);
+      final anyMatch = find.widgetWithText(ChoiceChip, t.videoFilters.anyMatch);
+      final allMatch = find.widgetWithText(ChoiceChip, t.videoFilters.allMatch);
+      final matchPosition = tester.getTopLeft(anyMatch);
+      expect(allMatch.hitTestable(), findsOneWidget);
+      expect(anyMatch.hitTestable(), findsOneWidget);
+      await tap(anyMatch);
+      await tap(first);
+      expect(tester.getTopLeft(anyMatch), matchPosition);
+      expect(tester.getTopLeft(first), initialPosition);
+      await tap(find.byKey(const ValueKey('hanime-filter.tag.60FPS')));
+      expect(tester.getTopLeft(first), initialPosition);
+      expect(tester.getTopLeft(apply), applyPosition);
+      final search = find.byType(TextField);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.enterText(search, '1080');
+      tester.view.viewInsets = const FakeViewPadding(bottom: 360);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<EditableText>(find.byType(EditableText))
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
+      expect(
+        find.byKey(const ValueKey('hanime-filter.tag.60FPS')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+      FocusManager.instance.primaryFocus?.unfocus();
+      tester.view.resetViewInsets();
+      await tester.pumpAndSettle();
+      await tap(find.byTooltip(t.common.clear));
+      expect(tester.getTopLeft(first), initialPosition);
+      expect(tester.getTopLeft(anyMatch), matchPosition);
+      expect(tester.widget<ChoiceChip>(anyMatch).selected, isTrue);
+      await tap(find.widgetWithText(Tab, t.videoFilters.date));
+      expect(tester.getTopLeft(anyMatch), matchPosition);
+      expect(
+        find.byKey(const ValueKey('hanime-filter.custom-date')),
+        findsOneWidget,
+      );
+      await tap(find.widgetWithText(Tab, t.videoFilters.tags));
+      expect(find.text(t.videoFilters.selected(count: 2)), findsOneWidget);
+      expect(tester.getTopLeft(first), initialPosition);
+      await tap(find.widgetWithText(Tab, t.videoFilters.date));
+      await tap(find.byKey(const ValueKey('video-filter.date.past')));
+      await tap(find.byKey(const ValueKey('video-filter.apply')));
+      expect(
+        applied,
+        const VideoSearchFilters(
+          query: 'Animation',
+          genre: '3DCG',
+          sort: 'views',
+          tags: ['1080p', '60FPS'],
+          anyTag: true,
+          date: 'past',
+        ),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets(
     'fixed controls omit stars while tag favorites survive draft cancel',
     (tester) async {

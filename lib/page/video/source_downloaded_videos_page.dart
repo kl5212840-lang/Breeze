@@ -1,3 +1,7 @@
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
+import 'package:zephyr/widgets/collection_command_icons.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
+import 'package:zephyr/page/video/hanime_work_facts.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
@@ -75,6 +79,9 @@ class SourceDownloadedVideosPage extends StatefulWidget {
 class _SourceDownloadedVideosPageState
     extends State<SourceDownloadedVideosPage> {
   late Future<List<Map<String, dynamic>>> _rows;
+  late final _hanimeFacts = widget.source == hanimeSourceId
+      ? HanimeWorkFactsStore.read()
+      : null;
   String _query = '', _sort = 'recent';
   KeywordSearchScope _keywordScope = KeywordSearchScope.all;
   bool get _titleOnly => _keywordScope == KeywordSearchScope.title;
@@ -304,10 +311,11 @@ class _SourceDownloadedVideosPageState
     },
     child: Scaffold(
       appBar: AppBar(
-        toolbarHeight:
-            widget.groupDownloads &&
-                _managing &&
-                MediaQuery.textScalerOf(context).scale(16) > 22
+        toolbarHeight: widget.groupDownloads && !_managing
+            ? SearchToolbarScope.stableHeight(context, 56)
+            : widget.groupDownloads &&
+                  _managing &&
+                  MediaQuery.textScalerOf(context).scale(16) > 22
             ? 80
             : 56,
         automaticallyImplyLeading: !widget.groupDownloads,
@@ -378,7 +386,7 @@ class _SourceDownloadedVideosPageState
               ),
         actions: widget.groupDownloads
             ? null
-            : const [CollectionCoverPrivacyButton()],
+            : const [CollectionCoverPrivacyActions()],
       ),
       body: _selectionBody(
         Column(
@@ -410,13 +418,12 @@ class _SourceDownloadedVideosPageState
                           SourceChromeIconButton(
                             key: const ValueKey('source-downloads.filters'),
                             tooltip: t.videoFilters.title,
-                            symbol: _facets.isActive
-                                ? 'line.3.horizontal.decrease.circle.fill'
-                                : 'line.3.horizontal.decrease.circle',
+                            symbol: CollectionCommandIcons.filter.symbol,
+                            selected: _facets.isActive,
                             onPressed: _openingFilters || _busy
                                 ? null
                                 : _editFilters,
-                            icon: Icons.filter_list_rounded,
+                            icon: CollectionCommandIcons.filter.icon,
                           ),
                         ],
                       );
@@ -481,6 +488,7 @@ class _SourceDownloadedVideosPageState
                           if (work == null)
                             return SourceDownloadedEpisodeRow(
                               item: entry.item,
+                              hanimeFacts: _hanimeFacts,
                               selecting: _managing,
                               selected: _selected.contains(entry.item.key),
                               onSelect: () => _toggleItems([entry.item]),
@@ -489,6 +497,7 @@ class _SourceDownloadedVideosPageState
                           return SourceDownloadedWorkCard(
                             key: ValueKey('source-download-work.${work.key}'),
                             work: work,
+                            hanimeFacts: _hanimeFacts,
                             selecting: _managing,
                             selected: _selected.containsAll(
                               work.episodes.map((item) => item.key),
@@ -565,6 +574,11 @@ class _SourceDownloadedVideosPageState
                                         ).textTheme.bodySmall,
                                       ),
                                     ],
+                                    if (_hanimeFacts != null)
+                                      HanimeCachedWorkStatistics(
+                                        facts: _hanimeFacts,
+                                        url: row['url'],
+                                      ),
                                   ],
                                 ),
                               ),

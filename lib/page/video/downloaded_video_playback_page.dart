@@ -6,6 +6,7 @@ import 'package:zephyr/page/video/downloaded_video_playback_queue.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
 import 'package:zephyr/page/video/native_video_page.dart';
 import 'package:zephyr/page/video/video_cover_overlay.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
 import 'package:zephyr/page/video/video_downloaded_details.dart';
 import 'package:zephyr/page/video/video_interaction.dart';
 import 'package:zephyr/page/video/video_watch_history.dart';
@@ -413,6 +414,7 @@ class _DownloadedVideoDetailsState extends State<_DownloadedVideoDetails> {
               _DownloadedLocalCover(
                 path: data?.localCoverPath,
                 duration: duration,
+                forceBlur: hanimePreviewCoverBlur(data?.watchUrl),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -506,9 +508,14 @@ class _DownloadedVideoDetailsState extends State<_DownloadedVideoDetails> {
 /// Same protection/fit contract as other collection posters, using one local
 /// provider for both foreground and contain background. Never a network image.
 class _DownloadedLocalCover extends StatelessWidget {
-  const _DownloadedLocalCover({required this.path, required this.duration});
+  const _DownloadedLocalCover({
+    required this.path,
+    required this.duration,
+    required this.forceBlur,
+  });
   final String? path;
   final String duration;
+  final bool forceBlur;
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
@@ -540,6 +547,7 @@ class _DownloadedLocalCover extends StatelessWidget {
               child: VideoCoverOverlay(
                 durationText: duration,
                 child: CollectionCoverPrivacy(
+                  forceBlur: forceBlur,
                   fit: fit,
                   image: image,
                   mosaicPlaceholder: placeholder,

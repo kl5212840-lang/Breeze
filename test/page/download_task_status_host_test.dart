@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'dart:async';
 import 'package:zephyr/page/bookshelf/service/bookshelf_source_preferences.dart';
 import 'package:zephyr/page/donwload_task/view/download_filter_sheet.dart';
@@ -2166,24 +2167,17 @@ void main() {
           await tester.pump();
           final editor = find.byKey(const ValueKey('download-search-field'));
           final cancel = find.byKey(const ValueKey('download-search-close'));
-          expect(
-            tester.getCenter(cancel).dx,
-            closeTo(frames.last.center.dx, .1),
-          );
-          final startWidth = tester.getSize(editor).width;
+          final expanded = tester.getRect(editor);
+          final moreExpanded = tester.getRect(more);
+          expect(moreExpanded.center.dx, closeTo(frames.last.center.dx, .1));
+          expect(moreExpanded.height, closeTo(expanded.height, .1));
+          expect(expanded.right, lessThan(moreExpanded.left));
+          expect(expanded.contains(tester.getCenter(cancel)), isTrue);
           expect(manage, findsNothing);
           expect(eye, findsNothing);
-          expect(more, findsNothing);
           expect(searchAction, findsNothing);
-          expect(
-            tester.getRect(editor).overlaps(tester.getRect(cancel)),
-            isFalse,
-          );
           await tester.pump(const Duration(milliseconds: 200));
-          expect(
-            tester.getSize(editor).width,
-            greaterThanOrEqualTo(startWidth),
-          );
+          expect(tester.getRect(editor), expanded);
           final after = tester.getRect(find.text('Header fixture'));
           expect(after.width, closeTo(before.width, .0001));
           expect(after.height, closeTo(before.height, .0001));
@@ -2195,17 +2189,16 @@ void main() {
           ]) {
             expect(edges.$1, closeTo(edges.$2, .15));
           }
-          tester.widget<SourceChromeIconButton>(cancel).onPressed!();
+          tester.widget<IconButton>(cancel).onPressed!();
           await tester.pump();
           expect(editor, findsNothing);
           expect(cancel, findsNothing);
           expect(manage, findsNothing);
-          // Reverse before the return animation completes; no departed actions
-          // remain mounted or interactive underneath the expanded input.
+          // Reopen immediately; departed actions must not remain interactive.
           tester.widget<SourceChromeIconButton>(searchAction).onPressed!();
           await tester.pump();
           expect(manage, findsNothing);
-          tester.widget<SourceChromeIconButton>(cancel).onPressed!();
+          tester.widget<IconButton>(cancel).onPressed!();
           await settleHost(tester);
           final restoredHeader = tester.getRect(
             find.byKey(const ValueKey('download-header')),
@@ -2365,16 +2358,16 @@ void main() {
           );
           expect(search, findsOneWidget);
           expect(tester.widget<SearchQueryField>(search).inline, isTrue);
-          // The editor occupies the existing header, beside its close control.
+          // The editor contains its close control and leaves the More slot visible.
           expect(
             find.byKey(const ValueKey('download-manage-action')),
             findsNothing,
           );
           expect(find.byType(CollectionCoverPrivacyButton), findsNothing);
-          expect(find.byKey(const ValueKey('download-more')), findsNothing);
+          expect(find.byKey(const ValueKey('download-more')), findsOneWidget);
           expect(
-            tester.getRect(search).overlaps(tester.getRect(closeSearch)),
-            isFalse,
+            tester.getRect(search).contains(tester.getCenter(closeSearch)),
+            isTrue,
           );
           expect(
             tester.getRect(search).center.dy,
@@ -3808,8 +3801,15 @@ void main() {
             matching: find.byKey(const ValueKey('breeze.selection.plate')),
           ),
         );
-        final sourcePlate = tester.getRect(
+        final sourceTarget = tester.getRect(
           find.byKey(const ValueKey('bookshelf.source.')),
+        );
+        const sourceInset = CollectionToolbarMetrics.actionPlateInset;
+        final sourcePlate = Rect.fromLTRB(
+          sourceTarget.left,
+          sourceTarget.top + sourceInset,
+          sourceTarget.right,
+          sourceTarget.bottom - sourceInset,
         );
         final boundary = tester.renderObject<RenderRepaintBoundary>(
           find.byKey(previewKey),

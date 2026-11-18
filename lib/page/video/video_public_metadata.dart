@@ -71,6 +71,19 @@ class VideoPublicMetadata {
     return '$label · $date';
   }
 
+  Map<String, dynamic> toWire() => {
+    'duration': ?duration,
+    'ratingPercentRaw': ?ratingPercentRaw,
+    'ratingPercent': ?ratingPercent,
+    'viewCountRaw': ?viewCountRaw,
+    'viewCount': ?viewCount,
+    'publishedRelative': ?publishedRelative,
+    'publishedDate': ?publishedDate,
+    'totalVotes': ?totalVotes,
+    'positiveVotes': ?positiveVotes,
+    'negativeVotes': ?negativeVotes,
+  };
+
   factory VideoPublicMetadata.fromWire(Map<String, dynamic> raw) {
     String? label(String field) {
       final value = raw[field];

@@ -14,6 +14,7 @@ import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/page/video/native_video_catalog_page.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
 import 'package:zephyr/page/video/video_search_filters.dart';
 import 'package:zephyr/page/video/video_search_history.dart';
 import 'package:zephyr/page/video/video_search_page.dart';
@@ -362,7 +363,13 @@ class DiscoverRouter {
           searchFilters: schema,
           selectors: selectors,
           categories: categories,
-          tabs: tabs,
+          tabs: source == hanimeSourceId && initialUrl?.path == '/search'
+              ? const []
+              : tabs,
+          structuredHanime:
+              source == hanimeSourceId &&
+              homeUrl.host == 'hanime1.me' &&
+              schema != null,
         ),
       ),
     );

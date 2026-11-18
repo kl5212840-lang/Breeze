@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:zephyr/page/video/video_interaction.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'dart:async';
@@ -23,6 +24,13 @@ typedef ShelfFilterKeyword = ({
   KeywordSearchScope scope,
   List<ShelfFacetEntry> Function(String, KeywordSearchScope) entriesFor,
   void Function(String, KeywordSearchScope) onApply,
+});
+
+typedef ShelfFilterSnapshot = ({
+  List<ShelfFacetEntry> entries,
+  String scopeLabel,
+  bool loadingMetadata,
+  bool canLoadMetadata,
 });
 
 String _facetPreferenceKey(String scope, String dimension) =>
@@ -59,31 +67,42 @@ Future<ShelfFacetSelection?> showShelfFilterSheet(
   bool showAllRecordsLabel = true,
   ValueChanged<ModalRoute<dynamic>>? onRouteOpened,
   ShelfFilterKeyword? keyword,
+  ValueListenable<ShelfFilterSnapshot>? liveSnapshot,
+  VoidCallback? onLoadMetadata,
 }) async {
   final favorites = await _loadFacetFavorites(preferenceKey);
   if (!context.mounted) return null;
+  Widget sheet(BuildContext sheetContext) {
+    final route = ModalRoute.of(sheetContext);
+    if (route != null) onRouteOpened?.call(route);
+    Widget panel(ShelfFilterSnapshot? snapshot) => _ShelfFilterSheet(
+      entries: snapshot?.entries ?? entries,
+      initial: initial,
+      preferenceKey: preferenceKey,
+      scopeLabel: snapshot?.scopeLabel ?? scopeLabel,
+      currentFolder: currentFolder,
+      hierarchical: hierarchical,
+      focusedLayout: focusedLayout,
+      showAllRecordsLabel: showAllRecordsLabel,
+      nativeMaterial: nativeMaterial,
+      favorites: favorites,
+      keyword: keyword,
+      loadingMetadata: snapshot?.loadingMetadata ?? false,
+      onLoadMetadata: snapshot?.canLoadMetadata == true ? onLoadMetadata : null,
+    );
+    if (liveSnapshot == null) return panel(null);
+    return ValueListenableBuilder(
+      valueListenable: liveSnapshot,
+      builder: (_, snapshot, _) => panel(snapshot),
+    );
+  }
+
   if (nativeMaterial) {
     return showVideoTaskSheet<ShelfFacetSelection>(
       context: context,
       useRootNavigator: true,
       systemStyle: AppInterfaceStyleScope.usesSystem(context),
-      builder: (sheetContext) {
-        final route = ModalRoute.of(sheetContext);
-        if (route != null) onRouteOpened?.call(route);
-        return _ShelfFilterSheet(
-          entries: entries,
-          initial: initial,
-          preferenceKey: preferenceKey,
-          scopeLabel: scopeLabel,
-          currentFolder: currentFolder,
-          hierarchical: hierarchical,
-          focusedLayout: focusedLayout,
-          showAllRecordsLabel: showAllRecordsLabel,
-          nativeMaterial: true,
-          favorites: favorites,
-          keyword: keyword,
-        );
-      },
+      builder: sheet,
     );
   }
   return showModalBottomSheet<ShelfFacetSelection>(
@@ -93,22 +112,7 @@ Future<ShelfFacetSelection?> showShelfFilterSheet(
     isScrollControlled: true,
     useSafeArea: true,
     constraints: const BoxConstraints(maxWidth: 640),
-    builder: (sheetContext) {
-      final route = ModalRoute.of(sheetContext);
-      if (route != null) onRouteOpened?.call(route);
-      return _ShelfFilterSheet(
-        entries: entries,
-        initial: initial,
-        preferenceKey: preferenceKey,
-        scopeLabel: scopeLabel,
-        currentFolder: currentFolder,
-        hierarchical: hierarchical,
-        focusedLayout: focusedLayout,
-        showAllRecordsLabel: showAllRecordsLabel,
-        favorites: favorites,
-        keyword: keyword,
-      );
-    },
+    builder: sheet,
   );
 }
 
@@ -125,6 +129,8 @@ class _ShelfFilterSheet extends StatefulWidget {
     this.nativeMaterial = false,
     required this.favorites,
     this.keyword,
+    this.loadingMetadata = false,
+    this.onLoadMetadata,
   });
   final List<ShelfFacetEntry> entries;
   final ShelfFacetSelection initial;
@@ -133,6 +139,8 @@ class _ShelfFilterSheet extends StatefulWidget {
   final bool hierarchical, focusedLayout, nativeMaterial, showAllRecordsLabel;
   final _FacetFavorites favorites;
   final ShelfFilterKeyword? keyword;
+  final bool loadingMetadata;
+  final VoidCallback? onLoadMetadata;
   @override
   State<_ShelfFilterSheet> createState() => _ShelfFilterSheetState();
 }
@@ -157,6 +165,7 @@ class _ShelfFilterSheetState extends State<_ShelfFilterSheet>
     'language': t.bookshelf.facets.language,
     'author': t.bookshelf.facets.author,
     'quality': t.bookshelf.facets.quality,
+    'duration': t.videoFilters.duration,
   };
 
   @override
@@ -304,7 +313,10 @@ class _ShelfFilterSheetState extends State<_ShelfFilterSheet>
     int count,
     double inset,
   ) {
-    final dimensions = options.keys.toList();
+    final dimensions = facetOptionsAppliedFirst(options.keys.toList(), {
+      for (final entry in widget.initial.values.entries)
+        if (entry.value.isNotEmpty) entry.key,
+    });
     final dimension = dimensions.contains(_expanded)
         ? _expanded
         : dimensions.firstOrNull;
@@ -322,12 +334,16 @@ class _ShelfFilterSheetState extends State<_ShelfFilterSheet>
                   : t.bookshelf.facets.loadFailed
             : null);
     final pinned = favorites ?? const <String>{};
-    final values = {...counts.keys, ...selected}.toList()
+    final ordered = {...counts.keys, ...selected}.toList()
       ..sort((a, b) {
         final rank =
             (pinned.contains(b) ? 1 : 0) - (pinned.contains(a) ? 1 : 0);
         return rank != 0 ? rank : a.compareTo(b);
       });
+    final values = facetOptionsAppliedFirst(
+      ordered,
+      widget.initial.values[dimension] ?? const {},
+    );
     final header = Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
       child: Row(
@@ -368,12 +384,36 @@ class _ShelfFilterSheetState extends State<_ShelfFilterSheet>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (widget.scopeLabel.isNotEmpty &&
+              (!widget.focusedLayout ||
+                  widget.onLoadMetadata != null ||
+                  widget.loadingMetadata))
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.scopeLabel,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                if (widget.loadingMetadata)
+                  const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else if (widget.onLoadMetadata != null)
+                  TextButton(
+                    key: const ValueKey('shelf-filter-more-metadata'),
+                    onPressed: widget.onLoadMetadata,
+                    child: Text(
+                      LocaleSettings.currentLocale.languageCode == 'zh'
+                          ? '补齐标签'
+                          : 'Load tags',
+                    ),
+                  ),
+              ],
+            ),
           if (!widget.focusedLayout) ...[
-            if (widget.scopeLabel.isNotEmpty)
-              Text(
-                widget.scopeLabel,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
             if (widget.showAllRecordsLabel &&
                 widget.currentFolder == null &&
                 widget.keyword == null)
@@ -521,7 +561,7 @@ class _ShelfFilterSheetState extends State<_ShelfFilterSheet>
           selected: selected,
           onToggle: (value) => _toggle(dimension!, value),
           optionKey: (value) => ValueKey('shelf-option-$dimension-$value'),
-          label: _label,
+          label: (value) => _label(dimension, value),
           reorderController: _reorder,
           trailing: !_supportsFacetFavorites(dimension)
               ? null
@@ -536,7 +576,7 @@ class _ShelfFilterSheetState extends State<_ShelfFilterSheet>
                       ? null
                       : ShelfTagPinButton.optionTooltip(
                           context,
-                          label: _label(value),
+                          label: _label(dimension, value),
                           pinned: pinned.contains(value),
                         ),
                   onPressed: !_saving && preferenceError == null
@@ -584,5 +624,12 @@ class _ShelfFilterSheetState extends State<_ShelfFilterSheet>
     );
   }
 
-  String _label(String value) => shelfFacetDisplayValue(value);
+  String _label(String? dimension, String value) =>
+      switch ((dimension, value)) {
+        ('duration', 'less-than-10') => t.download.durationShort,
+        ('duration', '10-to-30') => t.download.durationMedium,
+        ('duration', '30-to-60') => t.download.durationLong,
+        ('duration', '60-or-more') => t.download.durationHour,
+        _ => shelfFacetDisplayValue(value),
+      };
 }

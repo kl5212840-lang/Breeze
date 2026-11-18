@@ -1,3 +1,5 @@
+import 'package:zephyr/widgets/applied_filter_bar.dart';
+import 'package:zephyr/widgets/collection_command_icons.dart';
 import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/service/read_recovery.dart';
@@ -234,8 +236,8 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
     return SourceChromeIconButton(
       key: const ValueKey('api-catalog.view-mode'),
       tooltip: grid ? t.videoLibrary.detailList : t.videoLibrary.grid,
-      icon: grid ? Icons.view_list_outlined : Icons.grid_view_outlined,
-      symbol: grid ? 'list.bullet' : 'square.grid.2x2',
+      icon: CollectionCommandIcons.toggleTarget(grid).icon,
+      symbol: CollectionCommandIcons.toggleTarget(grid).symbol,
       onPressed: _savingViews.contains('library')
           ? null
           : () => unawaited(_toggleView('library')),
@@ -713,6 +715,23 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
     });
   }
 
+  Widget _catalogScopeMenu(BuildContext context) => KeywordScopeMenu(
+    compact:
+        MediaQuery.sizeOf(context).width < 400 ||
+        MediaQuery.textScalerOf(context).scale(14) > 20,
+    scope: _editingCatalogSearch ? _draftKeywordScope : _keywordScope,
+    onChanged: (scope) => setState(() {
+      if (_editingCatalogSearch) {
+        _draftKeywordScope = scope;
+      } else {
+        _keywordScope = scope;
+        if (_siteSearchInHeader && !_websiteSearch) {
+          _remoteKeywordScope = scope;
+        }
+      }
+    }),
+  );
+
   void _endCatalogSearch() {
     if (!_editingCatalogSearch) return;
     _catalogSearchFocus.unfocus();
@@ -1098,17 +1117,27 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                       : SearchToolbarScope.appBar(
                           context,
                           (height) => AppBar(
-                            toolbarHeight: height,
+                            toolbarHeight: SearchToolbarScope.stableHeight(
+                              context,
+                              56,
+                            ),
                             leadingWidth: height == null ? null : 56,
-                            leading: _embedded
+                            leading: _editingCatalogSearch && !_remoteSearchTask
+                                ? null
+                                : _embedded
                                 ? widget.leading
                                 : SourceBackButton(
                                     onPressed: _remoteSearchTask
                                         ? () => Navigator.of(context).pop()
                                         : null,
                                   ),
-                            automaticallyImplyLeading: !_embedded,
-                            titleSpacing: 0,
+                            automaticallyImplyLeading:
+                                !_embedded &&
+                                (!_editingCatalogSearch || _remoteSearchTask),
+                            titleSpacing:
+                                _editingCatalogSearch && !_remoteSearchTask
+                                ? 16
+                                : 0,
                             title: _tab == 0 && _siteSearchInHeader
                                 ? VideoSearchEntry(
                                     query: _websiteSearch
@@ -1134,6 +1163,14 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                                         ? null
                                         : _clearCatalogQuery,
                                     focusNode: _catalogSearchFocus,
+                                    onClose: _editingCatalogSearch
+                                        ? _endCatalogSearch
+                                        : null,
+                                    leadingControl: _editingCatalogSearch
+                                        ? _catalogScopeMenu(context)
+                                        : null,
+                                    leadingControlWidth:
+                                        KeywordScopeMenu.leadingWidth(context),
                                     queryRevision: _catalogQueryRevision,
                                   )
                                 : _tab == 0 &&
@@ -1165,31 +1202,11 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                             actions: [
                               const SizedBox(width: 8),
                               if (_tab == 0 &&
+                                  !_editingCatalogSearch &&
                                   (_siteSearchInHeader ||
                                       _compactBrowsing &&
                                           _localCatalogSupported))
-                                KeywordScopeMenu(
-                                  compact:
-                                      MediaQuery.sizeOf(context).width < 400 ||
-                                      MediaQuery.textScalerOf(
-                                            context,
-                                          ).scale(14) >
-                                          20,
-                                  scope: _editingCatalogSearch
-                                      ? _draftKeywordScope
-                                      : _keywordScope,
-                                  onChanged: (scope) => setState(() {
-                                    if (_editingCatalogSearch) {
-                                      _draftKeywordScope = scope;
-                                    } else {
-                                      _keywordScope = scope;
-                                      if (_siteSearchInHeader &&
-                                          !_websiteSearch) {
-                                        _remoteKeywordScope = scope;
-                                      }
-                                    }
-                                  }),
-                                ),
+                                _catalogScopeMenu(context),
                               if (_tab == 0 &&
                                   !_editingCatalogSearch &&
                                   (!_remoteSearchTask || _query.isNotEmpty) &&
@@ -1205,26 +1222,27 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                                 SourceChromeIconButton(
                                   key: const ValueKey('api-library.filters'),
                                   tooltip: t.videoFilters.title,
-                                  symbol: 'line.3.horizontal.decrease',
-                                  icon: Icons.filter_list_rounded,
+                                  symbol: CollectionCommandIcons.filter.symbol,
+                                  icon: CollectionCommandIcons.filter.icon,
                                   onPressed: () =>
                                       _catalogKey.currentState?.editFilters(),
                                 ),
-                              if (_omoRecommendationActive ||
-                                  _showOmoRecommendations &&
-                                      _tab == 0 &&
-                                      !_putCatalogViewInMore(context))
+                              if (!_editingCatalogSearch &&
+                                  (_omoRecommendationActive ||
+                                      _showOmoRecommendations &&
+                                          _tab == 0 &&
+                                          !_putCatalogViewInMore(context)))
                                 SourceChromeIconButton(
                                   key: const ValueKey('api-library.view-mode'),
                                   tooltip: _mode == ApiVideoView.grid
                                       ? t.videoLibrary.detailList
                                       : t.videoLibrary.grid,
-                                  symbol: _mode == ApiVideoView.grid
-                                      ? 'list.bullet'
-                                      : 'square.grid.2x2',
-                                  icon: _mode == ApiVideoView.grid
-                                      ? Icons.view_list_outlined
-                                      : Icons.grid_view_outlined,
+                                  symbol: CollectionCommandIcons.toggleTarget(
+                                    _mode == ApiVideoView.grid,
+                                  ).symbol,
+                                  icon: CollectionCommandIcons.toggleTarget(
+                                    _mode == ApiVideoView.grid,
+                                  ).icon,
                                   onPressed: _savingView ? null : _toggleView,
                                 ),
                               if (_omo && _tab == _omoAccountIndex)
@@ -1238,7 +1256,8 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                                             context,
                                           )?.source !=
                                           _repository.source,
-                                  showCoverSettings: false,
+                                  showCoverSettings:
+                                      _omo && _tab == _omoAccountIndex,
                                   actions: [
                                     if (_putCatalogViewInMore(context) ||
                                         _tab == 0 &&
@@ -1251,12 +1270,14 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                                         label: _mode == ApiVideoView.grid
                                             ? t.videoLibrary.detailList
                                             : t.videoLibrary.grid,
-                                        icon: _mode == ApiVideoView.grid
-                                            ? Icons.view_list_outlined
-                                            : Icons.grid_view_outlined,
-                                        symbol: _mode == ApiVideoView.grid
-                                            ? 'list.bullet'
-                                            : 'square.grid.2x2',
+                                        icon:
+                                            CollectionCommandIcons.toggleTarget(
+                                              _mode == ApiVideoView.grid,
+                                            ).icon,
+                                        symbol:
+                                            CollectionCommandIcons.toggleTarget(
+                                              _mode == ApiVideoView.grid,
+                                            ).symbol,
                                         onSelected: () =>
                                             unawaited(_toggleView()),
                                       ),
@@ -2478,19 +2499,72 @@ class _ApiCatalogState extends State<_ApiCatalog> {
         _usesLocalCatalog && _hasLocalConditions;
     final showLocalScope = !_failed || _items.isNotEmpty;
     final showQueryChip = searching && !widget.siteSearchInHeader;
+    void changeAppliedFilters(VoidCallback change, {bool reload = false}) {
+      setState(change);
+      widget.onFiltersChanged?.call(draftFilters);
+      if (reload) _load();
+    }
+
     void resetCatalogFilters() {
-      setState(() {
-        _type = '';
+      final reload = _year.isNotEmpty || _recent;
+      changeAppliedFilters(() {
         _year = '';
-        _sort = '';
         _recent = false;
         _localYear = '';
         _completedOnly = false;
-      });
-      widget.onFiltersChanged?.call(draftFilters);
-      _load();
+        _localFacets = _localFacets.copyWith(values: const {}, applied: false);
+      }, reload: reload);
     }
 
+    final appliedFilters = <AppliedFilter>[
+      if (_localYear.isNotEmpty)
+        (
+          id: 'local-year',
+          label: _localYear,
+          edit: editFilters,
+          remove: () => changeAppliedFilters(() => _localYear = ''),
+        ),
+      if (_completedOnly)
+        (
+          id: 'completed',
+          label: t.videoLibrary.completedOnly,
+          edit: editFilters,
+          remove: () => changeAppliedFilters(() => _completedOnly = false),
+        ),
+      if (_year.isNotEmpty)
+        (
+          id: 'source-year',
+          label: _year,
+          edit: editFilters,
+          remove: () => changeAppliedFilters(() => _year = '', reload: true),
+        ),
+      if (_recent)
+        (
+          id: 'recent',
+          label: t.videoLibrary.recent24Hours,
+          edit: editFilters,
+          remove: () =>
+              changeAppliedFilters(() => _recent = false, reload: true),
+        ),
+      for (final group in _localFacets.values.entries)
+        for (final value in group.value)
+          (
+            id: 'facet.${group.key}.$value',
+            label: shelfFacetDisplayValue(value),
+            edit: editFilters,
+            remove: () => setState(() {
+              final next = {
+                for (final entry in _localFacets.values.entries)
+                  entry.key: {...entry.value},
+              };
+              next[group.key]?.remove(value);
+              _localFacets = _localFacets.copyWith(
+                values: next,
+                applied: next.values.any((values) => values.isNotEmpty),
+              );
+            }),
+          ),
+    ];
     final catalogHeader = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2637,27 +2711,6 @@ class _ApiCatalogState extends State<_ApiCatalog> {
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
                 ),
-                if (widget.showFilters &&
-                    (_type.isNotEmpty ||
-                        _year.isNotEmpty ||
-                        _sort.isNotEmpty ||
-                        _recent ||
-                        _localYear.isNotEmpty ||
-                        _completedOnly))
-                  if (widget.headingAction == null)
-                    TextButton(
-                      onPressed: resetCatalogFilters,
-                      child: Text(t.videoLibrary.clearFilters),
-                    )
-                  else
-                    SizedBox.square(
-                      dimension: 44,
-                      child: IconButton(
-                        tooltip: t.videoLibrary.clearFilters,
-                        onPressed: resetCatalogFilters,
-                        icon: const Icon(Icons.clear_rounded),
-                      ),
-                    ),
                 ?widget.headingAction,
               ],
             ),
@@ -2669,22 +2722,6 @@ class _ApiCatalogState extends State<_ApiCatalog> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
             child: localScopeLabel,
-          ),
-        if (widget.compactBrowsing && _usesLocalCatalog && _hasLocalConditions)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Align(
-              alignment: AlignmentDirectional.centerStart,
-              child: TextButton.icon(
-                key: const ValueKey('api-catalog.local-reset'),
-                onPressed: () => setState(() {
-                  _localQuery = '';
-                  _localFacets = const ShelfFacetSelection();
-                }),
-                icon: const Icon(Icons.clear, size: 18),
-                label: Text(t.videoLibrary.clearFilters),
-              ),
-            ),
           ),
         if (_hasWebsiteSearchQuery)
           Padding(
@@ -2735,74 +2772,30 @@ class _ApiCatalogState extends State<_ApiCatalog> {
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),
-        if (showQueryChip ||
-            _year.isNotEmpty ||
-            _sort.isNotEmpty ||
-            _localYear.isNotEmpty ||
-            _completedOnly)
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                if (showQueryChip)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: InputChip(
-                      label: Text(widget.query),
-                      onDeleted: widget.onClearQuery,
-                    ),
-                  ),
-                if (_localYear.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: InputChip(
-                      label: Text(_localYear),
-                      onDeleted: () {
-                        setState(() => _localYear = '');
-                        widget.onFiltersChanged?.call(draftFilters);
-                      },
-                    ),
-                  ),
-                if (_completedOnly)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: InputChip(
-                      label: Text(t.videoLibrary.completedOnly),
-                      onDeleted: () {
-                        setState(() => _completedOnly = false);
-                        widget.onFiltersChanged?.call(draftFilters);
-                      },
-                    ),
-                  ),
-                if (_year.isNotEmpty)
-                  InputChip(
-                    label: Text(_year),
-                    onDeleted: () {
-                      setState(() => _year = '');
-                      widget.onFiltersChanged?.call(draftFilters);
-                      _load();
-                    },
-                  ),
-                if (_sort.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 8),
-                    child: InputChip(
-                      label: Text(
-                        _sort == 'hits'
-                            ? t.videoSource.sourcePopularity
-                            : t.videoSource.sourceScore,
-                      ),
-                      onDeleted: () {
-                        setState(() => _sort = '');
-                        widget.onFiltersChanged?.call(draftFilters);
-                        _load();
-                      },
-                    ),
-                  ),
-              ],
-            ),
-          ),
+        AppliedFilterBar(
+          entries: appliedFilters,
+          clearWhenEmpty: _localFacets.isActive,
+          onClearAll: resetCatalogFilters,
+          contextChips: [
+            if (showQueryChip || _usesLocalCatalog && _localQuery.isNotEmpty)
+              InputChip(
+                label: Text(showQueryChip ? widget.query : _localQuery),
+                onDeleted: showQueryChip
+                    ? widget.onClearQuery
+                    : () => setState(() => _localQuery = ''),
+              ),
+            if (_sort.isNotEmpty)
+              InputChip(
+                label: Text(
+                  _sort == 'hits'
+                      ? t.videoSource.sourcePopularity
+                      : t.videoSource.sourceScore,
+                ),
+                onDeleted: () =>
+                    changeAppliedFilters(() => _sort = '', reload: true),
+              ),
+          ],
+        ),
         SizedBox(
           height: 2,
           child: _loading && !_pullRefreshing
@@ -2824,7 +2817,7 @@ class _ApiCatalogState extends State<_ApiCatalog> {
                 SearchToolbarScope(
                   extent: widget.siteSearchInHeader
                       ? null
-                      : SearchToolbarScope.breezeExtent(context),
+                      : SearchToolbarScope.fieldExtent(context),
                   child: Row(
                     children: [
                       Expanded(

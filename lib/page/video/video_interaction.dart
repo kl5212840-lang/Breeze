@@ -178,6 +178,8 @@ Future<T?> showVideoTaskSheet<T>({
   String? networkSource,
   Future<OmoNetworkContext?>? network,
   VideoPanelPurpose purpose = VideoPanelPurpose.download,
+  double portraitHeightFraction = .82,
+  double portraitMaxHeight = 600,
 }) {
   // Capture player appearance before crossing the modal route boundary.
   final appearance = systemStyle ?? VideoControlAppearance.usesSystem(context);
@@ -230,7 +232,7 @@ Future<T?> showVideoTaskSheet<T>({
                           maxHeight: landscape
                               ? available
                               : math.min(
-                                  600,
+                                  portraitMaxHeight,
                                   (media.size.height -
                                               media.padding.vertical -
                                               media.viewInsets.bottom)

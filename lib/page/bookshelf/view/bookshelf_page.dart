@@ -1,3 +1,4 @@
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_navigation_bar.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
@@ -532,12 +533,19 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
       _refreshAll();
     },
     child: Scaffold(
-      appBar: AppBar(
-        automaticallyImplyLeading: false,
-        titleSpacing: CollectionToolbarMetrics.sourceContentInset,
-        scrolledUnderElevation: 0,
-        toolbarHeight: _headerHeight(context),
-        title: _buildHeader(),
+      appBar: SearchToolbarScope.appBar(
+        context,
+        (_) => AppBar(
+          automaticallyImplyLeading: false,
+          titleSpacing: CollectionToolbarMetrics.sourceContentInset,
+          scrolledUnderElevation: 0,
+          toolbarHeight: SearchToolbarScope.stableHeight(
+            context,
+            _headerHeight(context),
+          ),
+          title: _buildHeader(),
+        ),
+        searching: _isSearchExpanded,
       ),
       body: Column(
         children: [
@@ -646,7 +654,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
         _selectRecords(ShelfPageMode.values.byName(value).index);
       },
     );
-    final sources = BlocBuilder<BookshelfSearchCubit, BookshelfSearchState>(
+    Widget sources() => BlocBuilder<BookshelfSearchCubit, BookshelfSearchState>(
       bloc: _activeSearch,
       builder: (context, state) {
         final medium = _sourceMedium, mode = _mode, cubit = _activeSearch;
@@ -654,8 +662,10 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
           systemControls: usesNativeSourceChrome(context),
           child: BookshelfSourceNavigation(
             horizontalInset: CollectionToolbarMetrics.sourceContentInset,
+            scrollStartInset: 4,
             showManage: true,
             classicChips: true,
+            scrollSafeChips: true,
             sources: _sourceControlsReady
                 ? _sourcePreferences[medium]!.arrange(_allLabelSources(medium))
                 : const {},
@@ -718,7 +728,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
             (sourceFailed ? CollectionToolbarMetrics.actionExtent : 0);
         const leadingPadding = CollectionToolbarMetrics.sourceContentInset;
         final fits =
-            recordWidth + minimumSources + leadingPadding <=
+            recordWidth + minimumSources + leadingPadding + 8 <=
             constraints.maxWidth;
         return Column(
           children: [
@@ -727,7 +737,8 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
                 children: [
                   const SizedBox(width: leadingPadding),
                   SizedBox(width: recordWidth, child: records),
-                  Expanded(child: sources),
+                  const SizedBox(width: 8),
+                  Expanded(child: sources()),
                 ],
               )
             else ...[
@@ -747,7 +758,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
                   ),
                 ),
               ),
-              sources,
+              sources(),
             ],
             const Padding(
               padding: EdgeInsets.fromLTRB(
@@ -765,7 +776,6 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
   }
 
   Widget _buildHeader() {
-    const extent = CollectionToolbarMetrics.actionExtent;
     return ListenableBuilder(
       key: const ValueKey('bookshelf.main-header'),
       listenable: _header,
@@ -774,37 +784,47 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
         final slots = _header.slots;
         final theme = Theme.of(context);
         final subtitle = slots?.subtitle ?? '';
+        final extent =
+            SearchToolbarScope.of(context) ??
+            CollectionToolbarMetrics.actionExtent;
         return Row(
           children: [
             Expanded(child: field ?? _buildHeading(context, theme, subtitle)),
-            BlocSelector<BookshelfSearchCubit, BookshelfSearchState, String>(
-              bloc: _activeSearch,
-              selector: (state) => state.stateOf(_mode).keyword,
-              builder: (context, query) => Badge(
-                isLabelVisible: !_isSearchExpanded && query.isNotEmpty,
-                child: SourceChromeIconButton(
-                  key: const ValueKey('bookshelf.search'),
-                  icon: _isSearchExpanded ? Icons.close_rounded : Icons.search,
-                  symbol: _isSearchExpanded ? 'xmark' : 'magnifyingglass',
-                  tooltip: _isSearchExpanded
-                      ? t.common.close
-                      : query.isEmpty
-                      ? t.bookshelf.searchList
-                      : '${t.bookshelf.searchList} · $query',
-                  onPressed: _scopeLocked
-                      ? null
-                      : _isSearchExpanded
-                      ? _exitSearch
-                      : _openSearch,
+            if (field != null)
+              const SizedBox(width: CollectionToolbarMetrics.searchControlGap),
+            if (field == null)
+              BlocSelector<BookshelfSearchCubit, BookshelfSearchState, String>(
+                bloc: _activeSearch,
+                selector: (state) => state.stateOf(_mode).keyword,
+                builder: (context, query) => Badge(
+                  isLabelVisible: !_isSearchExpanded && query.isNotEmpty,
+                  child: SourceChromeIconButton(
+                    key: const ValueKey('bookshelf.search'),
+                    icon: _isSearchExpanded
+                        ? Icons.close_rounded
+                        : Icons.search,
+                    symbol: _isSearchExpanded ? 'xmark' : 'magnifyingglass',
+                    tooltip: _isSearchExpanded
+                        ? t.common.close
+                        : query.isEmpty
+                        ? t.bookshelf.searchList
+                        : '${t.bookshelf.searchList} · $query',
+                    onPressed: _scopeLocked
+                        ? null
+                        : _isSearchExpanded
+                        ? _exitSearch
+                        : _openSearch,
+                  ),
                 ),
               ),
-            ),
-            const CollectionCoverPrivacyButton(
-              key: ValueKey('bookshelf.cover-privacy'),
-              emphasizeProtected: true,
-            ),
-            SizedBox.square(
-              dimension: extent,
+            if (field == null)
+              const CollectionCoverPrivacyButton(
+                key: ValueKey('bookshelf.cover-privacy'),
+                emphasizeProtected: true,
+              ),
+            SizedBox(
+              height: extent,
+              width: CollectionToolbarMetrics.actionExtent,
               child: _scopeLocked || slots?.more == null
                   ? null
                   : KeyedSubtree(
@@ -982,6 +1002,8 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
             ignoring: _scopeLocked,
             child: SearchQueryField(
               key: ValueKey('shelf-search.$_showVideos.${mode.name}'),
+              onClose: _exitSearch,
+              closeKey: const ValueKey('bookshelf.search'),
               query: state.stateOf(mode).keyword,
               inline: true,
               focusNode: _searchFocusNode,

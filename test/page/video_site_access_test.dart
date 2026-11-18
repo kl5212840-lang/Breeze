@@ -2,9 +2,119 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zephyr/page/video/video_site_access.dart';
+import 'package:zephyr/page/video/video_catalog_dom.dart';
 
 void main() {
   final home = Uri.parse('https://hanime1.me/');
+  test(
+    'explicit multi-tag empty results are distinct from busy or unknown content',
+    () async {
+      const harness = r'''
+const assert = require('node:assert/strict'), vm = require('node:vm');
+const script = JSON.parse(process.argv[1]);
+function read(text, {busy=false, form=false}={}) {
+  const heading = {textContent:text, closest:() => form ? {} : null};
+  const area = {getAttribute:() => String(busy), querySelectorAll:() => [heading]};
+  const document = {readyState:'complete', querySelectorAll:() => [],
+    querySelector:selector => selector.includes('.content-padding') ? area : null};
+  const ctx = {document, config:{cards:'.card'}, location:new URL('https://hanime1.me/search?tags%5B%5D=A&tags%5B%5D=B'), URL};
+  return vm.runInNewContext(script, ctx);
+}
+assert.equal(read('找不到符合搜尋條件的影片。'), 'empty');
+assert.equal(read('No videos matching your filters'), 'empty');
+assert.equal(read('沒有影片', {busy:true}), 'waiting');
+assert.equal(read('沒有影片', {form:true}), 'unrecognized');
+assert.equal(read('Unexpected markup'), 'unrecognized');
+''';
+      final result = await Process.run('node', [
+        '-e',
+        harness,
+        jsonEncode(
+          '(() => { $videoSearchDiscoveryScript return videoSearchResults().state; })()',
+        ),
+      ]);
+      expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+    },
+  );
+  test('ad-only search results settle before subresources finish', () async {
+    const harness = r'''
+const assert = require('node:assert/strict'), vm = require('node:vm');
+const [script, probe] = JSON.parse(process.argv[1]);
+const page = new URL('https://hanime1.me/search?genre=Animation&tags%5B%5D=A&tags%5B%5D=B');
+function fixture({readyState='interactive', busy=false, href='https://ads.example/offer',
+  pageLink=false, unknown=false, normalCard=false}={}) {
+  const node = ({tagName='DIV', classes=[], attrs={}, children=[]}={}) => ({
+    tagName, children, firstElementChild:children[0], classList:{contains:c => classes.includes(c)},
+    getAttribute:key => attrs[key] || null, hasAttribute:key => key in attrs,
+    querySelector:s => (s === 'ul.pagination, a[href], [aria-busy="true"]' && pageLink) ? {} : null,
+    querySelectorAll:() => [], matches:() => false, textContent:'',
+  });
+  const ad = node({tagName:'A', attrs:{href,target:'_blank'},
+    children:[node({classes: unknown ? [] : ['search-videos', 'home-rows-videos-div']})]});
+  const wrapper = node({children:[ad], attrs:busy ? {'aria-busy':'true'} : {}});
+  wrapper.parentElement = node({classes:['search-rows-wrapper']});
+  wrapper.previousElementSibling = node({classes:['search-pagination', 'mobile-search-pagination']});
+  wrapper.nextElementSibling = node({classes:['search-pagination']});
+  const card = node({attrs:{'data-id':'123'}});
+  const form = node();
+  return {readyState, title:'Search', querySelectorAll:selector =>
+    selector === '.home-rows-videos-wrapper' ? [wrapper] : normalCard && selector === '.card' ? [card] : [],
+    querySelector:selector => selector === 'form[action$="/search"]' ? form : null};
+}
+function read(options) {
+  return JSON.parse(vm.runInNewContext(script, {document:fixture(options), window:{}, location:page, URL}));
+}
+assert.equal(read().searchState,'empty');
+assert.equal(read().nativeContent,true);
+assert.equal(read({readyState:'complete'}).searchState,'empty');
+assert.equal(read({readyState:'loading'}).searchState,'waiting');
+assert.equal(read({busy:true}).searchState,'waiting');
+assert.equal(read({pageLink:true}).searchState,'waiting');
+assert.equal(read({href:'/watch?v=123'}).searchState,'waiting');
+assert.equal(read({unknown:true}).searchState,'waiting');
+assert.equal(read({normalCard:true}).searchState,'content');
+async function confirm({status=200, destination=page.href, location=page, ...options}={}) {
+  return vm.runInNewContext(probe, {
+    URL, location, AbortController, setTimeout, clearTimeout,
+    fetch: async (url, init) => {
+      assert.equal(url, page.href);
+      assert.equal(init.credentials, 'same-origin');
+      assert.equal(init.redirect, 'error');
+      return {ok:status === 200, url:destination, headers:new Map(), text:async () => 'fixture'};
+    },
+    DOMParser: class { parseFromString() { return fixture({readyState:'complete', ...options}); } },
+  });
+}
+(async () => {
+  assert.equal(await confirm(), page.href);
+  assert.equal(await confirm({normalCard:true}), null);
+  assert.equal(await confirm({unknown:true}), null);
+  assert.equal(await confirm({status:503}), null);
+  assert.equal(await confirm({destination:'https://other.example/search'}), null);
+  assert.equal(await confirm({location:new URL('https://other.example/')}), null);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+''';
+    const selectors = {'cards': '.card', 'cardLink': 'a[href*="/watch"]'};
+    final result = await Process.run('node', [
+      '-e',
+      harness,
+      jsonEncode([
+        videoSiteStateScript(selectors, diagnostics: false),
+        hanimeEmptySearchProbeScript(
+          home.replace(
+            path: '/search',
+            queryParameters: {
+              'genre': 'Animation',
+              'tags[]': ['A', 'B'],
+            },
+          ),
+          selectors,
+        ),
+      ]),
+    ]);
+    expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+  });
+
   test(
     'actual document script distinguishes provider block markup from challenges and ordinary content',
     () async {

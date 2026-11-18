@@ -651,7 +651,7 @@ class _OmoSiteFavoritesPageState extends State<OmoSiteFavoritesPage> {
                     ),
                     const SizedBox(width: 8),
                     _keywordMenu(),
-                    const CollectionCoverPrivacyButton(),
+                    const CollectionCoverPrivacyActions(),
                   ],
                 ),
               ),

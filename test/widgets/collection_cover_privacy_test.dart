@@ -106,6 +106,25 @@ int _difference(Uint8List data, int a, int b) =>
     (data[a + 2] - data[b + 2]).abs();
 
 void main() {
+  testWidgets(
+    'a forced cover blur does not require a global privacy preference',
+    (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: CollectionCoverPrivacy(
+              forceBlur: true,
+              child: SizedBox.square(dimension: 80),
+            ),
+          ),
+        ),
+      );
+      final filter = tester.widget<ImageFiltered>(find.byType(ImageFiltered));
+      expect(filter.enabled, isTrue);
+      expect(filter.imageFilter, isA<ui.ImageFilter>());
+    },
+  );
+
   final controller = CollectionCoverPrivacyController.instance;
   setUp(() {
     SharedPreferences.setMockInitialValues({});

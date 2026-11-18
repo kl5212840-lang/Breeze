@@ -123,6 +123,10 @@ class _NavigationBarState extends State<NavigationBar> {
       initialIndex: _selectedDestination.index,
     );
     _layoutSubscription = settings.stream.listen(_onSettings);
+    DiscoverNavigation.attach(
+      this,
+      () => _select(MainNavigationDestination.discover),
+    );
     DownloadCenterNavigation.attach(this, _openDownloads);
     ComicFollowNavigation.attach(this, _openFollow);
     if (unpinnedWelcome) {
@@ -165,6 +169,7 @@ class _NavigationBarState extends State<NavigationBar> {
 
   @override
   void dispose() {
+    DiscoverNavigation.detach(this);
     _followForegroundScheduler?.dispose();
     _syncTimer?.cancel();
     _syncSubscription?.cancel();

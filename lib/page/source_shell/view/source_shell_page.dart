@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/widgets/read_recovery_scope.dart';
 import 'package:zephyr/page/source_shell/source_settings_destination.dart';
@@ -137,6 +138,7 @@ class _SourceShellPageState extends State<_SourceShellBody> {
     SourceReturnPreferences.changes.addListener(_onReturnModeChanged);
     unawaited(SourceReturnPreferences.load());
     _profileBackController.addListener(_onProfileBackChanged);
+    _profileBackController.jmHeader.addListener(_onJmSearchChanged);
     _sourceName = widget.sourceName;
     final plugin = PluginRegistryService.I.getByUuid(widget.source);
     _bundleKey = plugin == null
@@ -330,6 +332,7 @@ class _SourceShellPageState extends State<_SourceShellBody> {
     }
     SourceReturnPreferences.changes.removeListener(_onReturnModeChanged);
     _profileBackController.removeListener(_onProfileBackChanged);
+    _profileBackController.jmHeader.removeListener(_onJmSearchChanged);
     _profileBackController.dispose();
     _pluginSubscription?.cancel();
     _loginSubscription?.cancel();
@@ -344,6 +347,14 @@ class _SourceShellPageState extends State<_SourceShellBody> {
       for (final i in _visitedIndexes)
         _tabRevisions[i] = (_tabRevisions[i] ?? 0) + 1;
     });
+  }
+
+  bool _jmSearching = false;
+  void _onJmSearchChanged() {
+    final searching = _profileBackController.jmHeader.searchField != null;
+    if (!mounted || searching == _jmSearching) return;
+    _jmSearching = searching;
+    _onProfileBackChanged();
   }
 
   void _onProfileBackChanged() {
@@ -552,6 +563,7 @@ class _SourceShellPageState extends State<_SourceShellBody> {
     final sections = _sections;
     final showingProfile =
         sections.isNotEmpty && sections[_selectedIndex].profile;
+    final jmSearching = showingProfile && _jmSearching;
     final showingSettings =
         sections.isNotEmpty && sections[_selectedIndex].sourceSettings;
     final showingVideo =
@@ -604,17 +616,25 @@ class _SourceShellPageState extends State<_SourceShellBody> {
                       : null,
                   automaticallyImplyLeading: false,
                   leadingWidth: height ?? 56,
-                  leading: SourceBackButton(
-                    tooltip: backLabel,
-                    onPressed: canGoBack ? _goBack : _exitSource,
-                  ),
-                  titleSpacing: 0,
+                  leading: jmSearching
+                      ? null
+                      : SourceBackButton(
+                          tooltip: backLabel,
+                          onPressed: canGoBack ? _goBack : _exitSource,
+                        ),
+                  titleSpacing: jmSearching
+                      ? CollectionToolbarMetrics.horizontalInset
+                      : 0,
                   toolbarHeight:
                       showingProfile &&
                           _profileBackController.title != null &&
                           sections[_selectedIndex].profileKind == 'jm'
-                      ? (MediaQuery.textScalerOf(context).scale(14) * 1.5 + 20)
-                            .clamp(56.0, double.infinity)
+                      ? SearchToolbarScope.stableHeight(
+                          context,
+                          (MediaQuery.textScalerOf(context).scale(14) * 1.5 +
+                                  20)
+                              .clamp(56.0, double.infinity),
+                        )
                       : height,
                   title: showingProfile
                       ? ListenableBuilder(
@@ -654,7 +674,9 @@ class _SourceShellPageState extends State<_SourceShellBody> {
                         _profileBackController.title != null &&
                         sections[_selectedIndex].profileKind == 'jm'))
                       const SizedBox(width: 8),
-                    if (showingProfile && !_profileBackController.canGoBack)
+                    if (showingProfile &&
+                        !jmSearching &&
+                        !_profileBackController.canGoBack)
                       const CollectionCoverPrivacyButton(),
                     if (!showingProfile &&
                         !sections.any((section) => section.profile) &&
@@ -947,7 +969,7 @@ class _SourceShellPageState extends State<_SourceShellBody> {
               ),
               const SizedBox(height: 24),
               SearchToolbarScope(
-                extent: SearchToolbarScope.breezeExtent(context),
+                extent: SearchToolbarScope.fieldExtent(context),
                 child: Row(
                   children: [
                     Expanded(

@@ -12,10 +12,14 @@ class FacetFilterBody extends StatefulWidget {
     required this.footer,
     required this.scrollKey,
     this.hasScope = false,
+    this.scrollController,
+    this.maxHeight = 600,
   });
   final Widget header, controls, options, footer;
   final Key scrollKey;
   final bool hasScope;
+  final double maxHeight;
+  final ScrollController? scrollController;
   @override
   State<FacetFilterBody> createState() => _FacetFilterBodyState();
 }
@@ -47,9 +51,28 @@ class _FacetFilterBodyState extends State<FacetFilterBody> {
   }
 
   @override
-  Widget build(BuildContext context) => LayoutBuilder(
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return ChipTheme(
+      data: ChipTheme.of(context).copyWith(
+        side: WidgetStateBorderSide.resolveWith(
+          (states) => BorderSide(
+            color: states.contains(WidgetState.selected)
+                ? colors.primary.withValues(alpha: .55)
+                : colors.outlineVariant,
+          ),
+        ),
+      ),
+      child: _layout(),
+    );
+  }
+
+  Widget _layout() => LayoutBuilder(
     builder: (context, bounds) {
-      final height = math.max(0.0, math.min(600.0, bounds.maxHeight));
+      final height = math.max(
+        0.0,
+        math.min(widget.maxHeight, bounds.maxHeight),
+      );
       final scale = math.max(1.0, MediaQuery.textScalerOf(context).scale(1));
       // Fixed chrome must leave a usable option hit region; scaled text grows
       // while padding/44pt actions do not multiply with the font scale.
@@ -89,6 +112,7 @@ class _FacetFilterBodyState extends State<FacetFilterBody> {
                 },
                 child: CustomScrollView(
                   key: _viewportKey,
+                  controller: widget.scrollController,
                   primary: false,
                   scrollBehavior: ScrollConfiguration.of(
                     context,

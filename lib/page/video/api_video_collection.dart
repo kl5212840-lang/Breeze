@@ -38,6 +38,9 @@ class ApiVideoCollection extends StatefulWidget {
     this.footer,
     this.badges = const {},
     this.header,
+    this.pinHeader = false,
+    this.onRefresh,
+    this.continuationKey,
     this.compactAnime = false,
     this.loading = false,
     this.emptyState,
@@ -59,6 +62,8 @@ class ApiVideoCollection extends StatefulWidget {
     this.gridMainAxisSpacing = 0,
     this.contentPadding = const EdgeInsets.fromLTRB(16, 8, 16, 8),
     this.gridCaptionBuilder,
+    this.statisticsBuilder,
+    this.compactDetails = false,
     this.leadingItems = const [],
     this.leadingListExtent = 132,
     this.posterRadius = 10,
@@ -77,6 +82,9 @@ class ApiVideoCollection extends StatefulWidget {
   final Widget? footer;
   final Map<String, String> badges;
   final Widget? header;
+  final bool pinHeader;
+  final Future<void> Function()? onRefresh;
+  final Object? continuationKey;
   final bool compactAnime;
   final bool loading;
   final double contentBottomPadding;
@@ -88,6 +96,8 @@ class ApiVideoCollection extends StatefulWidget {
   final double posterAspectRatio;
   final EdgeInsets contentPadding;
   final Widget Function(BuildContext, ApiVideoItem)? gridCaptionBuilder;
+  final Widget? Function(BuildContext, ApiVideoItem)? statisticsBuilder;
+  final bool compactDetails;
   final List<Widget> leadingItems;
 
   /// Called for visible detailed rows and grid cards without a source poster.
@@ -186,9 +196,19 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
     binding.ensureVisualUpdate();
   }
 
+  void _checkShortPage() {
+    if (widget.continuationKey == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _scroll.hasClients && _scroll.position.extentAfter < 500) {
+        widget.onNearEnd?.call();
+      }
+    });
+  }
+
   @override
   void initState() {
     super.initState();
+    _checkShortPage();
     _scroll.addListener(() {
       if (_scroll.hasClients && _scroll.position.extentAfter < 500) {
         widget.onNearEnd?.call();
@@ -199,6 +219,7 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
   @override
   void didUpdateWidget(covariant ApiVideoCollection oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.continuationKey != widget.continuationKey) _checkShortPage();
     if (oldWidget.detailGeneration != widget.detailGeneration ||
         (widget.retryMissingCoverDetailsOnRefresh &&
             oldWidget.imageRefreshToken != widget.imageRefreshToken)) {
@@ -208,7 +229,8 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
       _invalidateAnchor();
       return;
     }
-    if (oldWidget.mode != widget.mode) {
+    if (oldWidget.mode != widget.mode ||
+        oldWidget.gridColumns != widget.gridColumns) {
       final previousAnchor = _activeAnchor ?? _pendingAnchor;
       _invalidateAnchor(stopScroll: true);
       if (previousAnchor != null) {
@@ -324,6 +346,7 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
                 _titleExtent +
                 (_summarySlot ? 3 + _summaryExtent : 0) +
                 (_remarksSlot ? 3 + _remarksExtent : 0) +
+                (widget.statisticsBuilder == null ? 0 : 3 + _remarksExtent) +
                 12
           : 34 + scale.scale(16) * 9.5;
       if (!grid && widget.listItemExtent != null) {
@@ -460,7 +483,7 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
         return content(initial);
       }
 
-      return CustomScrollView(
+      final scroll = CustomScrollView(
         key: PageStorageKey(widget.storageKey),
         controller: _scroll,
         // Detail reads belong to visible rows, not the next offscreen page.
@@ -470,7 +493,7 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
         physics: const AlwaysScrollableScrollPhysics(),
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         slivers: [
-          if (widget.header != null)
+          if (widget.header != null && !widget.pinHeader)
             SliverToBoxAdapter(key: _headerSliverKey, child: widget.header),
           if (!grid && widget.leadingItems.isNotEmpty)
             SliverPadding(
@@ -546,6 +569,17 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
           ),
         ],
       );
+      final body = widget.onRefresh == null
+          ? scroll
+          : RefreshIndicator(onRefresh: widget.onRefresh!, child: scroll);
+      if (!widget.pinHeader || widget.header == null) return body;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          widget.header!,
+          Expanded(child: body),
+        ],
+      );
     },
   );
 
@@ -597,6 +631,10 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
                 bar(.5, _summaryExtent),
               ],
               if (_remarksSlot) ...[
+                const SizedBox(height: 3),
+                bar(.5, _remarksExtent),
+              ],
+              if (widget.statisticsBuilder != null) ...[
                 const SizedBox(height: 3),
                 bar(.5, _remarksExtent),
               ],
@@ -800,6 +838,13 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
             ),
           ),
         ],
+        if (widget.statisticsBuilder != null) ...[
+          const SizedBox(height: 3),
+          SizedBox(
+            height: _remarksExtent,
+            child: widget.statisticsBuilder!(context, item),
+          ),
+        ],
       ],
     );
   }
@@ -827,6 +872,7 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
         : initial.description;
     final posterItem = item.coverUrl != null ? item : initial;
     final poster = _listPosterSize(availableWidth);
+    final statistics = widget.statisticsBuilder?.call(context, item);
     final recordNote = widget.recordNoteBuilder?.call(initial) ?? '';
     final summary = [
       ...item.summary,
@@ -843,6 +889,9 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
+            key: widget.compactDetails
+                ? ValueKey('video-list.cover.${item.id}')
+                : null,
             width: poster.width,
             height: poster.height,
             child: ClipRRect(
@@ -878,10 +927,22 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
                   const SizedBox(height: 7),
                   CollectionRecordTimeLine(text: recordNote),
                 ],
-                if (description.isNotEmpty ||
-                    status == _DetailRowStatus.ready ||
-                    status == _DetailRowStatus.loading ||
-                    status == _DetailRowStatus.failed) ...[
+                if (widget.compactDetails && description.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    description,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+                if (!widget.compactDetails &&
+                    (description.isNotEmpty ||
+                        status == _DetailRowStatus.ready ||
+                        status == _DetailRowStatus.loading ||
+                        status == _DetailRowStatus.failed)) ...[
                   const SizedBox(height: 7),
                   SizedBox(
                     height: math.max(
@@ -963,7 +1024,11 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
                           ),
                   ),
                 ],
-                if (item.sourceViews != null) ...[
+                if (statistics != null) ...[
+                  SizedBox(height: widget.compactDetails ? 4 : 5),
+                  statistics,
+                ] else if (widget.statisticsBuilder == null &&
+                    item.sourceViews != null) ...[
                   const SizedBox(height: 5),
                   Text(
                     item.sourceViewsAreClicks

@@ -394,6 +394,14 @@ abstract final class DownloadCenterResources {
     return rows;
   }
 
+  static Object? _tryDecodeMetadata(String value) {
+    try {
+      return jsonDecode(value);
+    } on FormatException {
+      return null;
+    }
+  }
+
   /// Local metadata keeps the early transfer list grouped while native files
   /// are independently checked. This never claims that a file exists.
   static Future<void> enrichVideoRows(
@@ -435,20 +443,31 @@ abstract final class DownloadCenterResources {
             value.creatorName,
           ].join(' ');
         }
-        if (row['metadata'] == null) {
+        final existing = row['metadata'];
+        final decoded = existing is String
+            ? _tryDecodeMetadata(existing)
+            : existing;
+        if (exactPage && (existing == null || decoded is List)) {
+          final saved = decoded is List ? decoded : const [];
+          final known = shelfFacetFieldsFromMetadata(jsonEncode(saved));
           final fields = [
-            if (value.typeName.isNotEmpty)
+            if (value.typeName.isNotEmpty && !known.containsKey('category'))
               {'type': 'category', 'value': value.typeName},
-            if (bound && value.writers.isNotEmpty)
+            if (bound &&
+                value.writers.isNotEmpty &&
+                !known.containsKey('author'))
               {'type': 'author', 'value': value.writers},
-            if (value.year.isNotEmpty) {'type': 'year', 'value': value.year},
-            if (value.region.isNotEmpty)
+            if (value.year.isNotEmpty && !known.containsKey('year'))
+              {'type': 'year', 'value': value.year},
+            if (value.region.isNotEmpty && !known.containsKey('area'))
               {'type': 'area', 'value': value.region},
-            if (value.language.isNotEmpty)
+            if (value.language.isNotEmpty && !known.containsKey('language'))
               {'type': 'language', 'value': value.language},
-            if (value.tags.isNotEmpty) {'type': 'tag', 'value': value.tags},
+            if (value.tags.isNotEmpty && !known.containsKey('tags'))
+              {'type': 'tag', 'value': value.tags},
           ];
-          if (fields.isNotEmpty) row['metadata'] = jsonEncode(fields);
+          if (fields.isNotEmpty)
+            row['metadata'] = jsonEncode([...saved, ...fields]);
         }
 
         if (value.source == row['source'] &&

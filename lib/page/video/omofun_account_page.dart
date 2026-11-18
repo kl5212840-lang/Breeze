@@ -1631,7 +1631,7 @@ class _OmoPrivateIndexPageState extends State<OmoPrivateIndexPage> {
                 scope: _keywordScope,
                 onChanged: (scope) => setState(() => _keywordScope = scope),
               ),
-              const CollectionCoverPrivacyButton(),
+              const CollectionCoverPrivacyActions(),
             ],
           ),
         ),

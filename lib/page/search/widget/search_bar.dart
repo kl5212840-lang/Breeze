@@ -81,13 +81,13 @@ class _SearchBarState extends State<SearchBar> {
                 final compactScope =
                     bounds.maxWidth < 352 ||
                     MediaQuery.textScalerOf(context).scale(14) > 20;
-                final extent = SearchToolbarScope.breezeExtent(context);
+                final extent = SearchToolbarScope.fieldExtent(context);
                 return SearchToolbarScope(
                   extent: extent,
                   child: Row(
                     children: [
                       SourceBackButton(onPressed: () => context.maybePop()),
-                      if (extent != null) const SizedBox(width: 6),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: ValueListenableBuilder<int>(
                           valueListenable: searchCubit.queryRevision,
@@ -111,8 +111,7 @@ class _SearchBarState extends State<SearchBar> {
                         compact: compactScope,
                         aggregate: widget.aggregateMode,
                       ),
-                      if (widget.aggregateMode && extent != null)
-                        const SizedBox(width: 4),
+                      if (widget.aggregateMode) const SizedBox(width: 4),
                       if (widget.aggregateMode)
                         SourceChromeIconButton(
                           tooltip: t.search.sourceFilter,

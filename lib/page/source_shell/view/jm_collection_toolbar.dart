@@ -1,3 +1,4 @@
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
@@ -89,13 +90,14 @@ class JmCollectionNavigationActions extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SourceChromeIconButton(
-            key: ValueKey('$keyPrefix.search'),
-            tooltip: searching ? t.common.close : t.common.search,
-            icon: searching ? Icons.close_rounded : Icons.search_rounded,
-            symbol: searching ? 'xmark' : 'magnifyingglass',
-            onPressed: onSearch,
-          ),
+          if (showActions)
+            SourceChromeIconButton(
+              key: ValueKey('$keyPrefix.search'),
+              tooltip: searching ? t.common.close : t.common.search,
+              icon: searching ? Icons.close_rounded : Icons.search_rounded,
+              symbol: searching ? 'xmark' : 'magnifyingglass',
+              onPressed: onSearch,
+            ),
           if (showActions && (sortOptions.isNotEmpty || reserveSortSlot))
             VideoControlAppearance(
               systemControls: usesNativeSourceChrome(context),
@@ -115,8 +117,11 @@ class JmCollectionNavigationActions extends StatelessWidget {
               ),
             ),
           if (showActions) const CollectionCoverPrivacyButton(),
-          if (showActions)
-            VideoControlAppearance(
+          if (!showActions)
+            const SizedBox(width: CollectionToolbarMetrics.searchControlGap),
+          SizedBox(
+            width: CollectionToolbarMetrics.actionExtent,
+            child: VideoControlAppearance(
               systemControls: usesNativeSourceChrome(context),
               child: NativeVideoMenu(
                 key: ValueKey('$keyPrefix.more'),
@@ -143,6 +148,7 @@ class JmCollectionNavigationActions extends StatelessWidget {
                 onSelected: onSelected,
               ),
             ),
+          ),
         ],
       ),
     );
@@ -161,16 +167,21 @@ class JmCollectionHeaderActions extends StatelessWidget {
     listenable: controller,
     builder: (context, _) {
       final actions = controller.actions;
-      return JmCollectionNavigationActions(
-        keyPrefix: 'jm-record',
-        reserveSortSlot: true,
-        inlineSearch: true,
-        onSearch: actions?.onSearch,
-        searching: actions?.searching ?? false,
-        options: actions?.options ?? const {},
-        groups: actions?.groups ?? const [],
-        selected: actions?.selected ?? '',
-        onSelected: (value) => controller.actions?.onSelected(value),
+      return SearchToolbarScope(
+        extent: actions?.searching == true
+            ? SearchToolbarScope.fieldExtent(context)
+            : null,
+        child: JmCollectionNavigationActions(
+          keyPrefix: 'jm-record',
+          reserveSortSlot: true,
+          inlineSearch: true,
+          onSearch: actions?.onSearch,
+          searching: actions?.searching ?? false,
+          options: actions?.options ?? const {},
+          groups: actions?.groups ?? const [],
+          selected: actions?.selected ?? '',
+          onSelected: (value) => controller.actions?.onSelected(value),
+        ),
       );
     },
   );
@@ -354,11 +365,11 @@ class JmCollectionResultsRow extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        ?viewAction,
         SizedBox.square(
           dimension: CollectionToolbarMetrics.actionExtent,
           child: filterButton,
         ),
+        ?viewAction,
       ],
     ),
   );

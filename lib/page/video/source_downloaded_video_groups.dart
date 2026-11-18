@@ -1,3 +1,5 @@
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
+import 'package:zephyr/page/video/hanime_work_facts.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:material_ui/material_ui.dart';
@@ -60,6 +62,9 @@ Future<void> openSourceDownloadedWork(
   BuildContext context,
   DownloadVideoWork work,
 ) {
+  final hanimeFacts = work.identity.source == hanimeSourceId
+      ? HanimeWorkFactsStore.read()
+      : null;
   DownloadVideoWorkHistory? readyHistory;
   final initialHistory = readDownloadVideoWorkHistory(
     work.identity.source,
@@ -98,6 +103,7 @@ Future<void> openSourceDownloadedWork(
             SourceDownloadedEpisodeRow(
               item: item,
               episodeContext: true,
+              hanimeFacts: hanimeFacts,
               showFileFormat: showFileFormat,
               resumeAt: resumeAt,
             ),
@@ -311,8 +317,10 @@ class SourceDownloadedWorkCard extends StatelessWidget {
     this.selecting = false,
     this.selected = false,
     this.enabled = true,
+    this.hanimeFacts,
   });
   final DownloadVideoWork work;
+  final Future<Map<Uri, HanimeWorkFacts>>? hanimeFacts;
   final VoidCallback onOpen, onManage, onRemove;
   final bool selecting, selected, enabled;
   @override
@@ -329,6 +337,11 @@ class SourceDownloadedWorkCard extends StatelessWidget {
       children: [
         Text(t.download.workEpisodeCount(count: work.episodes.length)),
         if (work.knownBytes != null) Text(downloadByteAmount(work.knownBytes!)),
+        if (hanimeFacts != null)
+          HanimeCachedWorkStatistics(
+            facts: hanimeFacts,
+            url: work.poster.video?['url'],
+          ),
       ],
     ),
     trailing: selecting
@@ -401,10 +414,12 @@ class SourceDownloadedEpisodeRow extends StatefulWidget {
     this.episodeContext = false,
     this.showFileFormat = false,
     this.resumeAt,
+    this.hanimeFacts,
     this.onSelect,
     this.onManage,
   });
   final DownloadCenterItem item;
+  final Future<Map<Uri, HanimeWorkFacts>>? hanimeFacts;
   final bool selecting, selected, episodeContext, showFileFormat;
   final Duration? resumeAt;
   final VoidCallback? onSelect, onManage;
@@ -516,6 +531,12 @@ class _SourceDownloadedEpisodeRowState
   @override
   Widget build(BuildContext context) {
     final item = widget.item, row = item.video!;
+    final statistics = widget.hanimeFacts == null
+        ? null
+        : HanimeCachedWorkStatistics(
+            facts: widget.hanimeFacts,
+            url: row['url'],
+          );
     final episode = DownloadEpisodeRowScope.of(context);
     final selecting = episode?.selecting ?? widget.selecting;
     final selected = episode?.selected ?? widget.selected;
@@ -635,6 +656,7 @@ class _SourceDownloadedEpisodeRowState
         variant: variant,
         bytes: item.sizeBytes,
         resumeAt: widget.resumeAt,
+        additionalMetadata: statistics,
         onPlay: busy
             ? null
             : selecting
@@ -673,6 +695,7 @@ class _SourceDownloadedEpisodeRowState
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            ?statistics,
             if (!widget.episodeContext && label.isNotEmpty && label != title)
               Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
             if ('${row['quality'] ?? ''}'.isNotEmpty)

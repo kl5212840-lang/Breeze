@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/collection_command_icons.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
@@ -14,8 +15,8 @@ class SourceListViewToggle extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SourceChromeIconButton(
     tooltip: detailed ? t.comicList.switchToGrid : t.comicList.switchToList,
-    icon: detailed ? Icons.grid_view_outlined : Icons.view_list_outlined,
-    symbol: detailed ? 'square.grid.2x2' : 'list.bullet',
+    icon: CollectionCommandIcons.toggleTarget(!detailed).icon,
+    symbol: CollectionCommandIcons.toggleTarget(!detailed).symbol,
     onPressed: () => onChanged(!detailed),
   );
 }

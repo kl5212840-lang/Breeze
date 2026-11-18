@@ -172,7 +172,15 @@ void main() {
             expect(tester.getSize(action).height, greaterThanOrEqualTo(44));
           }
           expect(tester.getTopLeft(count).dx, 16);
-          expect(tester.getCenter(filter).dx, tester.getCenter(more).dx);
+          expect(tester.getCenter(view).dx, tester.getCenter(more).dx);
+          expect(
+            tester.getCenter(sort).dx,
+            lessThan(tester.getCenter(filter).dx),
+          );
+          expect(
+            tester.getCenter(filter).dx,
+            lessThan(tester.getCenter(view).dx),
+          );
           expect(tester.getCenter(sort).dy, tester.getCenter(filter).dy);
           expect(tester.getCenter(view).dy, tester.getCenter(filter).dy);
           expect(
@@ -182,9 +190,16 @@ void main() {
           final search = find.byKey(
             const ValueKey('api-history.search-toggle'),
           );
+          final resultBefore = tester.getRect(results);
+          final moreBefore = tester.getCenter(more);
           await tester.tap(search);
           await tester.pumpAndSettle();
-          expect(tester.getCenter(filter).dx, tester.getCenter(search).dx);
+          expect(tester.getRect(results), resultBefore);
+          expect(tester.getCenter(more).dx, moreBefore.dx);
+          expect(
+            find.descendant(of: find.byType(TextField), matching: search),
+            findsOneWidget,
+          );
           expect(find.byType(TextField), findsOneWidget);
           expect(
             tester
