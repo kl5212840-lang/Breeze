@@ -61,6 +61,10 @@ void main() {
   testWidgets(
     'resume and chapter taps work again after a reader replaces its route',
     (tester) async {
+      const capacity = MethodChannel('breeze.download.capacity');
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(capacity, (_) async => null);
+      addTearDown(() => messenger.setMockMethodCallHandler(capacity, null));
       await tester.runAsync(useIsolatedDownloadFixture);
       final saved = createTestDownload('$source:$comicId')
         ..source = source
@@ -655,7 +659,14 @@ void main() {
               const ValueKey('download-swipe.comic:$source:$comicId.delete'),
             );
             Future<void> openDeleteConfirmation() async {
-              await tester.drag(find.text(title), const Offset(-220, 0));
+              final more = find.byKey(
+                const ValueKey('download-row-more.comic:$source:$comicId'),
+              );
+              await waitFor(
+                tester,
+                () => more.hitTestable().evaluate().isNotEmpty,
+              );
+              await tester.tap(more.hitTestable());
               await waitFor(
                 tester,
                 () => deleteResource.hitTestable().evaluate().isNotEmpty,

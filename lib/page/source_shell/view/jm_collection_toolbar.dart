@@ -1,3 +1,4 @@
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
@@ -49,8 +50,7 @@ class JmCollectionHeaderController extends ChangeNotifier {
   }
 }
 
-/// JM's cloud favorites and local record pages share the same three actions.
-/// The More trigger is icon-only; a sort check never adds selection chevrons.
+/// Actions that belong to the collection's navigation bar.
 class JmCollectionNavigationActions extends StatelessWidget {
   const JmCollectionNavigationActions({
     super.key,
@@ -59,36 +59,24 @@ class JmCollectionNavigationActions extends StatelessWidget {
     required this.groups,
     required this.onSelected,
     this.searching = false,
-    this.selected = '',
     this.keyPrefix = 'jm-collection',
-    this.reserveSortSlot = false,
+    this.showSearch = true,
     this.inlineSearch = false,
   });
   final VoidCallback? onSearch;
   final Map<String, String> options;
   final List<List<String>> groups;
   final ValueChanged<String> onSelected;
-  final bool searching, reserveSortSlot, inlineSearch;
-  final String selected, keyPrefix;
+  final bool searching, showSearch, inlineSearch;
+  final String keyPrefix;
   @override
   Widget build(BuildContext context) {
-    final sortOptions = {
-      for (final e in options.entries)
-        if (e.key.startsWith('sort.')) e.key: e.value,
-    };
-    final moreOptions = {
-      for (final e in options.entries)
-        if (!e.key.startsWith('sort.')) e.key: e.value,
-    };
-    final icons = collectionMenuIcons(options);
-    final showActions = !inlineSearch || !searching;
-    return Padding(
-      padding: const EdgeInsetsDirectional.only(
-        end: CollectionToolbarMetrics.horizontalInset,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
+    if (inlineSearch && searching) return const SizedBox.shrink();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      spacing: CollectionToolbarMetrics.searchControlGap,
+      children: [
+        if (showSearch)
           SourceChromeIconButton(
             key: ValueKey('$keyPrefix.search'),
             tooltip: searching ? t.common.close : t.common.search,
@@ -96,60 +84,37 @@ class JmCollectionNavigationActions extends StatelessWidget {
             symbol: searching ? 'xmark' : 'magnifyingglass',
             onPressed: onSearch,
           ),
-          if (showActions && (sortOptions.isNotEmpty || reserveSortSlot))
-            VideoControlAppearance(
-              systemControls: usesNativeSourceChrome(context),
-              child: NativeVideoMenu(
-                key: ValueKey('$keyPrefix.sort'),
-                label: '',
-                tooltip:
-                    '排序${options[selected] == null ? '' : ' · ${options[selected]}'}',
-                selected: selected,
-                icon: Icons.sort_rounded,
-                symbol: 'arrow.up.arrow.down',
-                width: CollectionToolbarMetrics.actionExtent,
-                hostPresentation: true,
-                options: sortOptions,
-                optionIcons: icons,
-                onSelected: onSelected,
-              ),
+        const CollectionCoverPrivacyButton(),
+        SizedBox(
+          width: CollectionToolbarMetrics.actionExtentOf(context),
+          child: VideoControlAppearance(
+            systemControls: usesNativeSourceChrome(context),
+            child: NativeVideoMenu(
+              key: ValueKey('$keyPrefix.more'),
+              label: '',
+              tooltip: t.common.more,
+              selected: '',
+              icon: Icons.more_horiz,
+              symbol: 'ellipsis',
+              width: CollectionToolbarMetrics.actionExtent,
+              hostPresentation: true,
+              selectAfterDismissal: {
+                if (options.containsKey(collectionCoverSettingsAction))
+                  collectionCoverSettingsAction,
+              },
+              options: options,
+              optionIcons: collectionMenuIcons(options),
+              groups: groups,
+              onSelected: onSelected,
             ),
-          if (showActions) const CollectionCoverPrivacyButton(),
-          if (showActions)
-            VideoControlAppearance(
-              systemControls: usesNativeSourceChrome(context),
-              child: NativeVideoMenu(
-                key: ValueKey('$keyPrefix.more'),
-                label: '',
-                tooltip: t.common.more,
-                selected: selected,
-                icon: Icons.more_horiz,
-                symbol: 'ellipsis',
-                width: CollectionToolbarMetrics.actionExtent,
-                hostPresentation: true,
-                selectAfterDismissal: {
-                  if (moreOptions.containsKey(collectionCoverSettingsAction))
-                    collectionCoverSettingsAction,
-                },
-                options: moreOptions,
-                optionIcons: icons,
-                groups: [
-                  for (final group in groups)
-                    [
-                      for (final key in group)
-                        if (moreOptions.containsKey(key)) key,
-                    ],
-                ],
-                onSelected: onSelected,
-              ),
-            ),
-        ],
-      ),
+          ),
+        ),
+      ],
     );
   }
 }
 
-/// Mount all collection controls with the destination body on its first frame.
+/// Mount the collection navigation controls on the destination's first frame.
 /// A child publishes callbacks after build; this slot keeps their native views
 /// in place while that happens instead of adding a second set next frame.
 class JmCollectionHeaderActions extends StatelessWidget {
@@ -161,19 +126,58 @@ class JmCollectionHeaderActions extends StatelessWidget {
     listenable: controller,
     builder: (context, _) {
       final actions = controller.actions;
-      return JmCollectionNavigationActions(
-        keyPrefix: 'jm-record',
-        reserveSortSlot: true,
-        inlineSearch: true,
-        onSearch: actions?.onSearch,
-        searching: actions?.searching ?? false,
-        options: actions?.options ?? const {},
-        groups: actions?.groups ?? const [],
-        selected: actions?.selected ?? '',
-        onSelected: (value) => controller.actions?.onSelected(value),
+      return SearchToolbarScope(
+        extent: actions?.searching == true
+            ? SearchToolbarScope.fieldExtent(context)
+            : null,
+        child: JmCollectionNavigationActions(
+          keyPrefix: 'jm-record',
+          inlineSearch: true,
+          onSearch: actions?.onSearch,
+          searching: actions?.searching ?? false,
+          options: actions?.options ?? const {},
+          groups: actions?.groups ?? const [],
+          onSelected: (value) => controller.actions?.onSelected(value),
+        ),
       );
     },
   );
+}
+
+class JmCollectionSortAction extends StatelessWidget {
+  const JmCollectionSortAction({
+    super.key,
+    required this.options,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final Map<String, String> options;
+  final String selected;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedLabel = options[selected];
+    final sortLabel = t.videoFilters.sort;
+    return VideoControlAppearance(
+      systemControls: usesNativeSourceChrome(context),
+      child: NativeVideoMenu(
+        label: '',
+        tooltip: selectedLabel == null
+            ? sortLabel
+            : '$sortLabel · $selectedLabel',
+        selected: selected,
+        icon: Icons.sort_rounded,
+        symbol: 'arrow.up.arrow.down',
+        width: CollectionToolbarMetrics.actionExtent,
+        hostPresentation: true,
+        options: options,
+        optionIcons: collectionMenuIcons(options),
+        onSelected: onSelected,
+      ),
+    );
+  }
 }
 
 String jmCollectionCountLabel({
@@ -326,40 +330,58 @@ class JmCollectionResultsRow extends StatelessWidget {
     required this.countLabel,
     required this.filterButton,
     this.scope,
+    this.sortAction,
     this.viewAction,
     this.countKey,
   });
   final String countLabel;
   final Widget filterButton;
-  final Widget? scope, viewAction;
+  final Widget? scope, sortAction, viewAction;
   final Key? countKey;
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsetsDirectional.symmetric(
-      horizontal: CollectionToolbarMetrics.horizontalInset,
-    ),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        if (scope != null) ...[
-          Expanded(flex: 2, child: scope!),
-          const SizedBox(width: 8),
-        ],
-        Expanded(
-          child: Text(
+  Widget build(BuildContext context) {
+    final actionExtent = CollectionToolbarMetrics.actionExtentOf(context);
+    const gap = CollectionToolbarMetrics.searchControlGap;
+    final actions = [?sortAction, filterButton, ?viewAction];
+    final count = countLabel.isEmpty
+        ? null
+        : Text(
             countLabel,
             key: countKey,
             maxLines: 2,
+            overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ),
-        const SizedBox(width: 8),
-        ?viewAction,
-        SizedBox.square(
-          dimension: CollectionToolbarMetrics.actionExtent,
-          child: filterButton,
-        ),
-      ],
-    ),
-  );
+          );
+    return Padding(
+      padding: CollectionToolbarMetrics.contentPaddingOf(context),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final minimumLabels = MediaQuery.textScalerOf(context).scale(144);
+          final scopeOnOwnRow =
+              scope != null &&
+              count != null &&
+              constraints.maxWidth <
+                  actions.length * (actionExtent + gap) + minimumLabels;
+          final tools = Row(
+            spacing: gap,
+            children: [
+              if (scope != null && !scopeOnOwnRow)
+                Expanded(flex: 2, child: scope!),
+              if (count != null || scope == null || scopeOnOwnRow)
+                Expanded(child: count ?? const SizedBox.shrink()),
+              for (final action in actions)
+                SizedBox.square(dimension: actionExtent, child: action),
+            ],
+          );
+          return scopeOnOwnRow
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  spacing: 4,
+                  children: [scope!, tools],
+                )
+              : tools;
+        },
+      ),
+    );
+  }
 }

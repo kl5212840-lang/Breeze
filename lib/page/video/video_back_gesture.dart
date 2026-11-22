@@ -13,11 +13,13 @@ class VideoBackGesture extends StatefulWidget {
     required this.onBack,
     required this.child,
     this.previousPage,
+    this.animatePage = true,
   });
   final bool enabled;
   final AsyncCallback onBack;
   final Widget child;
   final Widget? previousPage;
+  final bool animatePage;
 
   @override
   State<VideoBackGesture> createState() => _VideoBackGestureState();
@@ -58,7 +60,8 @@ class _VideoBackGestureState extends State<VideoBackGesture>
       await _position
           .animateTo(
             commit ? 1 : 0,
-            duration: MediaQuery.disableAnimationsOf(context)
+            duration:
+                !widget.animatePage || MediaQuery.disableAnimationsOf(context)
                 ? Duration.zero
                 : const Duration(milliseconds: 200),
             curve: Curves.easeOutCubic,
@@ -92,7 +95,7 @@ class _VideoBackGestureState extends State<VideoBackGesture>
             builder: (context, child) => Stack(
               fit: StackFit.expand,
               children: [
-                if (_position.value > 0)
+                if (widget.animatePage && _position.value > 0)
                   ExcludeSemantics(
                     child: IgnorePointer(
                       child: Transform.translate(
@@ -117,12 +120,14 @@ class _VideoBackGestureState extends State<VideoBackGesture>
                 Transform.translate(
                   key: const ValueKey('video-back-transition'),
                   offset: Offset(
-                    direction * size.maxWidth * _position.value,
+                    widget.animatePage
+                        ? direction * size.maxWidth * _position.value
+                        : 0,
                     0,
                   ),
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      boxShadow: _position.value == 0
+                      boxShadow: !widget.animatePage || _position.value == 0
                           ? []
                           : const [
                               BoxShadow(

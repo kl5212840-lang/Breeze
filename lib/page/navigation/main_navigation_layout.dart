@@ -1,3 +1,22 @@
+/// The mounted shell owns tab selection even when a plugin is on the root navigator.
+abstract final class DiscoverNavigation {
+  static Object? _owner;
+  static void Function()? _select;
+
+  static void attach(Object owner, void Function() select) {
+    _owner = owner;
+    _select = select;
+  }
+
+  static void detach(Object owner) {
+    if (!identical(_owner, owner)) return;
+    _owner = null;
+    _select = null;
+  }
+
+  static void select() => _select?.call();
+}
+
 enum MainNavigationShortcut { follow, downloads }
 
 enum MainNavigationPosition { left, right, more }

@@ -426,10 +426,16 @@ void main() {
       );
       final size = tester.getSize(find.byType(PluginCard));
       final settings = find.byTooltip(t.discover.settings);
+      final search = find.byWidgetPredicate(
+        (widget) =>
+            widget is SourceChromeIconButton &&
+            widget.tooltip == t.sourceShell.search,
+      );
       final toggle = find.byKey(
         const ValueKey('plugin-card.copy-source.toggle'),
       );
       final settingsBounds = tester.getRect(settings);
+      final searchBounds = tester.getRect(search);
       final toggleBounds = tester.getRect(toggle);
       final control = find.byType(Switch);
       final switchElement = tester.element(control);
@@ -438,10 +444,8 @@ void main() {
       expect(settingsBounds.height, greaterThanOrEqualTo(44));
       expect(toggleBounds.height, greaterThanOrEqualTo(44));
       expect(tester.getSize(openTarget).height, greaterThanOrEqualTo(44));
-      expect(
-        tester.getSize(find.byTooltip(t.sourceShell.search)).height,
-        greaterThanOrEqualTo(44),
-      );
+      expect(searchBounds.height, settingsBounds.height);
+      expect(searchBounds.center.dy, settingsBounds.center.dy);
       for (final busy in [true, false]) {
         await tester.pumpWidget(
           card(
@@ -462,13 +466,8 @@ void main() {
         expect(tester.widget<Switch>(control).value, isFalse);
         await tester.tap(toggle);
         expect(toggled, busy ? isEmpty : [true]);
-        final search = find.byWidgetPredicate(
-          (widget) =>
-              widget is SourceChromeIconButton &&
-              widget.tooltip == t.sourceShell.search,
-        );
         expect(tester.widget<SourceChromeIconButton>(search).onPressed, isNull);
-        expect(tester.getSize(search).height, 44);
+        expect(tester.getRect(search), searchBounds);
         expect(
           tester
               .widget<AnimatedScale>(

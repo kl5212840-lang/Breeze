@@ -1,3 +1,4 @@
+import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
@@ -47,11 +48,12 @@ class ApiVideoFavorites extends StatefulWidget {
     this.onDetailLoaded,
     this.showFolders = false,
     this.compactHeader = false,
+    this.tabReselectEnabled = false,
     this.onToggleView,
     this.headerLeading,
   });
   final Widget? headerLeading;
-  final bool compactHeader;
+  final bool compactHeader, tabReselectEnabled;
   final VoidCallback? onToggleView;
   final String source;
   final bool showFolders;
@@ -113,9 +115,32 @@ class _ApiVideoFavoritesState extends State<ApiVideoFavorites> {
     });
   }
 
+  void _closeSearch() {
+    _searchFocus.unfocus();
+    setState(() {
+      _searching = false;
+      _query = '';
+      _input.clear();
+    });
+  }
+
+  void _toggleSearch() {
+    if (_searching) {
+      _closeSearch();
+      return;
+    }
+    setState(() => _searching = true);
+    requestSearchKeyboard(
+      _searchFocus,
+      isCurrent: () => mounted && widget.active && _searching && !_selecting,
+    );
+  }
+
   void _backWithinCollection() {
     if (_working) return;
-    if (_searchFocus.hasFocus) {
+    if (_searching && !_selecting) {
+      _closeSearch();
+    } else if (_searchFocus.hasFocus) {
       _searchFocus.unfocus();
     } else if (_selecting) {
       _cancelSelection();
@@ -141,6 +166,8 @@ class _ApiVideoFavoritesState extends State<ApiVideoFavorites> {
       _folder = null;
       _facets = const ShelfFacetSelection();
       _query = '';
+      _searching = false;
+      _searchFocus.unfocus();
       _keywordScope = KeywordSearchScope.all;
       _input.clear();
       _selected.clear();
@@ -774,8 +801,8 @@ class _ApiVideoFavoritesState extends State<ApiVideoFavorites> {
         if (!widget.compactHeader) ...[
           const SizedBox(width: 8),
           _keywordMenu(),
-          const CollectionCoverPrivacyButton(
-            key: ValueKey('local-favorites.cover-privacy'),
+          const CollectionCoverPrivacyActions(
+            buttonKey: ValueKey('local-favorites.cover-privacy'),
           ),
         ],
       ],
@@ -813,7 +840,6 @@ class _ApiVideoFavoritesState extends State<ApiVideoFavorites> {
               title: t.videoSource.localFavorites,
               onSearch: null,
               options: const {},
-              reserveMoreSlot: _snapshot == null,
               onMore: (_) {},
             ),
             Expanded(child: empty),
@@ -891,6 +917,7 @@ class _ApiVideoFavoritesState extends State<ApiVideoFavorites> {
           (!_working &&
               !_selecting &&
               _folder == null &&
+              !_searching &&
               !_searchFocus.hasFocus),
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) {
@@ -924,23 +951,22 @@ class _ApiVideoFavoritesState extends State<ApiVideoFavorites> {
                 keyPrefix: 'local-favorites',
                 leading: widget.headerLeading,
                 menuKey: const ValueKey('local-favorites.manage'),
-                title: _query.isEmpty ? t.videoSource.localFavorites : _query,
+                title: t.videoSource.localFavorites,
                 searching: _searching,
-                searchField: _buildSearchRow(context),
+                searchField: SearchQueryField(
+                  query: _query,
+                  focusNode: _searchFocus,
+                  inline: true,
+                  closeOnSubmit: false,
+                  enabled: !_working,
+                  hintText: t.videoSource.searchLocal,
+                  onChanged: (value) => setState(() {
+                    _input.text = value;
+                    _query = value;
+                  }),
+                ),
                 searchScope: _keywordMenu(),
-                onSearch: _working
-                    ? null
-                    : () {
-                        setState(() => _searching = !_searching);
-                        if (_searching)
-                          requestSearchKeyboard(
-                            _searchFocus,
-                            isCurrent: () =>
-                                mounted && widget.active && _searching,
-                          );
-                        else
-                          _searchFocus.unfocus();
-                      },
+                onSearch: _working ? null : _toggleSearch,
                 options: {
                   'select': t.videoLibrary.batchSelect,
                   if (rows.isNotEmpty) 'clear': t.common.clear,
@@ -1215,6 +1241,13 @@ class _ApiVideoFavoritesState extends State<ApiVideoFavorites> {
                     loadDetail: widget.loadDetail,
                     onDetailLoaded: widget.onDetailLoaded,
                     detailsActive: widget.active && !_selecting,
+                    tabReselectEnabled:
+                        widget.tabReselectEnabled &&
+                        widget.active &&
+                        _folder == null &&
+                        !_searching &&
+                        !_openingFilters &&
+                        !_working,
                     key: ValueKey(
                       'favorite.$_folder.$_query.${_keywordScope.name}.$_facets.$_sort',
                     ),

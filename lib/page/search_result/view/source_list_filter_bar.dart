@@ -3,6 +3,7 @@ import 'package:zephyr/util/text/chinese_convert.dart';
 import 'package:zephyr/page/source_shell/source_list_view_toggle.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/widgets/source_choice_menu.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 
 /// Shared controls for source search and personal record lists.
 class SourceListFilterBar extends StatelessWidget {
@@ -72,7 +73,11 @@ class SourceListFilterBar extends StatelessWidget {
       textDirection: Directionality.of(context),
       textScaler: MediaQuery.textScalerOf(context),
     )..layout();
-    final categoryHeight = (painter.height + 20).clamp(44.0, double.infinity);
+    final actionExtent = CollectionToolbarMetrics.actionExtentOf(context);
+    final categoryHeight = (painter.height + 20).clamp(
+      actionExtent,
+      double.infinity,
+    );
     painter.dispose();
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -88,7 +93,12 @@ class SourceListFilterBar extends StatelessWidget {
                   height: categoryHeight,
                   child: ListView.separated(
                     scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    padding: CollectionToolbarMetrics.contentPaddingOf(
+                      context,
+                      inset:
+                          contentInset ??
+                          CollectionToolbarMetrics.sourceContentInset,
+                    ),
                     itemCount: categories.length,
                     separatorBuilder: (_, _) => const SizedBox(width: 6),
                     itemBuilder: (context, index) {
@@ -120,7 +130,6 @@ class SourceListFilterBar extends StatelessWidget {
                               key: ValueKey('category-$category'),
                               visualDensity: const VisualDensity(
                                 horizontal: -2,
-                                vertical: -1,
                               ),
                               materialTapTargetSize:
                                   MaterialTapTargetSize.padded,
@@ -189,25 +198,27 @@ class SourceListFilterBar extends StatelessWidget {
           ),
         if (!categoriesOnly)
           Padding(
-            padding: EdgeInsetsDirectional.fromSTEB(
-              contentInset ?? 12,
-              0,
-              contentInset ?? 8,
-              4,
+            padding: CollectionToolbarMetrics.contentPaddingOf(
+              context,
+              inset:
+                  contentInset ?? CollectionToolbarMetrics.sourceContentInset,
+              bottom: 4,
             ),
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final hasClear =
                     blockedCategories.isNotEmpty &&
                     onClearBlockedCategories != null;
+                const gap = CollectionToolbarMetrics.searchControlGap;
+                final fixedActions = trailingAction == null ? 1 : 2;
                 final sortWidth = SourceChoiceMenu.triggerWidth(
                   context,
                   sortOptions.values,
                   selectionIndicator: true,
-                  maximumWidth: (constraints.maxWidth - 60).clamp(
-                    44.0,
-                    double.infinity,
-                  ),
+                  maximumWidth:
+                      (constraints.maxWidth -
+                              fixedActions * (actionExtent + gap))
+                          .clamp(actionExtent, double.infinity),
                 );
                 final sort = SourceChoiceMenu<String>(
                   key: const ValueKey('source-list.sort'),
@@ -240,6 +251,8 @@ class SourceListFilterBar extends StatelessWidget {
                         child: Row(
                           key: const ValueKey('source-list.manage-actions'),
                           children: [
+                            if (sortOptions.isNotEmpty)
+                              SizedBox(width: sortWidth, child: sort),
                             ?leading,
                             if (pageLabel != null && onPageTap != null)
                               TextButton(
@@ -250,15 +263,14 @@ class SourceListFilterBar extends StatelessWidget {
                                 onPressed: onPageTap,
                                 child: Text(pageLabel!),
                               ),
-                            if (sortOptions.isNotEmpty)
-                              SizedBox(width: sortWidth, child: sort),
                             if (hasClear) clear,
                           ],
                         ),
                       ),
                     ),
-                    const SizedBox(width: 4),
+                    const SizedBox(width: gap),
                     ?trailingAction,
+                    if (trailingAction != null) const SizedBox(width: gap),
                     SourceListViewToggle(
                       key: viewToggleKey,
                       detailed: detailedView,

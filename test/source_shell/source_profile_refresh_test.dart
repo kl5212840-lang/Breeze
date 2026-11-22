@@ -293,6 +293,7 @@ void main() {
     ValueNotifier<bool>? readActivity,
     GlobalKey<NavigatorState>? navigator,
     bool expectCover = true,
+    bool expectCloud = true,
   }) async {
     final cubit = GlobalSettingCubit();
     final preference = ValueNotifier(style);
@@ -368,18 +369,20 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(
-      find.byKey(_cloudKey),
-      250,
-      scrollable: find
-          .byWidgetPredicate(
-            (widget) =>
-                widget is Scrollable &&
-                widget.axisDirection == AxisDirection.down,
-          )
-          .first,
-    );
-    await tester.pumpAndSettle();
+    if (expectCloud) {
+      await tester.scrollUntilVisible(
+        find.byKey(_cloudKey),
+        250,
+        scrollable: find
+            .byWidgetPredicate(
+              (widget) =>
+                  widget is Scrollable &&
+                  widget.axisDirection == AxisDirection.down,
+            )
+            .first,
+      );
+      await tester.pumpAndSettle();
+    }
     if (expectCover) {
       expect(
         find.byKey(const ValueKey('profile-cover-$_source:first')),
@@ -425,6 +428,7 @@ void main() {
         source: source,
         readActivity: activity,
         expectCover: false,
+        expectCloud: false,
       );
       expect(api.profileReads, 1);
       expect(PluginAccountIdentities.current(source), isNull);
@@ -766,8 +770,11 @@ void main() {
         find.byKey(const ValueKey('profile-cover-$_source:first')),
         findsNothing,
       );
-      expect(cloudCard(tester).countLabel, isNull);
-      expect(find.text('登录后查看站点收藏'), findsOneWidget);
+      expect(find.byKey(_cloudKey), findsNothing);
+      expect(
+        find.widgetWithText(TextButton, t.sourceProfile.bikaSignIn),
+        findsOneWidget,
+      );
       expect(api.cloudReads, 1);
     },
   );
@@ -785,9 +792,12 @@ void main() {
       Brightness.light,
       source: source,
       expectCover: false,
+      expectCloud: false,
     );
-    expect(cloudCard(tester).error, t.sourceProfile.signInForFavorites);
-    expect(find.text(t.sourceProfile.signInForFavorites), findsWidgets);
+    expect(find.byKey(_cloudKey), findsNothing);
+    expect(find.text(t.sourceProfile.signInForFavorites), findsOneWidget);
+    final login = find.byKey(const ValueKey('profile-account-action'));
+    expect(tester.widget<TextButton>(login).onPressed, isNotNull);
     expect(find.textContaining('private-value'), findsNothing);
     expect(api.profileReads, 1);
     expect(api.cloudReads, 0);
@@ -1642,7 +1652,12 @@ void main() {
             final search = find.byKey(const ValueKey('jm-record.search'));
             final recordTools = find.byKey(const ValueKey('jm-record-tools'));
             final toolsTop = tester.getTopLeft(recordTools).dy;
-            expect(tester.getSize(search), const Size(44, 44));
+            final extent =
+                Theme.of(tester.element(search)).platform ==
+                    TargetPlatform.android
+                ? 48.0
+                : 44.0;
+            expect(tester.getSize(search), Size.square(extent));
             await tester.tap(search);
             await tester.pumpAndSettle();
             expect(
@@ -1651,11 +1666,15 @@ void main() {
             );
             expect(tester.getTopLeft(recordTools).dy, closeTo(toolsTop, .01));
             expect(tester.testTextInput.isVisible, isTrue);
-            expect(
-              tester.widget<SourceChromeIconButton>(search).symbol,
-              'xmark',
-            );
+            expect(find.byTooltip(t.common.close), findsOneWidget);
             expect(back.canGoBack, isFalse);
+            await tester.binding.handlePopRoute();
+            await tester.pumpAndSettle();
+            expect(find.byType(SourceProfileRecordsView), findsOneWidget);
+            expect(
+              find.byKey(const ValueKey('source-loaded.search')),
+              findsNothing,
+            );
             tester
                 .widget<SourceChromeIconButton>(
                   find.byWidgetPredicate(
@@ -1801,7 +1820,14 @@ void main() {
             find.byKey(const ValueKey('source-loaded.filters')),
           );
           expect(filter.width, 44);
-          expect(filter.right, 378);
+          final view = tester.getRect(
+            find.byKey(const ValueKey('jm-record-view')),
+          );
+          expect(filter.right + 8, view.left);
+          final sort = tester.getRect(
+            find.byKey(const ValueKey('jm-record.sort')),
+          );
+          expect(sort.right + 8, filter.left);
           final list = find.byKey(const ValueKey('profile-detailed-list'));
           final last = find.byKey(
             const ValueKey('profile-record.$_source:own-0'),

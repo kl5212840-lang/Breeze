@@ -86,6 +86,8 @@ void main() {
     expect(reset, findsOneWidget);
     await tester.tap(reset);
     await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, t.common.clear));
+    await tester.pumpAndSettle();
     expect(await SourceResultFilterPreferences.read(scope), applied);
     expect(reset, findsOneWidget);
     expect(find.text(t.error.saveFailed), findsOneWidget);
@@ -202,6 +204,8 @@ void main() {
             'Warm entry checks only the first page; restored filters request the unfinished index',
       );
       await tester.tap(find.byKey(const ValueKey('source-loaded.reset')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, t.common.clear));
       await tester.pump();
       await SourceResultFilterPreferences.flush();
       expect(

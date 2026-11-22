@@ -5,6 +5,7 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_search_filters.dart';
 import 'package:zephyr/page/video/video_search_history.dart';
 import 'package:zephyr/page/video/video_search_page.dart';
+import 'package:zephyr/page/search/widget/search_field_surface.dart';
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
@@ -70,6 +71,7 @@ void main() {
       VideoSearchFilters? result;
       await mount(tester, (value) => result = value);
       final input = find.byKey(const ValueKey('video-search.input'));
+      final submit = find.byKey(const ValueKey('video-search.submit'));
       expect(tester.testTextInput.isVisible, isTrue);
       expect(find.byIcon(Icons.search_rounded), findsOneWidget);
       expect(
@@ -79,16 +81,7 @@ void main() {
       await tester.tap(find.byTooltip(t.videoSearch.clearQuery));
       await tester.pump();
       expect(tester.widget<TextField>(input).controller!.text, isEmpty);
-      expect(
-        tester
-            .widget<IconButton>(
-              find.byWidgetPredicate(
-                (w) => w is IconButton && w.tooltip == t.videoSearch.submit,
-              ),
-            )
-            .onPressed,
-        isNull,
-      );
+      expect(tester.widget<VideoSearchSubmitButton>(submit).onPressed, isNull);
       await tester.enterText(input, 'Creator');
       await tester.tap(find.widgetWithText(ChoiceChip, t.videoFilters.authors));
       await tester.testTextInput.receiveAction(TextInputAction.search);
@@ -108,6 +101,63 @@ void main() {
         isEmpty,
         reason: 'only the catalog confirms a submitted search for history',
       );
+    },
+  );
+
+  testWidgets(
+    'dedicated search keeps stable back, input and submit slots with the keyboard',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: VideoSearchPage(
+            source: 'one',
+            initial: const VideoSearchFilters(query: 'Series'),
+            filterBuilder: (_, _) => const SizedBox.shrink(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final appBar = find.byType(AppBar);
+      final field = find.byType(SearchFieldSurface);
+      final filterRow = find.byKey(const ValueKey('video-search.filters-row'));
+      final filter = find.byKey(const ValueKey('video-search.filters'));
+      final initialBar = tester.getRect(appBar);
+      final initialField = tester.getRect(field);
+      final initialRow = tester.getRect(filterRow);
+      final back = tester.getRect(find.byTooltip(t.videoSearch.cancel));
+      final submit = tester.getRect(
+        find.byKey(const ValueKey('video-search.submit')),
+      );
+      expect(back.left, closeTo(initialBar.left + 16, .5));
+      expect(initialField.left - back.right, greaterThanOrEqualTo(8));
+      expect(submit.left - initialField.right, greaterThanOrEqualTo(8));
+      expect(initialBar.right - submit.right, greaterThanOrEqualTo(16));
+      expect(initialField.width, greaterThan(150));
+      expect(back.center.dy, closeTo(initialField.center.dy, .5));
+      expect(submit.center.dy, closeTo(initialField.center.dy, .5));
+      expect(tester.getRect(filter).right, closeTo(initialBar.right - 16, .5));
+      expect(tester.getSize(filter).width, greaterThanOrEqualTo(44));
+      expect(tester.getSize(filter).height, greaterThanOrEqualTo(44));
+      expect(find.byTooltip(t.videoSearch.clearQuery), findsOneWidget);
+      expect(find.byTooltip(t.videoSearch.cancel), findsOneWidget);
+
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      await tester.pump();
+      expect(tester.getRect(appBar), initialBar);
+      expect(tester.getRect(field), initialField);
+      expect(tester.getRect(filterRow), initialRow);
+
+      tester.view.viewInsets = const FakeViewPadding();
+      await tester.pump();
+      expect(tester.getRect(appBar), initialBar);
+      expect(tester.getRect(field), initialField);
+      expect(tester.getRect(filterRow), initialRow);
+      await tester.pumpWidget(const SizedBox.shrink());
     },
   );
 

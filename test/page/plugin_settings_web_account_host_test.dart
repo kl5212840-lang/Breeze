@@ -1,8 +1,8 @@
 import 'dart:io';
-import 'package:zephyr/page/video/video_thumbnail.dart';
-import 'package:zephyr/widgets/collection_cover_privacy.dart';
+import 'package:zephyr/page/setting/common/plugin_account_avatar.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'package:crypto/crypto.dart';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/foundation.dart';
@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:visibility_detector/visibility_detector.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/cubit/plugin_registry_cubit.dart';
@@ -45,6 +46,10 @@ const _declaredLoginSource = 'vendor-declared-web-login';
 const _declaredLoginLabel = 'Vendor web login';
 
 class _Api extends RustLibApi {
+  @override
+  String crateApiSimpleEncodePath({required String path}) =>
+      sha256.convert(utf8.encode(path)).toString();
+
   int imageCalls = 0;
   bool declaredWebAccount = false;
   String? webLoginFunction;
@@ -113,6 +118,7 @@ class _Web extends InAppWebViewPlatform {
   dynamic get wrapped => params.controllerFromPlatform!(controller);
   int reads = 0, creations = 0, disposals = 0;
   bool nativeLoginSupported = false;
+  bool holdLoginDocument = false;
   final loads = <Uri>[];
   List<Cookie>? restorationCookies;
   final cookieWriteGenerations = <int>[];
@@ -133,6 +139,22 @@ class _CookieManager extends PlatformCookieManager {
     PlatformInAppWebViewController? webViewController}) async =>
       host.restorationCookies ??
       (throw StateError('Cold identity reads must not capture cookies'));
+
+  @override
+  Future<bool> deleteCookie({
+    required WebUri url,
+    required String name,
+    String path = '/',
+    String? domain,
+    PlatformInAppWebViewController? iosBelow11WebViewController,
+    PlatformInAppWebViewController? webViewController,
+  }) async {
+    final cookies = host.restorationCookies;
+    if (cookies == null) throw StateError('No account change in progress');
+    cookies.removeWhere((cookie) =>
+        cookie.name == name && cookie.domain == domain && cookie.path == path);
+    return true;
+  }
 
   @override
   Future<bool> setCookie({
@@ -187,6 +209,7 @@ class _Controller extends PlatformInAppWebViewController {
   final _Web host;
   @override Future<void> loadUrl({required URLRequest urlRequest,Uri? iosAllowingReadAccessTo,WebUri? allowingReadAccessTo}) async {
     final uri=Uri.parse(urlRequest.url.toString());host.loads.add(uri);
+    if (host.holdLoginDocument && uri.path == '/user/login') return;
     host.params.onLoadStop?.call(host.wrapped,WebUri(uri.toString()));
   }
   @override Future<CallAsyncJavaScriptResult?> callAsyncJavaScript({required String functionBody,
@@ -292,6 +315,25 @@ void main(){
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
+  }
+
+  Future<void> waitForPortrait(WidgetTester tester) async {
+    final elapsed = Stopwatch()..start();
+    bool hasDecodedPortrait() => tester
+        .widgetList<RawImage>(find.byType(RawImage))
+        .any((image) => image.image != null);
+    while (!hasDecodedPortrait() &&
+        elapsed.elapsed.compareTo(const Duration(seconds: 5)).isNegative) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(
+      hasDecodedPortrait(),
+      isTrue,
+      reason: 'The account portrait must finish downloading, caching and decoding',
+    );
   }
 
   Future<void> mount(WidgetTester tester, {bool settle = true, String source = omoNetworkSource}) async {
@@ -414,6 +456,108 @@ void main(){
     expect(signIn, findsOneWidget);
     expect(tester.takeException(), isNull);
   }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('adding from cold Omo settings keeps the form open and cancelling restores the active account', (tester) async {
+    web.nativeLoginSupported = true;
+    web.restorationCookies = [
+      Cookie(name: 'session', value: 'first-fixture-session', domain: _home.host,
+        path: '/', isSecure: true, isHttpOnly: true),
+    ];
+    addTearDown(() => replaceActivePluginAccount(omoNetworkSource, {}));
+    await mount(tester);
+    final pendingIdentity = Completer<dynamic>();
+    web.next = pendingIdentity.future;
+    await tester.tap(find.text(t.plugin.switchAccount));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final add = find.byKey(const ValueKey('saved-account-add'));
+    await tester.tap(add);
+    await tester.tap(add, warnIfMissed: false);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.byType(OmoSiteWebPage), findsOneWidget);
+    expect(find.byType(NativeVideoAuthForm), findsOneWidget);
+    expect(find.text(t.common.retry), findsNothing);
+    expect(web.loads, [_home]);
+    expect(web.restorationCookies!.single.value, 'first-fixture-session');
+    final account = find.byType(EditableText).first;
+    expect(tester.widget<EditableText>(account).controller.text, isEmpty);
+    await tester.enterText(account, 'typed-during-preparation');
+    expect(
+      tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, t.videoCommunity.login),
+      ).onPressed,
+      isNull,
+    );
+    web.next = null;
+    pendingIdentity.complete(web.reply);
+    await tester.pumpAndSettle();
+    expect(find.byType(NativeVideoAuthForm), findsOneWidget);
+    expect(
+      tester.widget<EditableText>(account).controller.text,
+      'typed-during-preparation',
+    );
+    expect(web.restorationCookies, isEmpty);
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byType(NativeVideoAuthForm), findsOneWidget);
+    Navigator.of(tester.element(find.byType(NativeVideoAuthForm))).pop();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('saved-account-add')), findsOneWidget);
+    expect(find.text(t.accountProfiles.switchFailed), findsNothing);
+    expect(web.restorationCookies!.single.value, 'first-fixture-session');
+    expect(PluginAccountIdentities.current(omoNetworkSource)?.serverIdentity, '42');
+    expect(tester.takeException(), isNull);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets(
+    'a stalled Omo login document shows Retry only after failure',
+    (tester) async {
+      web.holdLoginDocument = true;
+      web.nativeLoginSupported = true;
+      final loginUrl = _home.resolve('/user/login');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: OmoSiteWebPage(
+            home: _home,
+            url: loginUrl,
+            title: 'Omo login',
+            finishOnSignIn: true,
+            requireFreshSignIn: true,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      final retry = find.widgetWithText(TextButton, t.common.retry);
+      final account = find.byType(EditableText).first;
+      expect(find.byType(NativeVideoAuthForm), findsOneWidget);
+      expect(web.loads, [loginUrl]);
+      await tester.enterText(account, 'typed-during-document-load');
+      expect(retry, findsNothing);
+      await tester.pump(const Duration(seconds: 11));
+      expect(retry, findsNothing);
+      await tester.pump(const Duration(seconds: 2));
+      expect(retry, findsOneWidget);
+      expect(find.text(t.videoSource.readFailed), findsOneWidget);
+
+      await tester.ensureVisible(retry);
+      await tester.tap(retry);
+      await tester.tap(retry, warnIfMissed: false);
+      await tester.pump();
+      expect(retry, findsNothing);
+      expect(web.loads, [loginUrl, loginUrl]);
+      expect(tester.widget<EditableText>(account).controller.text,
+          'typed-during-document-load');
+      web.holdLoginDocument = false;
+      web.params.onLoadStop?.call(web.wrapped, WebUri(loginUrl.toString()));
+      await tester.pumpAndSettle();
+      expect(retry, findsNothing);
+      expect(find.text(t.videoCommunity.captcha), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
 
   for (final mode in ['owned', 'borrowed', 'signed-in']) {
     final borrow = mode == 'borrowed', signedIn = mode == 'signed-in';
@@ -589,30 +733,48 @@ void main(){
     expect(web.disposals,1);expect(tester.takeException(),isNull);
   },variant:TargetPlatformVariant.only(TargetPlatform.iOS));
   testWidgets('formal Omo portrait uses source image transport and refreshes unchanged URL without plugin image capability', (tester) async {
+    final visibility = VisibilityDetectorController.instance;
+    final previousInterval = visibility.updateInterval;
+    visibility.updateInterval = Duration.zero;
+    addTearDown(() => visibility.updateInterval = previousInterval);
     final images=_PortraitImages();
-    web.reply={'kind':'account','account':{'id':'4242','name':'Actual portrait member','avatar':'https://images.example/formal-avatar.png'}};
+    replaceActivePluginAccount(omoNetworkSource, {
+      'account.credentials': {'version': 1, 'deleted': false, 'origin': _home.origin,
+        'account': 'portrait-fixture', 'password': 'portrait-test-password'},
+    });
+    addTearDown(() => replaceActivePluginAccount(omoNetworkSource, {}));
+    web.reply={'kind':'account','account':{'id':'4242','loginName':'portrait-fixture','name':'Actual portrait member','avatar':'https://images.example/formal-avatar.png'}};
     await HttpOverrides.runZoned(() async {
       await mount(tester);
-      for(var i=0;i<8;i++) {
-        await tester.runAsync(()=>Future<void>.delayed(const Duration(milliseconds:20)));
-        await tester.pump();
-      }
+      await waitForPortrait(tester);
       expect(find.byType(PluginUserInfoCard),findsOneWidget);
-      final thumbnail=tester.widget<VideoThumbnail>(find.byType(VideoThumbnail));
-      expect(thumbnail.source,omoNetworkSource);expect(thumbnail.referrer,_home.replace(path:''));
-      expect(thumbnail.refreshHealthyOnTokenChange,isTrue);
-      expect(tester.widget<CollectionCoverPrivacyScope>(find.descendant(of:find.byType(PluginUserInfoCard),
-        matching:find.byType(CollectionCoverPrivacyScope))).enabled,isFalse);
+      final portrait=tester.widget<PluginAccountAvatar>(find.byType(PluginAccountAvatar));
+      expect(portrait.source,omoNetworkSource);expect(portrait.origin,_home.origin);
+      expect(portrait.identity,'4242');
+      expect(portrait.url,'https://images.example/formal-avatar.png');
       expect(images.requests,hasLength(1));
       expect(images.requests.single.headers.values['referer'],_home.replace(path:'').toString());
       expect(tester.widget<RawImage>(find.byType(RawImage)).image,isNotNull);
       expect(api.imageCalls,0,reason:'the source has no fetchImageBytes API');
+      await tester.tap(find.text(t.plugin.switchAccount));
+      await tester.pumpAndSettle();
+      final saved = PluginAccountProfiles.read(omoNetworkSource).profiles.values
+          .singleWhere((p) => !p.deleted && p.serverIdentity == '4242');
+      expect(saved.kind, 'password');
+      final row = find.byKey(ValueKey('saved-account-${saved.id}'));
+      final avatar = tester.widget<PluginAccountAvatar>(
+          find.descendant(of: row, matching: find.byType(PluginAccountAvatar)));
+      expect((avatar.source, avatar.identity, avatar.origin, avatar.url),
+          (portrait.source, portrait.identity, portrait.origin, portrait.url));
+      expect(find.descendant(of: row, matching: find.byType(Image)), findsOneWidget);
+      expect(images.requests, hasLength(1));
+      Navigator.of(tester.element(row)).pop();
+      await tester.pumpAndSettle();
       await pullSettingsRefresh(tester);await tester.pumpAndSettle();
-      for(var i=0;i<8;i++) {
-        await tester.runAsync(()=>Future<void>.delayed(const Duration(milliseconds:20)));
-        await tester.pump();
-      }
+      await waitForPortrait(tester);
       expect(images.requests,hasLength(2));
+      expect(tester.widget<PluginAccountAvatar>(find.byType(PluginAccountAvatar)).revision,
+        greaterThan(portrait.revision));
       expect(tester.widget<RawImage>(find.byType(RawImage)).image,isNotNull);
       expect(api.imageCalls,0);expect(tester.takeException(),isNull);
       await tester.pumpWidget(const SizedBox());await tester.pump();
@@ -620,6 +782,10 @@ void main(){
   },variant:TargetPlatformVariant.only(TargetPlatform.iOS));
 
   testWidgets('declared Hanime Web account uses its confirmed origin image transport without inventing an image API', (tester) async {
+    final visibility = VisibilityDetectorController.instance;
+    final previousInterval = visibility.updateInterval;
+    visibility.updateInterval = Duration.zero;
+    addTearDown(() => visibility.updateInterval = previousInterval);
     const source='1e600cff-8ebe-4517-8aa4-6678aec46424';
     api.declaredWebAccount=true;
     pluginSessionWriteFence.advance(source);
@@ -631,12 +797,12 @@ void main(){
     final images=_PortraitImages();
     await HttpOverrides.runZoned(() async {
       await mount(tester,source:source);
-      for(var i=0;i<8;i++) {
-        await tester.runAsync(()=>Future<void>.delayed(const Duration(milliseconds:20)));
-        await tester.pump();
-      }
+      await waitForPortrait(tester);
       expect(find.text('Fresh Hanime member'),findsOneWidget);
-      expect(tester.widget<VideoThumbnail>(find.byType(VideoThumbnail)).source,source);
+      final portrait=tester.widget<PluginAccountAvatar>(find.byType(PluginAccountAvatar));
+      expect(portrait.source,source);expect(portrait.origin,_home.origin);
+      expect(portrait.identity,'88');
+      expect(portrait.url,'https://images.example/hanime-account.png');
       expect(images.requests,hasLength(1));
       expect(tester.widget<RawImage>(find.byType(RawImage)).image,isNotNull);
       expect(api.imageCalls,0);expect(tester.takeException(),isNull);

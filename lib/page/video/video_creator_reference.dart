@@ -26,6 +26,13 @@ class VideoCreatorReference {
   /// The avatar opens the real profile, never a synthesized name search.
   Uri? get destination => profileUrl;
 
+  Uri? get uploadedPage => pages.values
+      .where(
+        (page) =>
+            page.path.replaceFirst(RegExp(r'/$'), '').endsWith('/uploaded'),
+      )
+      .firstOrNull;
+
   static final _profilePath = RegExp(r'^/user/([0-9]+)/?$');
   static final _digits = RegExp(r'^[0-9]+$');
   static const _roles = {'artist', 'uploader', 'publicUser'};

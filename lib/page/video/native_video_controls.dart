@@ -7,6 +7,7 @@ import 'package:zephyr/widgets/breeze_control_colors.dart';
 import 'package:zephyr/widgets/breeze_control_motion.dart';
 import 'package:zephyr/widgets/breeze_navigation_bar.dart';
 import 'package:zephyr/widgets/touch_hover_intent.dart';
+import 'package:zephyr/widgets/tab_reselect_scope.dart';
 import 'package:zephyr/widgets/collection_press_feedback.dart';
 import 'package:zephyr/widgets/collection_command_icons.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
@@ -61,7 +62,7 @@ bool _usesUIKit(BuildContext context) =>
 /// UIKit applies the same inset to its background, never to the platform view.
 abstract final class VideoControlMetrics {
   static const touchExtent = CollectionToolbarMetrics.actionExtent;
-  static const backgroundInset = 4.0;
+  static const backgroundInset = CollectionToolbarMetrics.actionPlateInset;
   static const glyphExtent = 22.0;
 }
 
@@ -194,6 +195,13 @@ class NativeVideoMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final native = _usesUIKit(context);
+    final searchExtent = SearchToolbarScope.of(context);
+    final rowExtent = compactTextChoice ? searchExtent : null;
+    final iconExtent = CollectionToolbarMetrics.actionExtentOf(context);
+    final controlWidth =
+        _usesIconMetrics && width == VideoControlMetrics.touchExtent
+        ? iconExtent
+        : width;
     final hasMetadata =
         optionDetails.isNotEmpty ||
         optionBadges.isNotEmpty ||
@@ -205,7 +213,9 @@ class NativeVideoMenu extends StatelessWidget {
       return _HostVideoMenu(menu: this);
     }
     if (native) {
-      var height = 44.0;
+      var height =
+          rowExtent ??
+          (_usesIconMetrics ? iconExtent : VideoControlMetrics.touchExtent);
       if (selectionIndicator) {
         final painter = TextPainter(
           text: TextSpan(
@@ -220,7 +230,7 @@ class NativeVideoMenu extends StatelessWidget {
         painter.dispose();
       }
       return SizedBox(
-        width: width,
+        width: controlWidth,
         height: height,
         child: _UIKitVideoControl(
           menuController: controller,
@@ -248,7 +258,10 @@ class NativeVideoMenu extends StatelessWidget {
             if (bare && label.isNotEmpty || icon != null && label.isEmpty)
               'pressFeedback': true,
             if (icon != null && label.isEmpty) 'iconPressFeedback': true,
-            if (!_usesIconMetrics) 'backgroundInset': 0.0,
+            if (!_usesIconMetrics)
+              'backgroundInset': compactTextChoice
+                  ? VideoControlMetrics.backgroundInset
+                  : 0.0,
             if (hostPresentation) 'choiceValues': const ['native', 'website'],
             if (compact) ...{
               'compactPopup': true,
@@ -275,6 +288,7 @@ class NativeVideoMenu extends StatelessWidget {
               'iconSize': secondary ? 16.0 : VideoControlMetrics.glyphExtent,
               'backgroundInset': VideoControlMetrics.backgroundInset,
             },
+            if (rowExtent != null) 'backgroundInset': 0.0,
             if (VideoControlAppearance.needsReadableSurface(context)) ...{
               'readableSurface': true,
               'backgroundInset': 0.0,
@@ -338,8 +352,10 @@ class NativeVideoMenu extends StatelessWidget {
             : Theme.of(context).colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(8),
         child: SizedBox(
-          width: width,
-          height: 44,
+          width: controlWidth,
+          height:
+              rowExtent ??
+              (_usesIconMetrics ? iconExtent : VideoControlMetrics.touchExtent),
           child: icon != null
               ? Center(
                   child: IconTheme.merge(
@@ -521,7 +537,8 @@ class _HostVideoMenuState extends State<_HostVideoMenu> {
                     width: menu.width,
                     child: ConstrainedBox(
                       constraints: BoxConstraints(
-                        minHeight: searchExtent ?? 44,
+                        minHeight:
+                            searchExtent ?? (menu.compactTextChoice ? 36 : 44),
                       ),
                       child: Padding(
                         padding: EdgeInsets.symmetric(
@@ -1190,11 +1207,18 @@ class NativeVideoIconButton extends StatelessWidget {
     'accent': Theme.of(context).colorScheme.primary.toARGB32(),
   };
 
+  double _extent(BuildContext context) =>
+      size == VideoControlMetrics.touchExtent
+      ? CollectionToolbarMetrics.actionExtentOf(context)
+      : size;
+
   @override
   Widget build(BuildContext context) {
+    final size = _extent(context);
+    final width = size;
     if (_usesUIKit(context)) {
       return SizedBox(
-        width: size,
+        width: width,
         height: size,
         child: _UIKitVideoControl(
           arguments: _uikitArguments(context),
@@ -1245,16 +1269,17 @@ class NativeVideoIconButton extends StatelessWidget {
               : Colors.white12,
           borderRadius: BorderRadius.circular(10),
         ),
-        child: SizedBox.square(
-          dimension: size - VideoControlMetrics.backgroundInset * 2,
+        child: SizedBox(
+          width: width - VideoControlMetrics.backgroundInset * 2,
+          height: size - VideoControlMetrics.backgroundInset * 2,
           child: Center(child: glyph),
         ),
       ),
-      constraints: BoxConstraints(minWidth: size, minHeight: size),
+      constraints: BoxConstraints(minWidth: width, minHeight: size),
       iconSize: iconSize,
       style: IconButton.styleFrom(
-        minimumSize: Size(size, size),
-        fixedSize: Size(size, size),
+        minimumSize: Size(width, size),
+        fixedSize: Size(width, size),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         padding: EdgeInsets.zero,
         backgroundColor: Colors.transparent,
@@ -1271,6 +1296,8 @@ class NativeVideoIconButton extends StatelessWidget {
   }
 
   Widget _buildBreezePlate(BuildContext context, Widget glyph) {
+    final size = _extent(context);
+    final width = size;
     final colors = Theme.of(context).colorScheme;
     final highContrast = MediaQuery.highContrastOf(context);
     final radius = BorderRadius.circular(10);
@@ -1287,8 +1314,8 @@ class NativeVideoIconButton extends StatelessWidget {
           icon: glyph,
           style:
               IconButton.styleFrom(
-                minimumSize: Size.square(size),
-                fixedSize: Size.square(size),
+                minimumSize: Size(width, size),
+                fixedSize: Size(width, size),
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 visualDensity: VisualDensity.standard,
                 padding: EdgeInsets.zero,
@@ -1356,8 +1383,9 @@ class NativeVideoIconButton extends StatelessWidget {
                       ),
                       child: child,
                     ),
-                    child: SizedBox.square(
-                      dimension: size - VideoControlMetrics.backgroundInset * 2,
+                    child: SizedBox(
+                      width: width - VideoControlMetrics.backgroundInset * 2,
+                      height: size - VideoControlMetrics.backgroundInset * 2,
                       child: Center(
                         child: BreezePressedContent(
                           pressed: pressed,
@@ -1420,7 +1448,10 @@ class NativeVideoSegmentedControl extends StatelessWidget {
     return (
       style: style,
       width: (labelWidth + 40).clamp(44.0, double.infinity) * labels.length,
-      height: (labelHeight + 20).clamp(44.0, double.infinity),
+      height: (labelHeight + 16).clamp(
+        CollectionToolbarMetrics.actionExtentOf(context),
+        double.infinity,
+      ),
     );
   }
 
@@ -1473,6 +1504,7 @@ class NativeVideoSegmentedControl extends StatelessWidget {
           Widget control(String visibleSelection) => _UIKitVideoControl(
             arguments: {
               'kind': 'segmented',
+              'verticalInset': CollectionToolbarMetrics.actionPlateInset,
               'options': [
                 for (final entry in options.entries)
                   {'value': entry.key, 'title': entry.value},
@@ -1521,8 +1553,10 @@ class NativeVideoSegmentedControl extends StatelessWidget {
           }
           painter.dispose();
         }
-        final rowHeight = (fallbackLabelHeight + 24).clamp(
-          44.0,
+        final actionExtent = CollectionToolbarMetrics.actionExtentOf(context);
+        const plateExtent = CollectionToolbarMetrics.actionPlateExtent;
+        final rowHeight = (fallbackLabelHeight + (fits ? 16 : 24)).clamp(
+          actionExtent,
           double.infinity,
         );
         return SizedBox(
@@ -1549,8 +1583,14 @@ class NativeVideoSegmentedControl extends StatelessWidget {
               backgroundColor: selection.track,
               selectedBackgroundColor: selection.fill,
               selectedForegroundColor: selection.foreground,
-              minimumSize: const Size(44, 44),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              minimumSize: Size(
+                actionExtent,
+                fits ? plateExtent : actionExtent,
+              ),
+              padding: EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: fits ? 4 : 12,
+              ),
               tapTargetSize: MaterialTapTargetSize.padded,
               visualDensity: VisualDensity.standard,
             ),
@@ -1963,6 +2003,7 @@ class _UIKitVideoControlState extends State<_UIKitVideoControl> {
   @override
   void dispose() {
     _clearPressed();
+    TabReselectScope.setBlockingOverlay(this, visible: false);
     if (widget.menuController != null) unawaited(_dismissMenu());
     if (_menuOpen) {
       // A route transition can remove the platform view before UIKit's close
@@ -2010,11 +2051,13 @@ class _UIKitVideoControlState extends State<_UIKitVideoControl> {
                 }
                 _menuGeneration = generation;
                 _menuOpen = true;
+                TabReselectScope.setBlockingOverlay(this, visible: true);
                 widget.onOpened?.call();
               }
               if (call.method == 'menuClosed' &&
                   (generation == null || generation == _menuGeneration)) {
                 _menuOpen = false;
+                TabReselectScope.setBlockingOverlay(this, visible: false);
                 widget.onClosed?.call();
               }
             });

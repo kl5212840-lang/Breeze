@@ -26,9 +26,11 @@ class NativeVideoAuthForm extends StatefulWidget {
     this.verification,
     this.allowRegistration = true,
     this.allowRetryAfterRejection = false,
+    this.submitEnabled = true,
     this.saveAccountLabel,
   });
   final bool accountIsEmail, allowRegistration, allowRetryAfterRejection;
+  final bool submitEnabled;
   final Widget? verification;
   final String? saveAccountLabel;
   final String? loginUsername;
@@ -45,7 +47,8 @@ class NativeVideoAuthForm extends StatefulWidget {
     bool remember,
   )
   submit;
-  final VoidCallback onChangeMode, onWebsite;
+  final VoidCallback onChangeMode;
+  final VoidCallback? onWebsite;
   final VoidCallback? onForgotPassword;
   final VoidCallback? onExternalAuthentication;
 
@@ -109,7 +112,11 @@ class _NativeVideoAuthFormState extends State<NativeVideoAuthForm> {
   }
 
   Future<void> _submit() async {
-    if (_busy || _unconfirmed || _key.currentState?.validate() != true) return;
+    if (!widget.submitEnabled ||
+        _busy ||
+        _unconfirmed ||
+        _key.currentState?.validate() != true)
+      return;
     final revision = _submissionRevision;
     setState(() {
       _busy = true;
@@ -135,7 +142,7 @@ class _NativeVideoAuthFormState extends State<NativeVideoAuthForm> {
       if (!mounted || revision != _submissionRevision) return;
       if (result == 'website') {
         _password.clear();
-        widget.onWebsite();
+        widget.onWebsite?.call();
       } else if (result != 'submitted') {
         setState(
           () => _error = result == 'unsupported'
@@ -319,7 +326,9 @@ class _NativeVideoAuthFormState extends State<NativeVideoAuthForm> {
               ],
               const SizedBox(height: 24),
               FilledButton(
-                onPressed: _busy || _unconfirmed ? null : _submit,
+                onPressed: !widget.submitEnabled || _busy || _unconfirmed
+                    ? null
+                    : _submit,
                 child: Text(
                   _busy
                       ? t.videoCommunity.submitting

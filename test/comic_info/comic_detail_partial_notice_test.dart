@@ -151,6 +151,29 @@ void main() {
         count: 1,
         platform: defaultTargetPlatform,
       );
+      final toolbar = find.byType(AppBar);
+      final heading = find.descendant(
+        of: toolbar,
+        matching: find.text(t.common.detail),
+      );
+      final back = find.descendant(
+        of: toolbar,
+        matching: find.byTooltip(t.common.back),
+      );
+      final more = find.descendant(
+        of: toolbar,
+        matching: find.byTooltip(t.sourceShell.navigationActions),
+      );
+      final extent = defaultTargetPlatform == TargetPlatform.android
+          ? 48.0
+          : 44.0;
+      expect(tester.getSize(back), Size.square(extent));
+      expect(tester.getTopLeft(back).dx, 16);
+      expect(tester.getTopRight(more).dx, tester.getTopRight(toolbar).dx - 16);
+      expect(
+        tester.getCenter(heading).dy,
+        closeTo(tester.getCenter(back).dy, .5),
+      );
       final favorite = find.widgetWithText(OutlinedButton, '本地收藏');
       await tester.ensureVisible(favorite);
       await tester.longPress(favorite);

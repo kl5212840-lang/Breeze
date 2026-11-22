@@ -390,7 +390,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byType(VideoSearchEntry));
+      await tester.tap(find.byKey(const ValueKey('api-catalog.open-search')));
       await tester.pumpAndSettle();
       expect(find.byType(ApiVideoFilterPanel), findsNothing);
       expect(find.text(t.videoLibrary.loadedResultScope), findsNothing);
@@ -423,7 +423,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('作品 b'), findsNothing);
       expect(calls.length, 2);
-      await tester.tap(find.byType(VideoSearchEntry));
+      await tester.tap(find.byKey(const ValueKey('api-catalog.query-title')));
       await tester.pumpAndSettle();
       expect(find.byType(ApiVideoFilterPanel), findsNothing);
       await tester.enterText(
@@ -462,7 +462,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(VideoSearchEntry));
+    await tester.tap(find.byKey(const ValueKey('api-catalog.open-search')));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.descendant(

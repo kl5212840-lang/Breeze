@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+
+import 'package:zephyr/page/video/video_catalog_dom.dart';
 import 'package:zephyr/page/video/video_site_action_models.dart';
 
 /// Minimal author identity data from the original subscribed-author management
@@ -66,20 +69,22 @@ const videoCreatorDirectoryExtraction = r'''
         const u = creatorUrl(a.getAttribute('href'), base, creatorSearch); return u ? [u.href] : [];
       }));
       const profiles = new Set(Array.from(card.querySelectorAll('a[href]')).flatMap(a => {
-        const u = a.querySelector('img') && creatorUrl(a.getAttribute('href'), base, u => !u.search && /^\/user\/[0-9]+\/?$/.test(u.pathname));
+        if (!a.matches('.overlay') && !a.querySelector('img')) return [];
+        const u = creatorUrl(a.getAttribute('href'), base, u => !u.search && /^\/user\/[0-9]+\/?$/.test(u.pathname));
         return u ? [u.href.replace(/\/$/, '')] : [];
       }));
       const profileUrl = profiles.size === 1 ? Array.from(profiles)[0] : null;
       const nameSearchUrl = names.size === 1 ? Array.from(names)[0] : null;
       const name = (card.querySelector('.search-artist-title')?.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 200);
-      if (!name || !nameSearchUrl) continue;
+      if (!name || (!nameSearchUrl && !profileUrl)) continue;
       validRows++;
       const entityKey = 'artist:' + artistId;
       if (!creators.has(entityKey)) creators.set(entityKey, {role:'artist', artistId, entityKey,
         profileId:profileUrl ? new URL(profileUrl).pathname.match(/^\/user\/([0-9]+)/)[1] : null,
         profileUrl, nameSearchUrl, name, avatarUrl:creatorImage(card, base),
         identityEvidence:{source:'subscribed-artist-management-row', managementTarget:'playlist-show-video-id',
-          profileRelation:profileUrl ? 'actual-anchor-in-same-row' : 'unresolved', nameSearchRelation:'actual-anchor-in-same-row'}});
+          profileRelation:profileUrl ? 'actual-anchor-in-same-row' : 'unresolved',
+          nameSearchRelation:nameSearchUrl ? 'actual-anchor-in-same-row' : 'unresolved'}});
     }
     const nexts = new Set(Array.from(doc.querySelectorAll('a[rel="next"][href], .pagination li:not(.disabled) a[aria-label="Next"][href]')).flatMap(a => {
       const u = creatorUrl(a.getAttribute('href'), base, creatorDirectoryPage);
@@ -125,6 +130,60 @@ class VideoCreatorDirectoryReader {
       _nextOwner = null;
     }
     return result;
+  }
+
+  void dispose() => _request.dispose();
+}
+
+/// Reads one visible author's subscription shelf through the site's own filter.
+/// The filter's data-user-id refers to the observed /user/ profile, which can
+/// differ from the management row's subscription target.
+class VideoSubscriptionShelfReader {
+  VideoSubscriptionShelfReader({
+    required Uri home,
+    required Future<dynamic> Function(String) evaluate,
+  }) : _request = _VideoCreatorRequest(home: home, evaluate: evaluate);
+
+  final _VideoCreatorRequest _request;
+
+  Future<VideoSiteResult<Map<String, dynamic>>> read({
+    required Uri owner,
+    required String profileId,
+    required Map<String, String> selectors,
+  }) async {
+    if (!RegExp(r'^[0-9]+$').hasMatch(profileId)) {
+      return _creatorResult(VideoSiteStatus.invalid);
+    }
+    return _request.run('''
+      const profileId = ${jsonEncode(profileId)};
+      if (owner !== ${jsonEncode(owner.toString())} || location.pathname !== '/subscriptions') throw 'changed';
+      const filter = (doc, base) => {
+        const forms = doc.querySelectorAll('form#hentai-form');
+        if (forms.length !== 1) return null;
+        const form = forms[0];
+        const method = (form.getAttribute('method') || 'get').toLowerCase();
+        const action = creatorUrl(form.getAttribute('action') || base, base, u => u.pathname === '/subscriptions');
+        const inputs = form.querySelectorAll('input#artist_id[type="hidden"][name="artist_id"]');
+        if (method !== 'get' || !action || inputs.length !== 1) return null;
+        return {action, active:inputs[0].value || inputs[0].getAttribute('value') || ''};
+      };
+      const form = filter(document, location.href);
+      const offered = Array.from(document.querySelectorAll('.subscriptions-artist-card[data-user-id]'))
+        .some(node => node.getAttribute('data-user-id') === profileId);
+      if (!form || !offered) throw 'unsupported';
+      const target = form.action;
+      target.search = '';
+      target.searchParams.set('artist_id', profileId);
+      const {doc, url} = await get(target);
+      if (filter(doc, url)?.active !== profileId) throw 'unsupported';
+      const config = ${jsonEncode(selectors)};
+      $videoCardExtractionScript
+      const nodes = Array.from(doc.querySelectorAll(config.cards)).slice(0, 160);
+      const cards = nodes.map(card).filter(item => item.title && item.href);
+      if ((!cards.length && nodes.length) ||
+          (!nodes.length && !doc.querySelector('.content-padding-new, .content-padding, #home-rows-wrapper'))) throw 'unsupported';
+      return {ownerUrl:owner, profileId, pageUrl:url, cards};
+    ''');
   }
 
   void dispose() => _request.dispose();
@@ -310,6 +369,10 @@ class _VideoCreatorRequest {
         );
       }
       if (_disposed) return _creatorResult(VideoSiteStatus.cancelled);
+      assert(() {
+        debugPrint('BREEZE_CREATOR_DIRECTORY status=${raw['status']}');
+        return true;
+      }());
       final status = raw['status'] == 'pending'
           ? VideoSiteStatus.network
           : VideoSiteStatus.fromWire(raw['status']);
@@ -321,7 +384,14 @@ class _VideoCreatorRequest {
             : null,
         writeUnconfirmed: false,
       );
-    } catch (_) {
+    } catch (error) {
+      assert(() {
+        final message = error.toString();
+        debugPrint(
+          'BREEZE_CREATOR_DIRECTORY transport=${message.length > 240 ? message.substring(0, 240) : message}',
+        );
+        return true;
+      }());
       return _creatorResult(
         _disposed ? VideoSiteStatus.cancelled : VideoSiteStatus.network,
       );

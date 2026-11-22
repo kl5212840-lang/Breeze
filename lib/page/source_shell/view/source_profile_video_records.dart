@@ -385,7 +385,7 @@ class _SourceProfileVideoRecordsState extends State<SourceProfileVideoRecords> {
             children: [
               const Align(
                 alignment: AlignmentDirectional.centerEnd,
-                child: CollectionCoverPrivacyButton(),
+                child: CollectionCoverPrivacyActions(),
               ),
               for (final mode in ShelfPageMode.values) _preview(module, mode),
             ],

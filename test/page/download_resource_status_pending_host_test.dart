@@ -329,14 +329,21 @@ void main() {
           await settleHost(tester);
           expect(find.byType(DownloadVideoWorkCard), findsOneWidget);
           final workCard = find.byType(DownloadVideoWorkCard);
-          await tester.drag(workCard, const Offset(-115, 0));
-          await tester.pump();
-          await tester.pump(const Duration(milliseconds: 240));
-          expect(find.text(t.common.detail).hitTestable(), findsOneWidget);
-          // Close the revealed actions before opening the downloaded group.
-          await tester.tap(workCard);
-          await tester.pump();
-          await tester.pump(const Duration(milliseconds: 240));
+          final workKey = tester
+              .widget<DownloadVideoWorkCard>(workCard)
+              .work
+              .key;
+          final workMore = find.byKey(ValueKey('download-row-more.$workKey'));
+          await tester.tap(workMore);
+          await tester.pumpAndSettle();
+          expect(
+            find
+                .byKey(ValueKey('download-swipe.$workKey.details'))
+                .hitTestable(),
+            findsOneWidget,
+          );
+          await tester.binding.handlePopRoute();
+          await tester.pumpAndSettle();
           await tester.tap(workCard);
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 450));
@@ -412,11 +419,53 @@ void main() {
             );
             expect(text.data, isNot(t.common.unknown));
             if (status == 'failed') {
-              expect(text.data, contains('网络'));
+              final detail = find.byKey(
+                ValueKey('download-reason.video:$identity'),
+              );
+              expect(tester.widget<Text>(detail).data, contains('网络'));
             }
           }
           expect(tester.getSize(card).height, cardHeight);
-          expect(find.text(t.download.retryEpisodeDownload), findsOneWidget);
+          expect(
+            find.widgetWithText(TextButton, t.common.retry),
+            findsOneWidget,
+          );
+
+          final retry = find.byKey(ValueKey('download-retry.$task'));
+          final more = find.byKey(
+            ValueKey('download-row-more.video:$identity'),
+          );
+          expect(tester.getRect(episodeBody).top, tester.getRect(more).top);
+          final originalSize = tester.view.physicalSize;
+          final originalRatio = tester.view.devicePixelRatio;
+          final dispatcher = tester.platformDispatcher;
+          tester.view.devicePixelRatio = 1;
+          tester.view.physicalSize = const Size(320, 860);
+          dispatcher.textScaleFactorTestValue = 1.6;
+          try {
+            await tester.pump();
+            expect(
+              find.widgetWithText(TextButton, t.common.retry),
+              findsOneWidget,
+            );
+            final recoveryTarget = tester.getRect(retry);
+            final actionsTarget = tester.getRect(more);
+            expect(recoveryTarget.height, greaterThanOrEqualTo(48));
+            expect(recoveryTarget.width, greaterThanOrEqualTo(48));
+            expect(actionsTarget.size, const Size.square(48));
+            expect(recoveryTarget.right, lessThanOrEqualTo(actionsTarget.left));
+            expect(
+              tester.getRect(episodeBody).bottom,
+              lessThanOrEqualTo(recoveryTarget.top),
+            );
+            expect(tester.takeException(), isNull);
+          } finally {
+            tester.view.devicePixelRatio = originalRatio;
+            tester.view.physicalSize = originalSize;
+            dispatcher.clearTextScaleFactorTestValue();
+            await tester.pump();
+          }
+
           await tester.tap(episodeBody);
           await tester.pump();
           expect(
@@ -442,15 +491,19 @@ void main() {
           expect(tester.getSize(card).height, greaterThanOrEqualTo(cardHeight));
           expect(tester.getTopLeft(episodeBody).dx, titleStart);
           expect(find.text(t.download.retryEpisodeDownload), findsNothing);
-          expect(find.text(t.common.detail).hitTestable(), findsNothing);
           expect(
-            find.byKey(ValueKey('download-source.$identity')),
+            find
+                .descendant(of: card, matching: find.text(t.common.detail))
+                .hitTestable(),
             findsNothing,
           );
-          final swipeHint = find.text(t.download.swipeForWorkDetails);
-          expect(swipeHint, findsOneWidget);
+          expect(find.text(t.download.swipeForWorkDetails), findsNothing);
+          final sourceRecovery = find.byKey(ValueKey('download-source.$task'));
+          expect(sourceRecovery.hitTestable(), findsOneWidget);
           expect(
-            tester.getRect(card).contains(tester.getRect(swipeHint).center),
+            tester
+                .getRect(card)
+                .contains(tester.getRect(sourceRecovery).center),
             isTrue,
           );
           expect(find.byType(NativeVideoPage), findsNothing);
@@ -478,17 +531,30 @@ void main() {
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 240));
           expect(
+            find.byKey(ValueKey('download-swipe.video:$identity.details')),
+            findsNothing,
+          );
+          expect(
             find
-                .byKey(ValueKey('download-swipe.video:$identity.details'))
+                .byKey(ValueKey('download-swipe.video:$identity.info'))
                 .hitTestable(),
             findsOneWidget,
           );
+          expect(find.byType(NativeVideoPage), findsNothing);
+          expect(more.hitTestable(), findsOneWidget);
+          await tester.tap(more);
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 240));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 240));
           expect(
             find
                 .byKey(ValueKey('download-swipe.video:$identity.delete'))
                 .hitTestable(),
             findsOneWidget,
           );
+          await tester.binding.handlePopRoute();
+          await tester.pump();
           expect(tester.takeException(), isNull);
         } finally {
           try {

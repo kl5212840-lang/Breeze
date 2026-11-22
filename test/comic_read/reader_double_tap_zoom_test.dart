@@ -24,7 +24,9 @@ class _SettingsCubit extends GlobalSettingCubit {
 }
 
 class _Viewer extends StatefulWidget {
-  const _Viewer();
+  const _Viewer({required this.scrollPages});
+
+  final bool scrollPages;
 
   @override
   State<_Viewer> createState() => _ViewerState();
@@ -52,8 +54,22 @@ class _ViewerState extends State<_Viewer> with SingleTickerProviderStateMixin {
       onRefreshState: () => setState(() {}),
       isScrollLockedByMultiTouch: () => locked,
       onUpdateScrollLock: (value) => setState(() => locked = value),
-      buildColumnMode: (_) => const ColoredBox(color: Colors.white),
-      buildRowMode: () => const ColoredBox(color: Colors.white),
+      buildColumnMode: (_) => widget.scrollPages
+          ? ListView.builder(
+              controller: _scroll,
+              itemCount: 5,
+              itemExtent: 300,
+              itemBuilder: (_, _) => const ColoredBox(color: Colors.white),
+            )
+          : const ColoredBox(color: Colors.white),
+      buildRowMode: () => widget.scrollPages
+          ? PageView.builder(
+              controller: _page,
+              reverse: isReverseRowReadMode(context.readEffectiveReadMode()),
+              itemCount: 5,
+              itemBuilder: (_, _) => const ColoredBox(color: Colors.white),
+            )
+          : const ColoredBox(color: Colors.white),
     );
     _input.setActionController(
       ReaderActionController(
@@ -84,6 +100,7 @@ Future<_SettingsCubit> _mount(
   required ReadSettingState setting,
   bool reduceMotion = false,
   bool openSettings = false,
+  bool scrollPages = false,
 }) async {
   final settings = _SettingsCubit(setting);
   final preferences = ComicReadPreferenceCubit();
@@ -114,7 +131,11 @@ Future<_SettingsCubit> _mount(
                       child: const Text('Open'),
                     ),
                   )
-                : const SizedBox(width: 400, height: 500, child: _Viewer()),
+                : SizedBox(
+                    width: 400,
+                    height: 500,
+                    child: _Viewer(scrollPages: scrollPages),
+                  ),
           ),
         ),
       ),
@@ -231,6 +252,112 @@ void main() {
     await tester.pump(const Duration(milliseconds: 180));
     expect(scale(), 1);
     expect(viewer.menuToggles, 0);
+  });
+
+  for (final (name, readMode, delta, viewport) in [
+    (
+      'continuous vertical',
+      kReadModeColumn,
+      const Offset(0, -12),
+      const Size(400, 700),
+    ),
+    (
+      'left-to-right pages',
+      kReadModeRowLtr,
+      const Offset(-12, 0),
+      const Size(700, 400),
+    ),
+    (
+      'right-to-left pages',
+      kReadModeRowRtl,
+      const Offset(12, 0),
+      const Size(400, 700),
+    ),
+  ]) {
+    testWidgets('a short $name swipe does not toggle menu', (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = viewport;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      await _mount(
+        tester,
+        setting: ReadSettingState(readMode: readMode),
+        scrollPages: true,
+      );
+
+      final viewer = tester.state<_ViewerState>(find.byType(_Viewer));
+      final center = tester.getCenter(find.byType(InteractiveViewer));
+      final gesture = await tester.startGesture(center);
+      await tester.pump(const Duration(milliseconds: 80));
+      await gesture.moveBy(delta);
+      await gesture.moveBy(-delta);
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(viewer.menuToggles, 0);
+
+      final deliberateTap = await tester.startGesture(center);
+      await deliberateTap.moveBy(delta / 3);
+      await deliberateTap.up();
+      await tester.pumpAndSettle();
+      expect(viewer.menuToggles, 1);
+
+      await tester.dragFrom(center, delta * 22);
+      await tester.pumpAndSettle();
+      expect(viewer.menuToggles, 1);
+      if (isColumnReadMode(readMode)) {
+        expect(viewer._scroll.offset, greaterThan(0));
+      } else {
+        expect(viewer._page.page, 1);
+        await tester.tapAt(center + const Offset(140, 0));
+        await tester.pumpAndSettle();
+        expect(viewer._page.page, 2);
+        expect(viewer.menuToggles, 1);
+      }
+    });
+  }
+
+  testWidgets('a swipe in either tap cannot open the double-tap menu', (
+    tester,
+  ) async {
+    await _mount(
+      tester,
+      setting: const ReadSettingState(doubleTapOpenMenu: true),
+      scrollPages: true,
+    );
+    final viewer = tester.state<_ViewerState>(find.byType(_Viewer));
+    viewer.context.read<ReaderCubit>().updateMenuVisible(visible: false);
+    final center = tester.getCenter(find.byType(InteractiveViewer));
+
+    Future<void> shortSwipe() async {
+      final gesture = await tester.startGesture(center);
+      await gesture.moveBy(const Offset(0, -12));
+      await gesture.up();
+    }
+
+    await shortSwipe();
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.tapAt(center);
+    await tester.pumpAndSettle();
+    expect(viewer.menuToggles, 0);
+
+    await tester.tapAt(center);
+    await tester.pump(const Duration(milliseconds: 60));
+    await shortSwipe();
+    await tester.pumpAndSettle();
+    expect(viewer.menuToggles, 0);
+
+    await tester.tapAt(center);
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.tapAt(center);
+    await tester.pumpAndSettle();
+    expect(viewer.menuToggles, 1);
+
+    viewer.context.read<ReaderCubit>().updateMenuVisible(visible: true);
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.tapAt(center);
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pumpAndSettle();
+    expect(viewer.menuToggles, 2);
   });
 
   for (final reduceMotion in [false, true]) {

@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'dart:async';
 import 'package:zephyr/page/bookshelf/service/bookshelf_source_preferences.dart';
 import 'package:zephyr/page/donwload_task/view/download_filter_sheet.dart';
@@ -67,9 +68,7 @@ Finder _chapterList(DownloadWorkPane pane) =>
 
 Finder _workPane(DownloadWorkPane pane) => find.descendant(
   of: find.byKey(const ValueKey('download-work-pane')),
-  matching: find.text(
-    pane == DownloadWorkPane.saved ? 'Downloaded' : 'Downloading',
-  ),
+  matching: find.text(pane == DownloadWorkPane.saved ? 'Downloaded' : 'Tasks'),
 );
 
 Future<void> _enterDownloadManagement(WidgetTester tester) async {
@@ -273,6 +272,33 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump();
+  }
+
+  Future<void> openRowActions(WidgetTester tester, String key) async {
+    final more = find.byKey(ValueKey('download-row-more.$key'));
+    expect(more.hitTestable(), findsOneWidget);
+    await tester.tap(more);
+    await settleHost(tester);
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump();
+  }
+
+  Future<void> settleRowMenuSelection(WidgetTester tester) async {
+    // The menu releases its input barrier before invoking a row command.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    await settleHost(tester);
+  }
+
+  Future<void> waitForRemovalDialog(WidgetTester tester) async {
+    final dialog = find.byType(AlertDialog).hitTestable();
+    final elapsed = Stopwatch()..start();
+    while (dialog.evaluate().isEmpty &&
+        elapsed.elapsed < const Duration(seconds: 5)) {
+      await settleHost(tester);
+    }
+    expect(dialog, findsOneWidget);
   }
 
   Future<void> runHost(
@@ -932,16 +958,17 @@ void main() {
           matching: find.byType(Divider),
         );
         final groupAxis = tester.getTopLeft(tailTitle).dx;
-        expect(tester.getTopLeft(chapterTitle).dx, closeTo(groupAxis, .01));
-        final headingDivider = tester.getRect(rowDivider(tailTitle));
-        final chapterDivider = tester.getRect(rowDivider(chapterTitle));
-        expect(headingDivider.left, closeTo(groupAxis, .01));
-        expect(chapterDivider.left, closeTo(headingDivider.left, .01));
-        expect(chapterDivider.right, closeTo(headingDivider.right, .01));
+        final chapterAxis = tester.getTopLeft(chapterTitle).dx;
+        expect(chapterAxis - groupAxis, closeTo(16, .01));
+        expect(rowDivider(tailTitle), findsNothing);
+        expect(
+          tester.getRect(rowDivider(chapterTitle)).left,
+          closeTo(chapterAxis, .01),
+        );
         final theme = Theme.of(tester.element(chapterTitle));
         expect(
           tester.widget<Text>(tailTitle).style?.color,
-          theme.colorScheme.onSurfaceVariant,
+          theme.colorScheme.onSurface,
         );
         expect(
           tester.widget<Text>(chapterTitle).style?.color,
@@ -949,13 +976,35 @@ void main() {
         );
         expect(
           tester.widget<Text>(tailTitle).style?.fontWeight,
-          FontWeight.w500,
+          FontWeight.w600,
+        );
+        final disclosure = find
+            .ancestor(of: tailTitle, matching: find.byType(InkWell))
+            .first;
+        expect(tester.getSize(disclosure).height, greaterThanOrEqualTo(44));
+        expect(
+          tester
+              .getCenter(
+                find.descendant(
+                  of: disclosure,
+                  matching: find.byIcon(Icons.expand_more),
+                ),
+              )
+              .dx,
+          closeTo(
+            tester
+                .getCenter(
+                  find.byKey(const ValueKey('download-row-more.chapter-61')),
+                )
+                .dx,
+            .01,
+          ),
         );
         final manage = find.byKey(const ValueKey('download-episodes-manage'));
         await tester.tap(manage);
         await settleHost(tester);
         await revealRow(chapter(61));
-        expect(tester.getTopLeft(chapterTitle).dx, closeTo(groupAxis, .01));
+        expect(tester.getTopLeft(chapterTitle).dx, closeTo(chapterAxis, .01));
         await tester.tap(chapter(61));
         await settleHost(tester);
         expect(find.text(t.bookshelf.selectedCount(count: 1)), findsOneWidget);
@@ -1015,11 +1064,23 @@ void main() {
         );
         await revealRanges();
         expect(find.text(tailRange), findsNothing);
+        final firstRange = find.text('Chapter 1–Chapter 30 · First volume');
+        expect(firstRange, findsOneWidget);
+        final firstHeading = find
+            .ancestor(
+              of: firstRange,
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is Semantics && widget.properties.header == true,
+              ),
+            )
+            .first;
         expect(
-          find.text('Chapter 1–Chapter 30 · First volume'),
-          findsOneWidget,
+          tester.widget<Semantics>(firstHeading).properties.expanded,
+          isTrue,
         );
-        expect(chapter(1), findsOneWidget);
+        await revealRow(chapter(1));
+        expect(chapter(1).hitTestable(), findsOneWidget);
         expect(find.text(t.bookshelf.selectedCount(count: 0)), findsOneWidget);
         expect(tester.takeException(), isNull);
       }),
@@ -1951,21 +2012,13 @@ void main() {
         ),
       );
       await settleHost(tester);
-      await tester.drag(
-        find.byKey(const ValueKey('download-open.$key')),
-        const Offset(-180, 0),
-      );
-      await settleHost(tester);
       final export = find.byKey(const ValueKey('download-swipe.$key.export'));
+      expect(export, findsNothing);
+      await openRowActions(tester, key);
       expect(export.hitTestable(), findsOneWidget);
-      final caption = find.descendant(
-        of: export,
-        matching: find.text(t.common.export),
-      );
-      expect(caption, findsOneWidget);
       expect(
-        tester.widget<Text>(caption).semanticsLabel,
-        isNot(t.common.export),
+        find.descendant(of: export, matching: find.text('Export copy')),
+        findsOneWidget,
       );
       await tester.tap(export);
       for (
@@ -2113,7 +2166,9 @@ void main() {
           final searchAction = find.byKey(
             const ValueKey('download-search-action'),
           );
-          final manage = find.byKey(const ValueKey('download-manage-action'));
+          final manage = find.byKey(
+            const ValueKey('download-selection.cancel'),
+          );
           final eye = find.byType(CollectionCoverPrivacyButton);
           final more = find.byKey(const ValueKey('download-more'));
           expect(manage, findsNothing);
@@ -2166,24 +2221,16 @@ void main() {
           await tester.pump();
           final editor = find.byKey(const ValueKey('download-search-field'));
           final cancel = find.byKey(const ValueKey('download-search-close'));
-          expect(
-            tester.getCenter(cancel).dx,
-            closeTo(frames.last.center.dx, .1),
-          );
-          final startWidth = tester.getSize(editor).width;
+          final expanded = tester.getRect(editor);
+          expect(more, findsNothing);
+          expect(expanded.left, closeTo(header.left, .1));
+          expect(expanded.right, closeTo(header.right, .1));
+          expect(expanded.contains(tester.getCenter(cancel)), isTrue);
           expect(manage, findsNothing);
           expect(eye, findsNothing);
-          expect(more, findsNothing);
           expect(searchAction, findsNothing);
-          expect(
-            tester.getRect(editor).overlaps(tester.getRect(cancel)),
-            isFalse,
-          );
           await tester.pump(const Duration(milliseconds: 200));
-          expect(
-            tester.getSize(editor).width,
-            greaterThanOrEqualTo(startWidth),
-          );
+          expect(tester.getRect(editor), expanded);
           final after = tester.getRect(find.text('Header fixture'));
           expect(after.width, closeTo(before.width, .0001));
           expect(after.height, closeTo(before.height, .0001));
@@ -2195,18 +2242,19 @@ void main() {
           ]) {
             expect(edges.$1, closeTo(edges.$2, .15));
           }
-          tester.widget<SourceChromeIconButton>(cancel).onPressed!();
+          tester.widget<IconButton>(cancel).onPressed!();
           await tester.pump();
           expect(editor, findsNothing);
           expect(cancel, findsNothing);
           expect(manage, findsNothing);
-          // Reverse before the return animation completes; no departed actions
-          // remain mounted or interactive underneath the expanded input.
+          // Reopen immediately; departed actions must not remain interactive.
           tester.widget<SourceChromeIconButton>(searchAction).onPressed!();
           await tester.pump();
           expect(manage, findsNothing);
-          tester.widget<SourceChromeIconButton>(cancel).onPressed!();
+          await tester.binding.handlePopRoute();
           await settleHost(tester);
+          expect(editor, findsNothing);
+          expect(find.text('Header fixture'), findsOneWidget);
           final restoredHeader = tester.getRect(
             find.byKey(const ValueKey('download-header')),
           );
@@ -2365,16 +2413,16 @@ void main() {
           );
           expect(search, findsOneWidget);
           expect(tester.widget<SearchQueryField>(search).inline, isTrue);
-          // The editor occupies the existing header, beside its close control.
+          // The editor contains its close control and uses the full header width.
           expect(
-            find.byKey(const ValueKey('download-manage-action')),
+            find.byKey(const ValueKey('download-selection.cancel')),
             findsNothing,
           );
           expect(find.byType(CollectionCoverPrivacyButton), findsNothing);
           expect(find.byKey(const ValueKey('download-more')), findsNothing);
           expect(
-            tester.getRect(search).overlaps(tester.getRect(closeSearch)),
-            isFalse,
+            tester.getRect(search).contains(tester.getCenter(closeSearch)),
+            isTrue,
           );
           expect(
             tester.getRect(search).center.dy,
@@ -2435,7 +2483,7 @@ void main() {
             isFalse,
           );
           expect(find.byType(DownloadTaskPage), findsOneWidget);
-          await tester.tap(find.byTooltip(t.common.done));
+          await tester.tap(find.byTooltip(t.common.cancel));
           await settleHost(tester);
           expect(tester.getRect(cover), coverBefore);
           expect(tester.getRect(text), titleBefore);
@@ -2597,20 +2645,19 @@ void main() {
         expect(hasCommand(), isTrue, reason: 'The $id command is available');
         await tester.ensureVisible(card);
         await tester.pump();
-        await tester.drag(card, const Offset(-220, 0));
-        await settleHost(tester);
+        await openRowActions(tester, firstKey);
         expect(action(id).hitTestable(), findsOneWidget);
       }
 
-      Future<void> swipeTo(String id) async {
+      Future<void> chooseAction(String id) async {
         await revealCommand(id);
         await tester.tap(action(id));
-        await settleHost(tester);
+        await settleRowMenuSelection(tester);
       }
 
       double top(Finder finder) => tester.getTopLeft(finder).dy;
       expect(top(secondTitle), lessThan(top(firstTitle)));
-      await swipeTo('pin');
+      await chooseAction('pin');
       expect(top(firstTitle), lessThan(top(secondTitle)));
       final poster = tester.getRect(
         find.byKey(const ValueKey('download-cover.$firstKey')),
@@ -2649,13 +2696,14 @@ void main() {
       await settleHost(tester);
       expect(top(firstTitle), lessThan(top(secondTitle)));
 
-      await swipeTo('unpin');
+      await chooseAction('unpin');
       expect(top(secondTitle), lessThan(top(firstTitle)));
       expect(find.byType(DownloadCardPin), findsNothing);
       expect(queue(), initialQueue);
 
-      await swipeTo('pin');
-      await swipeTo('delete');
+      await chooseAction('pin');
+      await chooseAction('delete');
+      await waitForRemovalDialog(tester);
       await tester.tap(find.widgetWithText(TextButton, t.common.delete));
       for (var attempt = 0; attempt < 20; attempt++) {
         await settleHost(tester);
@@ -2686,8 +2734,12 @@ void main() {
   );
 
   testWidgets(
-    'stopped rows reveal deletion while retry stays at the failure',
+    'stopped rows offer details and deletion while retry stays at the failure',
     (tester) => runHost(tester, () async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       final first = _task('可侧拉的下载', 'completed');
       final second = _task('另一个已下载项', 'completed');
       final failed = _task('重试留在原位', 'failed');
@@ -2714,62 +2766,55 @@ void main() {
       Finder action(String title, String id) =>
           find.byKey(ValueKey('download-swipe.$prefix$title.$id'));
 
-      await tester.drag(find.text(first.comicName), const Offset(-220, 0));
-      await settleHost(tester);
-      expect(action(first.comicName, 'delete').hitTestable(), findsOneWidget);
       final firstKey = '$prefix${first.comicName}';
       final card = find.byKey(ValueKey('download-card.$firstKey'));
+      await tester.ensureVisible(card);
+      final rest = tester.getRect(card);
+      await tester.drag(card, const Offset(-160, 0));
+      await settleHost(tester);
+      expect(action(first.comicName, 'export'), findsNothing);
       final tray = find.byKey(ValueKey('download-swipe-tray.$firstKey'));
       final cardRect = tester.getRect(card);
       final trayRect = tester.getRect(tray);
       expect(trayRect.center.dy, closeTo(cardRect.center.dy, .01));
-      expect(trayRect.height / cardRect.height, inInclusiveRange(.40, .55));
-      final command = action(first.comicName, 'delete');
-      final commands = tester
-          .widget<DownloadSwipeActions>(
-            find.ancestor(
-              of: card,
-              matching: find.byType(DownloadSwipeActions),
-            ),
-          )
-          .actions;
-      final actionWidth = switch (commands.length) {
-        <= 2 => 66.0,
-        3 => 60.0,
-        _ => 54.0,
-      };
-      final total = commands.fold<double>(
-        0,
-        (width, action) =>
-            width +
-            (action.id == 'pin' || action.id == 'unpin' ? 66.0 : actionWidth),
-      );
+      expect(trayRect.height, closeTo(cardRect.height, .01));
+      expect(trayRect.right, closeTo(rest.right, .01));
+      expect(cardRect.right, closeTo(trayRect.left, .01));
       expect(
-        tester.getSize(command).width,
-        closeTo(actionWidth * (total + 6) / total, .01),
+        find.byKey(ValueKey('download-row-more.$firstKey')).hitTestable(),
+        findsOneWidget,
       );
-      final icon = find.descendant(of: command, matching: find.byType(Icon));
-      final label = find.descendant(of: command, matching: find.byType(Text));
-      expect(tester.getRect(label).top - tester.getRect(icon).bottom, 5);
-      final deleteColor = tester.widget<Text>(label).style!.color!;
-      final trayColor = tester.widget<Material>(tray).color!;
-      expect(deleteColor, const Color(0xffff453a));
-      expect(tester.widget<Icon>(icon).color, deleteColor);
-      expect(
-        BreezeThemeColors.contrast(deleteColor, trayColor),
-        greaterThanOrEqualTo(4.5),
-      );
+      expect(action(first.comicName, 'more'), findsNothing);
+      expect(action(first.comicName, 'pin'), findsNothing);
+      final shortcutDelete = action(first.comicName, 'delete');
+      expect(shortcutDelete.hitTestable(), findsOneWidget);
+      expect(tester.getSize(shortcutDelete).width, greaterThanOrEqualTo(44));
+      expect(tester.getSize(shortcutDelete).height, greaterThanOrEqualTo(44));
       expect(action(first.comicName, 'retry'), findsNothing);
       expect(find.byType(AlertDialog), findsNothing);
       expect(objectbox.downloadTaskBox.count(), 3);
 
-      await tester.drag(find.text(second.comicName), const Offset(-220, 0));
+      await tester.tapAt(tester.getCenter(card));
       await settleHost(tester);
-      expect(action(first.comicName, 'delete'), findsNothing);
+      expect(tray, findsNothing);
+      await openRowActions(tester, '$prefix${second.comicName}');
       final delete = action(second.comicName, 'delete');
       expect(delete.hitTestable(), findsOneWidget);
+      final icon = find.descendant(of: delete, matching: find.byType(Icon));
+      final label = find.descendant(of: delete, matching: find.byType(Text));
+      final deleteColor = tester.widget<Text>(label).style!.color!;
+      expect(deleteColor.r, greaterThan(deleteColor.g));
+      expect(deleteColor.r, greaterThan(deleteColor.b));
+      expect(tester.widget<Icon>(icon).color, deleteColor);
+      expect(
+        BreezeThemeColors.contrast(
+          deleteColor,
+          Theme.of(tester.element(delete)).colorScheme.surface,
+        ),
+        greaterThanOrEqualTo(4.5),
+      );
       await tester.tap(delete);
-      await settleHost(tester);
+      await waitForRemovalDialog(tester);
       expect(
         find.descendant(
           of: find.byType(AlertDialog),
@@ -2781,25 +2826,28 @@ void main() {
       await settleHost(tester);
       expect(objectbox.downloadTaskBox.count(), 3);
 
-      await tester.drag(find.text(failed.comicName), const Offset(-180, 0));
-      await settleHost(tester);
       final deleteFailed = action(failed.comicName, 'delete');
+      await openRowActions(tester, '$prefix${failed.comicName}');
       expect(deleteFailed.hitTestable(), findsOneWidget);
       expect(action(failed.comicName, 'retry'), findsNothing);
       expect(action(failed.comicName, 'export'), findsNothing);
       expect(find.byType(AlertDialog), findsNothing);
       await tester.tap(deleteFailed);
-      await settleHost(tester);
+      await waitForRemovalDialog(tester);
       expect(find.textContaining(failed.comicName), findsWidgets);
       await tester.tap(find.widgetWithText(TextButton, t.common.cancel));
       await settleHost(tester);
-      expect(find.byTooltip(t.common.retry).hitTestable(), findsOneWidget);
+      expect(
+        find.widgetWithText(TextButton, t.common.retry).hitTestable(),
+        findsOneWidget,
+      );
 
-      await tester.drag(find.text(failed.comicName), const Offset(-180, 0));
-      await settleHost(tester);
-      await tester.tap(deleteFailed);
-      await tester.pump(const Duration(milliseconds: 32));
-      await tester.tap(find.byKey(const ValueKey('download-search-action')));
+      await openRowActions(tester, '$prefix${failed.comicName}');
+      await tester.tap(
+        find.byKey(
+          ValueKey('download-action-sheet-close.$prefix${failed.comicName}'),
+        ),
+      );
       await settleHost(tester);
       expect(find.byType(AlertDialog), findsNothing);
       expect(objectbox.downloadTaskBox.count(), 3);
@@ -2818,108 +2866,166 @@ void main() {
     }),
   );
 
-  testWidgets('three and four swipe actions stay compact with large labels', (
-    tester,
-  ) async {
-    final open = ValueNotifier<String?>('density');
-    addTearDown(open.dispose);
-    final actions = <DownloadSwipeAction>[
-      (id: 'unpin', label: '取消置顶', icon: Icons.push_pin, run: () {}),
-      (id: 'details', label: 'Details', icon: Icons.info_outline, run: () {}),
-      (id: 'export', label: 'Export', icon: Icons.ios_share, run: () {}),
-      (id: 'delete', label: 'Delete', icon: Icons.delete_outline, run: () {}),
-    ];
-    Rect? defaultTray;
-    double? defaultIconY;
-    for (final (count, scale, width, pinned) in [
-      (3, 1.0, 60.0, true),
-      (4, 1.0, 54.0, false),
-      (4, 1.0, 54.0, true),
-      (4, 1.8, 64.4, true),
-    ]) {
-      final visibleActions = [
-        if (pinned)
-          actions.first
-        else
-          (id: 'pin', label: '置顶', icon: Icons.push_pin_outlined, run: () {}),
-        ...actions.skip(1).take(count - 1),
+  testWidgets(
+    'swipe shortcut order and touch targets adapt to text and direction',
+    (tester) async {
+      final open = ValueNotifier<String?>(null);
+      addTearDown(open.dispose);
+      final actions = <DownloadSwipeAction>[
+        (
+          id: 'details',
+          label: 'Work details',
+          icon: Icons.info_outline,
+          run: () {},
+        ),
+        (id: 'export', label: 'Export', icon: Icons.ios_share, run: () {}),
+        (id: 'delete', label: 'Delete', icon: Icons.delete_outline, run: () {}),
+        (
+          id: 'next',
+          label: 'Prioritize this download',
+          icon: Icons.vertical_align_top_rounded,
+          run: () {},
+        ),
       ];
-      open.value = 'density';
-      await tester.pumpWidget(
-        MaterialApp(
-          locale: const Locale('zh'),
-          supportedLocales: const [Locale('zh')],
-          localizationsDelegates: GlobalMaterialLocalizations.delegates,
-          builder: (context, child) => MediaQuery(
-            data: MediaQuery.of(
-              context,
-            ).copyWith(textScaler: TextScaler.linear(scale)),
-            child: child!,
-          ),
-          home: Scaffold(
-            body: Center(
-              child: SizedBox(
-                width: 320,
-                height: 120,
-                child: DownloadSwipeActions(
-                  key: ValueKey((count, scale, pinned)),
-                  rowKey: 'density',
-                  openRow: open,
-                  actions: visibleActions,
-                  child: const SizedBox.expand(),
+      final row = find.byKey(const ValueKey('density-row'));
+      final title = find.text('Offline item');
+      for (final (width, scale, direction, secondary) in [
+        (430.0, 1.0, TextDirection.ltr, 'delete'),
+        (320.0, 2.4, TextDirection.ltr, 'delete'),
+        (320.0, 1.0, TextDirection.rtl, 'next'),
+      ]) {
+        final rtl = direction == TextDirection.rtl;
+        final shortcuts = ['details', secondary];
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData(
+              platform: rtl ? TargetPlatform.android : TargetPlatform.iOS,
+            ),
+            builder: (context, child) => Directionality(
+              textDirection: direction,
+              child: MediaQuery(
+                data: MediaQuery.of(context).copyWith(
+                  textScaler: TextScaler.linear(scale),
+                  disableAnimations: scale > 2,
+                ),
+                child: child!,
+              ),
+            ),
+            home: Scaffold(
+              body: Center(
+                child: SizedBox(
+                  width: width,
+                  child: DownloadSwipeActions(
+                    key: ValueKey((width, scale, direction)),
+                    rowKey: 'density',
+                    openRow: open,
+                    actions: actions,
+                    swipeActionIds: shortcuts,
+                    child: const SizedBox(
+                      key: ValueKey('density-row'),
+                      height: 78,
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 12),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Offline item',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            DownloadRowMoreButton(),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      );
-      await tester.pumpAndSettle();
-      final pinWidth = scale == 1 ? 66.0 : 76.4;
-      final total = pinWidth + width * (count - 1);
-      for (final action in visibleActions) {
-        final target = find.byKey(
-          ValueKey('download-swipe.density.${action.id}'),
         );
-        expect(target.hitTestable(), findsOneWidget);
-        final slot = action == visibleActions.first ? pinWidth : width;
+        await tester.pumpAndSettle();
+        final rest = tester.getRect(row);
+        final titleAtRest = tester.getRect(title);
+        final gesture = await tester.startGesture(rest.center);
+        final step = Offset(rtl ? 28 : -28, 0);
+        await gesture.moveBy(step);
+        await gesture.moveBy(step);
+        await tester.pump();
+        final moving = tester.getRect(row);
+        expect(moving.height, rest.height);
+        expect(moving.top, rest.top);
         expect(
-          tester.getSize(target).width,
-          closeTo(slot * (total + 6) / total, .02),
+          rtl ? moving.left - rest.left : rest.right - moving.right,
+          greaterThan(10),
         );
-        expect(tester.getSize(target).height, 72);
-      }
-      final label = find.text(pinned ? '取消' : '置顶');
-      expect(tester.widget<Text>(label).semanticsLabel, pinned ? '取消置顶' : '置顶');
-      expect(tester.widget<Text>(label).maxLines, 2);
-      final paragraph = tester.renderObject<RenderParagraph>(
-        find.descendant(of: label, matching: find.byType(RichText)),
-      );
-      expect(paragraph.didExceedMaxLines, isFalse);
-      if (scale == 1) {
-        final lines = paragraph.getBoxesForSelection(
-          const TextSelection(baseOffset: 0, extentOffset: 2),
+        final movedTitle = tester.getRect(title);
+        expect(
+          movedTitle,
+          rectMoreOrLessEquals(
+            titleAtRest.shift(moving.topLeft - rest.topLeft),
+          ),
         );
-        expect(lines.map((line) => line.top).toSet(), hasLength(1));
-      }
-      if (count == 4 && scale == 1) {
-        final tray = tester.getRect(
-          find.byKey(const ValueKey('download-swipe-tray.density')),
-        );
-        final iconY = tester
-            .getCenter(find.byIcon(visibleActions.first.icon))
-            .dy;
-        if (pinned) {
-          expect(tray, defaultTray);
-          expect(iconY, defaultIconY);
-        } else {
-          defaultTray = tray;
-          defaultIconY = iconY;
+        expect(moving.size, rest.size);
+        await gesture.moveBy(step * 4);
+        await gesture.up();
+        await tester.pumpAndSettle();
+        Finder button(String id) =>
+            find.byKey(ValueKey('download-swipe.density.$id'));
+        final minimum = rtl ? 48.0 : 44.0;
+        final tray = find.byKey(const ValueKey('download-swipe-tray.density'));
+        expect(tester.getSize(tray).height, rest.height);
+        for (final id in shortcuts) {
+          final target = button(id);
+          expect(target.hitTestable(), findsOneWidget);
+          expect(tester.getSize(target).width, greaterThanOrEqualTo(minimum));
+          expect(tester.getSize(target).height, greaterThanOrEqualTo(minimum));
+          final label = find.descendant(
+            of: target,
+            matching: find.byType(Text),
+          );
+          if (label.evaluate().isEmpty) {
+            final icon = tester.widget<Icon>(
+              find.descendant(of: target, matching: find.byType(Icon)),
+            );
+            expect(
+              icon.semanticLabel,
+              actions.firstWhere((a) => a.id == id).label,
+            );
+          } else {
+            expect(tester.widget<Text>(label).maxLines, 1);
+            expect(
+              tester
+                  .renderObject<RenderParagraph>(
+                    find.descendant(of: label, matching: find.byType(RichText)),
+                  )
+                  .didExceedMaxLines,
+              isFalse,
+            );
+          }
         }
+        expect(
+          tester.getCenter(button('details')).dx,
+          rtl
+              ? greaterThan(tester.getCenter(button(secondary)).dx)
+              : lessThan(tester.getCenter(button(secondary)).dx),
+        );
+        for (final action in actions.where((a) => !shortcuts.contains(a.id))) {
+          expect(button(action.id), findsNothing);
+        }
+        expect(button('more'), findsNothing);
+        await tester.tapAt(Offset(rest.center.dx, rest.bottom + 10));
+        await tester.pumpAndSettle();
+        expect(tray, findsNothing);
+        expect(tester.getRect(row), rest);
+        expect(tester.getRect(title), titleAtRest);
+        expect(tester.takeException(), isNull);
       }
-      expect(tester.takeException(), isNull);
-    }
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets(
     'same chapter attempts own separate swipe and selection actions',
@@ -3000,14 +3106,41 @@ void main() {
         ),
         findsOneWidget,
       );
+      final retryButton = find.byKey(
+        ValueKey('download-chapter-resume.task:${retry.id}'),
+      );
+      expect(retryButton.hitTestable(), findsOneWidget);
+      expect(
+        find.descendant(
+          of: retryButton,
+          matching: find.text(t.download.retryNow),
+        ),
+        findsOneWidget,
+      );
       await tester.drag(row(retry), const Offset(-160, 0));
       await settleHost(tester);
+      expect(tray(retry), findsOneWidget);
+      expect(retryButton.hitTestable(), findsNothing);
       expect(
         find
-            .byKey(ValueKey('download-swipe.task:${retry.id}.retry-now'))
+            .byKey(ValueKey('download-swipe.task:${retry.id}.info'))
             .hitTestable(),
         findsOneWidget,
       );
+      expect(
+        find.byKey(ValueKey('download-swipe.task:${retry.id}.delete')),
+        findsNothing,
+      );
+      await tester.tapAt(tester.getCenter(row(retry)));
+      await settleHost(tester);
+      expect(retryButton.hitTestable(), findsOneWidget);
+      await openRowActions(tester, 'task:${retry.id}');
+      expect(
+        find.byKey(ValueKey('download-swipe.task:${retry.id}.pause')),
+        findsOneWidget,
+      );
+      await tester.binding.handlePopRoute();
+      await settleHost(tester);
       final waitingBefore = tester.getRect(row(waiting));
       await tester.drag(row(old), const Offset(-160, 0));
       await settleHost(tester);
@@ -3142,7 +3275,7 @@ void main() {
         tester.getRect(last).bottom,
         lessThanOrEqualTo(tester.getTopLeft(delete).dy),
       );
-      await tester.tap(find.byTooltip(t.common.done));
+      await tester.tap(find.byTooltip(t.common.cancel));
       await tester.pumpAndSettle();
       expect(tester.getRect(list), viewport);
       expect(position.pixels, endPosition);
@@ -3224,52 +3357,102 @@ void main() {
       );
       final titleFinder = find.text('Second chapter');
       final titleBefore = tester.getRect(titleFinder);
+      final chapterBefore = tester.getRect(chapter);
       final gesture = await tester.startGesture(tester.getCenter(chapter));
       await gesture.moveBy(const Offset(-27, 0));
       await gesture.moveBy(const Offset(-36, 0));
       await tester.pump();
-      final titleWhileDragging = tester.getRect(titleFinder);
-      expect(titleWhileDragging.left, lessThan(titleBefore.left));
-      expect(titleWhileDragging.top, titleBefore.top);
+      expect(tester.getRect(titleFinder).left, lessThan(titleBefore.left));
+      expect(tester.getRect(chapter).right, lessThan(chapterBefore.right));
       await gesture.moveBy(const Offset(-120, 0));
       await gesture.up();
       await settleHost(tester);
       final tray = find.byKey(const ValueKey('download-swipe-tray.chapter-b'));
-      final time = find.byKey(const ValueKey('download-swipe-time.chapter-b'));
+      final time = find.byKey(
+        const ValueKey('download-action-sheet-time.chapter-b'),
+      );
       final well = find.byKey(const ValueKey('download-swipe-well.chapter-b'));
       final wellColor =
           (tester.widget<DecoratedBox>(well).decoration as BoxDecoration).color;
-      final trayColor = tester.widget<Material>(tray).color;
-      expect(trayColor?.a, 1);
-      expect(wellColor, isNot(trayColor));
-      final titleAfter = tester.getRect(titleFinder);
-      expect(titleAfter.left, lessThan(titleBefore.left - 44));
-      expect(titleAfter.left, lessThan(titleWhileDragging.left));
-      expect(titleAfter.top, titleBefore.top);
-      expect(titleAfter.size, titleBefore.size);
+      expect(wellColor?.a, 1);
+      expect(tester.widget<Material>(tray).type, MaterialType.transparency);
+      expect(tester.getRect(titleFinder).left, lessThan(titleBefore.left));
       final rowRect = tester.getRect(chapter);
       final trayRect = tester.getRect(tray);
-      expect(trayRect.height, lessThan(72));
-      final topGap = trayRect.top - rowRect.top;
-      final bottomGap = rowRect.bottom - trayRect.bottom;
-      expect(topGap, greaterThanOrEqualTo(5));
-      expect(bottomGap, closeTo(topGap, .01));
-      expect(time, findsOneWidget);
+      expect(trayRect.right, closeTo(chapterBefore.right, .01));
+      expect(trayRect.left, closeTo(rowRect.right, .01));
+      expect(trayRect.center.dy, closeTo(rowRect.center.dy, .01));
+      expect(rowRect.height, chapterBefore.height);
+      expect(
+        tester.getRect(titleFinder),
+        rectMoreOrLessEquals(
+          titleBefore.shift(rowRect.topLeft - chapterBefore.topLeft),
+        ),
+      );
+      expect(time, findsNothing);
+      expect(
+        find.byKey(const ValueKey('download-row-more.chapter-b')).hitTestable(),
+        findsOneWidget,
+      );
+      final information = find.byKey(
+        const ValueKey('download-swipe.chapter-b.info'),
+      );
+      expect(information.hitTestable(), findsOneWidget);
       final delete = find.byKey(
         const ValueKey('download-swipe.chapter-b.delete'),
       );
+      expect(delete.hitTestable(), findsOneWidget);
       expect(tester.getSize(delete).height, greaterThanOrEqualTo(44));
-      expect(
-        tester.getRect(time).top,
-        greaterThanOrEqualTo(tester.getRect(delete).bottom),
-      );
-      await tester.tap(find.text('First chapter'));
+      await tester.tap(information);
+      await settleHost(tester);
+      expect(time, findsOneWidget);
+      expect(tester.widget<Text>(time).data, startsWith('Downloaded '));
+      expect(delete, findsNothing);
+      await tester.binding.handlePopRoute();
+      await settleHost(tester);
+      expect(tester.getRect(titleFinder), titleBefore);
+      await tester.drag(chapter, const Offset(-190, 0));
+      await settleHost(tester);
+      await tester.tap(delete);
+      await waitForRemovalDialog(tester);
+      await tester.tap(find.widgetWithText(TextButton, t.common.cancel));
+      await settleHost(tester);
+      expect(tester.getRect(titleFinder), titleBefore);
+      await openRowActions(tester, 'chapter-b');
+      await tester.tap(information);
+      await settleRowMenuSelection(tester);
+      expect(time, findsOneWidget);
+      expect(tester.widget<Text>(time).data, startsWith('Downloaded '));
+      await tester.binding.handlePopRoute();
+      await settleHost(tester);
+
+      final inFlight = _task(title, 'running')..isDownloading = true;
+      objectbox.downloadTaskBox.put(inFlight);
+      await settleHost(tester);
+      await openRowActions(tester, 'chapter-b');
+      expect(delete, findsNothing);
+      await tester.tap(information);
+      await settleRowMenuSelection(tester);
+      expect(time, findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await settleHost(tester);
+      objectbox.downloadTaskBox.remove(inFlight.id);
       await settleHost(tester);
 
       history.chapterId = 'shared-request';
       objectbox.unifiedHistoryBox.put(history);
       await settleHost(tester);
       expect(tester.widget<InkWell>(resume).onTap, isNull);
+      await tester.drag(chapter, const Offset(-190, 0));
+      await settleHost(tester);
+      expect(tray.hitTestable(), findsOneWidget);
+      await tester.tap(find.byType(BackButton).hitTestable());
+      await settleHost(tester);
+      expect(chapter, findsNothing);
+      await tester.tap(find.text(title));
+      await settleHost(tester);
+      expect(chapter, findsOneWidget);
+      expect(tray, findsNothing);
     }),
   );
 
@@ -3291,19 +3474,42 @@ void main() {
         find.byKey(const ValueKey('download-menu.$activeKey')),
         findsNothing,
       );
-      expect(find.byTooltip('Pause downloads for this work'), findsOneWidget);
+      expect(
+        find.widgetWithText(TextButton, 'Pause downloads'),
+        findsOneWidget,
+      );
       await _enterDownloadManagement(tester);
       await settleHost(tester);
       final activeSelection = tester.widget<DownloadCardSelection>(
         find.byKey(const ValueKey('download-select.$activeKey')),
       );
       expect(activeSelection.onTap, isNull);
-      final count = find.byKey(const ValueKey('download-count'));
-      expect(tester.widget<Text>(count).data, '0/2');
+      final cancel = find.byKey(const ValueKey('download-selection.cancel'));
+      final selectAll = find.byKey(
+        const ValueKey('download-selection.select-all'),
+      );
+      final count = find.text(t.bookshelf.selectedCount(count: 0));
+      expect(count, findsOneWidget);
+      expect(
+        find.descendant(of: cancel, matching: find.text(t.common.cancel)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: selectAll, matching: find.text(t.common.selectAll)),
+        findsOneWidget,
+      );
+      expect(tester.getCenter(cancel).dx, lessThan(tester.getCenter(count).dx));
+      expect(
+        tester.getCenter(selectAll).dx,
+        greaterThan(tester.getCenter(count).dx),
+      );
       await tester.tap(find.byTooltip(t.common.selectAll));
       await settleHost(tester);
-      expect(find.text('2/2'), findsOneWidget);
+      expect(find.text(t.bookshelf.selectedCount(count: 2)), findsOneWidget);
       expect(find.byTooltip(t.bookshelf.deselectAll), findsOneWidget);
+      await tester.tap(find.byTooltip(t.bookshelf.deselectAll));
+      await settleHost(tester);
+      expect(count, findsOneWidget);
 
       tester
           .widget<BookshelfSourceNavigation>(
@@ -3311,7 +3517,7 @@ void main() {
           )
           .onChanged!(['another-offline-source']);
       await settleHost(tester);
-      expect(find.text('0/1'), findsOneWidget);
+      expect(count, findsOneWidget);
       expect(
         tester
             .widget<TextButton>(
@@ -3339,7 +3545,12 @@ void main() {
         ),
         findsNothing,
       );
-      await tester.tap(find.widgetWithText(TextButton, t.common.cancel));
+      await tester.tap(
+        find.descendant(
+          of: dialog,
+          matching: find.widgetWithText(TextButton, t.common.cancel),
+        ),
+      );
       await settleHost(tester);
       expect(objectbox.downloadTaskBox.count(), 3);
     }),
@@ -3496,7 +3707,9 @@ void main() {
           await tester.drag(row, const Offset(-150, 0));
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 240));
-          final action = remove(key).hitTestable();
+          final action = find
+              .byKey(ValueKey('download-swipe.$key.delete'))
+              .hitTestable();
           expect(action, findsOneWidget);
           expect(tester.getSize(action).width, greaterThanOrEqualTo(44));
           expect(tester.getSize(action).height, greaterThanOrEqualTo(44));
@@ -3633,9 +3846,10 @@ void main() {
         expect(batchDelete, findsNothing);
         expect(chapter('a'), findsOneWidget);
 
-        await reveal('a');
+        await tester.ensureVisible(chapter('a'));
+        await openRowActions(tester, 'a');
         await tester.tap(remove('a'));
-        await settleHost(tester);
+        await waitForRemovalDialog(tester);
         await tester.tap(find.widgetWithText(TextButton, t.common.cancel));
         await settleHost(tester);
         expect(objectbox.downloadTaskBox.count(), 1);
@@ -3648,9 +3862,10 @@ void main() {
         record.detailJson = '{invalid';
         objectbox.unifiedDownloadBox.put(record);
         await settleHost(tester);
-        await reveal('a');
+        await tester.ensureVisible(chapter('a'));
+        await openRowActions(tester, 'a');
         await tester.tap(remove('a'));
-        await settleHost(tester);
+        await waitForRemovalDialog(tester);
         await confirm();
         expect(chapter('a'), findsOneWidget);
         expect(chapter('b'), findsOneWidget);
@@ -3662,9 +3877,10 @@ void main() {
         record.detailJson = '';
         objectbox.unifiedDownloadBox.put(record);
         await settleHost(tester);
-        await reveal('a');
+        await tester.ensureVisible(chapter('a'));
+        await openRowActions(tester, 'a');
         await tester.tap(remove('a'));
-        await settleHost(tester);
+        await waitForRemovalDialog(tester);
         await confirm();
         expect(chapter('a'), findsNothing);
         expect(chapter('b'), findsOneWidget);
@@ -3674,9 +3890,10 @@ void main() {
           findsNothing,
         );
         expect(objectbox.downloadTaskBox.count(), 0);
-        await reveal('b');
+        await tester.ensureVisible(chapter('b'));
+        await openRowActions(tester, 'b');
         await tester.tap(remove('b'));
-        await settleHost(tester);
+        await waitForRemovalDialog(tester);
         await confirm();
         expect(objectbox.unifiedDownloadBox.count(), 0);
         expect(objectbox.downloadTaskBox.count(), 0);
@@ -3808,8 +4025,15 @@ void main() {
             matching: find.byKey(const ValueKey('breeze.selection.plate')),
           ),
         );
-        final sourcePlate = tester.getRect(
+        final sourceTarget = tester.getRect(
           find.byKey(const ValueKey('bookshelf.source.')),
+        );
+        const sourceInset = CollectionToolbarMetrics.actionPlateInset;
+        final sourcePlate = Rect.fromLTRB(
+          sourceTarget.left,
+          sourceTarget.top + sourceInset,
+          sourceTarget.right,
+          sourceTarget.bottom - sourceInset,
         );
         final boundary = tester.renderObject<RenderRepaintBoundary>(
           find.byKey(previewKey),
@@ -4002,12 +4226,27 @@ void main() {
       );
       await tester.longPress(find.text('保留的下载'));
       await settleHost(tester);
-      expect(find.byTooltip(t.common.done), findsOneWidget);
+      expect(find.byTooltip(t.common.cancel), findsOneWidget);
       final selection = find.byType(DownloadCardSelection);
       expect(selection, findsOneWidget);
       expect(tester.widget<DownloadCardSelection>(selection).selected, isTrue);
-      await tester.tap(find.byTooltip(t.common.done));
+      await tester.tap(find.byTooltip(t.common.cancel));
       await settleHost(tester);
+      expect(selection, findsNothing);
+
+      await tester.tap(find.byTooltip(t.common.search));
+      await settleHost(tester);
+      await tester.enterText(find.byType(TextField), '保留');
+      await settleHost(tester);
+      await tester.longPress(find.text('保留的下载'));
+      await settleHost(tester);
+      expect(find.byType(TextField), findsNothing);
+      expect(find.text(t.bookshelf.selectedCount(count: 1)), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await settleHost(tester);
+      final editor = tester.widget<TextField>(find.byType(TextField));
+      expect(editor.controller?.text, '保留');
+      expect(editor.focusNode?.hasFocus, isFalse);
       expect(selection, findsNothing);
       expect(objectbox.downloadTaskBox.get(task.id), isNotNull);
       expect(tester.takeException(), isNull);
@@ -4076,7 +4315,7 @@ void main() {
       await settleHost(tester);
       expect(find.text(t.download.notificationFailedTitle), findsOneWidget);
       expect(find.text('测试下载失败'), findsOneWidget);
-      expect(find.byTooltip(t.common.retry), findsOneWidget);
+      expect(find.widgetWithText(TextButton, t.common.retry), findsOneWidget);
       expect(find.text(t.download.pending(count: 1)), findsNothing);
       expect(tester.takeException(), isNull);
     }),

@@ -695,16 +695,14 @@ void main() {
           // No background loop reads page 3 while waiting with sparse matches.
           await tester.pump(const Duration(seconds: 2));
           expect(pages, [1, 2]);
-          await pressControl(
-            find.byKey(const ValueKey('api-catalog.local-reset')),
-          );
+          await tester.enterText(field, '');
           await tester.pumpAndSettle();
           expect(collection().items, hasLength(40));
           expect(
             position().pixels,
             closeTo(originalOffset, 1),
             reason:
-                'clearing local conditions restores the unfiltered reading position',
+                'clearing the local search restores the unfiltered reading position',
           );
           expect(pages, [1, 2]);
           await pressControl(

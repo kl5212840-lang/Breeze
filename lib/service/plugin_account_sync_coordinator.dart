@@ -449,6 +449,7 @@ class PluginAccountSyncCoordinator {
             identity: credentials.account,
             serverIdentity: proof.serverIdentity,
             label: proof.label,
+            avatarUrl: proof.avatarUrl,
             origin: registration.origin.origin,
             kind: 'password',
             select: true,
@@ -504,6 +505,7 @@ class PluginAccountSyncCoordinator {
           identity: identity,
           serverIdentity: proof.serverIdentity,
           label: proof.label,
+          avatarUrl: proof.avatarUrl,
           origin: registration.origin.origin,
           kind: kind,
           verifiedCredentialAccount: tiedCredentials
@@ -609,6 +611,183 @@ class PluginAccountSyncCoordinator {
       }
       rethrow;
     }
+  }
+
+  /// Start a new login without letting the previous account satisfy it.
+  /// Cookie rollback and profile rollback share the same session owner.
+  Future<void> addAccount(
+    String source, {
+    required Future<void> Function() login,
+    Future<void> Function()? reconnect,
+    bool Function()? canContinue,
+  }) async {
+    void checkOpen() {
+      if (canContinue?.call() == false) {
+        throw const PluginAccountLoginCancelled();
+      }
+    }
+
+    checkOpen();
+    try {
+      await captureAuthenticated(source, explicitSave: true);
+    } on PluginAccountAuthenticationRejected {
+      // A signed-out session has nothing to save. The transaction below still
+      // verifies the current session before it can clear or replace cookies.
+    }
+    checkOpen();
+    PluginAccountAuthentication? proof;
+    await PluginAccountProfiles.submitLogin<void>(
+      source,
+      webSession: true,
+      verify: () async => proof,
+      submit: () async {
+        checkOpen();
+        final initial = _registrations[source];
+        if (initial == null ||
+            !_live(source, initial) ||
+            initial.identity == null) {
+          throw const PluginAccountNeedsLogin();
+        }
+        var registration = initial;
+        final origin = registration.origin;
+        final generation = pluginSessionWriteFence.generation(source);
+        final installation = registration.installation;
+        bool current() =>
+            pluginSessionWriteFence.generation(source) == generation &&
+            LocalPluginInstallationState.instance.installationEpoch(source) ==
+                installation &&
+            _live(source, registration) &&
+            registration.origin.origin == origin.origin;
+        void guard() {
+          if (!current()) throw const PluginSessionChanged();
+          checkOpen();
+        }
+
+        final before = VideoAccountBackup.parse(
+          {
+            'version': 1,
+            'origin': origin.origin,
+            'cookies': await registration.service.cookies.read(origin),
+          },
+          origin,
+          source: source,
+        );
+        guard();
+        if (before == null) {
+          var signedOut = false;
+          try {
+            await registration.identity!();
+          } on PluginAccountAuthenticationRejected {
+            signedOut = true;
+          }
+          guard();
+          // Unknown or nonportable sessions cannot be cleared reversibly.
+          if (!signedOut) throw const PluginAccountNeedsLogin();
+        }
+        try {
+          await registration.service.clearSession(canApply: current);
+          guard();
+          final active = activePluginAccountSnapshot(
+            readHostPluginConfiguration(source),
+          );
+          replaceActivePluginAccount(
+            source,
+            const {},
+            expectedDigest: accountProfileDigest(active),
+            expectedGeneration: generation,
+          );
+          try {
+            await login();
+          } finally {
+            await reconnect?.call();
+          }
+          final resumed = _registrations[source];
+          if (resumed == null || resumed.origin.origin != origin.origin) {
+            throw const PluginSessionChanged();
+          }
+          registration = resumed;
+          guard();
+          if (registration.identity == null) {
+            throw const PluginAccountNeedsLogin();
+          }
+          final beforeIdentity = VideoAccountBackup.parse(
+            {
+              'version': 1,
+              'origin': origin.origin,
+              'cookies': await registration.service.cookies.read(origin),
+            },
+            origin,
+            source: source,
+          );
+          final confirmed = await registration.identity!();
+          guard();
+          if (confirmed == null) throw const PluginAccountNeedsLogin();
+          final snapshot = VideoAccountBackup.parse(
+            {
+              'version': 1,
+              'origin': origin.origin,
+              'name': confirmed.label,
+              'profileId': PluginAccountProfilesData.idFor(
+                source,
+                confirmed.serverIdentity,
+                origin.origin,
+                kind: 'web',
+              ),
+              'cookies': await registration.service.cookies.read(origin),
+            },
+            origin,
+            source: source,
+          );
+          guard();
+          if (beforeIdentity?.sessionFingerprint !=
+              snapshot?.sessionFingerprint) {
+            throw const PluginAccountSwitchFailed();
+          }
+          final draft = activePluginAccountSnapshot(
+            readHostPluginConfiguration(source),
+          );
+          final credentials = VideoAccountCredentials.decode(
+            draft['account.credentials'],
+            origin,
+          );
+          final account = confirmed.publicSummary['extern'];
+          final tiedCredentials =
+              credentials != null &&
+              account is Map &&
+              account['username'] == credentials.account;
+          replaceActivePluginAccount(
+            source,
+            {
+              'account.backup':
+                  snapshot?.toJson() ??
+                  PluginAccountProfiles.webLoginRequiredBackup(
+                    origin.origin,
+                    confirmed.serverIdentity,
+                  ),
+              if (tiedCredentials)
+                'account.credentials': draft['account.credentials'],
+            },
+            expectedDigest: accountProfileDigest(draft),
+            expectedGeneration: generation,
+          );
+          guard();
+          proof = confirmed.atOrigin(origin.origin);
+        } catch (_) {
+          final resumed = _registrations[source];
+          if (resumed != null && resumed.origin.origin == origin.origin) {
+            registration = resumed;
+          }
+          if (current()) {
+            if (before != null) {
+              await registration.service.restore(before, canApply: current);
+            } else {
+              await registration.service.clearSession(canApply: current);
+            }
+          }
+          rethrow;
+        }
+      },
+    );
   }
 
   /// Explicit saved-credential continuation. The ordinary login UI may renew

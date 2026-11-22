@@ -157,6 +157,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       final entry = find.byType(VideoSearchEntry);
+      final openSearch = find.byKey(const ValueKey('api-catalog.open-search'));
+      final queryTitle = find.byKey(const ValueKey('api-catalog.query-title'));
       final input = find.descendant(
         of: entry,
         matching: find.byType(TextField),
@@ -173,15 +175,9 @@ void main() {
       directoryScroll.jumpTo(120);
       await tester.pumpAndSettle();
       expect(visibleIds().take(2), ['initial-one', 'initial-two']);
-      expect(
-        tester.widget<KeywordScopeMenu>(scopeMenu).scope,
-        KeywordSearchScope.all,
-      );
-      tester
-          .widget<KeywordScopeMenu>(scopeMenu)
-          .onChanged(KeywordSearchScope.title);
-      await tester.pumpAndSettle();
-      await tester.tap(entry);
+      expect(entry, findsNothing);
+      expect(scopeMenu, findsNothing);
+      await tester.tap(openSearch);
       await tester.pumpAndSettle();
       expect(
         ModalRoute.of(tester.element(input))?.settings.name,
@@ -193,7 +189,7 @@ void main() {
       expect(tester.testTextInput.isVisible, isTrue);
       expect(
         tester.widget<KeywordScopeMenu>(scopeMenu).scope,
-        KeywordSearchScope.title,
+        KeywordSearchScope.all,
       );
       expect(requests, [(home: _movieHome, query: '', refresh: false)]);
       final historyPanel = find.byType(CatalogSearchOverlay);
@@ -213,12 +209,22 @@ void main() {
       }
       tester
           .widget<KeywordScopeMenu>(scopeMenu)
+          .onChanged(KeywordSearchScope.title);
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<KeywordScopeMenu>(scopeMenu).scope,
+        KeywordSearchScope.title,
+      );
+      tester
+          .widget<KeywordScopeMenu>(scopeMenu)
           .onChanged(KeywordSearchScope.all);
       await tester.pumpAndSettle();
 
       Future<void> submit(String keyword) async {
-        await tester.tap(input);
-        await tester.pumpAndSettle();
+        if (input.evaluate().isEmpty) {
+          await tester.tap(queryTitle);
+          await tester.pumpAndSettle();
+        }
         await tester.enterText(input, keyword);
         await tester.testTextInput.receiveAction(TextInputAction.search);
         await tester.pump();
@@ -228,7 +234,8 @@ void main() {
       await submit(query);
       await tester.pumpAndSettle();
       expect(visibleIds(), ['search-one', 'search-two']);
-      expect(tester.widget<TextField>(input).controller!.text, query);
+      expect(tester.widget<VideoSearchResultTitle>(queryTitle).query, query);
+      expect(input, findsNothing);
       expect(find.text(t.search.history), findsNothing);
       expect(find.widgetWithText(InputChip, query), findsNothing);
       expect(find.text(t.videoLibrary.results(count: 2)), findsOneWidget);
@@ -237,12 +244,14 @@ void main() {
         findsNothing,
       );
 
-      await tester.tap(input);
+      await tester.tap(queryTitle);
       await tester.pumpAndSettle();
       await tester.enterText(input, 'discard edit');
-      await tester.tap(find.byTooltip(t.videoSearch.cancel));
+      await tester.tap(
+        find.descendant(of: entry, matching: find.byTooltip(t.common.close)),
+      );
       await tester.pumpAndSettle();
-      expect(tester.widget<TextField>(input).controller!.text, query);
+      expect(tester.widget<VideoSearchResultTitle>(queryTitle).query, query);
       expect(visibleIds(), ['search-one', 'search-two']);
 
       await submit(failedQuery);
@@ -254,18 +263,13 @@ void main() {
       expect(visibleIds(), ['recovered-one', 'recovered-two']);
 
       await submit(pendingQuery);
-      await tester.tap(
-        find.descendant(of: entry, matching: find.byTooltip(t.common.clear)),
+      expect(
+        tester.widget<VideoSearchResultTitle>(queryTitle).query,
+        pendingQuery,
       );
-      await tester.pumpAndSettle();
-      expect(tester.widget<TextField>(input).controller!.text, isEmpty);
-      expect(find.text(t.search.history), findsOneWidget);
-      expect(find.byType(ApiVideoCollection), findsNothing);
-      lateSearch.complete(catalog('late'));
-      await tester.pumpAndSettle();
-      expect(find.byType(ApiVideoCollection), findsNothing);
-
       await tester.tap(find.byTooltip(t.common.back));
+      await tester.pumpAndSettle();
+      lateSearch.complete(catalog('late'));
       await tester.pumpAndSettle();
       expect(visibleIds().take(2), ['initial-one', 'initial-two']);
       expect(directoryScroll.offset, 120);
@@ -422,8 +426,12 @@ void main() {
           await tester.pumpAndSettle();
           expect(find.byType(VideoNativeNavigation), findsOneWidget);
           expect(find.byKey(const ValueKey('api-library.scope')), findsNothing);
-          expect(find.byType(VideoSearchEntry), findsOneWidget);
-          expect(find.byType(SearchQueryField), findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('api-catalog.open-search')),
+            findsOneWidget,
+          );
+          expect(find.byType(VideoSearchEntry), findsNothing);
+          expect(find.byType(SearchQueryField), findsNothing);
           final more = tester.widget<NativeVideoMenu>(
             find.descendant(
               of: find.byType(SourceMoreButton),

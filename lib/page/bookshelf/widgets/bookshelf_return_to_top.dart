@@ -1,6 +1,5 @@
-import 'dart:async';
-
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/widgets/tab_reselect_scope.dart';
 import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:zephyr/widgets/scroll_return_to_top.dart';
 import 'package:zephyr/widgets/list_position_scrollbar.dart';
@@ -10,10 +9,12 @@ class BookshelfReturnToTop extends StatefulWidget {
   const BookshelfReturnToTop({
     super.key,
     required this.enabled,
+    this.reselectEnabled = false,
     required this.child,
   });
 
   final bool enabled;
+  final bool reselectEnabled;
   final Widget child;
 
   @override
@@ -37,42 +38,33 @@ class _BookshelfReturnToTopState extends State<BookshelfReturnToTop> {
   void _returnToTop() {
     final scrollable = _scrollable;
     if (scrollable == null || !scrollable.mounted) return;
-    final position = scrollable.position;
-    final target = position.minScrollExtent;
-    if (MediaQuery.disableAnimationsOf(context) ||
-        position.extentBefore >= position.viewportDimension * 2) {
-      position.jumpTo(target);
-    } else {
-      unawaited(
-        position.animateTo(
-          target,
-          duration: const Duration(milliseconds: 230),
-          curve: Curves.easeOutCubic,
-        ),
-      );
-    }
+    TabReselectScope.scrollPositionToStart(context, scrollable.position);
   }
 
   @override
-  Widget build(BuildContext context) => Stack(
-    fit: StackFit.expand,
-    children: [
-      NotificationListener<ScrollMetricsNotification>(
-        onNotification: (n) => _observe(n.depth, n.metrics, n.context),
-        child: NotificationListener<ScrollNotification>(
+  Widget build(BuildContext context) => TabReselectListener(
+    enabled: widget.reselectEnabled,
+    onReselect: _returnToTop,
+    child: Stack(
+      fit: StackFit.expand,
+      children: [
+        NotificationListener<ScrollMetricsNotification>(
           onNotification: (n) => _observe(n.depth, n.metrics, n.context),
-          child: ListPositionScrollbar(
-            bottomInset: NativeNavigationInset.scrollBottom(context),
-            child: widget.child,
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (n) => _observe(n.depth, n.metrics, n.context),
+            child: ListPositionScrollbar(
+              bottomInset: NativeNavigationInset.scrollBottom(context),
+              child: widget.child,
+            ),
           ),
         ),
-      ),
-      ScrollReturnToTop(
-        actionKey: const ValueKey('bookshelf.return-to-top'),
-        visible: widget.enabled && _show,
-        bottom: NativeNavigationInset.scrollBottom(context) + 16,
-        onPressed: _returnToTop,
-      ),
-    ],
+        ScrollReturnToTop(
+          actionKey: const ValueKey('bookshelf.return-to-top'),
+          visible: widget.enabled && _show,
+          bottom: NativeNavigationInset.scrollBottom(context) + 16,
+          onPressed: _returnToTop,
+        ),
+      ],
+    ),
   );
 }

@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/applied_filter_bar.dart';
 import 'package:zephyr/widgets/read_recovery_scope.dart';
 import 'package:zephyr/widgets/pull_refresh_feedback.dart';
 import 'package:auto_route/auto_route.dart';
@@ -8,6 +9,7 @@ import 'package:zephyr/page/source_shell/source_list_scroll_positions.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:zephyr/widgets/tab_reselect_scope.dart';
 import 'package:zephyr/page/comic_list/cubit/plugin_paged_comic_list_cubit.dart';
 import 'package:zephyr/page/comic_list/cubit/plugin_paged_comic_list_state.dart';
 import 'package:zephyr/page/comic_list/view/plugin_comic_grid_sliver.dart';
@@ -55,6 +57,7 @@ class PluginPagedComicListView extends StatelessWidget {
     this.loadedSearchExpanded = true,
     this.loadedChromeBuilder,
     this.focusedFacets = false,
+    this.tabReselectEnabled = false,
   });
 
   final String pluginId;
@@ -71,6 +74,7 @@ class PluginPagedComicListView extends StatelessWidget {
   final Set<String> blockedCategories;
   final PluginPageRequest? requestPage;
   final bool localResultTools, focusedFacets, publicLoadedFacets;
+  final bool tabReselectEnabled;
   final TextEditingController? loadedSearchController;
   final FocusNode? loadedSearchFocusNode;
   final bool loadedSearchExpanded;
@@ -94,9 +98,12 @@ class PluginPagedComicListView extends StatelessWidget {
           onActiveChanged: context
               .read<PluginPagedComicListCubit>()
               .setReadActive,
+          keepActiveWhileCovered: () =>
+              AppliedFilterBar.confirmationIsCovering(context),
           child: _PluginPagedComicListBody(
             pluginId: pluginId,
             fnPath: fnPath,
+            tabReselectEnabled: tabReselectEnabled,
             localResultTools: localResultTools,
             publicLoadedFacets: publicLoadedFacets,
             loadedSearchController: loadedSearchController,
@@ -126,6 +133,7 @@ class _PluginPagedComicListBody extends StatefulWidget {
   const _PluginPagedComicListBody({
     required this.pluginId,
     required this.fnPath,
+    required this.tabReselectEnabled,
     required this.localResultTools,
     required this.publicLoadedFacets,
     this.loadedSearchController,
@@ -143,7 +151,7 @@ class _PluginPagedComicListBody extends StatefulWidget {
     required this.blockedCategories,
   });
 
-  final bool shrinkWrap;
+  final bool shrinkWrap, tabReselectEnabled;
   final String pluginId, fnPath;
   final bool localResultTools, focusedFacets, publicLoadedFacets;
   final TextEditingController? loadedSearchController;
@@ -231,7 +239,8 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
     final visible =
         ReadRecoveryScope.activeOf(context) &&
         TickerMode.of(context) &&
-        ModalRoute.of(context)?.isCurrent != false &&
+        (ModalRoute.of(context)?.isCurrent != false ||
+            AppliedFilterBar.confirmationIsCovering(context)) &&
         (lifecycle == null || lifecycle == AppLifecycleState.resumed);
     final becameVisible = visible && !_wasVisible;
     _wasVisible = visible;
@@ -313,6 +322,14 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
         oldWidget.rankingLayout != widget.rankingLayout) {
       _scrollPositions.reset(afterLayout: true);
     }
+    if (widget.loadedSearchController != null &&
+        oldWidget.loadedSearchExpanded != widget.loadedSearchExpanded) {
+      if (widget.loadedSearchExpanded) {
+        _scrollPositions.beginSearch();
+      } else {
+        _scrollPositions.endSearch();
+      }
+    }
   }
 
   @override
@@ -364,7 +381,7 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
     final revision = context.select(
       (PluginPagedComicListCubit owner) => owner.privateDataRevision,
     );
-    return PullRefreshFeedback.indicator(
+    final content = PullRefreshFeedback.indicator(
       indicatorKey: _refreshIndicator,
       active: ReadRecoveryScope.activeOf(context),
       scope: (cubit, revision),
@@ -540,6 +557,15 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
           );
         },
       ),
+    );
+    return TabReselectListener(
+      enabled: widget.tabReselectEnabled && ReadRecoveryScope.activeOf(context),
+      onReselect: () {
+        if (!_scrollPositions.isChanging) {
+          TabReselectScope.scrollToStart(context, scrollController);
+        }
+      },
+      child: content,
     );
   }
 

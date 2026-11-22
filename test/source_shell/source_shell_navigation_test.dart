@@ -12,7 +12,6 @@ import 'package:zephyr/page/source_shell/view/source_shell_page.dart';
 import 'package:zephyr/page/source_shell/view/source_video_content.dart';
 import 'package:zephyr/page/video/api_video_library_page.dart';
 import 'package:zephyr/page/video/video_native_navigation.dart';
-import 'package:zephyr/page/video/video_search_page.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_navigation_bar.dart';
 
@@ -259,10 +258,19 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(SourceVideoContent), findsOneWidget);
       expect(find.byType(ApiVideoLibraryPage), findsOneWidget);
-      expect(find.byType(VideoSearchEntry), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('api-catalog.open-search')),
+        findsOneWidget,
+      );
       expect(find.byType(AppBar), findsOneWidget);
       expect(find.byType(NavigationBar), findsOneWidget);
-      expect(find.byType(VideoNativeNavigation), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byType(ApiVideoLibraryPage),
+          matching: find.byType(VideoNativeNavigation),
+        ),
+        findsNothing,
+      );
       final state = tester.state(find.byType(ApiVideoLibraryPage));
       await tester.tap(find.byType(SourceBackButton));
       await tester.pumpAndSettle();

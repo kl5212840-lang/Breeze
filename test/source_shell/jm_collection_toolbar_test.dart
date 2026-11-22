@@ -1,4 +1,5 @@
 import 'package:zephyr/widgets/source_choice_menu.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:material_ui/material_ui.dart';
@@ -10,14 +11,19 @@ import 'package:zephyr/page/search/widget/search_field_surface.dart';
 
 JmCollectionNavigationActions navigation() => JmCollectionNavigationActions(
   onSearch: () {},
-  options: const {'sort.new': '最新', 'view.grid': '网格'},
+  options: const {'view.grid': '网格'},
   groups: const [
-    ['sort.new'],
     ['view.grid'],
   ],
   onSelected: (_) {},
 );
 void main() {
+  const platforms = TargetPlatformVariant({
+    TargetPlatform.iOS,
+    TargetPlatform.android,
+  });
+  double controlExtent() =>
+      defaultTargetPlatform == TargetPlatform.android ? 48 : 44;
   setUp(() => SharedPreferences.setMockInitialValues({}));
   test(
     'JM server total stays stable while its first or later pages arrive',
@@ -133,19 +139,20 @@ void main() {
           ),
         ),
       );
-      final keys = ['jm-record.search', 'jm-record.sort', 'jm-record.more'];
+      final keys = ['jm-record.search', 'jm-record.more'];
       final before = {
-        for (final key in keys)
-          key: tester.getRect(find.byKey(ValueKey(key))),
+        for (final key in keys) key: tester.getRect(find.byKey(ValueKey(key))),
       };
       controller.publish(Object(), navigation());
       await tester.pumpAndSettle();
       for (final key in keys) {
         expect(tester.getRect(find.byKey(ValueKey(key))), before[key]);
-        expect(before[key]!.size, const Size(44, 44));
+        expect(before[key]!.size, Size.square(controlExtent()));
       }
+      expect(find.byKey(const ValueKey('jm-record.sort')), findsNothing);
       expect(tester.takeException(), isNull);
     },
+    variant: platforms,
   );
   testWidgets(
     'three JM record destinations use icon-only More and a stable trailing filter',
@@ -171,6 +178,12 @@ void main() {
                 appBar: AppBar(title: Text(title), actions: [navigation()]),
                 body: JmCollectionResultsRow(
                   countLabel: '267 部作品',
+                  sortAction: JmCollectionSortAction(
+                    key: const ValueKey('jm-collection.sort'),
+                    options: const {'new': '最新', 'old': '最早'},
+                    selected: 'new',
+                    onSelected: (_) {},
+                  ),
                   scope: title == '站点收藏'
                       ? SourceChoiceMenu<String>(
                           label: '默认',
@@ -194,28 +207,33 @@ void main() {
         final more = tester.widget<NativeVideoMenu>(
           find.byKey(const ValueKey('jm-collection.more')),
         );
+        final sortLocation = find.byKey(const ValueKey('jm-collection.sort'));
         final sort = tester.widget<NativeVideoMenu>(
-          find.byKey(const ValueKey('jm-collection.sort')),
+          find.descendant(
+            of: sortLocation,
+            matching: find.byType(NativeVideoMenu),
+          ),
         );
-        expect(sort.options, {'sort.new': '最新'});
+        expect(sort.options, {'new': '最新', 'old': '最早'});
         expect(more.options.keys, isNot(contains('sort.new')));
         expect(more.optionIcons.keys, containsAll(more.options.keys));
         expect(sort.optionIcons.keys, containsAll(sort.options.keys));
-        expect(
-          tester.getSize(find.byKey(const ValueKey('jm-collection.sort'))),
-          const Size(44, 44),
-        );
+        expect(tester.getSize(sortLocation), Size.square(controlExtent()));
         expect(more.label, isEmpty);
         expect(more.symbol, 'ellipsis');
         expect(more.selectionIndicator, isFalse);
         expect(
           tester.getSize(find.byKey(const ValueKey('jm-collection.more'))),
-          const Size(44, 44),
+          Size.square(controlExtent()),
         );
         final filter = tester.getRect(find.byKey(const ValueKey('filter')));
-        expect(filter.width, 44);
-        expect(filter.height, 44);
-        expect(filter.right, 308);
+        expect(filter.size, Size.square(controlExtent()));
+        expect(filter.right, 304);
+        expect(tester.getRect(sortLocation).right + 8, filter.left);
+        expect(
+          find.descendant(of: find.byType(AppBar), matching: sortLocation),
+          findsNothing,
+        );
         expect(
           find.descendant(
             of: find.byType(AppBar),
@@ -226,5 +244,6 @@ void main() {
         expect(tester.takeException(), isNull);
       }
     },
+    variant: platforms,
   );
 }

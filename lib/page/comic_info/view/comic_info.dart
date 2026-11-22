@@ -277,8 +277,10 @@ class _ComicInfoState extends State<_ComicInfo>
           bloc.state.status == GetComicInfoStatus.success,
     );
     final scaffold = Scaffold(
-      appBar: AppBar(
-        leading: SourceBackButton(onPressed: () => context.pop()),
+      appBar: sourceSecondaryAppBar(
+        context,
+        title: t.common.detail,
+        onBack: () => context.pop(),
         actions: [
           SourceMoreButton(
             source: widget.from,

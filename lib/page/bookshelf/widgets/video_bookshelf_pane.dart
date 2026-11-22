@@ -92,6 +92,7 @@ class VideoBookshelfPane extends StatefulWidget {
     this.refreshSignal = 0,
     this.isActive = true,
     this.showReturnToTop = false,
+    this.allowTabReselect = false,
     this.onSelectionChanged,
     this.dataSource,
   });
@@ -101,6 +102,7 @@ class VideoBookshelfPane extends StatefulWidget {
   final int refreshSignal;
   final bool isActive;
   final bool showReturnToTop;
+  final bool allowTabReselect;
   final ValueChanged<bool>? onSelectionChanged;
   final VideoBookshelfPaneDataSource? dataSource;
   @override
@@ -1133,6 +1135,12 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
   Widget build(BuildContext context) {
     super.build(context);
     final rows = _visible, byKey = {for (final row in rows) row.key: row};
+    final canReturnToTop =
+        widget.isActive &&
+        !_selecting &&
+        !_working &&
+        !_loading &&
+        rows.isNotEmpty;
     // A short placeholder must not claim or clamp the loaded list's offset.
     final storageKey = _rows == null
         ? '$_collectionKey.pending'
@@ -1160,13 +1168,11 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
                   rows,
                   BookshelfReturnToTop(
                     key: ValueKey(storageKey),
-                    enabled:
-                        widget.showReturnToTop &&
-                        widget.isActive &&
-                        !_selecting &&
-                        !_working &&
-                        !_loading &&
-                        rows.isNotEmpty,
+                    reselectEnabled:
+                        widget.allowTabReselect &&
+                        canReturnToTop &&
+                        _folder == null,
+                    enabled: widget.showReturnToTop && canReturnToTop,
                     child: PullRefreshFeedback.indicator(
                       notificationPredicate: (notice) =>
                           !_working && widget.isActive && notice.depth == 0,

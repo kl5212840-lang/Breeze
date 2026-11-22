@@ -11,10 +11,11 @@ abstract final class CollectionCommandIcons {
     symbol: 'square.grid.2x2',
   );
   static const list = (icon: Icons.view_list_outlined, symbol: 'list.bullet');
-  static const filter = (
-    icon: Icons.filter_list_rounded,
-    symbol: 'line.3.horizontal.decrease',
-  );
+  static ({IconData icon, String symbol}) toggleTarget(bool currentlyGrid) =>
+      currentlyGrid ? list : grid;
+  static const filterIcon = Icons.tune_rounded;
+  static const filterSymbol = 'slider.horizontal.3';
+  static const filter = (icon: filterIcon, symbol: filterSymbol);
 }
 
 /// Breeze's line icons are drawn on the same optical canvas. Native controls
@@ -30,7 +31,7 @@ class CollectionCommandGlyph extends StatelessWidget {
       Icons.swap_vert_rounded || Icons.sort_rounded || Icons.sort => 0,
       Icons.grid_view_outlined || Icons.grid_view_rounded => 1,
       Icons.view_list_outlined || Icons.view_list_rounded => 2,
-      Icons.filter_list_rounded || Icons.filter_list => 3,
+      Icons.tune_rounded => 3,
       _ => null,
     };
     if (command == null) return Icon(icon, size: size);
@@ -96,9 +97,11 @@ class _CommandPainter extends CustomPainter {
           line(9, y, 20, y);
         }
       case 3:
-        line(4, 6, 20, 6);
-        line(7, 12, 17, 12);
-        line(10, 18, 14, 18);
+        for (final (y, knob) in [(6.0, 8.0), (12.0, 16.0), (18.0, 11.0)]) {
+          line(4, y, knob - 2, y);
+          line(knob + 2, y, 20, y);
+          canvas.drawCircle(Offset(knob, y), 2, stroke);
+        }
     }
     canvas.restore();
   }

@@ -6,6 +6,7 @@ import 'package:zephyr/widgets/breeze_control_colors.dart';
 import 'package:zephyr/widgets/breeze_control_motion.dart';
 import 'package:zephyr/widgets/breeze_theme_colors.dart';
 import 'package:zephyr/widgets/collection_press_feedback.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/widgets/touch_hover_intent.dart';
 
 /// Breeze's fixed tab bar, with immediate selection at each destination.
@@ -184,55 +185,77 @@ class BreezeSectionSelector<T> extends StatelessWidget {
       if (enabled && value != selected) onSelected?.call(value);
     }
 
+    final horizontal = direction == Axis.horizontal;
+    const inset = CollectionToolbarMetrics.actionPlateInset;
     return RepaintBoundary(
-      child: Material(
-        color: track,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(3),
-          child: IntrinsicHeight(
-            child: _BreezeSelectionTrack(
-              ids: [for (final entry in entries) entry.key],
-              selectedIndex: entries.indexWhere(
-                (entry) => entry.key == selected,
-              ),
-              direction: direction,
-              onDragSelected:
-                  dragEnabled &&
-                      enabled &&
-                      onSelected != null &&
-                      direction == Axis.horizontal
-                  ? (index) => select(entries[index].key)
-                  : null,
-              inset: direction == Axis.horizontal
-                  ? const EdgeInsets.symmetric(horizontal: 1)
-                  : const EdgeInsets.symmetric(vertical: 1),
-              radius: 9,
-              color: selection.fill,
-              duration: BreezeControlMotion.segmentSelection(context),
-              builder: (progress) => Flex(
-                direction: direction,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (final (index, entry) in entries.indexed)
-                    Expanded(
-                      key: ValueKey(entry.key),
-                      child: _BreezeSegmentButton(
-                        label: entry.value,
-                        index: index,
-                        selected: entry.key == selected,
-                        selectedForeground: selection.foreground,
-                        progress: progress,
-                        onPressed: enabled && onSelected != null
-                            ? () => select(entry.key)
-                            : null,
-                      ),
-                    ),
-                ],
+      child: Stack(
+        children: [
+          Positioned.fill(
+            top: horizontal ? inset : 0,
+            bottom: horizontal ? inset : 0,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: track,
+                borderRadius: BorderRadius.circular(12),
               ),
             ),
           ),
-        ),
+          Material(
+            type: MaterialType.transparency,
+            child: Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: 3,
+                vertical: horizontal ? 0 : 3,
+              ),
+              child: IntrinsicHeight(
+                child: _BreezeSelectionTrack(
+                  ids: [for (final entry in entries) entry.key],
+                  selectedIndex: entries.indexWhere(
+                    (entry) => entry.key == selected,
+                  ),
+                  direction: direction,
+                  onDragSelected:
+                      dragEnabled &&
+                          enabled &&
+                          onSelected != null &&
+                          direction == Axis.horizontal
+                      ? (index) => select(entries[index].key)
+                      : null,
+                  inset: direction == Axis.horizontal
+                      ? const EdgeInsets.symmetric(
+                          horizontal: 1,
+                          vertical: inset + 3,
+                        )
+                      : const EdgeInsets.symmetric(vertical: 1),
+                  radius: 9,
+                  color: selection.fill,
+                  duration: BreezeControlMotion.segmentSelection(context),
+                  builder: (progress) => Flex(
+                    direction: direction,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final (index, entry) in entries.indexed)
+                        Expanded(
+                          key: ValueKey(entry.key),
+                          child: _BreezeSegmentButton(
+                            label: entry.value,
+                            compact: horizontal,
+                            index: index,
+                            selected: entry.key == selected,
+                            selectedForeground: selection.foreground,
+                            progress: progress,
+                            onPressed: enabled && onSelected != null
+                                ? () => select(entry.key)
+                                : null,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -241,6 +264,7 @@ class BreezeSectionSelector<T> extends StatelessWidget {
 class _BreezeSegmentButton extends StatelessWidget {
   const _BreezeSegmentButton({
     required this.label,
+    required this.compact,
     required this.index,
     required this.selected,
     required this.selectedForeground,
@@ -249,6 +273,7 @@ class _BreezeSegmentButton extends StatelessWidget {
   });
 
   final String label;
+  final bool compact;
   final int index;
   final bool selected;
   final Color selectedForeground;
@@ -268,12 +293,15 @@ class _BreezeSegmentButton extends StatelessWidget {
             onPressed: onPressed,
             style:
                 TextButton.styleFrom(
-                  minimumSize: const Size(44, 44),
+                  minimumSize: Size.square(
+                    CollectionToolbarMetrics.actionExtentOf(context),
+                  ),
                   visualDensity: VisualDensity.standard,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   animationDuration: Duration.zero,
-                  padding: const EdgeInsets.symmetric(
+                  padding: EdgeInsets.symmetric(
                     horizontal: 6,
-                    vertical: 8,
+                    vertical: compact ? 7 : 8,
                   ),
                   foregroundColor: colors.onSurfaceVariant,
                   backgroundColor: Colors.transparent,

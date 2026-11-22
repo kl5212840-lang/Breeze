@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -9,6 +10,7 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/search/widget/search_field_decoration.dart';
 import 'package:zephyr/page/search/widget/search_keyboard.dart';
 import 'package:zephyr/page/search/widget/search_tool_glyph.dart';
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 
 class SearchQueryField extends StatefulWidget {
   const SearchQueryField({
@@ -19,6 +21,9 @@ class SearchQueryField extends StatefulWidget {
     this.onChanged,
     this.onTap,
     this.onClear,
+    this.onClose,
+    this.closeKey,
+    this.enabled = true,
     this.autoExpand = false,
     this.hintText,
     this.semanticLabel,
@@ -35,7 +40,9 @@ class SearchQueryField extends StatefulWidget {
   final FutureOr<void> Function(String query)? onSubmitted;
   final ValueChanged<String>? onChanged;
   final VoidCallback? onTap;
-  final VoidCallback? onClear;
+  final VoidCallback? onClear, onClose;
+  final Key? closeKey;
+  final bool enabled;
   final bool autoExpand;
   final String? hintText;
   final String? semanticLabel;
@@ -552,10 +559,17 @@ class _SearchQueryFieldState extends State<SearchQueryField>
   @override
   Widget build(BuildContext context) {
     if (widget.inline) {
-      final leading = widget.leadingControl;
+      final toolbar = SearchToolbarScope.maybeOf(context);
+      final leading = widget.leadingControl ?? toolbar?.leadingControl;
+      final leadingWidth = widget.leadingControl == null
+          ? toolbar?.leadingWidth ?? widget.leadingControlWidth
+          : widget.leadingControlWidth;
+      final onClose = widget.onClose ?? toolbar?.onClose;
+      final closeKey = widget.closeKey ?? toolbar?.closeKey;
       final field = SearchFieldSurface(
         child: TextField(
           key: _targetKey,
+          enabled: widget.enabled,
           controller: _controller,
           focusNode: _focusNode,
           onTapAlwaysCalled: true,
@@ -571,7 +585,7 @@ class _SearchQueryFieldState extends State<SearchQueryField>
             context,
             hintText: widget.hintText ?? t.search.searchHint,
             prefixIcon: leading != null
-                ? SizedBox(width: widget.leadingControlWidth, height: 48)
+                ? SizedBox(width: leadingWidth + 6, height: 48)
                 : widget.showSubmit
                 ? ValueListenableBuilder(
                     valueListenable: _controller,
@@ -584,15 +598,25 @@ class _SearchQueryFieldState extends State<SearchQueryField>
                     ),
                   )
                 : null,
+            variableSuffixWidth: onClose != null,
             suffixIcon: ValueListenableBuilder(
               valueListenable: _controller,
-              builder: (_, value, _) => value.text.isEmpty
-                  ? const SizedBox(width: 44)
-                  : IconButton(
-                      tooltip: t.common.clear,
-                      onPressed: _clear,
-                      icon: const SearchToolGlyph(SearchTool.clear, size: 20),
-                    ),
+              builder: (_, value, _) {
+                final clear = IconButton(
+                  tooltip: t.common.clear,
+                  onPressed: widget.enabled ? _clear : null,
+                  icon: const SearchToolGlyph(SearchTool.clear, size: 20),
+                );
+                if (onClose == null) {
+                  return value.text.isEmpty ? const SizedBox(width: 44) : clear;
+                }
+                return SearchFieldCloseActions(
+                  hasText: value.text.isNotEmpty,
+                  onClear: widget.enabled ? _clear : null,
+                  onClose: onClose,
+                  closeKey: closeKey,
+                );
+              },
             ),
           ),
           onChanged: widget.onChanged,
@@ -608,13 +632,60 @@ class _SearchQueryFieldState extends State<SearchQueryField>
             start: 0,
             top: 0,
             bottom: 0,
-            width: widget.leadingControlWidth,
+            width: leadingWidth,
             child: Center(child: leading),
           ),
         ],
       );
     }
     return SizedBox(key: _targetKey, child: _buildCollapsedField(context));
+  }
+}
+
+/// Keep query clearing and closing the editor available while text is present.
+class SearchFieldCloseActions extends StatelessWidget {
+  const SearchFieldCloseActions({
+    super.key,
+    required this.hasText,
+    required this.onClear,
+    required this.onClose,
+    this.closeKey,
+    this.clearTooltip,
+    this.closeTooltip,
+  });
+
+  final bool hasText;
+  final VoidCallback? onClear;
+  final VoidCallback? onClose;
+  final Key? closeKey;
+  final String? clearTooltip, closeTooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final extent = CollectionToolbarMetrics.actionExtentOf(context);
+    final target = IconButton.styleFrom(
+      minimumSize: Size.square(extent),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (hasText)
+          IconButton(
+            style: target,
+            tooltip: clearTooltip ?? t.common.clear,
+            onPressed: onClear,
+            icon: const SearchToolGlyph(SearchTool.clear, size: 20),
+          ),
+        IconButton(
+          key: closeKey,
+          style: target,
+          tooltip: closeTooltip ?? t.common.close,
+          onPressed: onClose,
+          icon: const SearchToolGlyph(SearchTool.close, size: 22),
+        ),
+      ],
+    );
   }
 }
 

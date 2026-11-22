@@ -1587,6 +1587,17 @@ void main() {
         findsOneWidget,
       );
       expect(find.byTooltip(t.videoCommunity.share), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('video-landscape-title')),
+        findsOneWidget,
+      );
+      expect(find.text('Author name'), findsNothing);
+      expect(find.byTooltip(t.videoCommunity.comments), findsNothing);
+      final lock = find.byTooltip(t.videoPlayback.lockControls);
+      expect(tester.getCenter(lock).dx, greaterThan(700));
+      await tester.tap(lock);
+      await tester.pumpAndSettle();
+      expect(find.byTooltip(t.videoPlayback.unlockControls), findsOneWidget);
       expect(writes, ['like', 'savePlaylist', 'watchLater']);
       expect(platform.urls.length, 1);
       expect(tester.takeException(), isNull);

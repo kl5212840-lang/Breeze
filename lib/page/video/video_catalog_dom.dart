@@ -18,7 +18,33 @@ const String videoSearchDiscoveryScript = r'''
         url.pathname === '/watch' && /^[0-9]+$/.test(url.searchParams.get('v') || '') ? url.href : '';
     } catch (_) { return ''; }
   };
-  const videoSearchResults = (firstOnly = false) => {
+  // Hanime renders empty desktop/mobile pagers around a result row that can
+  // contain an outbound advert with the same inner classes as a video card.
+  // Once the HTML is parsed, the row doesn't need to wait for advert loads.
+  const adOnlySearchRow = (wrapper) => {
+    const section = wrapper.parentElement;
+    const mobile = wrapper.previousElementSibling;
+    const desktop = wrapper.nextElementSibling;
+    if (!section?.classList.contains('search-rows-wrapper') ||
+        section.getAttribute('aria-busy') === 'true' ||
+        !mobile?.classList.contains('mobile-search-pagination') ||
+        !desktop?.classList.contains('search-pagination') ||
+        [mobile, desktop].some(pager => pager.querySelector('ul.pagination, a[href], [aria-busy="true"]'))) {
+      return false;
+    }
+    return Array.from(wrapper.children).every(link => {
+      const card = link.firstElementChild;
+      if (link.tagName !== 'A' || link.getAttribute('target') !== '_blank' ||
+          link.children.length !== 1 ||
+          !card?.classList.contains('home-rows-videos-div') ||
+          !card.classList.contains('search-videos')) return false;
+      try {
+        const target = new URL(link.getAttribute('href'), location.href);
+        return /^https?:$/.test(target.protocol) && target.origin !== location.origin;
+      } catch (_) { return false; }
+    });
+  };
+  const videoSearchResults = (firstOnly = false, detached = false) => {
     const wrappers = Array.from(document.querySelectorAll('.home-rows-videos-wrapper')).slice(0, 160);
     const normal = Array.from(document.querySelectorAll(config.cards)).slice(0, 160);
     const compact = [];
@@ -41,13 +67,51 @@ const String videoSearchDiscoveryScript = r'''
     if (busy) return { roots, state: 'waiting' };
     if (roots.length || artists) return { roots, state: 'content' };
     // A header/search form says nothing about whether results have arrived.
+    if (document.readyState !== 'loading' && wrappers.length === 1 &&
+        document.querySelector('form[action$="/search"]') && adOnlySearchRow(wrappers[0])) {
+      return { roots, state: 'empty' };
+    }
     if (document.readyState !== 'complete') return { roots, state: 'waiting' };
-    const messages = Array.from((content || wrappers[0])?.querySelectorAll('p, .alert, .empty-state, .text-muted') || []).slice(0, 32);
+    const resultScope = content || wrappers[0];
+    const messages = Array.from(resultScope?.querySelectorAll(
+      'p, h1, h2, h3, h4, .alert, .empty-state, .text-muted') || []).slice(0, 48);
     const emptyMessage = messages.some(node => !node.closest('form, nav, .modal') &&
-      /^(?:(?:沒有|没有|未找到|找不到|無|无)(?:找到|任何|相關|相关|符合條件的|符合条件的)?(?:影片|视频|結果|结果|資料|资料)|no (?:results|videos|matches)(?: found)?)[。.!！\s]*$/i.test(node.textContent?.trim() || ''));
+      /^(?:(?:沒有|没有|未找到|找不到|無法找到|无法找到|沒有找到|没有找到|未能找到|無|无)(?:找到)?(?:任何)?(?:符合(?:搜尋|搜索|篩選|筛选)?(?:條件|条件)(?:的)?|(?:相關|相关))?(?:影片|視頻|视频|結果|结果|資料|资料)|(?:搜尋|搜索|篩選|筛选)(?:結果|结果)?(?:為|为)\s*0(?:\s*(?:部|筆|笔|個|个))?|no (?:results|videos|matches)(?: (?:were )?found)?(?: (?:matching|for) (?:your|the) (?:search|filters))?)[。.!！\s]*$/i.test(node.textContent?.trim() || ''));
     const emptyWrappers = wrappers.length > 0 && wrappers.every(node => !node.children.length && !node.textContent?.trim());
-    return { roots, state: emptyMessage || emptyWrappers ? 'empty' : content || wrappers.length ? 'unrecognized' : 'waiting' };
+    return { roots, state: emptyMessage || (!detached && emptyWrappers) ? 'empty' : content || wrappers.length ? 'unrecognized' : 'waiting' };
   };
+''';
+
+/// Confirm an empty multi-tag search in the same session without waiting for
+/// main-frame navigation or for the result page's subresources.
+String hanimeEmptySearchProbeScript(Uri page, Map<String, String> selectors) =>
+    '''
+(async () => {
+  const target = new URL(${jsonEncode(page.toString())});
+  if (target.origin !== globalThis.location.origin || target.origin !== 'https://hanime1.me' ||
+      target.pathname !== '/search' || target.username || target.password) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3400);
+  try {
+    const response = await fetch(target.href, {
+      credentials:'same-origin', redirect:'error', signal:controller.signal,
+    });
+    if (!response.ok || response.headers.get('cf-mitigated') === 'challenge') return null;
+    const html = await response.text();
+    if (html.length > 1500000) return null;
+    const location = new URL(response.url);
+    if (location.origin !== target.origin || location.pathname !== target.pathname) return null;
+    const document = new DOMParser().parseFromString(html, 'text/html');
+    if (document.querySelector('#challenge-form, #cf-challenge-running, #cf-error-details')) return null;
+    const config = ${jsonEncode(selectors)};
+    $videoSearchDiscoveryScript
+    return videoSearchResults(true, true).state === 'empty' ? location.href : null;
+  } catch (_) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+})()
 ''';
 
 const String videoCreatorExtractionScript = r'''
@@ -144,6 +208,7 @@ const String videoCardExtractionScript =
       title: titleNode?.getAttribute('title')?.trim() || root.getAttribute('title')?.trim() ||
         titleNode?.textContent?.trim() || image?.getAttribute('alt') || '',
       coverUrl: imageUrl(image),
+      portraitCover: Boolean(image?.closest('.video-card-inner')),
       subtitle: creatorNode?.textContent?.trim() || '',
       creatorUrl: creatorHref(creatorLink),
       creatorProfileUrl: (() => { const href = creatorHref(creatorLink); try { return /^\/user\/[0-9]+\/?$/.test(new URL(href).pathname) ? href : ''; } catch (_) { return ''; } })(),
@@ -160,6 +225,7 @@ const String videoCardExtractionScript =
 String videoCatalogSnapshotScript(
   Map<String, String> selectors, {
   bool includeFilters = false,
+  bool detached = false,
 }) =>
     '''
   (() => {
@@ -178,7 +244,7 @@ String videoCatalogSnapshotScript(
     }));
     const normal = Array.from(document.querySelectorAll(config.cards +
       ', .content-padding-new div[class^="video-item-container"], div[class^="user-tab-item-wrapper"], .playlist-video-list > div.user-tab-item-wrapper'));
-    const searchResult = location.pathname === '/search' ? videoSearchResults() : null;
+    const searchResult = location.pathname === '/search' ? videoSearchResults(${detached ? 'false, true' : ''}) : null;
     const cards = (searchResult?.roots || [...new Set(normal)].slice(0, 160)).map(card);
     const categoryLinks = Array.from(document.querySelectorAll('a[href*="genre="]')).slice(0, 60)
       .map((node) => ({ title: label(node), url: node.getAttribute('href') || '' }));
@@ -268,17 +334,54 @@ String videoCatalogSnapshotScript(
     // Subscription ownership comes from actual per-card links and a separate
     // authenticated directory, never DOM ancestry or filter names.
     const creatorGroups = [];
+    const subscriptionFilterUsers = location.pathname === '/subscriptions' ?
+      Array.from(new Set(Array.from(document.querySelectorAll('.subscriptions-artist-card[data-user-id]'),
+        node => node.getAttribute('data-user-id')).filter(id => /^[0-9]+\$/.test(id)))).slice(0, 500) : [];
     return JSON.stringify({ ${includeFilters ? 'searchFilters: filterSchema(document),' : ''} rows, cards, categoryLinks, genreOptions, searchPageReady, searchState, pagination, currentPage,
-      account, publicProfile, personalPageReady, playlists, artists, creatorGroups,
+      account, publicProfile, personalPageReady, playlists, artists, creatorGroups, subscriptionFilterUsers,
       pageTitle: document.querySelector('.playlist-title')?.textContent?.trim() || '',
       resultCardCount: searchResult ? searchResult.roots.length : normal.length });
   })()
+''';
+
+/// Read the next native list page without replacing the live WebView.
+String hanimeCatalogContinuationScript(
+  Uri page,
+  Map<String, String> selectors,
+) =>
+    '''
+(async () => {
+  const target = new URL(${jsonEncode(page.toString())});
+  if (target.origin !== globalThis.location.origin ||
+      target.origin !== 'https://hanime1.me' ||
+      target.username || target.password) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 7000);
+  try {
+    const response = await fetch(target.href, {
+      credentials:'same-origin', redirect:'error', signal:controller.signal,
+    });
+    if (!response.ok || response.headers.get('cf-mitigated') === 'challenge') return null;
+    const location = new URL(response.url);
+    if (location.href !== target.href) return null;
+    const html = await response.text();
+    if (html.length > 3000000) return null;
+    const document = new DOMParser().parseFromString(html, 'text/html');
+    if (document.querySelector('#challenge-form, #cf-challenge-running, #cf-error-details')) return null;
+    return ${videoCatalogSnapshotScript(selectors, detached: true)};
+  } catch (_) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+})()
 ''';
 
 String videoDetailSnapshotScript(
   Map<String, String> selectors, {
   String? documentExpression,
   String? locationExpression,
+  bool publicFactsOnly = false,
 }) =>
     '''
   (() => {
@@ -289,20 +392,6 @@ String videoDetailSnapshotScript(
     const video = document.querySelector(config.video);
     const titleElement = document.querySelector(config.detailTitle);
     const coverElement = document.querySelector(config.detailCover);
-    const artist = document.querySelector('#video-artist-name');
-    const uploader = document.querySelector('.video-description-panel a[href*="/user/"]');
-    const artistScope = artist?.parentElement?.parentElement?.parentElement;
-    const artistProfiles = Array.from(artistScope?.querySelectorAll('a[href]') || []).filter(node => {
-      const target = creatorHref(node);
-      return target && new URL(target).pathname.startsWith('/user/') && !!node.querySelector('img');
-    });
-    const artistProfile = artistProfiles.length === 1 ? artistProfiles[0] : null;
-    const artistProfileUrl = creatorHref(artistProfile);
-    const subscribeForms = Array.from(document.forms).filter(form => {
-      try { const u = new URL(form.getAttribute('action') || '', location.href); return u.origin === location.origin && u.pathname === '/subscribe' &&
-        form.querySelectorAll('[name="subscribe-artist-id"]').length === 1; } catch (_) { return false; }
-    });
-    const artistId = subscribeForms.length === 1 ? subscribeForms[0].querySelector('[name="subscribe-artist-id"]')?.value || '' : '';
     const mainTitle = consistentMetric(Array.from(document.querySelectorAll('#shareBtn-title')).slice(0, 4).map(metricText));
     const primaryStats = Array.from(document.querySelectorAll('.video-details-wrapper.hidden-sm.hidden-md.hidden-lg.hidden-xl, .video-description-panel > .hidden-xs')).slice(0, 4)
       .flatMap(node => Array.from(node.childNodes).filter(child => child.nodeType === 3).map(child => child.textContent.replace(/\\s+/g, ' ').trim()).filter(Boolean));
@@ -326,6 +415,44 @@ String videoDetailSnapshotScript(
       });
       return values.length && values.every(value => value != null && value === values[0]) ? values[0] : null;
     };
+    const detailTags = Array.from(document.querySelectorAll(config.detailTags)).slice(0, 80).flatMap(item => {
+      const label = item.textContent?.trim() || '';
+      try {
+        const href = new URL(item.getAttribute('href') || '', location.href);
+        if (href.origin !== location.origin || href.username || href.password ||
+            href.pathname !== '/search') return [];
+        const values = href.searchParams.getAll('tags[]');
+        if (values.length !== 1 || !values[0].trim()) return [];
+        const value = values[0].trim();
+        const base = label.replace(/\\s*[(（][0-9]+[)）]\$/, '').trim();
+        return [{label: base !== label ? value : label || value, value, href:href.href}];
+      } catch (_) { return []; }
+    });
+    const publicFacts = {
+      viewCountRaw, viewCount:metricCount(viewCountRaw, 'views'), publishedDate,
+      ratingPercentRaw, ratingPercent:metricPercent(ratingPercentRaw), totalVotes:exactMetricInteger(totalVotesRaw),
+      positiveVotes:voteCount('likes-count'), negativeVotes:voteCount('unlikes-count'),
+      tagsObserved: location.hostname === 'hanime1.me' ? detailTags.length > 0 : Boolean(document.querySelector('.video-tags-wrapper')),
+      tags: location.hostname === 'hanime1.me'
+        ? Array.from(new Set(detailTags.map(tag => tag.label))).slice(0, 40)
+        : Array.from(document.querySelectorAll(config.detailTags)).slice(0,40)
+            .map(item => item.textContent?.trim() || '').filter(tag => tag && !['add', 'remove'].includes(tag.toLowerCase()))
+    };
+    ${publicFactsOnly ? 'return mainTitle || video ? publicFacts : null;' : ''}
+    const artist = document.querySelector('#video-artist-name');
+    const uploader = document.querySelector('.video-description-panel a[href*="/user/"]');
+    const artistScope = artist?.parentElement?.parentElement?.parentElement;
+    const artistProfiles = Array.from(artistScope?.querySelectorAll('a[href]') || []).filter(node => {
+      const target = creatorHref(node);
+      return target && new URL(target).pathname.startsWith('/user/') && !!node.querySelector('img');
+    });
+    const artistProfile = artistProfiles.length === 1 ? artistProfiles[0] : null;
+    const artistProfileUrl = creatorHref(artistProfile);
+    const subscribeForms = Array.from(document.forms).filter(form => {
+      try { const u = new URL(form.getAttribute('action') || '', location.href); return u.origin === location.origin && u.pathname === '/subscribe' &&
+        form.querySelectorAll('[name="subscribe-artist-id"]').length === 1; } catch (_) { return false; }
+    });
+    const artistId = subscribeForms.length === 1 ? subscribeForms[0].querySelector('[name="subscribe-artist-id"]')?.value || '' : '';
     const detailCard = element => {
       const parent = element.parentElement;
       return card(element.matches('.related-video-margin-bottom') && parent &&
@@ -335,9 +462,7 @@ String videoDetailSnapshotScript(
       documentUrl: location.href,
       title: mainTitle || titleElement?.getAttribute('content') || document.title,
       coverUrl: video?.getAttribute('poster') || coverElement?.getAttribute('content') || '',
-      viewCountRaw, viewCount:metricCount(viewCountRaw, 'views'), publishedDate,
-      ratingPercentRaw, ratingPercent:metricPercent(ratingPercentRaw), totalVotes:exactMetricInteger(totalVotesRaw),
-      positiveVotes:voteCount('likes-count'), negativeVotes:voteCount('unlikes-count'),
+      ...publicFacts,
       creator: { role:'artist', name: artist?.textContent?.trim() || '',
         profileUrl:artistProfileUrl, artistId,
         profileId:artistProfileUrl ? new URL(artistProfileUrl).pathname.split('/')[2] : '',
@@ -347,10 +472,9 @@ String videoDetailSnapshotScript(
         profileUrl:creatorHref(uploader), avatarUrl:avatarImageUrl(uploader),
         identityEvidence:'watch-description-uploader-anchor', url:creatorHref(uploader) },
       description: document.querySelector(config.detailDescription)?.textContent?.trim() || '',
-      tagFilters: Array.from(document.querySelectorAll(config.detailTags)).slice(0, 80)
-        .map(item => ({label: item.textContent?.trim() || '', href: item.getAttribute('href') || ''})),
-      tags: Array.from(document.querySelectorAll(config.detailTags)).slice(0, 40)
-        .map(item => item.textContent?.trim() || '').filter(tag => tag && !['add', 'remove'].includes(tag.toLowerCase())),
+      tagFilters: location.hostname === 'hanime1.me' ? detailTags
+        : Array.from(document.querySelectorAll(config.detailTags)).slice(0,80)
+            .map(item => ({label:item.textContent?.trim() || '', href:item.getAttribute('href') || ''})),
       episodes: Array.from(document.querySelectorAll(config.episodes)).slice(0, 100).map(card),
       related: Array.from(document.querySelectorAll(config.related)).slice(0, 80).map(detailCard),
       video: video && {
@@ -362,4 +486,38 @@ String videoDetailSnapshotScript(
       }
     });
   })()
+''';
+
+/// Read an ordinary, same-origin work document. The detached document never
+/// executes scripts. The bridge receives only allowlisted public fields.
+String hanimePublicFactsScript(Uri page, Map<String, String> selectors) =>
+    '''
+(async () => {
+  const breezePublicWork = ${jsonEncode(page.toString())};
+  const target = new URL(breezePublicWork);
+  if (target.origin !== location.origin || target.origin !== 'https://hanime1.me' ||
+      target.username || target.password || !/^\\/watch\\?v=[0-9]+\$/.test(target.pathname + target.search)) {
+    return {status:'unavailable'};
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5500);
+  try {
+    const response = await fetch(target.href, {
+      credentials:'same-origin', redirect:'error', signal:controller.signal,
+    });
+    if ([401, 403, 429, 503].includes(response.status)) return {status:'blocked'};
+    if ([404, 410].includes(response.status)) return {status:'missing'};
+    if (!response.ok || response.url !== target.href) return {status:'unavailable'};
+    const html = await response.text();
+    if (html.length > 3000000) return {status:'unavailable'};
+    const detailDocument = new DOMParser().parseFromString(html, 'text/html');
+    if (detailDocument.querySelector('#challenge-form, #cf-challenge-running')) return {status:'blocked'};
+    const facts = ${videoDetailSnapshotScript(selectors, documentExpression: 'detailDocument', locationExpression: 'target', publicFactsOnly: true)};
+    return facts ? {status:'ok', url:target.href, facts} : {status:'unavailable'};
+  } catch (_) {
+    return {status:'unavailable'};
+  } finally {
+    clearTimeout(timer);
+  }
+})()
 ''';

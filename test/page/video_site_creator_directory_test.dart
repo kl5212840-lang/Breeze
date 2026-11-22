@@ -25,7 +25,7 @@ void main() {
       );
       expect(result.exitCode, 0, reason: result.stderr.toString());
       final report = jsonDecode(result.stdout as String) as Map;
-      expect(report['checks'], 10);
+      expect(report['checks'], 12);
       expect(report['networkRequests'], 0);
       expect(report['realNavigationVerified'], isFalse);
     },
@@ -81,6 +81,25 @@ void main() {
       );
       await resolver.resolve(creator: creator);
       resolver.dispose();
+      final shelf = VideoSubscriptionShelfReader(
+        home: home,
+        evaluate: (script) async {
+          if (script.contains('const breezeCreatorDirectoryStart'))
+            scripts['shelf'] = script;
+          return {'status': 'unsupported'};
+        },
+      );
+      await shelf.read(
+        owner: home.resolve('/user/7'),
+        profileId: '99',
+        selectors: {
+          'cards': '.content-padding-new .horizontal-card',
+          'cardLink': 'a.video-link',
+          'cardTitle': '.title',
+          'cardImage': 'img',
+        },
+      );
+      shelf.dispose();
       final result = await Process.run(
         'node',
         ['-e', _transportCheck, dependency],
@@ -90,7 +109,7 @@ void main() {
       );
       expect(result.exitCode, 0, reason: result.stderr.toString());
       final report = jsonDecode(result.stdout as String) as Map;
-      expect(report['checks'], 11);
+      expect(report['checks'], 16);
       expect(report['realRequests'], 0);
       expect(report['realNavigationVerified'], isFalse);
     },
@@ -290,6 +309,22 @@ check(()=>{ const x=read(identity+row('12'));assert.equal(x.recognized,true);ass
 check(()=>{const x=read(identity+row('12')+row('13'));assert.equal(x.creators.length,2);assert.notEqual(x.creators[0].entityKey,x.creators[1].entityKey);});
 check(()=>{const x=read(identity+row('12')+row('12'));assert.equal(x.creators.length,1);});
 check(()=>{const x=read(identity+row('12','<a href="/user/99"><img src="https://img.test/profile.jpg"></a>'));assert.equal(x.creators[0].profileUrl,root+'/user/99');assert.equal(x.creators[0].profileId,'99');assert.equal(x.creators[0].artistId,'12');});
+check(() => {
+  const profileOnly = row('12').replace('/search?query=Fixture', '/user/99');
+  const entry = read(identity + profileOnly);
+  assert.equal(entry.recognized, true);
+  assert.equal(entry.creators.length, 1);
+  const author = entry.creators[0];
+  assert.equal(author.entityKey, 'artist:12');
+  assert.equal(author.profileUrl, root + '/user/99');
+  assert.equal(author.nameSearchUrl, null);
+});
+check(() => {
+  const ambiguous = row('12', '<a class="overlay" href="/user/88"></a>').replace('/search?query=Fixture', '/user/99');
+  assert.equal(read(identity + ambiguous).creators.length, 0);
+  const unrelated = row('12', '<a href="/user/88">other</a>').replace('/search?query=Fixture', 'https://outside.test/user/99');
+  assert.equal(read(identity + unrelated).creators.length, 0);
+});
 check(()=>{const x=read(identity+row('12','<a href="/user/99"><img></a><a href="/user/98"><img></a>'));assert.equal(x.creators[0].profileUrl,null);});
 check(()=>{const x=read(identity+'<div class="subscriptions-artist-card artist-option"><img src="https://img.test/a.jpg"><div class="search-artist-title">Fixture</div></div>');assert.equal(x.creators.length,0);assert.equal(x.recognized,false);});
 check(()=>{const x=read(identity+row('12').replace('value="12"','value="13"'));assert.equal(x.creators.length,0);assert.equal(x.recognized,false);});
@@ -309,6 +344,9 @@ const identity = id=>`<a id="user-modal-trigger" href="/user/${id}"></a>`;
 const row = `<div id="playlist-show-video-wrapper-12"><div><div class="multiple-link-wrapper home-artist-card"><a class="overlay" href="/search?query=Fixture"></a><img style="object-fit:cover" src="https://img.test/a.jpg"><div class="search-artist-title">Fixture</div></div><form class="playitem-delete-form" action="/subscribe/artist/delete"><input name="_token" value="synthetic-secret"><input type="hidden" name="playlist-show-video-id" value="12"></form></div></div>`;
 const watch = (id='12', extra='')=> identity('7')+`<form id="video-subscribe-form" action="/subscribe"><input type="hidden" name="subscribe-artist-id" value="${id}"></form><div><a href="/user/99"><img src="https://img.test/avatar.jpg"></a>${extra}<div><div><a id="video-artist-name" href="/search?query=Fixture&genre=Example">Fixture</a></div></div></div>`;
 const search = identity('7')+'<div class="content-padding-new"><a class="overlay" href="/watch?v=3"></a></div>';
+const filter = (id, method='get') => '<form id="hentai-form" method="'+method+'" action="/subscriptions"><input id="artist_id" type="hidden" name="artist_id" value="'+id+'"></form>';
+const choices = '<div class="subscriptions-artist-card" data-user-id="99">Shared name</div><div class="subscriptions-artist-card" data-user-id="98">Shared name</div>';
+const page = '<div class="content-padding-new"><div class="horizontal-card"><a class="video-link" href="/watch?v=31"></a><div class="title">Filtered work</div></div></div>';
 const run = async (script, provide, initial=identity('7')) => {
  const {document}=parseHTML('<html><body>'+initial+'</body></html>');
  const window={};
@@ -335,6 +373,17 @@ await check(async()=>{const e=await run(scripts.search,n=>n===1?search:watch('13
 await check(async()=>{const e=await run(scripts.search,()=>identity('7')+'<a href="/watch?v=3">unrelated navigation</a>');assert.equal(e.result.status,'unsupported');assert.equal(e.calls.length,1);});
 await check(async()=>{const e=await run(scripts.direct,()=>watch('12','<a href="/user/98"><img></a>'));assert.equal(e.result.status,'unsupported');});
 await check(async()=>{const e=await run(scripts.read,()=>identity('7')+row);assert.equal(vm.runInNewContext(scripts.poll,e.env).status,'ok');e.document.querySelector('#user-modal-trigger').setAttribute('href','/user/8');assert.equal(vm.runInNewContext(scripts.poll,e.env).status,'changed');});
+const listing = identity('7')+filter('')+choices;
+await check(async()=>{
+  const e=await run(scripts.shelf,()=>identity('7')+filter('99')+page,listing);
+  assert.equal(e.result.status,'ok'); assert.equal(e.result.value.profileId,'99');
+  assert.equal(e.result.value.cards[0].href,origin+'/watch?v=31');
+  assert.equal(e.calls.length,1); assert.equal(e.calls[0].url,origin+'/subscriptions?artist_id=99');
+});
+await check(async()=>{const e=await run(scripts.shelf,()=>identity('7')+filter('98')+page,listing);assert.equal(e.result.status,'unsupported');});
+await check(async()=>{const e=await run(scripts.shelf,()=>identity('8')+filter('99')+page,listing);assert.equal(e.result.status,'changed');});
+await check(async()=>{const e=await run(scripts.shelf,()=>page,identity('7')+filter('','post')+choices);assert.equal(e.result.status,'unsupported');assert.equal(e.calls.length,0);});
+await check(async()=>{const e=await run(scripts.shelf,()=>page,identity('7')+filter('')+choices.replace('data-user-id="99"', 'data-user-id="12"'));assert.equal(e.result.status,'unsupported');assert.equal(e.calls.length,0);});
 process.stdout.write(JSON.stringify({checks,realRequests:0,realNavigationVerified:false}));
 })().catch(error=>{console.error(error);process.exitCode=1;});
 ''';

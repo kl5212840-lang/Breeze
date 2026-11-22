@@ -1,6 +1,8 @@
 import 'package:auto_route/auto_route.dart' show AutoRoutePage;
 import 'package:zephyr/page/video/video_page_route.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/service/read_recovery.dart';
 import 'package:zephyr/widgets/read_recovery_scope.dart';
 import 'package:zephyr/widgets/pull_refresh_feedback.dart';
@@ -1354,7 +1356,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
           if (widget.notificationsFunction.isNotEmpty)
             _notificationsEntry(colors),
           SizedBox(height: _brandHero ? 18 : 8),
-          _cloudPreview(),
+          if (!_accountSignedOut) _cloudPreview(),
           _sectionLabel(t.videoSource.localHistory),
           if (widget.videoModules.isNotEmpty)
             Padding(
@@ -1468,12 +1470,11 @@ class _ProfileBodyState extends State<_ProfileBody> {
             origin,
             SourceExperienceBoundary(
               source: widget.source,
-              builder: (_) => Scaffold(
-                appBar: AppBar(
-                  leading: SourceBackButton(
-                    onPressed: () => navigator.maybePop(),
-                  ),
-                  title: Text(t.sourceNotices.title),
+              builder: (context) => Scaffold(
+                appBar: sourceSecondaryAppBar(
+                  context,
+                  title: t.sourceNotices.title,
+                  onBack: () => navigator.maybePop(),
                 ),
                 body: SafeArea(
                   top: false,
@@ -1535,41 +1536,57 @@ class _ProfileBodyState extends State<_ProfileBody> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 0, 12, 8),
+                  padding: CollectionToolbarMetrics.contentPaddingOf(
+                    sheetContext,
+                    bottom: 8,
+                  ),
                   child: Row(
                     children: [
                       Expanded(
                         child: Text(
-                          notice.displayTitle,
+                          t.common.detail,
                           style: Theme.of(sheetContext).textTheme.titleMedium,
                         ),
                       ),
-                      IconButton(
+                      SourceChromeIconButton(
                         tooltip: t.common.close,
                         onPressed: () => Navigator.pop(sheetContext),
-                        icon: const Icon(Icons.close),
+                        icon: Icons.close_rounded,
+                        symbol: 'xmark',
+                        bare: true,
                       ),
                     ],
                   ),
                 ),
-                if (notice.time.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-                    child: Text(
-                      formatSourceNoticeTime(notice.time),
-                      style: Theme.of(sheetContext).textTheme.bodySmall,
-                    ),
-                  ),
                 const Divider(height: 1),
                 Flexible(
                   child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(20),
+                    padding: CollectionToolbarMetrics.contentPaddingOf(
+                      sheetContext,
+                      top: 16,
+                      bottom: 20,
+                    ),
                     child: SelectionArea(
-                      child: Text(
-                        notice.content.isEmpty
-                            ? t.oldHome.empty
-                            : notice.content,
-                        style: Theme.of(sheetContext).textTheme.bodyLarge,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        spacing: 12,
+                        children: [
+                          Text(
+                            notice.displayTitle,
+                            style: Theme.of(sheetContext).textTheme.titleMedium,
+                          ),
+                          if (notice.time.isNotEmpty)
+                            Text(
+                              formatSourceNoticeTime(notice.time),
+                              style: Theme.of(sheetContext).textTheme.bodySmall,
+                            ),
+                          Text(
+                            notice.content.isEmpty
+                                ? t.oldHome.empty
+                                : notice.content,
+                            style: Theme.of(sheetContext).textTheme.bodyLarge,
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -2635,18 +2652,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
           canPop: !saving,
           child: AlertDialog(
             scrollable: true,
-            title: Row(
-              children: [
-                Expanded(child: Text(t.sourceProfile.editBio)),
-                IconButton(
-                  tooltip: t.common.close,
-                  icon: const Icon(Icons.close),
-                  onPressed: saving
-                      ? null
-                      : () => Navigator.pop(dialogContext, false),
-                ),
-              ],
-            ),
+            title: Text(t.sourceProfile.editBio),
             content: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2809,10 +2815,13 @@ class _SourceComicRecordsDestinationState
         settings: const RouteSettings(
           name: 'breeze.source.comic.record-folders',
         ),
-        builder: (_) => BlocProvider.value(
+        builder: (routeContext) => BlocProvider.value(
           value: search,
           child: Scaffold(
-            appBar: AppBar(title: Text(sourceProfileRecordLabel(widget.mode))),
+            appBar: sourceSecondaryAppBar(
+              routeContext,
+              title: sourceProfileRecordLabel(widget.mode),
+            ),
             body: FolderShelfPage(mode: widget.mode),
           ),
         ),

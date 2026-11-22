@@ -15,6 +15,7 @@ import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/page/video/api_video_collection.dart';
 import 'package:zephyr/page/video/api_video_favorites.dart';
 import 'package:zephyr/page/video/source_profile_video_preview.dart';
+import 'package:zephyr/page/video/source_video_list_header.dart';
 import 'package:zephyr/page/video/omofun_account_page.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/service/collection_view_preferences.dart';
@@ -289,6 +290,9 @@ void main() {
     WidgetTester tester,
     String source, {
     String module = '',
+    int itemCount = 0,
+    double textScale = 1,
+    String query = '',
   }) async {
     final home = Uri.parse('https://www.omofuna.com/');
     final calls = <String>[];
@@ -320,11 +324,20 @@ void main() {
             },
           };
         }
-        calls.add('${args['typeId']}');
+        final type = '${args['typeId']}';
+        calls.add(type);
         return {
           'data': {
-            'items': [],
-            'total': 0,
+            'items': [
+              for (var index = 0; index < itemCount; index++)
+                {
+                  'id': 'feed$index',
+                  'title': '$type item $index',
+                  'detailUrl':
+                      '${home}anime/${index.toString().padLeft(16, '0')}.html',
+                },
+            ],
+            'total': itemCount,
             'page': 1,
             'pageCount': 1,
             'categories': [
@@ -374,11 +387,18 @@ void main() {
       AppInterfaceStyleScope(
         style: style,
         child: MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(textScale)),
+            child: child!,
+          ),
           home: ApiVideoLibraryPage(
             key: ValueKey('$source|$module'),
             repository: repository,
             title: 'OmoFun',
             siteClient: client,
+            initialQuery: query,
           ),
         ),
       ),
@@ -387,27 +407,119 @@ void main() {
     return (calls: calls, repository: repository);
   }
 
-  testWidgets('phone Discover leaves room for search and keeps view in More', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(440, 956);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    await mountRecommendations(tester, 'recommendation-phone-toolbar');
-    expect(find.byKey(const ValueKey('api-library.view-mode')), findsNothing);
-    final field = tester.getRect(find.byType(SearchFieldSurface));
-    final more = find.byType(SourceMoreButton);
-    final target = tester.getRect(more);
-    expect(field.width, greaterThanOrEqualTo(180));
-    expect(field.center.dy, closeTo(target.center.dy, .01));
-    expect(target.size, const Size(44, 44));
-    expect(
-      tester.widget<SourceMoreButton>(more).actions.map((e) => e.id),
-      contains('display'),
-    );
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    'phone Discover and search results keep list controls below navigation',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final more = find.byType(SourceMoreButton);
+      final tools = find.byType(SourceVideoResultsToolbar);
+      final filter = find.byKey(const ValueKey('api-library.filters'));
+      final view = find.byKey(const ValueKey('api-library.view-mode'));
+      for (final (width, scale, query) in [
+        (440.0, 1.0, ''),
+        (320.0, 2.0, '合成测试'),
+      ]) {
+        tester.view.physicalSize = Size(width, 956);
+        await mountRecommendations(
+          tester,
+          'recommendation-phone-toolbar-$width',
+          itemCount: 36,
+          textScale: scale,
+          query: query,
+        );
+        expect(find.byType(SearchFieldSurface), findsNothing);
+        final target = tester.getRect(more);
+        if (query.isEmpty) {
+          final search = tester.getRect(
+            find.byKey(const ValueKey('api-catalog.open-search')),
+          );
+          expect(search.width, greaterThanOrEqualTo(44));
+          expect(search.right, lessThanOrEqualTo(target.left));
+          expect(search.center.dy, closeTo(target.center.dy, .01));
+          expect(
+            find.descendant(of: tools, matching: find.byType(ChoiceChip)),
+            findsWidgets,
+          );
+        } else {
+          expect(
+            find.descendant(
+              of: tools,
+              matching: find.text(t.videoLibrary.results(count: 36)),
+            ),
+            findsOneWidget,
+          );
+        }
+        expect(
+          find.descendant(of: tools, matching: filter.hitTestable()),
+          findsOneWidget,
+        );
+        expect(
+          find.descendant(of: tools, matching: view.hitTestable()),
+          findsOneWidget,
+        );
+        final filterRect = tester.getRect(filter);
+        final viewRect = tester.getRect(view);
+        expect(viewRect.top, greaterThanOrEqualTo(target.bottom));
+        expect(viewRect.right, closeTo(target.right, .01));
+        expect(filterRect.center.dy, closeTo(viewRect.center.dy, .01));
+        expect(filterRect.right, lessThan(viewRect.left));
+        expect(
+          tester.widget<SourceMoreButton>(more).actions.map((e) => e.id),
+          isNot(contains('display')),
+        );
+        await tester.drag(
+          find.byType(CustomScrollView).first,
+          const Offset(0, -280),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.getRect(view), viewRect);
+        expect(tester.takeException(), isNull);
+      }
+    },
+  );
+
+  testWidgets(
+    'reselecting Omo recommendation tabs scrolls only the visible result list',
+    (tester) async {
+      final fixture = await mountRecommendations(
+        tester,
+        'recommendation-reselect',
+        itemCount: 36,
+      );
+      ScrollPosition position() => tester
+          .state<ScrollableState>(
+            find
+                .descendant(
+                  of: find.byType(ApiVideoCollection),
+                  matching: find.byType(Scrollable),
+                )
+                .first,
+          )
+          .position;
+      position().jumpTo(310);
+      await tester.pumpAndSettle();
+      for (final label in [
+        t.videoSource.weeklyTab,
+        t.videoSource.rankingTab,
+        t.videoSource.topicsTab,
+      ]) {
+        await _selectBottom(tester, label);
+        position().jumpTo(350);
+        await tester.pumpAndSettle();
+        expect(position().pixels, 350);
+        final reads = List.of(fixture.calls);
+        await _selectBottom(tester, label);
+        expect(position().pixels, 0);
+        expect(fixture.calls, reads);
+      }
+      await _selectBottom(tester, t.videoSource.discover);
+      expect(position().pixels, 310);
+      await _selectBottom(tester, t.videoSource.discover);
+      expect(position().pixels, 0);
+    },
+  );
 
   testWidgets(
     'recommendation tabs keep their categories and Discover filters separate',

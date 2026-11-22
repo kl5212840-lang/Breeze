@@ -264,7 +264,7 @@ class ComicSimplifyEntry extends StatelessWidget {
 
         return Semantics(
           selected: selectionMode ? isSelected : null,
-          child: CollectionPressFeedback(
+          child: CollectionPressFeedback.surface(
             enabled:
                 onLongPressOverride != null || type != ComicEntryType.normal,
             child: GestureDetector(

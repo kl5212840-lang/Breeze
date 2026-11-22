@@ -293,19 +293,10 @@ void main() {
                 ),
               );
               expect(readTime, findsOneWidget);
-              expect(
-                find.descendant(of: reading, matching: readTime),
-                findsNothing,
-                reason:
-                    'secondary times span the full card instead of stretching only its right column',
-              );
               final checkTime = find.descendant(
                 of: check,
-                matching: find.byWidgetPredicate(
-                  (w) =>
-                      w is Text &&
-                      w.data?.startsWith(t.comicFollow.checkTime(time: '')) ==
-                          true,
+                matching: find.textContaining(
+                  t.comicFollow.checkTime(time: ''),
                 ),
               );
               expect(checkTime, findsOneWidget);
@@ -435,18 +426,12 @@ void main() {
               await tester.pumpAndSettle();
               expect(find.text('保持清晰的追更长标题与章节状态信息'), findsOneWidget);
               expect(
-                tester.getRect(times).top,
-                greaterThanOrEqualTo(tester.getRect(cover).bottom),
+                tester.getRect(readTime).top,
+                greaterThanOrEqualTo(tester.getRect(reading).bottom),
               );
               expect(
                 tester.getRect(readTime).left,
-                closeTo(tester.getRect(cover).left, 1),
-              );
-              expect(
-                tester.getRect(readTime).top,
-                closeTo(tester.getRect(checkTime).top, 1),
-                reason:
-                    'normal-size timestamps share one full-width metadata row',
+                closeTo(tester.getRect(reading).left, 1),
               );
               expect(tester.getSize(cover), const Size(94.5, 141.75));
               await writeUiPreview(
@@ -495,8 +480,28 @@ void main() {
                   }
                   expect(
                     footer.top,
-                    greaterThanOrEqualTo(chapters.bottom + 7.9),
+                    greaterThanOrEqualTo(tester.getRect(reading).bottom + 7.9),
                   );
+                  expect(footer.left, closeTo(chapters.left, .1));
+                  expect(footer.right, lessThanOrEqualTo(chapters.right + .1));
+                  expect(
+                    footer.bottom,
+                    lessThanOrEqualTo(chapters.bottom + .1),
+                  );
+                  final readBounds = tester.getRect(readTime);
+                  final checkBounds = tester.getRect(checkTime);
+                  if ((readBounds.top - checkBounds.top).abs() < 1) {
+                    expect(
+                      checkBounds.left - readBounds.right,
+                      closeTo(12, .1),
+                    );
+                  } else {
+                    expect(
+                      checkBounds.top,
+                      greaterThanOrEqualTo(readBounds.bottom),
+                    );
+                    expect(checkBounds.left, closeTo(readBounds.left, .1));
+                  }
                   expect(card.right, greaterThanOrEqualTo(identity.right));
                   expect(
                     tester.element(pictureBuilder).read<PictureBloc>(),
@@ -514,15 +519,15 @@ void main() {
               tester.view.physicalSize = const Size(320, 900);
               textScale.value = 1.7;
               await tester.pumpAndSettle();
-              final checkRight = tester.getRect(checkTime).right;
               repository.hasHistory = false;
               await cubit.refreshHistories();
               await tester.pumpAndSettle();
               expect(readTime, findsNothing);
               expect(
-                tester.getRect(checkTime).right,
-                closeTo(checkRight, .01),
-                reason: 'missing read time preserves the right-hand check slot',
+                tester.getRect(checkTime).left,
+                closeTo(tester.getRect(reading).left, .01),
+                reason:
+                    'the check timestamp starts the row without reading history',
               );
               repository.hasHistory = true;
               await cubit.refreshHistories();
@@ -551,22 +556,20 @@ void main() {
                 expect(failedCheck, findsOneWidget);
                 expect(
                   tester.getRect(failedCheck).left,
-                  closeTo(tester.getRect(cover).left, 1),
+                  closeTo(tester.getRect(reading).left, 1),
                 );
-                if (width == 320) {
+                final activity = tester.getRect(check);
+                final readBounds = tester.getRect(readTime);
+                final attemptBounds = tester.getRect(attemptedTime);
+                if (readBounds.width + attemptBounds.width + 12 >
+                    activity.width) {
                   expect(
-                    tester.getRect(attemptedTime).top,
-                    greaterThanOrEqualTo(tester.getRect(readTime).bottom),
+                    attemptBounds.top,
+                    greaterThanOrEqualTo(readBounds.bottom),
                   );
-                  expect(
-                    tester.getRect(attemptedTime).left,
-                    closeTo(tester.getRect(readTime).left, 1),
-                  );
+                  expect(attemptBounds.left, closeTo(readBounds.left, 1));
                 } else {
-                  expect(
-                    tester.getRect(attemptedTime).top,
-                    closeTo(tester.getRect(readTime).top, 1),
-                  );
+                  expect(attemptBounds.top, closeTo(readBounds.top, 1));
                 }
                 expect(
                   tester.getSize(retryCheck).height,

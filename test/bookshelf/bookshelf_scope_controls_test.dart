@@ -222,8 +222,14 @@ void main() {
         final all = find.byKey(const ValueKey('bookshelf.source.'));
         final last = find.byKey(const ValueKey('bookshelf.source.$lastId'));
         final before = tester.getRect(source);
+        Rect plateFrame(Rect frame) => Rect.fromLTRB(
+          frame.left,
+          frame.top + 4,
+          frame.right,
+          frame.bottom - 4,
+        );
         final initialPlate = paintedPlates().single;
-        expect(initialPlate, tester.getRect(all));
+        expect(initialPlate, plateFrame(tester.getRect(all)));
         expect(before.width, greaterThanOrEqualTo(44));
         expect(before.height, greaterThanOrEqualTo(44));
         final pressPlate = find
@@ -300,7 +306,7 @@ void main() {
         await mount();
         await tester.tap(source);
         await tester.pump();
-        expect(paintedPlates().single, before);
+        expect(paintedPlates().single, plateFrame(before));
         expect(labelColor(source), activeColor);
         final scroll = tester.state<ScrollableState>(find.byType(Scrollable));
         await tester.drag(
@@ -314,7 +320,7 @@ void main() {
         await tester.pump();
         expect(selection.value, [lastId]);
         final originalLast = tester.getRect(last);
-        expect(paintedPlates().single, originalLast);
+        expect(paintedPlates().single, plateFrame(originalLast));
 
         await savePluginDisplayName(lastId, 'Alias', expectedName: '');
         for (var i = 0; i < 50 && find.text('Alias').evaluate().isEmpty; i++) {
@@ -325,14 +331,17 @@ void main() {
         }
         expect(find.text('Alias'), findsOneWidget);
         expect(tester.getSize(last).width, lessThan(originalLast.width));
-        expect(paintedPlates().single, tester.getRect(last));
+        expect(paintedPlates().single, plateFrame(tester.getRect(last)));
         await savePluginDisplayName(lastId, '', expectedName: 'Alias');
 
         selection.value = ['a', lastId];
         await tester.pump();
         expect(
           paintedPlates(),
-          unorderedEquals([tester.getRect(source), tester.getRect(last)]),
+          unorderedEquals([
+            plateFrame(tester.getRect(source)),
+            plateFrame(tester.getRect(last)),
+          ]),
         );
         selection.value = [lastId];
         await tester.pump();
@@ -363,7 +372,7 @@ void main() {
         await tester.sendKeyEvent(LogicalKeyboardKey.enter);
         await tester.pump();
         expect(selection.value, isEmpty);
-        expect(paintedPlates().single, tester.getRect(all));
+        expect(paintedPlates().single, plateFrame(tester.getRect(all)));
         expect(tester.takeException(), isNull);
       },
     );

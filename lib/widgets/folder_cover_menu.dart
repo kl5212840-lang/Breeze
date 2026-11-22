@@ -7,6 +7,7 @@ import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/service/local_appearance_images.dart';
 import 'package:zephyr/service/folder_cover_service.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/widgets/local_appearance_image_picker.dart';
 import 'package:zephyr/widgets/toast.dart';
 
@@ -44,7 +45,7 @@ class FolderCoverMenu extends StatelessWidget {
           secondary: true,
           overArtwork: onCover,
           bare: true,
-          width: 44,
+          width: CollectionToolbarMetrics.actionExtentOf(context),
           hostPresentation: true,
           options: {
             for (final entry in extraOptions.entries)

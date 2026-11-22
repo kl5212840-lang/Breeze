@@ -12,6 +12,7 @@ import 'package:zephyr/page/video/omofun_favorites_page.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/page/video/video_interaction.dart';
 import 'package:zephyr/widgets/collection_cover_privacy.dart';
+import 'package:zephyr/widgets/collection_cover_settings.dart';
 
 Future<void> chooseMore(WidgetTester tester, String label) async {
   await tester.tap(find.byKey(const ValueKey('omo-favorites.more')));
@@ -608,7 +609,7 @@ void main() {
     final more = tester.widget<NativeVideoMenu>(
       find.byKey(const ValueKey('omo-favorites.more')),
     );
-    expect(more.options.keys, ['manage']);
+    expect(more.options.keys, ['manage', collectionCoverSettingsAction]);
     expect(find.byKey(const ValueKey('omo-favorites.sort')), findsOneWidget);
     expect(find.byKey(const ValueKey('omo-favorites.view')), findsOneWidget);
     expect(find.text(t.common.retry), findsNothing);
@@ -749,6 +750,17 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+    final search = find.byKey(const ValueKey('omo-favorites.search-toggle'));
+    await tester.tap(search);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'No matching work');
+    await tester.pumpAndSettle();
+    expect(find.byType(ApiVideoPoster), findsNothing);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text(t.videoSource.siteFavorites), findsOneWidget);
+    expect(find.byType(ApiVideoPoster), findsOneWidget);
     await chooseMore(tester, t.videoSource.importLocal);
     final cancel = find.byTooltip(t.common.cancel).hitTestable();
     expect(cancel, findsOneWidget);

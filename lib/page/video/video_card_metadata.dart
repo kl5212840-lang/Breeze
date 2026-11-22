@@ -57,10 +57,11 @@ class VideoCardFacts extends StatelessWidget {
     this.creator = '',
     this.fallback = '',
     this.showCreator = true,
+    this.showStatistics = true,
   });
   final VideoPublicMetadata metadata;
   final String creator, fallback;
-  final bool showCreator;
+  final bool showCreator, showStatistics;
   @override
   Widget build(BuildContext context) {
     final byline = metadata.byline(
@@ -95,7 +96,7 @@ class VideoCardFacts extends StatelessWidget {
               style: style,
             ),
           ),
-        if (statistics.isNotEmpty)
+        if (showStatistics && statistics.isNotEmpty)
           Tooltip(
             message: statistics,
             child: Text(

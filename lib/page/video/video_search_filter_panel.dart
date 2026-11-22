@@ -1,3 +1,5 @@
+import 'package:zephyr/widgets/applied_filter_bar.dart';
+import 'package:zephyr/page/bookshelf/widgets/facet_filter_body.dart';
 import 'package:zephyr/widgets/native_material_surface.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/page/search/widget/search_field_decoration.dart';
@@ -33,6 +35,8 @@ class VideoSearchFilterPanel extends StatefulWidget {
     required this.readSchema,
     this.source,
     this.initialSection = VideoFilterSection.genre,
+    this.sections = VideoFilterSection.values,
+    this.structuredLayout = false,
     this.onSchema,
     this.onCancelRead,
   });
@@ -40,6 +44,8 @@ class VideoSearchFilterPanel extends StatefulWidget {
   final VideoSearchFilters initial;
   final VideoFilterSchema schema;
   final VideoFilterSection initialSection;
+  final List<VideoFilterSection> sections;
+  final bool structuredLayout;
   final Future<VideoSiteResult<VideoFilterSchema>> Function() readSchema;
   final ValueChanged<VideoFilterSchema>? onSchema;
   final VoidCallback? onCancelRead;
@@ -56,6 +62,8 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
   Duration? _tabDuration;
   late final _query = TextEditingController(text: _draft.query);
   final _tagSearch = TextEditingController();
+  final _structuredScroll = ScrollController();
+  final _structuredOffsets = <int, double>{};
   late final _year = TextEditingController();
   int? _month;
   bool _customDate = false, _loading = false;
@@ -96,12 +104,14 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
     final duration = VideoMotion.feedback(context);
     if (_tabDuration == duration) return;
     final index = _tabDuration == null
-        ? widget.initialSection.index
+        ? widget.sections
+              .indexOf(widget.initialSection)
+              .clamp(0, widget.sections.length - 1)
         : _tabs.index;
     if (_tabDuration != null) _tabs.dispose();
     _tabDuration = duration;
     _tabs = TabController(
-      length: VideoFilterSection.values.length,
+      length: widget.sections.length,
       vsync: this,
       initialIndex: index,
       animationDuration: duration,
@@ -116,6 +126,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
     _tabs.dispose();
     _query.dispose();
     _tagSearch.dispose();
+    _structuredScroll.dispose();
     _year.dispose();
     super.dispose();
   }
@@ -126,9 +137,30 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
 
   void _tabChanged() {
     if (_visibleSection != _tabs.index) {
-      setState(() => _visibleSection = _tabs.index);
+      final previous = _visibleSection, next = _tabs.index;
+      if (widget.structuredLayout &&
+          previous != null &&
+          _structuredScroll.hasClients) {
+        _structuredOffsets[previous] = _structuredScroll.offset;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted ||
+              _tabs.index != next ||
+              !_structuredScroll.hasClients) {
+            return;
+          }
+          final position = _structuredScroll.position;
+          if (!position.hasContentDimensions) return;
+          _structuredScroll.jumpTo(
+            (_structuredOffsets[next] ?? 0).clamp(
+              position.minScrollExtent,
+              position.maxScrollExtent,
+            ),
+          );
+        });
+      }
+      setState(() => _visibleSection = next);
     }
-    if (_tabs.index == VideoFilterSection.tags.index &&
+    if (widget.sections[_tabs.index] == VideoFilterSection.tags &&
         _schema.tagGroups.isEmpty &&
         !_loading &&
         _error == null) {
@@ -181,6 +213,8 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
   });
 
   static const _customDateChoice = '__breeze_custom_date__';
+  String _localized(BuildContext context, String zh, String en) =>
+      Localizations.localeOf(context).languageCode == 'zh' ? zh : en;
 
   Widget _single(BuildContext context, VideoFilterSection section) {
     final value = switch (section) {
@@ -216,7 +250,43 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (choices.isEmpty) Text(t.videoFilters.optionsUnavailable),
-        if (section == VideoFilterSection.date)
+        if (widget.structuredLayout) ...[
+          if (section == VideoFilterSection.date && _schema.customDate)
+            Text(
+              _localized(context, '常用日期', 'Date presets'),
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+          if (section == VideoFilterSection.date && _schema.customDate)
+            const SizedBox(height: 10),
+          SelectionChoiceGrid<String>(
+            options: {
+              ...ordered,
+              if (value.isNotEmpty &&
+                  !customDate &&
+                  !ordered.containsKey(value))
+                value: value,
+            },
+            value: customDate ? _customDateChoice : value,
+            maxColumns: 3,
+            optionKey: (value) => ValueKey(
+              'video-filter.${section.name}.${value.isEmpty ? 'all' : value}',
+            ),
+            onChanged: (value) => _set(section, value),
+          ),
+          if (section == VideoFilterSection.date && _schema.customDate)
+            Padding(
+              padding: const EdgeInsets.only(top: 20),
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: OutlinedButton.icon(
+                  key: const ValueKey('hanime-filter.custom-date'),
+                  icon: const Icon(Icons.calendar_month_outlined, size: 20),
+                  label: Text(t.videoFilters.yearMonth),
+                  onPressed: customDate ? null : _setMonth,
+                ),
+              ),
+            ),
+        ] else if (section == VideoFilterSection.date)
           CompactFilterChoice(
             keyPrefix: 'video-filter.date',
             label: videoFilterTitle(section),
@@ -294,7 +364,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
             ),
           ],
         ],
-        if (value.isNotEmpty)
+        if (value.isNotEmpty && !widget.structuredLayout)
           Padding(
             padding: const EdgeInsets.only(top: 16),
             child: TextButton(
@@ -361,6 +431,338 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
             ?.order('tags', choices, (choice) => choice.value)
             .toList() ??
         choices;
+  }
+
+  Widget _structuredTagControls(BuildContext context) {
+    final groups = _schema.tagGroups;
+    final group = groups.containsKey(_group) ? _group : groups.keys.firstOrNull;
+    final count = _draft.tags.length;
+    final browsingGroups = !_selectedOnly && _tagSearch.text.trim().isEmpty;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _tagSearchField(context),
+          SingleChildScrollView(
+            key: const PageStorageKey('hanime.filter.groups'),
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              spacing: 6,
+              children: [
+                FilterChip(
+                  key: const ValueKey('video-filter.selected'),
+                  label: Text(t.videoFilters.selected(count: count)),
+                  selected: _selectedOnly,
+                  showCheckmark: false,
+                  onSelected: count == 0 && !_selectedOnly
+                      ? null
+                      : (value) {
+                          _tagSearch.clear();
+                          setState(() => _selectedOnly = value);
+                        },
+                ),
+                for (final name in groups.keys)
+                  ChoiceChip(
+                    label: Text(name),
+                    selected: browsingGroups && group == name,
+                    showCheckmark: false,
+                    chipAnimationStyle: _chipMotion(context),
+                    onSelected: (_) {
+                      _tagSearch.clear();
+                      FocusScope.of(context).unfocus();
+                      setState(() {
+                        _selectedOnly = false;
+                        _group = name;
+                      });
+                      if (_structuredScroll.hasClients)
+                        _structuredScroll.jumpTo(0);
+                    },
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _structuredTagOptions(BuildContext context, double width) {
+    final choices = _tagChoices();
+    final favorites = _favorites;
+    final known = _selectedOnly
+        ? {
+            for (final items in _schema.tagGroups.values)
+              for (final item in items) item.value,
+          }
+        : null;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final scale = MediaQuery.textScalerOf(context).scale(14);
+    final columns = width - 32 >= 320 * scale / 14 ? 2 : 1;
+    return SliverMainAxisGroup(
+      slivers: [
+        if (_loading)
+          const SliverToBoxAdapter(
+            child: LinearProgressIndicator(minHeight: 2),
+          ),
+        if (_error != null && choices.isEmpty)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Semantics(liveRegion: true, child: Text(_error!)),
+                  TextButton(onPressed: _read, child: Text(t.common.retry)),
+                ],
+              ),
+            ),
+          )
+        else if (choices.isEmpty && !_loading)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+              child: Text(
+                _selectedOnly
+                    ? t.videoFilters.noSelection
+                    : t.videoFilters.noMatchingTags,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+            ),
+          )
+        else
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+            sliver: SliverGrid.builder(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: columns,
+                mainAxisExtent: (scale * 2.5 + 12).clamp(48.0, double.infinity),
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+              ),
+              itemCount: choices.length,
+              itemBuilder: (context, index) {
+                final choice = choices[index];
+                final selected = _draft.tags.contains(choice.value);
+                return Material(
+                  color: selected
+                      ? colors.secondaryContainer
+                      : colors.surfaceContainerLow,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(
+                      color: selected ? colors.primary : colors.outlineVariant,
+                    ),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: Semantics(
+                          selected: selected,
+                          button: true,
+                          child: InkWell(
+                            key: ValueKey('hanime-filter.tag.${choice.value}'),
+                            onTap: () => setState(
+                              () => _draft = selected
+                                  ? _draft.removeTag(choice.value)
+                                  : _draft.change(
+                                      VideoFilterSection.tags,
+                                      choice.value,
+                                    ),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsetsDirectional.only(
+                                start: 10,
+                                end: 4,
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    selected
+                                        ? Icons.check_circle_rounded
+                                        : Icons.circle_outlined,
+                                    size: 17,
+                                    color: selected
+                                        ? colors.primary
+                                        : colors.onSurfaceVariant,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      choice.label,
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.labelLarge
+                                          ?.copyWith(
+                                            color: selected
+                                                ? colors.onSecondaryContainer
+                                                : colors.onSurface,
+                                          ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (favorites != null &&
+                          (known?.contains(choice.value) ?? true))
+                        favorites.star(
+                          context,
+                          'tags',
+                          choice.value,
+                          choice.label,
+                        ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _structuredPanel(BuildContext context, double width) {
+    final section = widget.sections[_tabs.index];
+    final colors = Theme.of(context).colorScheme;
+    final scrollTabs =
+        width - 32 < 295 * MediaQuery.textScalerOf(context).scale(14) / 14;
+    double labelWidth(String label, TextStyle? style) {
+      final painter = TextPainter(
+        text: TextSpan(text: label, style: style),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+      )..layout();
+      final width = painter.width;
+      painter.dispose();
+      return width;
+    }
+
+    final theme = Theme.of(context);
+    final match = Wrap(
+      key: const ValueKey('hanime-filter.match-mode'),
+      spacing: 4,
+      children: _tagMatchChoices(context, showCheckmark: false).toList(),
+    );
+    final fits =
+        width >=
+        24 +
+            44 +
+            62 +
+            labelWidth(t.videoFilters.title, theme.textTheme.titleMedium) +
+            labelWidth(
+              t.videoFilters.clearFilters,
+              theme.textTheme.labelLarge,
+            ) +
+            labelWidth(t.videoFilters.allMatch, theme.textTheme.labelLarge) +
+            labelWidth(t.videoFilters.anyMatch, theme.textTheme.labelLarge);
+    return SafeArea(
+      top: false,
+      child: FacetFilterBody(
+        scrollKey: const ValueKey('hanime.filter.options'),
+        maxHeight: 680,
+        scrollController: _structuredScroll,
+        header: Padding(
+          padding: const EdgeInsetsDirectional.only(start: 16, end: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    t.videoFilters.title,
+                    style: theme.textTheme.titleMedium,
+                  ),
+                  if (fits) ...[
+                    const SizedBox(width: 6),
+                    Expanded(child: match),
+                  ] else
+                    const Spacer(),
+                  TextButton(
+                    key: const ValueKey('video-filter.reset'),
+                    onPressed: _reset,
+                    style: TextButton.styleFrom(
+                      minimumSize: const Size(0, 44),
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                    ),
+                    child: Text(t.videoFilters.clearFilters),
+                  ),
+                  IconButton(
+                    tooltip: t.common.cancel,
+                    onPressed: _cancel,
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              if (!fits) match,
+            ],
+          ),
+        ),
+        controls: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: colors.surfaceContainerLow,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: TabBar(
+                  controller: _tabs,
+                  isScrollable: scrollTabs,
+                  tabAlignment: scrollTabs
+                      ? TabAlignment.start
+                      : TabAlignment.fill,
+                  dividerColor: Colors.transparent,
+                  indicatorSize: TabBarIndicatorSize.tab,
+                  indicatorPadding: const EdgeInsets.all(3),
+                  indicator: BoxDecoration(
+                    color: colors.primaryContainer,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  labelColor: colors.onPrimaryContainer,
+                  tabs: [
+                    for (final value in widget.sections)
+                      Tab(text: videoFilterTitle(value)),
+                  ],
+                ),
+              ),
+            ),
+            if (section == VideoFilterSection.tags)
+              _structuredTagControls(context),
+          ],
+        ),
+        options: section == VideoFilterSection.tags
+            ? _structuredTagOptions(context, width)
+            : SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: _single(context, section),
+                ),
+              ),
+        footer: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          child: SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              key: const ValueKey('video-filter.apply'),
+              style: FilledButton.styleFrom(minimumSize: const Size(44, 44)),
+              onPressed: _invalidYear ? null : _apply,
+              child: Text(t.videoFilters.apply),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   ({double extent, double width, int rows}) _tagGrid(
@@ -697,12 +1099,16 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
     );
   }
 
-  Iterable<Widget> _tagMatchChoices(BuildContext context) sync* {
+  Iterable<Widget> _tagMatchChoices(
+    BuildContext context, {
+    bool showCheckmark = true,
+  }) sync* {
     // Match mode is a fixed control, distinct from collectible tag values.
     for (final any in [false, true]) {
       yield ChoiceChip(
         label: Text(any ? t.videoFilters.anyMatch : t.videoFilters.allMatch),
         selected: _draft.anyTag == any,
+        showCheckmark: showCheckmark,
         onSelected: (_) =>
             setState(() => _draft = _draft.copyWith(anyTag: any, page: 1)),
         chipAnimationStyle: _chipMotion(context),
@@ -749,19 +1155,43 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
   );
 
   void _reset({bool all = false}) => setState(() {
-    _draft = all ? const VideoSearchFilters() : _draft.clearFilters();
-    if (all) _query.clear();
+    final resetQuery =
+        all && widget.sections.contains(VideoFilterSection.query);
+    _draft = resetQuery
+        ? const VideoSearchFilters()
+        : _draft.copyWith(
+            genre: widget.sections.contains(VideoFilterSection.genre)
+                ? ''
+                : _draft.genre,
+            sort: widget.sections.contains(VideoFilterSection.sort)
+                ? ''
+                : _draft.sort,
+            date: '',
+            duration: '',
+            tags: const [],
+            anyTag: false,
+            completed: false,
+            page: 1,
+          );
+    if (resetQuery) _query.clear();
     _tagSearch.clear();
     _year.clear();
     _month = null;
     _customDate = false;
+    if (widget.structuredLayout) _selectedOnly = false;
   });
 
   void _apply() {
     FocusScope.of(context).unfocus();
-    Navigator.of(
-      context,
-    ).pop(_draft.copyWith(query: _query.text.trim(), page: 1));
+    Navigator.of(context).pop(
+      _draft.copyWith(
+        query: _query.text.trim(),
+        anyTag:
+            _draft.anyTag &&
+            (!widget.structuredLayout || _draft.tags.length > 1),
+        page: 1,
+      ),
+    );
   }
 
   void _cancel() {
@@ -777,15 +1207,21 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
       child: LayoutBuilder(
         builder: (context, constraints) {
           final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
-          final tags = _tabs.index == VideoFilterSection.tags.index;
+          if (widget.structuredLayout) {
+            return SizedBox(
+              key: const ValueKey('video-filter.panel'),
+              height: constraints.maxHeight.clamp(0.0, 680.0),
+              child: _structuredPanel(context, constraints.maxWidth),
+            );
+          }
+          final section = widget.sections[_tabs.index];
+          final tags = section == VideoFilterSection.tags;
           final grid = _tagGrid(context, constraints.maxWidth, _tagChoices());
-          // Small groups should not stretch to a nearly full-screen sheet. Large
-          // groups still get the available viewport and retain lazy grid scrolling.
           final desired = tags
               ? 340 * scale + grid.rows * (grid.extent + 8) + 40
-              : (_customDate && _tabs.index == VideoFilterSection.date.index
-                        ? 640.0
-                        : 420.0) *
+              : (_customDate && section == VideoFilterSection.date
+                        ? 640
+                        : 420) *
                     scale;
           return SizedBox(
             key: const ValueKey('video-filter.panel'),
@@ -807,12 +1243,13 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                                 ? PopupMenuButton<VideoFilterSection>(
                                     tooltip: t.videoFilters.allFilters,
                                     onSelected: (section) {
-                                      _tabs.index = section.index;
+                                      _tabs.index = widget.sections.indexOf(
+                                        section,
+                                      );
                                       setState(() {});
                                     },
                                     itemBuilder: (_) => [
-                                      for (final section
-                                          in VideoFilterSection.values)
+                                      for (final section in widget.sections)
                                         PopupMenuItem(
                                           value: section,
                                           child: Text(
@@ -827,8 +1264,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                                       ),
                                       child: Text(
                                         videoFilterTitle(
-                                          VideoFilterSection.values[_tabs
-                                              .index],
+                                          widget.sections[_tabs.index],
                                         ),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
@@ -854,7 +1290,9 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                               onPressed: () => FocusScope.of(context).unfocus(),
                               icon: const Icon(Icons.keyboard_hide_rounded),
                             )
-                          else
+                          else if (widget.sections.contains(
+                            VideoFilterSection.query,
+                          ))
                             Tooltip(
                               message: t.videoFilters.clearAll,
                               child: TextButton(
@@ -881,7 +1319,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                           context,
                         ).textTheme.labelLarge,
                         tabs: [
-                          for (final section in VideoFilterSection.values)
+                          for (final section in widget.sections)
                             Tab(text: videoFilterTitle(section)),
                         ],
                       ),
@@ -897,7 +1335,7 @@ class _VideoSearchFilterPanelState extends State<VideoSearchFilterPanel>
                               : null,
                           controller: _tabs,
                           children: [
-                            for (final section in VideoFilterSection.values)
+                            for (final section in widget.sections)
                               section == VideoFilterSection.tags
                                   ? _tags()
                                   : ListView(
@@ -1173,27 +1611,37 @@ class VideoActiveFilters extends StatelessWidget {
     required this.filters,
     required this.schema,
     required this.onChanged,
+    this.sections = VideoFilterSection.values,
+    this.onEdit,
   });
   final VideoSearchFilters filters;
   final VideoFilterSchema schema;
   final ValueChanged<VideoSearchFilters> onChanged;
+  final List<VideoFilterSection> sections;
+  final ValueChanged<VideoFilterSection>? onEdit;
 
   @override
   Widget build(BuildContext context) {
-    final entries = <({String label, VideoSearchFilters next})>[];
+    final entries =
+        <
+          ({
+            String id,
+            String label,
+            VideoSearchFilters next,
+            VideoFilterSection section,
+          })
+        >[];
     for (final section in [
-      VideoFilterSection.genre,
       VideoFilterSection.sort,
       VideoFilterSection.date,
       VideoFilterSection.duration,
     ]) {
       final value = switch (section) {
-        VideoFilterSection.genre => filters.genre,
         VideoFilterSection.sort => filters.sort,
         VideoFilterSection.date => filters.date,
         _ => filters.duration,
       };
-      if (value.isEmpty) continue;
+      if (value.isEmpty || !sections.contains(section)) continue;
       final label =
           schema.options[section.name]
               ?.where((choice) => choice.value == value)
@@ -1201,50 +1649,71 @@ class VideoActiveFilters extends StatelessWidget {
               ?.label ??
           value;
       entries.add((
-        label: '${videoFilterTitle(section)}: $label',
+        id: section.name,
+        label: section == VideoFilterSection.duration
+            ? label
+            : '${videoFilterTitle(section)}: $label',
         next: filters.change(section, ''),
+        section: section,
       ));
     }
-    entries.addAll(
-      filters.tags.map((tag) => (label: tag, next: filters.removeTag(tag))),
-    );
-    if (filters.author) {
+    if (sections.contains(VideoFilterSection.tags)) {
+      entries.addAll(
+        filters.tags.map(
+          (tag) => (
+            id: 'tag.$tag',
+            label: tag,
+            next: filters
+                .removeTag(tag)
+                .copyWith(anyTag: filters.anyTag && filters.tags.length > 2),
+            section: VideoFilterSection.tags,
+          ),
+        ),
+      );
+    }
+    if (filters.author && sections.contains(VideoFilterSection.query)) {
       entries.add((
+        id: 'author',
         label: t.videoFilters.authors,
         next: filters.copyWith(author: false, page: 1),
+        section: VideoFilterSection.query,
       ));
     }
-    if (filters.anyTag) {
+    if (filters.anyTag && sections.contains(VideoFilterSection.tags)) {
       entries.add((
+        id: 'any',
         label: t.videoFilters.anyMatch,
         next: filters.copyWith(anyTag: false, page: 1),
+        section: VideoFilterSection.tags,
       ));
     }
-    if (entries.isEmpty) return const SizedBox.shrink();
-    return Semantics(
-      label: t.videoFilters.active,
-      child: SizedBox(
-        height: MediaQuery.textScalerOf(context).scale(14) * 1.5 + 28,
-        child: ListView.builder(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          itemCount: entries.length + 1,
-          itemBuilder: (_, index) => Padding(
-            padding: const EdgeInsetsDirectional.only(end: 8),
-            child: Center(
-              child: index == 0
-                  ? TextButton(
-                      onPressed: () => onChanged(filters.clearFilters()),
-                      child: Text(t.videoFilters.clearFilters),
-                    )
-                  : InputChip(
-                      label: Text(entries[index - 1].label),
-                      chipAnimationStyle: VideoMotion.chip(context),
-                      deleteButtonTooltipMessage: t.videoFilters.removeFilter,
-                      onDeleted: () => onChanged(entries[index - 1].next),
-                    ),
-            ),
+    return AppliedFilterBar(
+      entries: [
+        for (final entry in entries)
+          (
+            id: entry.id,
+            label: entry.label,
+            remove: () => onChanged(entry.next),
+            edit: onEdit == null ? null : () => onEdit!(entry.section),
           ),
+      ],
+      onClearAll: () => onChanged(
+        filters.copyWith(
+          tags: sections.contains(VideoFilterSection.tags)
+              ? const []
+              : filters.tags,
+          anyTag: sections.contains(VideoFilterSection.tags)
+              ? false
+              : filters.anyTag,
+          sort: sections.contains(VideoFilterSection.sort) ? '' : filters.sort,
+          date: sections.contains(VideoFilterSection.date) ? '' : filters.date,
+          duration: sections.contains(VideoFilterSection.duration)
+              ? ''
+              : filters.duration,
+          author: sections.contains(VideoFilterSection.query)
+              ? false
+              : filters.author,
+          page: 1,
         ),
       ),
     );

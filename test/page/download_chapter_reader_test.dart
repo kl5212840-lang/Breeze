@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +14,7 @@ import 'package:zephyr/page/comic_read/method/get_local_info.dart';
 import 'package:zephyr/page/donwload_task/service/download_chapter_reader.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/page/donwload_task/service/download_center_resources.dart';
+import 'package:zephyr/service/download/download_asset_store.dart';
 import 'package:zephyr/service/reader/comic_chapter_reading_progress.dart';
 import 'package:zephyr/type/enum.dart';
 
@@ -272,7 +274,7 @@ void main() {
   );
 
   test(
-    'offline docs remove network fallback for missing images and keep the original record intact',
+    'missing downloads never fall back to same-named online cache',
     () async {
       await useIsolatedDownloadFixture();
       final saved = record();
@@ -286,6 +288,18 @@ void main() {
       );
       final doc = chapter.docs.single;
       expect(doc.fileServer, isEmpty);
+      final cacheFile = File(
+        await DownloadAssetStore(
+          from: saved.source,
+          cartoonId: saved.comicId,
+          chapterId: chapter.epId,
+          storageChapterId: doc.storageChapterId,
+          path: doc.path,
+          pictureType: PictureType.page,
+        ).canonicalCachePath(),
+      );
+      await cacheFile.parent.create(recursive: true);
+      await cacheFile.writeAsString('online cache');
       await expectLater(
         getCachePicture(
           from: 'reader-source',
@@ -299,6 +313,7 @@ void main() {
         ),
         throwsA(isA<DownloadPictureNotFoundException>()),
       );
+      expect(await cacheFile.readAsString(), 'online cache');
       expect(objectbox.unifiedDownloadBox.get(saved.id)!.chapters, before);
     },
   );

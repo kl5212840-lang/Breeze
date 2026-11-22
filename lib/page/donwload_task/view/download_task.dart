@@ -1,3 +1,5 @@
+import 'package:zephyr/widgets/tab_reselect_scope.dart';
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/page/donwload_task/service/download_interaction_trace.dart';
 import 'package:zephyr/network/sync/portable_preferences.dart';
@@ -29,6 +31,7 @@ import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_scope_controls.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_selection_toolbar.dart';
 import 'package:zephyr/page/download/models/unified_comic_download.dart';
 import 'package:zephyr/page/comic_info/view/comic_info.dart';
 import 'package:zephyr/page/donwload_task/bloc/dowload_task_bloc.dart';
@@ -247,7 +250,8 @@ class _DownloadHeader extends StatelessWidget {
     required this.rowCount,
     required this.totalCount,
     required this.selectedCount,
-    required this.selectableCount,
+    required this.canSelectAll,
+    required this.allSelected,
     required this.query,
     required this.keywordScope,
     required this.onKeywordScope,
@@ -258,7 +262,8 @@ class _DownloadHeader extends StatelessWidget {
     required this.onSelectAll,
   });
   final bool embedded, searching, managing, working, inventoryReady;
-  final int rowCount, totalCount, selectedCount, selectableCount;
+  final bool canSelectAll, allSelected;
+  final int rowCount, totalCount, selectedCount;
   final String query;
   final KeywordSearchScope keywordScope;
   final ValueChanged<KeywordSearchScope> onKeywordScope;
@@ -268,11 +273,10 @@ class _DownloadHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsetsDirectional.fromSTEB(
-      _downloadContentInset,
-      8,
-      _downloadContentInset,
-      0,
+    padding: CollectionToolbarMetrics.contentPaddingOf(
+      context,
+      inset: _downloadContentInset,
+      top: 8,
     ),
     child: LayoutBuilder(
       builder: (context, constraints) {
@@ -281,7 +285,7 @@ class _DownloadHeader extends StatelessWidget {
         final countStyle = theme.textTheme.bodySmall?.copyWith(
           color: theme.colorScheme.onSurfaceVariant,
         );
-        const extent = CollectionToolbarMetrics.actionExtent;
+        final extent = CollectionToolbarMetrics.actionExtentOf(context);
         final titleWidth = (constraints.maxWidth - extent * (embedded ? 3 : 4))
             .clamp(48.0, constraints.maxWidth)
             .toDouble();
@@ -297,208 +301,157 @@ class _DownloadHeader extends StatelessWidget {
         }
 
         final title = measure(t.common.download, titleStyle, titleWidth);
-        var headerHeight = extent;
-        // Reserve both modes' labels so filtering/selection/search cannot move
-        // the content. Large text wraps within this same header, never shrinks.
-        for (final count in [
+        final searchExtent = searching
+            ? SearchToolbarScope.fieldExtent(context)
+            : null;
+        var headerHeight = SearchToolbarScope.fieldExtent(context) + 8;
+        // Keep one frame for normal browsing, search and selection.
+        final count = measure(
           t.common.itemsCount(count: totalCount),
-          '$totalCount/$totalCount',
-        ]) {
-          final measured = measure(count, countStyle, titleWidth);
-          final inline = title.width + 8 + measured.width <= titleWidth;
-          final height = inline
-              ? (title.height > measured.height
-                    ? title.height
-                    : measured.height)
-              : title.height + 2 + measured.height;
-          if (height > headerHeight) headerHeight = height;
+          countStyle,
+          titleWidth,
+        );
+        final height = title.width + 8 + count.width <= titleWidth
+            ? (title.height > count.height ? title.height : count.height)
+            : title.height + 2 + count.height;
+        if (height > headerHeight) headerHeight = height;
+        if (managing) {
+          return SizedBox(
+            key: const ValueKey('download-header'),
+            height: headerHeight,
+            child: BookshelfSelectionToolbar(
+              keyPrefix: 'download-selection',
+              padding: EdgeInsets.zero,
+              selectedCount: selectedCount,
+              allSelected: allSelected,
+              onCancel: working ? null : onManage,
+              onToggleAll: working || !canSelectAll ? null : onSelectAll,
+            ),
+          );
         }
-        final reduced = MediaQuery.disableAnimationsOf(context);
-        final searchWidth = constraints.maxWidth - extent;
-        final searchStart = titleWidth < 160
-            ? (searchWidth < 160 ? searchWidth : 160.0)
-            : titleWidth;
-        return SizedBox(
+        final header = SizedBox(
           key: const ValueKey('download-header'),
           height: headerHeight,
-          child: TweenAnimationBuilder<double>(
-            tween: Tween(begin: 0, end: searching ? 1 : 0),
-            duration: reduced
-                ? Duration.zero
-                : const Duration(milliseconds: 160),
-            curve: Curves.easeOutCubic,
-            builder: (context, progress, _) => Row(
-              children: [
-                if (!searching && !embedded) const SourceBackButton(),
-                Expanded(
-                  child: Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: SizedBox(
-                      width: searching
-                          ? searchStart + (searchWidth - searchStart) * progress
-                          : titleWidth,
-                      child: searching
-                          ? SearchQueryField(
-                              key: const ValueKey('download-search-field'),
-                              query: query,
-                              focusNode: focusNode,
-                              inline: true,
-                              closeOnSubmit: false,
-                              hintText: _label(
-                                context,
-                                '查找下载',
-                                'Search downloads',
-                              ),
-                              onChanged: onQuery,
-                            )
-                          : Transform.translate(
-                              offset: Offset(0, -4 * progress),
-                              child: Wrap(
-                                spacing: 8,
-                                runSpacing: 2,
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                children: [
-                                  Text(t.common.download, style: titleStyle),
-                                  if (inventoryReady)
-                                    Semantics(
-                                      label: managing
-                                          ? t.bookshelf.selectedCount(
-                                              count: selectedCount,
-                                            )
-                                          : t.common.itemsCount(
-                                              count: rowCount,
-                                            ),
-                                      excludeSemantics: true,
-                                      child: Text(
-                                        managing
-                                            ? '$selectedCount/$selectableCount'
-                                            : t.common.itemsCount(
-                                                count: rowCount,
-                                              ),
-                                        key: const ValueKey('download-count'),
-                                        style: countStyle,
-                                      ),
-                                    ),
-                                ],
-                              ),
+          child: Row(
+            children: [
+              if (!searching && !embedded) const SourceBackButton(),
+              Expanded(
+                child: searching
+                    ? SearchQueryField(
+                        key: const ValueKey('download-search-field'),
+                        onClose: onSearch,
+                        closeKey: const ValueKey('download-search-close'),
+                        leadingControlWidth: KeywordScopeMenu.leadingWidth(
+                          context,
+                        ),
+                        leadingControl: KeywordScopeMenu(
+                          compact: true,
+                          scope: keywordScope,
+                          onChanged: onKeywordScope,
+                        ),
+                        query: query,
+                        focusNode: focusNode,
+                        inline: true,
+                        closeOnSubmit: false,
+                        hintText: _label(context, '查找下载', 'Search downloads'),
+                        onChanged: onQuery,
+                      )
+                    : Wrap(
+                        spacing: 8,
+                        runSpacing: 2,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(t.common.download, style: titleStyle),
+                          if (inventoryReady)
+                            Text(
+                              t.common.itemsCount(count: rowCount),
+                              key: const ValueKey('download-count'),
+                              style: countStyle,
                             ),
+                        ],
+                      ),
+              ),
+              if (!searching) ...[
+                SourceChromeIconButton(
+                  key: const ValueKey('download-search-action'),
+                  tooltip: t.common.search,
+                  icon: Icons.search,
+                  symbol: 'magnifyingglass',
+                  onPressed: working ? null : onSearch,
+                ),
+                SizedBox.square(
+                  dimension: extent,
+                  child: const CollectionCoverPrivacyButton(),
+                ),
+              ],
+              if (!searching)
+                SizedBox(
+                  width: extent,
+                  height: extent,
+                  child: VideoControlAppearance(
+                    systemControls: usesNativeSourceChrome(context),
+                    child: NativeVideoMenu(
+                      key: const ValueKey('download-more'),
+                      width: extent,
+                      label: '',
+                      tooltip: t.common.more,
+                      selected: '',
+                      icon: Icons.more_horiz,
+                      symbol: 'ellipsis',
+                      hostPresentation: true,
+                      selectAfterDismissal: const {
+                        'manage',
+                        'download-settings',
+                        collectionCoverSettingsAction,
+                        'help',
+                      },
+                      options: {
+                        if (inventoryReady && !working)
+                          'manage': t.bookshelf.manage,
+                        'download-settings': t.download.settings,
+                        collectionCoverSettingsAction:
+                            collectionCoverSettingsLabel(context),
+                        'help': t.common.help,
+                      },
+                      optionIcons: {
+                        'manage': (icon: Icons.checklist, symbol: 'checklist'),
+                        'download-settings': (
+                          icon: Icons.settings_outlined,
+                          symbol: 'gearshape',
+                        ),
+                        collectionCoverSettingsAction: (
+                          icon: Icons.visibility_off_outlined,
+                          symbol: 'eye.slash',
+                        ),
+                        'help': (
+                          icon: Icons.help_outline_rounded,
+                          symbol: 'questionmark.circle',
+                        ),
+                      },
+                      groups: const [
+                        ['manage', 'download-settings'],
+                        [collectionCoverSettingsAction],
+                        ['help'],
+                      ],
+                      onSelected: (value) {
+                        if (working || !context.mounted) return;
+                        if (value == 'manage') {
+                          onManage();
+                        } else if (value == 'download-settings') {
+                          unawaited(openDownloadSettings(context));
+                        } else if (value == 'help') {
+                          unawaited(openDownloadHelp(context));
+                        } else if (value == collectionCoverSettingsAction) {
+                          unawaited(openCollectionCoverSettings(context));
+                        }
+                      },
                     ),
                   ),
                 ),
-                if (searching) ...[
-                  const SizedBox(width: 8),
-                  KeywordScopeMenu(
-                    scope: keywordScope,
-                    onChanged: onKeywordScope,
-                  ),
-                  SourceChromeIconButton(
-                    key: const ValueKey('download-search-close'),
-                    tooltip: _label(context, '关闭查找', 'Close search'),
-                    icon: Icons.close_rounded,
-                    symbol: 'xmark',
-                    onPressed: onSearch,
-                  ),
-                ] else ...[
-                  SourceChromeIconButton(
-                    key: const ValueKey('download-search-action'),
-                    tooltip: !managing
-                        ? t.common.search
-                        : selectableCount > 0 &&
-                              selectedCount == selectableCount
-                        ? t.bookshelf.deselectAll
-                        : t.common.selectAll,
-                    icon: managing ? Icons.select_all_rounded : Icons.search,
-                    symbol: managing ? 'checkmark.circle' : 'magnifyingglass',
-                    onPressed: working || managing && selectableCount == 0
-                        ? null
-                        : managing
-                        ? onSelectAll
-                        : onSearch,
-                  ),
-                  if (managing)
-                    SourceChromeIconButton(
-                      key: const ValueKey('download-manage-action'),
-                      tooltip: managing ? t.common.done : t.bookshelf.manage,
-                      icon: managing ? Icons.done_rounded : Icons.checklist,
-                      symbol: managing ? 'checkmark' : 'checklist',
-                      onPressed: working || !inventoryReady ? null : onManage,
-                    ),
-                  if (!managing) ...[
-                    const SizedBox.square(
-                      dimension: extent,
-                      child: CollectionCoverPrivacyButton(),
-                    ),
-                    SizedBox.square(
-                      dimension: extent,
-                      child: VideoControlAppearance(
-                        systemControls: usesNativeSourceChrome(context),
-                        child: NativeVideoMenu(
-                          key: const ValueKey('download-more'),
-                          width: extent,
-                          label: '',
-                          tooltip: t.common.more,
-                          selected: '',
-                          icon: Icons.more_horiz,
-                          symbol: 'ellipsis',
-                          hostPresentation: true,
-                          selectAfterDismissal: const {
-                            'manage',
-                            'download-settings',
-                            collectionCoverSettingsAction,
-                            'help',
-                          },
-                          options: {
-                            if (inventoryReady && !working)
-                              'manage': t.bookshelf.manage,
-                            'download-settings': t.download.settings,
-                            collectionCoverSettingsAction:
-                                collectionCoverSettingsLabel(context),
-                            'help': t.common.help,
-                          },
-                          optionIcons: {
-                            'manage': (
-                              icon: Icons.checklist,
-                              symbol: 'checklist',
-                            ),
-                            'download-settings': (
-                              icon: Icons.settings_outlined,
-                              symbol: 'gearshape',
-                            ),
-                            collectionCoverSettingsAction: (
-                              icon: Icons.visibility_off_outlined,
-                              symbol: 'eye.slash',
-                            ),
-                            'help': (
-                              icon: Icons.help_outline_rounded,
-                              symbol: 'questionmark.circle',
-                            ),
-                          },
-                          groups: const [
-                            ['manage', 'download-settings'],
-                            [collectionCoverSettingsAction],
-                            ['help'],
-                          ],
-                          onSelected: (value) {
-                            if (working || !context.mounted) return;
-                            if (value == 'manage') {
-                              onManage();
-                            } else if (value == 'download-settings') {
-                              unawaited(openDownloadSettings(context));
-                            } else if (value == 'help') {
-                              unawaited(openDownloadHelp(context));
-                            } else if (value == collectionCoverSettingsAction) {
-                              unawaited(openCollectionCoverSettings(context));
-                            }
-                          },
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ],
-            ),
+            ],
           ),
         );
+        return SearchToolbarScope(extent: searchExtent, child: header);
       },
     ),
   );
@@ -707,6 +660,7 @@ class _DownloadCenterState extends State<_DownloadCenter> {
   void _closeSwipe() => _openSwipe.value = null;
   bool _orderBySize = false;
   final _scroll = ScrollController();
+  double? _searchReturnOffset;
   final _scrollEdges = ValueNotifier((up: false, footer: false));
   int _sizeOrderEpoch = 0;
   Map<String, SavedComicSize> _orderedComicSizes = {};
@@ -727,8 +681,21 @@ class _DownloadCenterState extends State<_DownloadCenter> {
     }
   }
 
+  void _setManaging(bool value) {
+    _closeSwipe();
+    _managing = value;
+    if (value) {
+      _searchFocus.unfocus();
+    } else {
+      _selected.clear();
+    }
+  }
+
   void _toggleSearch() {
     _closeSwipe();
+    if (!_searching) {
+      _searchReturnOffset = _scroll.hasClients ? _scroll.offset : null;
+    }
     setState(() {
       _searching = !_searching;
       if (!_searching && _query.isNotEmpty) {
@@ -738,11 +705,25 @@ class _DownloadCenterState extends State<_DownloadCenter> {
     });
     if (!_searching) {
       _searchFocus.unfocus();
+      final offset = _searchReturnOffset;
+      _searchReturnOffset = null;
+      if (offset != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || _searching || !_scroll.hasClients) return;
+          final position = _scroll.position;
+          _scroll.jumpTo(
+            offset.clamp(position.minScrollExtent, position.maxScrollExtent),
+          );
+        });
+      }
     } else {
       requestSearchKeyboard(
         _searchFocus,
         isCurrent: () =>
-            mounted && _searching && ModalRoute.of(context)?.isCurrent != false,
+            mounted &&
+            _searching &&
+            !_managing &&
+            ModalRoute.of(context)?.isCurrent != false,
       );
     }
   }
@@ -1222,20 +1203,16 @@ class _DownloadCenterState extends State<_DownloadCenter> {
 
   void _returnToTop() {
     if (!_scroll.hasClients) return;
-    final position = _scroll.position;
     _closeSwipe();
-    final target = position.minScrollExtent;
-    if (!MediaQuery.disableAnimationsOf(context) &&
-        position.extentBefore < position.viewportDimension * 2) {
-      unawaited(
-        position.animateTo(
-          target,
-          duration: const Duration(milliseconds: 230),
-          curve: Curves.easeOutCubic,
-        ),
-      );
-    } else {
-      position.jumpTo(target);
+    TabReselectScope.scrollToStart(context, _scroll);
+  }
+
+  void _handleTabReselect() {
+    if (!_managing &&
+        !_working &&
+        !_sourceManagerOpen &&
+        _openSwipe.value == null) {
+      _returnToTop();
     }
   }
 
@@ -1545,8 +1522,7 @@ class _DownloadCenterState extends State<_DownloadCenter> {
           ? episode?.onManage
           : allowManage
           ? () => setState(() {
-              _closeSwipe();
-              _managing = true;
+              _setManaging(true);
               if (_canRemove(item)) _selected.add(item.key);
             })
           : null,
@@ -1742,6 +1718,15 @@ class _DownloadCenterState extends State<_DownloadCenter> {
             matches: _matchesDownloadItem,
             canRemoveEpisode: _canRemove,
             onRemoveEpisodes: (origin, items) => _remove(items, origin: origin),
+            onOpenDetails: (origin, row) => _navigateFrom(
+              origin,
+              () => openVideoDownloadWork(
+                origin,
+                row,
+                includeEpisode: false,
+                forDownloadRecovery: false,
+              ),
+            ),
             onRetryFailed: (items) =>
                 _retryVideoEpisodes(items, origin: workContext),
             onContinueWatching: (origin, item) => _videoAction(
@@ -2042,7 +2027,11 @@ class _DownloadCenterState extends State<_DownloadCenter> {
       showInfoToast(
         videoDownloadSourceTarget(row) == null
             ? t.download.sourceUnavailableHint
-            : t.download.swipeForWorkDetails,
+            : _label(
+                origin,
+                '请从作品详情重新下载',
+                'Open work details to download again',
+              ),
       );
       return;
     }
@@ -2397,6 +2386,17 @@ class _DownloadCenterState extends State<_DownloadCenter> {
         final chosen = selectable
             .where((item) => _selected.contains(item.key))
             .toList();
+        final chosenKeys = chosen.map((item) => item.key).toSet();
+        final selectedRows = _managing
+            ? displayRows.where((entry) {
+                final work = entry.work;
+                return work == null
+                    ? chosenKeys.contains(entry.item.key)
+                    : work.episodes.every(
+                        (item) => chosenKeys.contains(item.key),
+                      );
+              }).length
+            : 0;
         final options = {
           'all': t.common.all,
           'comic': _label(context, '漫画', 'Comics'),
@@ -2431,8 +2431,10 @@ class _DownloadCenterState extends State<_DownloadCenter> {
               inventoryReady: inventoryReady,
               rowCount: rows.length,
               totalCount: inventoryReady ? all.length : 0,
-              selectedCount: chosen.length,
-              selectableCount: selectable.length,
+              selectedCount: selectedRows,
+              canSelectAll: selectable.isNotEmpty,
+              allSelected:
+                  selectable.isNotEmpty && chosen.length == selectable.length,
               query: _query,
               keywordScope: _keywordScope,
               onKeywordScope: (scope) => setState(() {
@@ -2449,11 +2451,7 @@ class _DownloadCenterState extends State<_DownloadCenter> {
                 }
                 _query = value;
               }),
-              onManage: () => setState(() {
-                _closeSwipe();
-                _managing = !_managing;
-                if (!_managing) _selected.clear();
-              }),
+              onManage: () => setState(() => _setManaging(!_managing)),
               onSelectAll: () => setState(() {
                 final keys = selectable.map((item) => item.key).toSet();
                 if (_selected.containsAll(keys)) {
@@ -2464,11 +2462,10 @@ class _DownloadCenterState extends State<_DownloadCenter> {
               }),
             ),
             Padding(
-              padding: const EdgeInsetsDirectional.fromSTEB(
-                _downloadContentInset,
-                4,
-                _downloadContentInset,
-                0,
+              padding: CollectionToolbarMetrics.contentPaddingOf(
+                context,
+                inset: _downloadContentInset,
+                top: 4,
               ),
               child: Row(
                 children: [
@@ -2506,7 +2503,7 @@ class _DownloadCenterState extends State<_DownloadCenter> {
                 selected: [if (_source != null) _source!],
                 showManage: true,
                 classicChips: true,
-                quietChips: true,
+                scrollSafeChips: true,
                 allLabel: _label(context, '全部来源', 'All sources'),
                 horizontalInset: _downloadContentInset,
                 onManage: !inventoryReady || _working || _sourceManagerOpen
@@ -2702,8 +2699,7 @@ class _DownloadCenterState extends State<_DownloadCenter> {
                                           ),
                                         ),
                                         onManage: () => setState(() {
-                                          _closeSwipe();
-                                          _managing = true;
+                                          _setManaging(true);
                                           _selected.addAll(keys);
                                         }),
                                         onRemove: (live) => _remove(
@@ -2801,13 +2797,28 @@ class _DownloadCenterState extends State<_DownloadCenter> {
           ),
       ],
     );
-    return CollectionCoverPrivacyScope(
-      child: widget.embedded
-          ? Material(
-              color: Theme.of(context).scaffoldBackgroundColor,
-              child: SafeArea(bottom: false, child: body),
-            )
-          : Scaffold(body: SafeArea(bottom: false, child: body)),
+    return PopScope(
+      canPop: !_searching && !_managing,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || _working) return;
+        if (_managing) {
+          setState(() => _setManaging(false));
+        } else if (_searching) {
+          _toggleSearch();
+        }
+      },
+      child: TabReselectListener(
+        enabled: widget.embedded,
+        onReselect: _handleTabReselect,
+        child: CollectionCoverPrivacyScope(
+          child: widget.embedded
+              ? Material(
+                  color: Theme.of(context).scaffoldBackgroundColor,
+                  child: SafeArea(bottom: false, child: body),
+                )
+              : Scaffold(body: SafeArea(bottom: false, child: body)),
+        ),
+      ),
     );
   }
 }
@@ -2992,6 +3003,7 @@ class _DownloadRowState extends State<_DownloadRow> {
     final external = isVideoExternalReceipt(video);
     final selection = DownloadEpisodeRowScope.of(context);
     final managing = selection?.selecting == true;
+    const more = DownloadRowMoreButton();
     final canManage = widget.enabled && canManageDownloadedVideoEpisode(video);
     final quality = video['quality'] is String
         ? (video['quality'] as String).trim()
@@ -3024,14 +3036,10 @@ class _DownloadRowState extends State<_DownloadRow> {
         selecting: managing,
         selected: canManage && selection?.selected == true,
         onManage: widget.enabled ? widget.onManage : null,
+        trailing: more,
       );
     }
 
-    final needsDetails =
-        widget.enabled &&
-        videoDownloadRequiresSourceDetails(video) &&
-        !VideoDownloadRetry.isWaitingForNetwork(video) &&
-        videoDownloadSourceTarget(video) != null;
     final action = active
         ? TextButton(
             key: ValueKey('download-cancel.${item.key}'),
@@ -3040,22 +3048,15 @@ class _DownloadRowState extends State<_DownloadRow> {
                 : null,
             child: Text(t.download.cancelTask),
           )
-        : needsDetails
-        ? null
         : VideoDownloadRetryAction(
             row: video,
             enabled: widget.enabled,
-            includeSourceDetails: false,
-            retryLabel: t.download.retryEpisodeDownload,
+            sourceLabel: t.download.workDetails,
+            onOpenSource: () => widget.onOpenDetails(video),
             onRetry: () => widget.onRetryVideo(video),
           );
     final caption = [
-      if (cancelling)
-        t.download.statusCancelling
-      else ...[
-        status.message,
-        ?status.reason,
-      ],
+      if (!cancelling) ?status.reason,
       if (variant.isNotEmpty) variant,
       if (video['status'] == 'downloading' && showProgress)
         ...videoDownloadProgressText(
@@ -3066,16 +3067,24 @@ class _DownloadRowState extends State<_DownloadRow> {
     ].where((line) => line.isNotEmpty).join(' · ');
 
     return InkWell(
-      onTap: managing
+      onTap: !DownloadSwipeActions.bodyEnabled(context)
+          ? null
+          : managing
           ? (canManage ? selection?.onSelect : null)
           : (external && widget.enabled ? widget.onOpen : null),
-      onLongPress: widget.enabled ? widget.onManage : null,
+      onLongPress: widget.enabled && DownloadSwipeActions.bodyEnabled(context)
+          ? widget.onManage
+          : null,
       borderRadius: BorderRadius.circular(12),
+      highlightColor: CollectionPressFeedback.surfaceHighlight(context),
+      splashFactory: NoSplash.splashFactory,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 70),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          padding: DownloadCardMetrics.padding,
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            spacing: 12,
             children: [
               SizedBox.square(
                 dimension: 38,
@@ -3098,68 +3107,56 @@ class _DownloadRowState extends State<_DownloadRow> {
                         size: 22,
                       ),
               ),
-              const SizedBox(width: 12),
               Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  spacing: 3,
-                  children: [
-                    Text(
-                      item.title,
-                      key: ValueKey('download-title.${item.key}'),
-                      style: titleStyle,
-                    ),
-                    if (caption.isNotEmpty)
+                child: DownloadRowHeading(
+                  action: more,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    spacing: 3,
+                    children: [
                       Text(
-                        caption,
-                        key: ValueKey('download-status.${item.key}'),
-                        style: status.failed
-                            ? bodyStyle.copyWith(color: colors.error)
-                            : bodyStyle,
+                        item.title,
+                        key: ValueKey('download-title.${item.key}'),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: titleStyle,
                       ),
-                    if (needsDetails)
-                      Visibility(
-                        visible: !managing,
-                        maintainSize: true,
-                        maintainAnimation: true,
-                        maintainState: true,
-                        child: Text(
-                          t.download.swipeForWorkDetails,
-                          style: bodyStyle,
+                      DownloadCardTransfer(
+                        status: Text(
+                          cancelling
+                              ? t.download.statusCancelling
+                              : status.message,
+                          key: ValueKey('download-status.${item.key}'),
+                          style: status.failed
+                              ? bodyStyle.copyWith(color: colors.error)
+                              : bodyStyle,
                         ),
+                        detail: caption.isEmpty
+                            ? null
+                            : Text(
+                                caption,
+                                key: ValueKey('download-reason.${item.key}'),
+                                style: bodyStyle,
+                              ),
+                        action: action,
+                        showAction: !managing,
+                        // Keep the row stable when this transfer stops reporting progress.
+                        progress: showProgress
+                            ? LinearProgressIndicator(
+                                key: ValueKey(
+                                  'download-work-progress.${item.key}',
+                                ),
+                                value: status.progress,
+                                minHeight: 3,
+                                borderRadius: BorderRadius.circular(2),
+                              )
+                            : const SizedBox(height: 3),
                       ),
-                    if (showProgress)
-                      LinearProgressIndicator(
-                        key: ValueKey('download-work-progress.${item.key}'),
-                        value: status.progress,
-                        minHeight: 3,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                  ],
-                ),
-              ),
-              if (action != null) ...[
-                const SizedBox(width: 4),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 112),
-                  child: TextButtonTheme(
-                    data: TextButtonThemeData(
-                      style: TextButton.styleFrom(
-                        minimumSize: const Size(44, 44),
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                      ),
-                    ),
-                    child: Visibility(
-                      visible: !managing,
-                      maintainSize: true,
-                      maintainAnimation: true,
-                      maintainState: true,
-                      child: action,
-                    ),
+                    ],
                   ),
                 ),
-              ],
+              ),
             ],
           ),
         ),
@@ -3327,13 +3324,7 @@ class _DownloadRowState extends State<_DownloadRow> {
               ) ||
               recoveryComics.isEmpty);
       final recovery = pauseAction
-          ? IconButton(
-              tooltip: video == null
-                  ? _label(context, '暂停此作品的下载', 'Pause downloads for this work')
-                  : t.download.cancelTask,
-              icon: Icon(
-                video == null ? Icons.pause_rounded : Icons.close_rounded,
-              ),
+          ? TextButton(
               onPressed:
                   widget.enabled &&
                       (video == null
@@ -3343,26 +3334,28 @@ class _DownloadRowState extends State<_DownloadRow> {
                         ? _requestVideoCancel(video)
                         : _pauseComicTasks(pausableComics)
                   : null,
+              child: Text(
+                video == null
+                    ? _label(context, '暂停下载', 'Pause downloads')
+                    : t.download.cancelTask,
+              ),
             )
           : video != null && !VideoDownloadRetry.isWaitingForNetwork(video)
           ? VideoDownloadRetryAction(
               row: video,
-              iconOnly: true,
               enabled: widget.enabled,
-              includeSourceDetails: false,
+              sourceLabel: t.download.workDetails,
+              onOpenSource: () => widget.onOpenDetails(video),
               onRetry: () => widget.onRetryVideo(video),
             )
           : recoveryComics.isNotEmpty
-          ? IconButton(
-              tooltip: resumePausedComics
-                  ? _label(context, '继续下载', 'Resume download')
-                  : t.common.retry,
-              icon: Icon(
-                resumePausedComics
-                    ? Icons.play_arrow_rounded
-                    : Icons.refresh_rounded,
-              ),
+          ? TextButton(
               onPressed: widget.enabled ? () => _retry(recoveryComics) : null,
+              child: Text(
+                resumePausedComics
+                    ? _label(context, '继续下载', 'Resume download')
+                    : t.common.retry,
+              ),
             )
           : null;
       final exportLabel = _label(context, '导出副本', 'Export copy');
@@ -3427,16 +3420,6 @@ class _DownloadRowState extends State<_DownloadRow> {
                     ),
                   ),
                 ),
-                if (!widget.managing)
-                  ExcludeSemantics(
-                    child: Icon(
-                      Icons.chevron_right_rounded,
-                      size: 20,
-                      color: colors.onSurfaceVariant,
-                    ),
-                  )
-                else
-                  const SizedBox(width: 20),
               ],
             )
           : chapter.isNotEmpty && chapter != item.title.trim()
@@ -3494,14 +3477,11 @@ class _DownloadRowState extends State<_DownloadRow> {
       final transfer = showStatus || active
           ? DownloadCardTransfer(
               key: ValueKey('download-state-row.${item.key}'),
-              status: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                spacing: 4,
-                children: [
-                  statusMetadata,
-                  if (status.reason case final reason?)
-                    Text(
-                      reason,
+              status: statusMetadata,
+              detail: status.reason == null
+                  ? null
+                  : Text(
+                      status.reason!,
                       key: ValueKey('download-reason.${item.key}'),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
@@ -3509,21 +3489,12 @@ class _DownloadRowState extends State<_DownloadRow> {
                         color: colors.onSurfaceVariant,
                       ),
                     ),
-                ],
-              ),
               progress: progress,
-              action: recovery == null
-                  ? null
-                  : Visibility(
-                      visible: !widget.managing,
-                      maintainAnimation: true,
-                      maintainState: true,
-                      maintainSize: true,
-                      child: recovery,
-                    ),
+              action: recovery,
+              showAction: !widget.managing,
             )
           : null;
-      final content = CollectionPressFeedback(
+      final content = CollectionPressFeedback.surface(
         enabled: widget.enabled,
         child: TouchHoverIntent(
           identity: item.key,
@@ -3531,11 +3502,17 @@ class _DownloadRowState extends State<_DownloadRow> {
             key: ValueKey('download-open.${item.key}'),
             borderRadius: BorderRadius.circular(12),
             hoverColor: hover.hoverColor(),
-            onTap: widget.enabled && (!widget.managing || !active)
+            highlightColor: Colors.transparent,
+            splashFactory: NoSplash.splashFactory,
+            onTap:
+                DownloadSwipeActions.bodyEnabled(context) &&
+                    widget.enabled &&
+                    (!widget.managing || !active)
                 ? widget.onOpen
                 : null,
             onLongPress:
-                widget.enabled &&
+                DownloadSwipeActions.bodyEnabled(context) &&
+                    widget.enabled &&
                     !active &&
                     !widget.managing &&
                     widget.allowManage
@@ -3564,7 +3541,8 @@ class _DownloadRowState extends State<_DownloadRow> {
                   Expanded(
                     child: DownloadCardDetails(
                       key: ValueKey('download-details.${item.key}'),
-                      heading: [
+                      identityAction: const DownloadRowMoreButton(),
+                      identity: [
                         Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
@@ -3603,6 +3581,8 @@ class _DownloadRowState extends State<_DownloadRow> {
                             color: colors.onSurfaceVariant,
                           ),
                         ),
+                      ],
+                      heading: [
                         if (chapterMetadata != null) chapterMetadata,
                         if (position != null)
                           Text(
@@ -3668,21 +3648,29 @@ class _DownloadRowState extends State<_DownloadRow> {
           borderRadius: BorderRadius.all(Radius.circular(14)),
         ),
         child: widget.compactVideoEpisode && video != null
-            ? _videoEpisodeContents(
-                context,
-                video,
-                status,
-                active: active,
-                showProgress: active && networkWait == null && !queuedVideo,
+            ? Builder(
+                builder: (context) => _videoEpisodeContents(
+                  context,
+                  video,
+                  status,
+                  active: active,
+                  showProgress: active && networkWait == null && !queuedVideo,
+                ),
               )
             : content,
       );
+      final sourceRecovery =
+          video != null &&
+          !active &&
+          !VideoDownloadRetry.isWaitingForNetwork(video) &&
+          videoDownloadRequiresSourceDetails(video);
       final canShowDetails =
           !widget.managing &&
           widget.enabled &&
+          !widget.compactVideoEpisode &&
           (video == null
               ? _hasComicDetails(item)
-              : videoDownloadSourceTarget(video) != null);
+              : !sourceRecovery && videoDownloadSourceTarget(video) != null);
       final showActions =
           !active &&
           !widget.managing &&
@@ -3690,14 +3678,46 @@ class _DownloadRowState extends State<_DownloadRow> {
           (!widget.compactVideoEpisode ||
               video == null ||
               canManageDownloadedVideoEpisode(video));
+      final canTogglePin =
+          widget.onTogglePin != null && widget.enabled && !widget.managing;
+      final canShowInformation =
+          widget.enabled && !widget.managing && !canShowDetails;
+      final watchPosition = widget.resumeAt;
+      final watched =
+          widget.compactVideoEpisode &&
+          DownloadEpisodeRowScope.of(context)?.watchCompleted == true;
       return DownloadSwipeActions(
         rowKey: item.key,
+        swipeActionIds: [
+          canShowDetails ? 'details' : 'info',
+          if (canPrioritize) 'next' else if (showActions) 'delete',
+        ],
+        information: canShowInformation
+            ? [
+                if (!widget.compactVideoEpisode) widget.sourceTitle,
+                if (status.message.isNotEmpty) status.message,
+                ?status.reason,
+                if (video != null &&
+                    '${video['quality'] ?? ''}'.trim().isNotEmpty)
+                  '${video['quality']}',
+                if (video != null &&
+                    '${video['format'] ?? ''}'.trim().isNotEmpty)
+                  '${video['format']}'.toUpperCase(),
+                if (item.sizeBytes case final size?) downloadByteAmount(size),
+                if (watched)
+                  t.videoPlayback.watchedComplete
+                else if (watchPosition != null && watchPosition > Duration.zero)
+                  t.bookshelf.watchTo(
+                    position: formatKnownVideoDuration(watchPosition),
+                  )
+                else
+                  ?position,
+              ]
+            : null,
+        title: item.title,
         openRow: widget.openSwipe,
         exposeActions: true,
-        completedAt:
-            widget.compactVideoEpisode &&
-                video != null &&
-                _playableVideoEpisode(video)
+        completedAt: widget.compactVideoEpisode || canShowInformation
             ? item.completedAt
             : null,
         actionVersion: video == null
@@ -3715,7 +3735,7 @@ class _DownloadRowState extends State<_DownloadRow> {
                 video['publicWorkIdentity'],
               ),
         actions: [
-          if (widget.onTogglePin != null && widget.enabled && !widget.managing)
+          if (canTogglePin)
             (
               id: widget.pinned ? 'unpin' : 'pin',
               label: widget.pinned
@@ -3750,7 +3770,9 @@ class _DownloadRowState extends State<_DownloadRow> {
               ),
             (
               id: 'delete',
-              label: t.common.delete,
+              label: multi
+                  ? _label(context, '删除整部下载', 'Delete work downloads')
+                  : t.common.delete,
               icon: Icons.delete_outline,
               run: () => widget.onRemove(video),
             ),
@@ -3979,12 +4001,8 @@ _Status _videoStatus(Map<String, dynamic> row, {bool compactEpisode = false}) {
   final reasonText = status == 'failed' && networkWait == null
       ? videoDownloadFailureText(reason, chinese: chinese)
       : null;
-  final recoveryHint = needsSource
-      ? videoDownloadSourceTarget(row) == null
-            ? t.download.sourceUnavailableHint
-            : compactEpisode
-            ? null
-            : t.download.swipeForWorkDetails
+  final recoveryHint = needsSource && videoDownloadSourceTarget(row) == null
+      ? t.download.sourceUnavailableHint
       : row['recordingFailed'] == true
       ? t.download.videoRecordFailed
       : null;
@@ -4048,9 +4066,8 @@ class _DownloadChaptersPage extends StatefulWidget {
 }
 
 class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
-  static const _groupIconSize = 24.0;
-  static const _groupIconGap = 6.0;
-  static const _groupTextStart = _groupIconSize + _groupIconGap;
+  static const _groupTextStart = 28.0;
+  static const _chapterStart = 12.0;
   static const _chapterTextInset = 2.0;
 
   DownloadComicResource? _resource;
@@ -4491,6 +4508,90 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
     ),
   );
 
+  Widget _chapterGroupHeading(
+    DownloadComicChapterGroup group, {
+    required bool expanded,
+    required bool chinese,
+    required VoidCallback onPressed,
+  }) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    const shape = BorderRadius.all(Radius.circular(10));
+    return Padding(
+      padding: EdgeInsets.only(top: 6, bottom: expanded ? 6 : 2),
+      child: Material(
+        color: expanded
+            ? colors.surfaceContainerHigh
+            : Color.alphaBlend(
+                colors.onSurface.withValues(alpha: .04),
+                colors.surface,
+              ),
+        borderRadius: shape,
+        child: Semantics(
+          header: true,
+          button: true,
+          expanded: expanded,
+          child: InkWell(
+            borderRadius: shape,
+            onTap: onPressed,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 50),
+              child: Padding(
+                padding: const EdgeInsetsDirectional.only(
+                  start: _chapterStart,
+                  end: _chapterStart,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        child: Wrap(
+                          alignment: WrapAlignment.spaceBetween,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 12,
+                          runSpacing: 4,
+                          children: [
+                            Text(
+                              group.title(
+                                fallback: t.download.downloadedChapters,
+                              ),
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                color: colors.onSurface,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Text(
+                              group.subtitle(chinese: chinese),
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colors.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    SizedBox.square(
+                      dimension: CollectionToolbarMetrics.actionExtentOf(
+                        context,
+                      ),
+                      child: Icon(
+                        expanded ? Icons.expand_more : Icons.chevron_right,
+                        textDirection: Directionality.of(context),
+                        color: colors.onSurfaceVariant,
+                        size: 19,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _chapterEntry({
     required String key,
     required String title,
@@ -4501,7 +4602,6 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
     VoidCallback? onPause,
     String? resumeLabel,
     VoidCallback? onPrioritize,
-    VoidCallback? onRetryNow,
     Object? taskVersion,
     bool failed = false,
     double? progress,
@@ -4518,9 +4618,10 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
     final metadata = theme.textTheme.bodySmall?.copyWith(
       color: colors.onSurfaceVariant,
     );
-    final titleStyle = grouped
-        ? theme.textTheme.bodyMedium?.copyWith(color: colors.onSurface)
-        : theme.textTheme.titleSmall;
+    final titleStyle = theme.textTheme.titleSmall?.copyWith(
+      color: colors.onSurface,
+      fontWeight: FontWeight.w500,
+    );
     final managing = _selection.active;
     final enabled = !_workingOnChapters;
     final selectable =
@@ -4532,198 +4633,201 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
     final version = _chapterVersion(taskVersion, canRemove: canRemove);
     final selected =
         managing && selectable && _selection.contains(key, version);
-    final actionLabel = onPause != null
-        ? _label(context, '暂停', 'Pause')
-        : failed
-        ? _label(context, '重试', 'Retry')
-        : _label(context, '继续', 'Resume');
-    final actionHint = onPause != null
+    final pauseInline = onPause != null && onResume == null;
+    final actionLabel = pauseInline
         ? _label(context, '暂停下载', 'Pause download')
-        : resumeLabel ?? _label(context, '继续下载', 'Resume download');
+        : resumeLabel ??
+              (failed
+                  ? t.common.retry
+                  : _label(context, '继续下载', 'Resume download'));
+    final showInformation = enabled && !managing;
+    final chapterSize = _chapterSizeLabel(size, taskVersion != null);
+    final canSwipeDelete =
+        canRemove ||
+        removableCancelled != null ||
+        (removableTransfer != null &&
+            !removableTransfer.isDownloading &&
+            const {
+              'paused',
+              'failed',
+            }.contains(removableTransfer.taskInfo?.stateCode));
+    final actions = <DownloadSwipeAction>[
+      if (enabled && !managing) ...[
+        if (onPrioritize != null)
+          (
+            id: 'next',
+            label: t.download.prioritizeDownload,
+            icon: Icons.vertical_align_top_rounded,
+            run: onPrioritize,
+          ),
+        if (onPause != null && onResume != null)
+          (
+            id: 'pause',
+            label: _label(context, '暂停下载', 'Pause download'),
+            icon: Icons.pause_rounded,
+            run: onPause,
+          ),
+        if (canRemove ||
+            removableTransfer != null ||
+            removableCancelled != null)
+          (
+            id: 'delete',
+            label: removableTransfer != null
+                ? _label(context, '停止并删除', 'Stop and delete')
+                : t.common.delete,
+            icon: Icons.delete_outline,
+            run: () => _removeChapters(
+              {if (canRemove) key: title},
+              transfers: {
+                if (removableTransfer != null) key: removableTransfer,
+              },
+              cancelled: {
+                if (removableCancelled != null) key: removableCancelled,
+              },
+            ),
+          ),
+      ],
+    ];
+    final onTransferAction = onResume ?? onPause;
+    final statusText = Text(
+      status,
+      style: failed ? metadata?.copyWith(color: colors.error) : metadata,
+    );
+    final sizeText = chapterSize == null
+        ? null
+        : Text(
+            chapterSize,
+            key: ValueKey('download-chapter-size.$key'),
+            style: metadata,
+          );
     return Padding(
       padding: const EdgeInsets.only(bottom: 1),
       child: DownloadSwipeActions(
         rowKey: key,
+        title: title,
         openRow: _openChapterSwipe,
         exposeActions: true,
+        swipeActionIds: [
+          'info',
+          if (onPrioritize != null) 'next' else if (canSwipeDelete) 'delete',
+        ],
+        information: showInformation
+            ? [if (status.isNotEmpty) status, ?chapterSize]
+            : null,
         actionVersion: version,
         completedAt: completedAt,
         lastReadAt: lastReadAt,
-        actions: [
-          if (enabled && !managing) ...[
-            if (widget.openDetails case final open?)
-              (
-                id: 'details',
-                label: t.download.workDetails,
-                icon: Icons.info_outline_rounded,
-                run: () => open(context),
-              ),
-            if (onPrioritize != null)
-              (
-                id: 'next',
-                label: t.download.prioritizeDownload,
-                icon: Icons.playlist_add_check_rounded,
-                run: onPrioritize,
-              ),
-            if (onRetryNow != null)
-              (
-                id: 'retry-now',
-                label: t.download.retryNow,
-                icon: Icons.refresh_rounded,
-                run: onRetryNow,
-              ),
-            if (canRemove ||
-                removableTransfer != null ||
-                removableCancelled != null)
-              (
-                id: 'delete',
-                label: t.common.delete,
-                icon: Icons.delete_outline,
-                run: () => _removeChapters(
-                  {if (canRemove) key: title},
-                  transfers: {
-                    if (removableTransfer != null) key: removableTransfer,
-                  },
-                  cancelled: {
-                    if (removableCancelled != null) key: removableCancelled,
-                  },
-                ),
-              ),
-          ],
-        ],
+        actions: actions,
         child: Material(
           color: selected ? colors.secondaryContainer : Colors.transparent,
           child: Semantics(
             checked: managing ? selected : null,
             enabled: managing ? enabled && selectable : null,
             button: managing || onOpen != null,
-            child: InkWell(
-              key: ValueKey('download-chapter-open.$key'),
-              onTap: !enabled
-                  ? null
-                  : managing
-                  ? selectable
-                        ? () => setState(() => _selection.toggle(key, version))
-                        : null
-                  : onOpen,
-              onLongPress: enabled && !managing && selectable
-                  ? () {
-                      _openChapterSwipe.value = null;
-                      setState(() => _selection.start(key, version));
-                    }
-                  : null,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 68),
-                child: Padding(
-                  padding: EdgeInsetsDirectional.fromSTEB(
-                    grouped ? 0 : _chapterTextInset,
-                    8,
-                    _chapterTextInset,
-                    8,
-                  ),
-                  child: Row(
-                    children: [
-                      if (managing) ...[
-                        SizedBox.square(
-                          dimension: grouped ? _groupIconSize : 38,
-                          child: Center(
-                            child: Opacity(
-                              opacity: selectable ? 1 : .48,
+            child: Builder(
+              builder: (context) => InkWell(
+                key: ValueKey('download-chapter-open.$key'),
+                highlightColor: CollectionPressFeedback.surfaceHighlight(
+                  context,
+                ),
+                splashFactory: NoSplash.splashFactory,
+                onTap: !enabled || !DownloadSwipeActions.bodyEnabled(context)
+                    ? null
+                    : managing
+                    ? selectable
+                          ? () =>
+                                setState(() => _selection.toggle(key, version))
+                          : null
+                    : onOpen,
+                onLongPress:
+                    DownloadSwipeActions.bodyEnabled(context) &&
+                        enabled &&
+                        !managing &&
+                        selectable
+                    ? () {
+                        _openChapterSwipe.value = null;
+                        setState(() => _selection.start(key, version));
+                      }
+                    : null,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 68),
+                  child: Padding(
+                    padding: EdgeInsetsDirectional.fromSTEB(
+                      grouped ? _groupTextStart : _chapterStart,
+                      8,
+                      _chapterStart,
+                      8,
+                    ),
+                    child: DownloadRowHeading(
+                      action: managing && selectable
+                          ? Center(
                               child: CollectionSelectionMark(
                                 visible: true,
                                 selected: selected,
                               ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: _groupIconGap),
-                      ] else if (grouped)
-                        const SizedBox(width: _groupTextStart),
-                      Expanded(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          spacing: 3,
-                          children: [
-                            Semantics(
-                              label: currentReading
-                                  ? '${t.comicInfo.lastRead} · $title'
-                                  : null,
-                              excludeSemantics: currentReading,
-                              child: Text(
-                                title,
-                                key: currentReading
-                                    ? ValueKey('download-chapter-reading.$key')
-                                    : null,
-                                style: currentReading
-                                    ? titleStyle?.copyWith(
-                                        color: colors.primary,
-                                      )
-                                    : titleStyle,
-                              ),
-                            ),
-                            Wrap(
-                              spacing: 8,
-                              children: [
-                                Text(
-                                  status,
-                                  style: failed
-                                      ? metadata?.copyWith(color: colors.error)
-                                      : metadata,
-                                ),
-                                if (_chapterSizeLabel(size, taskVersion != null)
-                                    case final chapterSize?)
-                                  Text(
-                                    chapterSize,
-                                    key: ValueKey('download-chapter-size.$key'),
-                                    style: metadata,
-                                  ),
-                              ],
-                            ),
-                            if (progress != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 3),
-                                child: LinearProgressIndicator(
-                                  key: ValueKey(
-                                    'download-chapter-progress.$key',
-                                  ),
-                                  value: progress,
-                                  minHeight: 3,
-                                ),
-                              ),
-                            if (_chapterErrors[key] case final message?)
-                              Text(
-                                message,
-                                key: ValueKey('download-chapter-error.$key'),
-                                style: metadata?.copyWith(color: colors.error),
-                              ),
-                          ],
-                        ),
-                      ),
-                      if (!managing && (onPause != null || onResume != null))
-                        Tooltip(
-                          message: actionHint,
-                          child: TextButton(
-                            key: ValueKey(
-                              onPause != null
-                                  ? 'download-chapter-pause.$key'
-                                  : 'download-chapter-resume.$key',
-                            ),
-                            style: TextButton.styleFrom(
-                              minimumSize: const Size(44, 44),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                              ),
-                            ),
-                            onPressed: enabled ? onPause ?? onResume : null,
+                            )
+                          : const DownloadRowMoreButton(),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        spacing: 3,
+                        children: [
+                          Semantics(
+                            label: currentReading
+                                ? '${t.comicInfo.lastRead} · $title'
+                                : null,
+                            excludeSemantics: currentReading,
                             child: Text(
-                              resumeLabel != null && !failed
-                                  ? resumeLabel
-                                  : actionLabel,
+                              title,
+                              key: currentReading
+                                  ? ValueKey('download-chapter-reading.$key')
+                                  : null,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: currentReading
+                                  ? titleStyle?.copyWith(color: colors.primary)
+                                  : titleStyle,
                             ),
                           ),
-                        ),
-                    ],
+                          if (taskVersion == null && onTransferAction == null)
+                            Wrap(spacing: 8, children: [statusText, ?sizeText])
+                          else
+                            DownloadCardTransfer(
+                              status: statusText,
+                              detail: sizeText,
+                              showAction: !managing,
+                              action: onTransferAction == null
+                                  ? null
+                                  : TextButton(
+                                      key: ValueKey(
+                                        pauseInline
+                                            ? 'download-chapter-pause.$key'
+                                            : 'download-chapter-resume.$key',
+                                      ),
+                                      onPressed: enabled
+                                          ? onTransferAction
+                                          : null,
+                                      child: Text(actionLabel),
+                                    ),
+                            ),
+                          if (progress != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 3),
+                              child: LinearProgressIndicator(
+                                key: ValueKey('download-chapter-progress.$key'),
+                                value: progress,
+                                minHeight: 3,
+                              ),
+                            ),
+                          if (_chapterErrors[key] case final message?)
+                            Text(
+                              message,
+                              key: ValueKey('download-chapter-error.$key'),
+                              style: metadata?.copyWith(color: colors.error),
+                            ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -4801,13 +4905,19 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
   Widget build(BuildContext context) => PopScope(
     canPop: !_selection.active,
     onPopInvokedWithResult: (didPop, _) {
-      if (!didPop && !_removingChapters && _selection.active) {
+      if (didPop) {
+        _openChapterSwipe.value = null;
+      } else if (!_removingChapters && _selection.active) {
         setState(_selection.close);
       }
     },
     child: CollectionCoverPrivacyScope(
       child: Scaffold(
         appBar: AppBar(
+          leading: TapRegion(
+            groupId: _openChapterSwipe,
+            child: const BackButton(),
+          ),
           title: Text(widget.initial.title),
           actions: [
             TextButton(
@@ -5086,9 +5196,17 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
                               ],
                             ),
                           ),
+                          if (widget.openDetails case final open?)
+                            DownloadWorkDetailsButton(
+                              visible:
+                                  !_selection.active && !_workingOnChapters,
+                              onPressed: () {
+                                _openChapterSwipe.value = null;
+                                open(context);
+                              },
+                            ),
                         ],
                       ),
-                      const SizedBox(height: 8),
                       DownloadWorkSectionControl(
                         selected: _pane,
                         onSelected: _switchPane,
@@ -5166,7 +5284,7 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
                           );
                     return WorkListRow(
                       divided: true,
-                      startInset: grouped ? _groupTextStart : null,
+                      startInset: grouped ? _groupTextStart : _chapterStart,
                       inset: grouped ? _chapterTextInset : 0,
                       child: _chapterEntry(
                         key: key,
@@ -5196,110 +5314,37 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
                       add(ValueKey(('download-chapter-group', group.key)), (
                         headingContext,
                       ) {
-                        final heading = Semantics(
-                          header: true,
-                          button: true,
-                          enabled: true,
+                        return _chapterGroupHeading(
+                          group,
                           expanded: expanded,
-                          child: InkWell(
-                            onTap: () {
-                              _openChapterSwipe.value = null;
-                              setState(() {
-                                _pickedGroup = true;
-                                _expandedChapterKey = expanded
-                                    ? null
-                                    : _storedKey(group.chapters.first);
-                              });
-                              final expected = _expandedChapterKey;
-                              WidgetsBinding.instance.addPostFrameCallback((_) {
-                                if (!mounted ||
-                                    !headingContext.mounted ||
-                                    _pane != DownloadWorkPane.saved ||
-                                    expected != _expandedChapterKey ||
-                                    !_savedScroll.hasClients)
-                                  return;
-                                final render = headingContext
-                                    .findRenderObject();
-                                if (render == null || !render.attached) return;
-                                unawaited(
-                                  _savedScroll.position.ensureVisible(
-                                    render,
-                                    alignmentPolicy:
-                                        ScrollPositionAlignmentPolicy
-                                            .keepVisibleAtStart,
-                                  ),
-                                );
-                              });
-                            },
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(minHeight: 44),
-                              child: Padding(
-                                padding: const EdgeInsetsDirectional.only(
-                                  end: _chapterTextInset,
+                          chinese: chinese,
+                          onPressed: () {
+                            _openChapterSwipe.value = null;
+                            setState(() {
+                              _pickedGroup = true;
+                              _expandedChapterKey = expanded
+                                  ? null
+                                  : _storedKey(group.chapters.first);
+                            });
+                            final expected = _expandedChapterKey;
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (!mounted ||
+                                  !headingContext.mounted ||
+                                  _pane != DownloadWorkPane.saved ||
+                                  expected != _expandedChapterKey ||
+                                  !_savedScroll.hasClients)
+                                return;
+                              final render = headingContext.findRenderObject();
+                              if (render == null || !render.attached) return;
+                              unawaited(
+                                _savedScroll.position.ensureVisible(
+                                  render,
+                                  alignmentPolicy: ScrollPositionAlignmentPolicy
+                                      .keepVisibleAtStart,
                                 ),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      expanded
-                                          ? Icons.expand_more
-                                          : Icons.chevron_right,
-                                      color: colors.onSurfaceVariant,
-                                      size: _groupIconSize,
-                                    ),
-                                    const SizedBox(width: _groupIconGap),
-                                    Expanded(
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 4,
-                                        ),
-                                        child: Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              group.title(
-                                                fallback: t
-                                                    .download
-                                                    .downloadedChapters,
-                                              ),
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .titleSmall
-                                                  ?.copyWith(
-                                                    fontWeight: FontWeight.w500,
-                                                    color:
-                                                        colors.onSurfaceVariant,
-                                                  ),
-                                            ),
-                                            Text(
-                                              group.subtitle(chinese: chinese),
-                                              style: Theme.of(context)
-                                                  .textTheme
-                                                  .bodySmall
-                                                  ?.copyWith(
-                                                    color:
-                                                        colors.onSurfaceVariant,
-                                                  ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                        return WorkListRow(
-                          divided: true,
-                          startInset: _groupTextStart,
-                          inset: _chapterTextInset,
-                          child: Padding(
-                            padding: const EdgeInsets.only(bottom: 1),
-                            child: heading,
-                          ),
+                              );
+                            });
+                          },
                         );
                       }, fold: true);
                     if (expanded) {
@@ -5336,6 +5381,8 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
                               queue.canStopAndDeleteTask(current);
                           return WorkListRow(
                             divided: true,
+                            startInset: _chapterStart,
+                            inset: _chapterTextInset,
                             child: _chapterEntry(
                               key: key,
                               title: _chapterTaskTitle(current, payload),
@@ -5364,8 +5411,10 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
                                   : null,
                               resumeLabel: payload?.stateCode == 'cancelled'
                                   ? _label(context, '重新下载', 'Download again')
+                                  : payload?.phaseCode == 'waitingRetry'
+                                  ? t.download.retryNow
                                   : status.failed
-                                  ? t.download.retryEpisodeDownload
+                                  ? t.common.retry
                                   : null,
                               onPrioritize:
                                   payload?.phaseCode != 'waitingRetry' &&
@@ -5376,12 +5425,6 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
                                           t.download.downloadPrioritized,
                                         );
                                     }
-                                  : null,
-                              onRetryNow:
-                                  resume && payload?.phaseCode == 'waitingRetry'
-                                  ? () => _changeChapterTasks({
-                                      key: current,
-                                    }, pause: false)
                                   : null,
                               onPause: pause
                                   ? () => _changeChapterTasks({

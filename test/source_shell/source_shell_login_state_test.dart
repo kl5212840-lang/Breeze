@@ -25,7 +25,12 @@ void main() {
     );
     expect(find.byTooltip(t.sourceShell.account), findsNothing);
     expect(find.widgetWithText(NavigationDestination, '我的'), findsOneWidget);
-    expect(find.byType(SearchQueryField), findsOneWidget);
+    expect(find.byType(SearchQueryField), findsNothing);
+    expect(find.byTooltip(t.sourceShell.search), findsOneWidget);
+    expect(
+      find.descendant(of: find.byType(AppBar), matching: find.text('分类')),
+      findsOneWidget,
+    );
     await tester.pumpWidget(
       const MaterialApp(
         home: SourceShellPage(

@@ -1,4 +1,4 @@
-import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:auto_route/auto_route.dart';
@@ -13,7 +13,6 @@ import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
-import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/page/search_result/view/source_search_capabilities.dart';
 import 'package:zephyr/page/search_result/view/source_search_scope_control.dart';
@@ -41,25 +40,129 @@ String sourceBrowseTitle(SearchStates state) {
   return '作品列表';
 }
 
-class SearchResultBar extends StatefulWidget implements PreferredSizeWidget {
-  final SearchEvent searchEvent;
+/// The query is the current page title until the person chooses to edit it.
+class SearchResultQueryTitle extends StatelessWidget {
+  const SearchResultQueryTitle({super.key, required this.title, this.onEdit});
 
+  final String title;
+  final VoidCallback? onEdit;
+
+  static double toolbarHeight(BuildContext context) {
+    final style =
+        AppBarTheme.of(context).titleTextStyle ??
+        Theme.of(context).textTheme.titleLarge;
+    final height = MediaQuery.textScalerOf(
+      context,
+    ).scale(style?.fontSize ?? 22);
+    return (height * (style?.height ?? 1.3) + 16).clamp(
+      kToolbarHeight,
+      double.infinity,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label = Text(title, maxLines: 1, overflow: TextOverflow.ellipsis);
+    if (onEdit == null) return label;
+    final actionExtent = CollectionToolbarMetrics.actionExtentOf(context);
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: Tooltip(
+        message: t.common.search,
+        child: Semantics(
+          button: true,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: onEdit,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: actionExtent,
+                minWidth: actionExtent,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                spacing: CollectionToolbarMetrics.searchControlGap,
+                children: [
+                  Flexible(child: label),
+                  Icon(
+                    Icons.edit_outlined,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class SearchResultBar extends StatelessWidget implements PreferredSizeWidget {
   const SearchResultBar({
     super.key,
     required this.searchEvent,
     this.toolbarHeight,
   });
 
+  final SearchEvent searchEvent;
   final double? toolbarHeight;
 
   @override
   Size get preferredSize => Size.fromHeight(toolbarHeight ?? kToolbarHeight);
 
   @override
-  State<SearchResultBar> createState() => _SearchResultBarState();
+  Widget build(BuildContext context) {
+    final state = context.watch<SearchCubit>().state;
+    final query = state.searchKeyword.trim();
+    return AppBar(
+      toolbarHeight: toolbarHeight,
+      elevation: 0,
+      scrolledUnderElevation: 0,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      titleSpacing: 0,
+      leadingWidth: CollectionToolbarMetrics.leadingExtentOf(context),
+      leading: CollectionToolbarMetrics.leading(
+        context,
+        const SourceBackButton(bare: true),
+      ),
+      title: SearchResultQueryTitle(
+        key: const ValueKey('search-result.query-title'),
+        title: query.isEmpty ? sourceBrowseTitle(state) : query,
+        onEdit: query.isEmpty ? null : () => _openSearchPage(context),
+      ),
+      actionsPadding: CollectionToolbarMetrics.trailingPadding,
+      actions: [SourceMoreButton(source: state.from)],
+    );
+  }
+
+  void _openSearchPage(BuildContext context) {
+    final stack = context.router.stack;
+    if (stack.length > 1 && stack[stack.length - 2].name == SearchRoute.name) {
+      context.maybePop();
+      return;
+    }
+
+    context.pushRoute(
+      SearchRoute(
+        key: ValueKey(const Uuid().v4()),
+        searchState: context.read<SearchCubit>().state,
+        aggregateMode: false,
+      ),
+    );
+  }
 }
 
-class _SearchResultBarState extends State<SearchResultBar> {
+/// Search scope and plugin filters belong alongside the result controls.
+class SearchResultOptions extends StatefulWidget {
+  const SearchResultOptions({super.key});
+
+  @override
+  State<SearchResultOptions> createState() => _SearchResultOptionsState();
+}
+
+class _SearchResultOptionsState extends State<SearchResultOptions> {
   String? _schemeKey;
   Future<PluginAdvancedSearchScheme?>? _schemeFuture;
   bool _openingAdvancedSearch = false;
@@ -79,97 +182,34 @@ class _SearchResultBarState extends State<SearchResultBar> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final state = context.watch<SearchCubit>().state;
-    final extent = SearchToolbarScope.of(context);
-
-    return AppBar(
-      toolbarHeight: widget.toolbarHeight,
-      elevation: 0,
-      scrolledUnderElevation: 0,
-      backgroundColor: colorScheme.surface,
-      titleSpacing: 0, // 清除默认边距，完全自定义
-      automaticallyImplyLeading: false, // 禁用默认返回键，我们自己画
-      // 2. 核心内容区域
-      title: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8.0),
-        child: Row(
-          children: [
-            // 左侧返回按钮
-            SourceBackButton(onPressed: () => context.maybePop()),
-            if (extent != null) const SizedBox(width: 6),
-
-            // 中间的紧凑搜索入口，点击后在原位置展开完整输入框
-            Expanded(
-              child: BlocBuilder<SearchCubit, SearchStates>(
-                builder: (context, state) => state.searchKeyword.trim().isEmpty
-                    ? Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: Text(
-                          sourceBrowseTitle(state),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      )
-                    : SearchQueryField(
-                        query: state.searchKeyword,
-                        hintText: t.search.searchHint,
-                        semanticLabel: t.search.title,
-                        onTap: () => _openSearchPage(context),
-                      ),
-              ),
+    if (state.from.trim().isEmpty) return const SizedBox.shrink();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (state.searchKeyword.trim().isNotEmpty &&
+            !state.pluginExtern.containsKey('url') &&
+            state.pluginExtern['mode'] != 'creator')
+          SourceSearchScopeControl(
+            compact: true,
+            onChanged: (_) => context.read<SearchBloc>().add(
+              SearchEvent(searchStates: context.read<SearchCubit>().state),
             ),
-
-            if (state.from.trim().isNotEmpty &&
-                state.searchKeyword.trim().isNotEmpty &&
-                !state.pluginExtern.containsKey('url') &&
-                state.pluginExtern['mode'] != 'creator')
-              SourceSearchScopeControl(
-                compact: MediaQuery.sizeOf(context).width < 352,
-                onChanged: (_) => context.read<SearchBloc>().add(
-                  SearchEvent(searchStates: context.read<SearchCubit>().state),
+          ),
+        FutureBuilder<PluginAdvancedSearchScheme?>(
+          future: _schemeFor(state),
+          builder: (context, snapshot) =>
+              snapshot.connectionState != ConnectionState.done ||
+                  snapshot.data == null
+              ? const SizedBox.shrink()
+              : SourceChromeIconButton(
+                  tooltip: t.search.advancedSearchOptions,
+                  icon: Icons.tune,
+                  symbol: 'slider.horizontal.3',
+                  onPressed: () => _search(context),
                 ),
-              ),
-            if (state.from.trim().isNotEmpty)
-              FutureBuilder<PluginAdvancedSearchScheme?>(
-                key: ValueKey(jsonEncode([state.from, state.pluginExtern])),
-                future: _schemeFor(state),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.done &&
-                      snapshot.data != null) {
-                    return SourceChromeIconButton(
-                      tooltip: t.search.advancedSearchOptions,
-                      icon: Icons.tune,
-                      symbol: 'slider.horizontal.3',
-                      onPressed: () => _search(context),
-                    );
-                  }
-                  return snapshot.connectionState == ConnectionState.waiting
-                      ? SizedBox(width: SearchToolbarScope.actionExtent)
-                      : const SizedBox.shrink();
-                },
-              ),
-            if (extent != null) const SizedBox(width: 4),
-            SourceMoreButton(source: state.from),
-          ],
         ),
-      ),
-    );
-  }
-
-  void _openSearchPage(BuildContext context) {
-    final stack = context.router.stack;
-    if (stack.length > 1 && stack[stack.length - 2].name == SearchRoute.name) {
-      context.maybePop();
-      return;
-    }
-
-    context.pushRoute(
-      SearchRoute(
-        key: ValueKey(const Uuid().v4()),
-        searchState: context.read<SearchCubit>().state,
-        aggregateMode: false,
-      ),
+      ],
     );
   }
 
@@ -185,18 +225,21 @@ class _SearchResultBarState extends State<SearchResultBar> {
 
   Future<void> _openAdvancedSearch(BuildContext context) async {
     final searchCubit = context.read<SearchCubit>();
+    final searchBloc = context.read<SearchBloc>();
     final query = searchCubit.state;
     if (query.from.trim().isEmpty) {
       showWarningToast(t.search.advancedSearchNotSupported);
       return;
     }
     final source = normalizePluginId(query.from);
+    final route = ModalRoute.of(context);
     final owner = pluginSessionWriteFence.generation(source);
+    final revision = searchCubit.queryRevision.value;
     bool ownsQuery() =>
+        mounted &&
         searchCubit.state.from == query.from &&
         searchCubit.state.searchKeyword == query.searchKeyword &&
-        jsonEncode(searchCubit.state.pluginExtern) ==
-            jsonEncode(query.pluginExtern) &&
+        searchCubit.queryRevision.value == revision &&
         pluginSessionWriteFence.generation(source) == owner;
 
     final PluginAdvancedSearchScheme? loaded;
@@ -215,9 +258,7 @@ class _SearchResultBarState extends State<SearchResultBar> {
       }
       return;
     }
-    if (!context.mounted ||
-        ModalRoute.of(context)?.isCurrent == false ||
-        !ownsQuery()) {
+    if (!ownsQuery() || route?.isCurrent == false) {
       return;
     }
     final scheme = loaded;
@@ -234,7 +275,7 @@ class _SearchResultBarState extends State<SearchResultBar> {
         scheme: scheme,
       ),
     );
-    if (changes == null || !context.mounted || !ownsQuery()) return;
+    if (changes == null || !ownsQuery() || route?.isCurrent == false) return;
 
     final latest = searchCubit.state;
     final next = latest.copyWith(
@@ -243,7 +284,7 @@ class _SearchResultBarState extends State<SearchResultBar> {
       pluginExtern: {...latest.pluginExtern, ...changes},
     );
     searchCubit.update(next);
-    context.read<SearchBloc>().add(SearchEvent(searchStates: next));
+    searchBloc.add(SearchEvent(searchStates: next));
   }
 
   Future<PluginAdvancedSearchScheme?> _loadAdvancedSearchScheme(

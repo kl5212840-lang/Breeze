@@ -15,6 +15,11 @@ void main(List<String> args) {
   stdout.write(
     jsonEncode({
       'catalog': videoCatalogSnapshotScript(selectors, includeFilters: true),
+      'personalFullPage': videoPersonalRecentScript(
+        Uri.parse('https://hanime1.me/user/42/histories?page=2'),
+        selectors,
+        fullPage: true,
+      ),
       'personalRecent': videoPersonalRecentScript(
         Uri.parse('https://hanime1.me/user/42/histories'),
         selectors,
@@ -27,6 +32,10 @@ void main(List<String> args) {
       'filterSchema':
           '(() => { $videoFilterSchemaExtraction return filterSchema(document); })()',
       'detail': videoDetailSnapshotScript(selectors),
+      'hanimeWorkFacts': hanimePublicFactsScript(
+        Uri.parse('https://hanime1.me/watch?v=42'),
+        selectors,
+      ),
       'episodeReadStart': videoEpisodeReadStartScript(
         Uri.parse('https://hanime1.me/watch?v=42'),
         'episode-test',

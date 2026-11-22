@@ -15,6 +15,7 @@ import 'package:zephyr/page/donwload_task/view/download_task_cover.dart';
 import 'package:zephyr/page/donwload_task/view/download_work_sections.dart';
 import 'package:zephyr/widgets/work_list_divider.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/service/download/download_byte_amount.dart';
 import 'package:zephyr/page/video/video_export_records.dart';
 import 'package:zephyr/page/video/video_download_progress.dart';
@@ -30,6 +31,7 @@ import 'package:zephyr/page/video/video_watch_history.dart';
 import 'package:zephyr/plugin/plugin_display_name.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/widgets/collection_cover_privacy.dart';
+import 'package:zephyr/widgets/collection_press_feedback.dart';
 import 'package:zephyr/widgets/collection_selection_mark.dart';
 import 'package:zephyr/widgets/pull_refresh_feedback.dart';
 import 'package:zephyr/page/donwload_task/service/download_read_queue.dart';
@@ -213,6 +215,19 @@ int _retryFailedCount(DownloadVideoWork work) => work.failedEpisodes
     .length;
 bool _canRetryFailed(DownloadVideoWork work) => _retryFailedCount(work) > 0;
 
+String downloadVideoWorkDeleteLabel(
+  BuildContext context,
+  DownloadVideoWork work,
+) {
+  final chinese = Localizations.localeOf(context).languageCode == 'zh';
+  final count = work.episodes.length;
+  if (count == work.totalEpisodes) {
+    return chinese ? '删除整部下载' : 'Delete work downloads';
+  }
+  if (chinese) return '删除这 $count 项';
+  return count == 1 ? 'Delete this download' : 'Delete $count downloads';
+}
+
 /// Work is a navigation summary; actions still receive original episode rows.
 class DownloadVideoWorkCard extends StatelessWidget {
   const DownloadVideoWorkCard({
@@ -264,29 +279,20 @@ class DownloadVideoWorkCard extends StatelessWidget {
         height: 1.25,
       );
       final fraction = live.progress;
-      final wholeWork = live.episodes.length == live.totalEpisodes;
       final count = live.episodes.length;
+      final wholeWork = count == live.totalEpisodes;
       final chinese = Localizations.localeOf(context).languageCode == 'zh';
-      final deleteLabel = wholeWork
-          ? (chinese ? '删除整部' : 'Delete work')
-          : (chinese
-                ? '删除这 $count 项'
-                : count == 1
-                ? 'Delete this download'
-                : 'Delete $count downloads');
+      final deleteLabel = downloadVideoWorkDeleteLabel(context, live);
       final stateLabels = downloadVideoWorkStateLabels(live);
       final retry = onRetryFailed != null && _canRetryFailed(live)
-          ? Visibility(
-              visible: !managing,
-              maintainAnimation: true,
-              maintainState: true,
-              maintainSize: true,
-              child: IconButton(
+          ? Tooltip(
+              message:
+                  '${t.download.retryEpisodeDownload} (${_retryFailedCount(live)})',
+              excludeFromSemantics: true,
+              child: TextButton(
                 key: ValueKey('download-work-retry.${work.key}'),
-                tooltip:
-                    '${t.download.retryEpisodeDownload} (${_retryFailedCount(live)})',
                 onPressed: enabled ? () => onRetryFailed!(live) : null,
-                icon: const Icon(Icons.refresh_rounded),
+                child: Text(t.common.retry),
               ),
             )
           : null;
@@ -312,159 +318,174 @@ class DownloadVideoWorkCard extends StatelessWidget {
         ),
         child: Stack(
           children: [
-            InkWell(
-              key: ValueKey('download-work-open.${work.key}'),
-              onTap: enabled && (!managing || !live.active) ? onOpen : null,
-              onLongPress: enabled && !managing && !live.active
-                  ? onManage
-                  : null,
-              borderRadius: BorderRadius.circular(14),
-              child: Padding(
-                padding: DownloadCardMetrics.padding,
-                child: Row(
-                  children: [
-                    Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        DownloadVideoTaskCover(
-                          width: DownloadCardMetrics.coverWidth,
-                          height: DownloadCardMetrics.coverHeight,
-                          // An episode's duration does not describe the work.
-                          row: {
-                            ...live.poster.video!,
-                            'durationMs': null,
-                            'sourceDuration': '',
-                          },
-                          fallback: const Icon(Icons.video_library_outlined),
-                        ),
-                        if (pinned) const DownloadCardPin(),
-                        if (managing)
-                          DownloadCardSelection(
-                            key: ValueKey('download-work-select.${work.key}'),
-                            label: live.title,
-                            selected: checked,
-                            onTap: enabled && !live.active ? onOpen : null,
+            Builder(
+              builder: (context) => InkWell(
+                key: ValueKey('download-work-open.${work.key}'),
+                splashFactory: NoSplash.splashFactory,
+                highlightColor: CollectionPressFeedback.surfaceHighlight(
+                  context,
+                ),
+                onTap:
+                    DownloadSwipeActions.bodyEnabled(context) &&
+                        enabled &&
+                        (!managing || !live.active)
+                    ? onOpen
+                    : null,
+                onLongPress:
+                    DownloadSwipeActions.bodyEnabled(context) &&
+                        enabled &&
+                        !managing &&
+                        !live.active
+                    ? onManage
+                    : null,
+                borderRadius: BorderRadius.circular(14),
+                child: Padding(
+                  padding: DownloadCardMetrics.padding,
+                  child: Row(
+                    children: [
+                      Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          DownloadVideoTaskCover(
+                            width: DownloadCardMetrics.coverWidth,
+                            height: DownloadCardMetrics.coverHeight,
+                            // An episode's duration does not describe the work.
+                            row: {
+                              ...live.poster.video!,
+                              'durationMs': null,
+                              'sourceDuration': '',
+                            },
+                            fallback: const Icon(Icons.video_library_outlined),
                           ),
-                        if (unread)
-                          PositionedDirectional(
-                            top: -3,
-                            end: -3,
-                            child: Container(
-                              width: 10,
-                              height: 10,
-                              decoration: BoxDecoration(
-                                color: colors.primary,
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: colors.surface,
-                                  width: 1.5,
+                          if (pinned) const DownloadCardPin(),
+                          if (managing)
+                            DownloadCardSelection(
+                              key: ValueKey('download-work-select.${work.key}'),
+                              label: live.title,
+                              selected: checked,
+                              onTap: enabled && !live.active ? onOpen : null,
+                            ),
+                          if (unread)
+                            PositionedDirectional(
+                              top: -3,
+                              end: -3,
+                              child: Container(
+                                width: 10,
+                                height: 10,
+                                decoration: BoxDecoration(
+                                  color: colors.primary,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: colors.surface,
+                                    width: 1.5,
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: DownloadCardDetails(
-                        heading: [
-                          title,
-                          Text(
-                            sourceTitle,
-                            maxLines:
-                                MediaQuery.textScalerOf(context).scale(12) > 16
-                                ? 2
-                                : 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: muted,
-                          ),
-                          Row(
-                            key: ValueKey('download-work-summary.${work.key}'),
-                            children: [
-                              ExcludeSemantics(
-                                child: Icon(
-                                  Icons.video_library_outlined,
-                                  size: 17,
-                                  color: colors.onSurfaceVariant,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Expanded(
-                                child: Text(
-                                  summary,
-                                  style: muted?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                              if (!managing)
-                                ExcludeSemantics(
-                                  child: Icon(
-                                    Icons.chevron_right_rounded,
-                                    size: 20,
-                                    color: colors.onSurfaceVariant,
-                                  ),
-                                )
-                              else
-                                const SizedBox(width: 20),
-                            ],
-                          ),
-                          if (!wholeWork)
+                        ],
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: DownloadCardDetails(
+                          identityAction: openSwipe == null
+                              ? null
+                              : const DownloadRowMoreButton(),
+                          identity: [
+                            title,
                             Text(
-                              _matchingDownloads(
-                                context,
-                                count,
-                                work.totalEpisodes,
-                              ),
-                              maxLines: 2,
+                              sourceTitle,
+                              maxLines:
+                                  MediaQuery.textScalerOf(context).scale(12) >
+                                      16
+                                  ? 2
+                                  : 1,
                               overflow: TextOverflow.ellipsis,
                               style: muted,
                             ),
-                          if (stateLabels.isNotEmpty ||
-                              retry != null ||
-                              live.transferring)
-                            DownloadCardTransfer(
-                              status: Text(
-                                stateLabels.join(' · '),
-                                key: ValueKey(
-                                  'download-work-state.${work.key}',
-                                ),
-                                style: muted?.copyWith(
-                                  color: live.failed > 0 ? colors.error : null,
-                                ),
+                          ],
+                          heading: [
+                            Row(
+                              key: ValueKey(
+                                'download-work-summary.${work.key}',
                               ),
-                              action: retry,
-                              progress: live.transferring
-                                  ? Row(
-                                      children: [
-                                        Expanded(
-                                          child: LinearProgressIndicator(
-                                            value: fraction,
-                                            minHeight: 3,
-                                            borderRadius: BorderRadius.circular(
-                                              2,
-                                            ),
-                                          ),
-                                        ),
-                                        if (fraction != null) ...[
-                                          const SizedBox(width: 8),
-                                          Text(
-                                            '${(fraction * 100).floor()}%',
-                                            key: ValueKey(
-                                              'download-work-progress-text.${work.key}',
-                                            ),
-                                            style: muted,
-                                          ),
-                                        ],
-                                      ],
-                                    )
-                                  : null,
+                              children: [
+                                ExcludeSemantics(
+                                  child: Icon(
+                                    Icons.video_library_outlined,
+                                    size: 17,
+                                    color: colors.onSurfaceVariant,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    summary,
+                                    style: muted?.copyWith(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
-                        ],
-                        footer: [_WorkTransferDetails(work: live)],
+                            if (!wholeWork)
+                              Text(
+                                _matchingDownloads(
+                                  context,
+                                  count,
+                                  work.totalEpisodes,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: muted,
+                              ),
+                            if (stateLabels.isNotEmpty ||
+                                retry != null ||
+                                live.transferring)
+                              DownloadCardTransfer(
+                                status: Text(
+                                  stateLabels.join(' · '),
+                                  key: ValueKey(
+                                    'download-work-state.${work.key}',
+                                  ),
+                                  style: muted?.copyWith(
+                                    color: live.failed > 0
+                                        ? colors.error
+                                        : null,
+                                  ),
+                                ),
+                                action: retry,
+                                showAction: !managing,
+                                progress: live.transferring
+                                    ? Row(
+                                        children: [
+                                          Expanded(
+                                            child: LinearProgressIndicator(
+                                              value: fraction,
+                                              minHeight: 3,
+                                              borderRadius:
+                                                  BorderRadius.circular(2),
+                                            ),
+                                          ),
+                                          if (fraction != null) ...[
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              '${(fraction * 100).floor()}%',
+                                              key: ValueKey(
+                                                'download-work-progress-text.${work.key}',
+                                              ),
+                                              style: muted,
+                                            ),
+                                          ],
+                                        ],
+                                      )
+                                    : null,
+                              ),
+                          ],
+                          footer: [_WorkTransferDetails(work: live)],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -484,6 +505,24 @@ class DownloadVideoWorkCard extends StatelessWidget {
                 .firstOrNull;
       return DownloadSwipeActions(
         rowKey: work.key,
+        swipeActionIds: [
+          sourceRow == null ? 'info' : 'details',
+          if (!live.active) 'delete',
+        ],
+        information: !managing && enabled && sourceRow == null
+            ? [
+                sourceTitle,
+                _completedDownloads(
+                  context,
+                  live.completed,
+                  live.episodes.length,
+                ),
+                ...stateLabels,
+                if (live.knownBytes case final bytes?)
+                  downloadByteAmount(bytes),
+              ]
+            : null,
+        title: live.title,
         openRow: openRow,
         exposeActions: true,
         actionVersion: jsonEncode([
@@ -540,6 +579,8 @@ class DownloadEpisodePlayRow extends StatelessWidget {
     required this.onPlay,
     this.bytes,
     this.resumeAt,
+    this.additionalMetadata,
+    this.trailing,
     this.onManage,
     this.selecting = false,
     this.selected = false,
@@ -548,6 +589,8 @@ class DownloadEpisodePlayRow extends StatelessWidget {
   final String title, variant;
   final int? bytes;
   final Duration? resumeAt;
+  final Widget? additionalMetadata;
+  final Widget? trailing;
   final VoidCallback? onPlay;
   final VoidCallback? onManage;
   final bool selecting, selected;
@@ -557,12 +600,55 @@ class DownloadEpisodePlayRow extends StatelessWidget {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final position = resumeAt;
+    final rowEnabled = DownloadSwipeActions.bodyEnabled(context);
     final watched = DownloadEpisodeRowScope.of(context)?.watchCompleted == true;
     final chinese = Localizations.localeOf(context).languageCode == 'zh';
     final fileBytes = bytes;
     final metadataStyle = theme.textTheme.bodySmall?.copyWith(
       color: colors.onSurfaceVariant,
     );
+    final details = <Widget>[
+      ?additionalMetadata,
+      if (variant.isNotEmpty || fileBytes != null)
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Expanded(
+              flex: 3,
+              child: variant.isEmpty
+                  ? const SizedBox.shrink()
+                  : Text(variant, style: metadataStyle),
+            ),
+            if (fileBytes != null) ...[
+              const SizedBox(width: 8),
+              Flexible(
+                flex: 2,
+                child: Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: Text(
+                    downloadByteAmount(fileBytes),
+                    textAlign: TextAlign.end,
+                    style: metadataStyle?.copyWith(
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      if (watched || position != null)
+        Text(
+          watched
+              ? (chinese ? '已看完' : 'Watched')
+              : (chinese
+                    ? '看到 ${formatKnownVideoDuration(position!)}'
+                    : 'Watched to ${formatKnownVideoDuration(position!)}'),
+          key: const ValueKey('download-episode-watch-progress'),
+          style: metadataStyle,
+        ),
+    ];
     return Semantics(
       button: true,
       enabled: onPlay != null,
@@ -570,12 +656,14 @@ class DownloadEpisodePlayRow extends StatelessWidget {
       label: selecting ? null : t.download.openEpisodePlayback,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: onPlay,
-        onLongPress: onManage,
+        splashFactory: NoSplash.splashFactory,
+        highlightColor: CollectionPressFeedback.surfaceHighlight(context),
+        onTap: rowEnabled ? onPlay : null,
+        onLongPress: rowEnabled ? onManage : null,
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 70),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+            padding: DownloadCardMetrics.padding,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -611,63 +699,24 @@ class DownloadEpisodePlayRow extends StatelessWidget {
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    spacing: 3,
-                    children: [
-                      Text(
-                        title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      if (variant.isNotEmpty || fileBytes != null)
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.baseline,
-                          textBaseline: TextBaseline.alphabetic,
-                          children: [
-                            Expanded(
-                              flex: 3,
-                              child: variant.isEmpty
-                                  ? const SizedBox.shrink()
-                                  : Text(variant, style: metadataStyle),
-                            ),
-                            if (fileBytes != null) ...[
-                              const SizedBox(width: 8),
-                              Flexible(
-                                flex: 2,
-                                child: Align(
-                                  alignment: AlignmentDirectional.centerEnd,
-                                  child: Text(
-                                    downloadByteAmount(fileBytes),
-                                    textAlign: TextAlign.end,
-                                    style: metadataStyle?.copyWith(
-                                      fontFeatures: const [
-                                        FontFeature.tabularFigures(),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      if (watched || position != null)
+                  child: DownloadRowHeading(
+                    action: trailing,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      spacing: 3,
+                      children: [
                         Text(
-                          watched
-                              ? (chinese ? '已看完' : 'Watched')
-                              : (chinese
-                                    ? '看到 ${formatKnownVideoDuration(position!)}'
-                                    : 'Watched to ${formatKnownVideoDuration(position!)}'),
-                          key: const ValueKey(
-                            'download-episode-watch-progress',
+                          title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
                           ),
-                          style: metadataStyle,
                         ),
-                    ],
+                        ...details,
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -714,6 +763,7 @@ class DownloadVideoWorkPage extends StatefulWidget {
     this.sourceTitle,
     this.refreshItems,
     this.onRetryFailed,
+    this.onOpenDetails,
     this.onContinueWatching,
     this.initialHistory,
     this.readyHistory,
@@ -734,6 +784,7 @@ class DownloadVideoWorkPage extends StatefulWidget {
   rowBuilder;
   final String? sourceTitle;
   final Future<void> Function(Iterable<DownloadCenterItem>)? onRetryFailed;
+  final void Function(BuildContext, Map<String, dynamic>)? onOpenDetails;
   final Future<void> Function(BuildContext, DownloadCenterItem)?
   onContinueWatching;
   final Future<DownloadVideoWorkHistory>? initialHistory;
@@ -1296,6 +1347,17 @@ class _DownloadVideoWorkPageState extends State<DownloadVideoWorkPage> {
         : downloadByteAmount(bytes);
     final poster =
         (_episodes.isEmpty ? widget.initial.poster : work.poster).video!;
+    final openDetails = widget.onOpenDetails;
+    final detailsRow = openDetails == null
+        ? null
+        : _episodes
+              .map((item) => item.video!)
+              .where(
+                (row) =>
+                    videoDownloadSourceTarget(row, includeEpisode: false) !=
+                    null,
+              )
+              .firstOrNull;
     final source = work.identity.source;
     final sourceName =
         widget.sourceTitle ??
@@ -1343,6 +1405,14 @@ class _DownloadVideoWorkPageState extends State<DownloadVideoWorkPage> {
             ],
           ),
         ),
+        if (detailsRow != null)
+          DownloadWorkDetailsButton(
+            visible: !_selection.active && !_removing,
+            onPressed: () {
+              _openSwipe.value = null;
+              openDetails!(context, detailsRow);
+            },
+          ),
       ],
     );
   }
@@ -1530,7 +1600,7 @@ class _DownloadVideoWorkPageState extends State<DownloadVideoWorkPage> {
                   if (saved &&
                       episodeKeys.length > downloadWorkEpisodeRangeSize)
                     Padding(
-                      padding: const EdgeInsets.only(top: 4),
+                      padding: const EdgeInsets.only(top: 8, bottom: 8),
                       child: VideoEpisodeRanges(
                         key: const ValueKey('download-video-ranges'),
                         count: episodeKeys.length,
@@ -1588,12 +1658,18 @@ class _DownloadVideoWorkPageState extends State<DownloadVideoWorkPage> {
     return PopScope(
       canPop: !_selection.active,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && !_removing && _selection.active) {
+        if (didPop) {
+          _openSwipe.value = null;
+        } else if (!_removing && _selection.active) {
           setState(_selection.close);
         }
       },
       child: SettingPageShell(
         title: widget.initial.title,
+        leading: TapRegion(
+          groupId: _openSwipe,
+          child: const SourceBackButton(),
+        ),
         actions: [
           if (widget.onRemoveEpisodes != null)
             TextButton(
@@ -1619,7 +1695,6 @@ class _DownloadVideoWorkPageState extends State<DownloadVideoWorkPage> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _overview(context),
-                    const SizedBox(height: 8),
                     DownloadWorkSectionControl(
                       selected: _pane,
                       onSelected: _selectPane,

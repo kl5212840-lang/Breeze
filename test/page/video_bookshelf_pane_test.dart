@@ -1000,7 +1000,7 @@ void main() {
       await _mount(tester, data);
       await tester.pumpAndSettle();
       final view = find.byKey(const ValueKey('video-shelf.view'));
-      expect(tester.getSize(view), const Size(44, 44));
+      expect(tester.getSize(view), const Size(48, 48));
       await tester.tap(view);
       await tester.pumpAndSettle();
       expect(data.enriched, isEmpty);
@@ -1932,10 +1932,15 @@ void main() {
               find.descendant(of: counts, matching: find.byType(Text)),
               findsOneWidget,
             );
-            expect(
-              tester.getCenter(works).dx,
-              greaterThan(tester.getCenter(folderCard).dx),
+            final title = find.descendant(
+              of: folderCard,
+              matching: find.text(
+                tester.widget<BookshelfFolderCard>(folderCard).title,
+              ),
             );
+            final titleRect = tester.getRect(title);
+            expect(tester.getRect(works).left, closeTo(titleRect.left, .1));
+            expect(tester.getRect(works).top, greaterThan(titleRect.bottom));
             expect(
               tester
                   .widget<BookshelfContentToolbar>(
@@ -1948,14 +1953,13 @@ void main() {
             expect(trigger.symbol, 'breeze.more.vertical');
             expect(trigger.options, contains('replace'));
             expect(trigger.width, 44);
+            final menuRect = tester.getRect(menu);
             expect(
-              tester.getRect(menu).bottom,
-              closeTo(tester.getRect(folderCard).bottom, .1),
+              menuRect.center.dy,
+              inInclusiveRange(titleRect.top, titleRect.bottom),
             );
-            expect(
-              tester.getRect(counts).bottom,
-              lessThanOrEqualTo(tester.getRect(menu).top),
-            );
+            expect(titleRect.right, lessThan(menuRect.left));
+            expect(tester.getRect(counts).right, lessThan(menuRect.left));
             expect(tester.takeException(), isNull);
             await tester.pumpWidget(const SizedBox.shrink());
             await tester.pump(const Duration(milliseconds: 200));

@@ -1,3 +1,6 @@
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
+import 'package:zephyr/page/video/hanime_work_facts.dart';
+import 'package:zephyr/page/video/video_public_metadata.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
@@ -218,9 +221,10 @@ class ApiVideoHistory extends StatefulWidget {
     this.compactHeader = false,
     this.onToggleView,
     this.headerLeading = const SourceBackButton(),
+    this.tabReselectEnabled = false,
   });
   final Widget? headerLeading;
-  final bool compactHeader;
+  final bool compactHeader, tabReselectEnabled;
   final VoidCallback? onToggleView;
   final String source;
   final String itemNamespace;
@@ -238,6 +242,9 @@ class ApiVideoHistory extends StatefulWidget {
 
 class _ApiVideoHistoryState extends State<ApiVideoHistory> {
   List<VideoWatchRecord>? _records;
+  Map<Uri, HanimeWorkFacts> _hanimeFacts = const {};
+  bool get _isHanime => widget.source == hanimeSourceId;
+
   bool _failed = false, _selecting = false, _working = false;
   final _selectedPaths = <String>{};
   final _searchFocus = FocusNode();
@@ -256,6 +263,7 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
   void _restoreConditions() {
     final saved = _storage?.readState(context, identifier: _conditionsKey);
     _query = saved is Map && saved['query'] is String ? saved['query'] : '';
+    _searching = widget.compactHeader && _query.isNotEmpty;
     _keywordScope = saved is Map
         ? parseKeywordSearchScope(saved['keywordScope']) ??
               KeywordSearchScope.all
@@ -276,6 +284,31 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
   void _setQuery(String value) {
     setState(() => _query = value);
     _saveConditions();
+  }
+
+  void _closeSearch() {
+    _searchFocus.unfocus();
+    setState(() {
+      _searching = false;
+      _query = '';
+    });
+    _saveConditions();
+  }
+
+  void _toggleSearch() {
+    if (_searching) {
+      _closeSearch();
+      return;
+    }
+    setState(() => _searching = true);
+    requestSearchKeyboard(
+      _searchFocus,
+      isCurrent: () => mounted && widget.active && _searching && !_selecting,
+    );
+  }
+
+  void _searchFocusChanged() {
+    if (mounted) setState(() {});
   }
 
   Widget _keywordMenu() => KeywordScopeMenu(
@@ -324,6 +357,7 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
   @override
   void initState() {
     super.initState();
+    _searchFocus.addListener(_searchFocusChanged);
     VideoWatchHistory.changes.addListener(_read);
     _read();
   }
@@ -403,8 +437,14 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
     final allowStandaloneWatch = widget.allowStandaloneWatch;
     try {
       final records = await VideoWatchHistory.read(source);
+      final facts = _isHanime
+          ? await HanimeWorkFactsStore.read().catchError(
+              (Object _) => <Uri, HanimeWorkFacts>{},
+            )
+          : const <Uri, HanimeWorkFacts>{};
       if (mounted && epoch == _epoch) {
         setState(() {
+          _hanimeFacts = facts;
           _records = records
               .where(
                 (e) =>
@@ -650,6 +690,7 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
         ),
     ];
     return CollectionCoverPrivacyScope(
+      replacementFit: _isHanime ? BoxFit.contain : BoxFit.cover,
       child: BookshelfFloatingSelectionActions(
         selecting: widget.compactHeader && _selecting,
         selectedCount: visibleSelected.length,
@@ -667,13 +708,23 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
           ),
         ],
         child: PopScope(
-          canPop: !widget.active || (!_selecting && !_working),
+          canPop:
+              !widget.active ||
+              (!_selecting &&
+                  !_working &&
+                  !_searching &&
+                  !_searchFocus.hasFocus),
           onPopInvokedWithResult: (didPop, _) {
-            if (!didPop && _selecting && !_working) {
+            if (didPop || !widget.active || _working) return;
+            if (_selecting) {
               setState(() {
                 _selecting = false;
                 _selectedPaths.clear();
               });
+            } else if (_searching) {
+              _closeSearch();
+            } else {
+              _searchFocus.unfocus();
             }
           },
           child: Column(
@@ -698,8 +749,8 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
                       ),
                       const SizedBox(width: 8),
                       _keywordMenu(),
-                      const CollectionCoverPrivacyButton(
-                        key: ValueKey('api-history.cover-privacy'),
+                      const CollectionCoverPrivacyActions(
+                        buttonKey: ValueKey('api-history.cover-privacy'),
                       ),
                     ],
                   ),
@@ -737,9 +788,7 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
                               leading: widget.headerLeading,
                               searching: _searching,
                               searchScope: _keywordMenu(),
-                              title: _query.isEmpty
-                                  ? t.videoSource.localHistory
-                                  : _query,
+                              title: t.videoSource.localHistory,
                               searchField: SearchQueryField(
                                 key: ValueKey('$_conditionsKey.search'),
                                 query: _query,
@@ -749,22 +798,7 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
                                 hintText: t.videoLibrary.searchHint,
                                 onChanged: _setQuery,
                               ),
-                              onSearch: _working
-                                  ? null
-                                  : () {
-                                      setState(() => _searching = !_searching);
-                                      if (_searching) {
-                                        requestSearchKeyboard(
-                                          _searchFocus,
-                                          isCurrent: () =>
-                                              mounted &&
-                                              widget.active &&
-                                              _searching,
-                                        );
-                                      } else {
-                                        _searchFocus.unfocus();
-                                      }
-                                    },
+                              onSearch: _working ? null : _toggleSearch,
                               options: {
                                 if (allRows.isNotEmpty)
                                   'manage': t.videoSource.manage,
@@ -779,7 +813,6 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
                                 } else if (action == 'manage') {
                                   setState(() {
                                     _selecting = true;
-                                    _searching = false;
                                     _selectedPaths.clear();
                                   });
                                 }
@@ -796,6 +829,7 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
                                         : t.common.loading)
                                   : t.videoLibrary.results(count: rows.length),
                               sort: _sort,
+                              showSortValue: _isHanime,
                               sortOptions: _sortOptions(),
                               onSort: _working || allRows.isEmpty
                                   ? null
@@ -1012,9 +1046,27 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
                           gridCoverCache: _gridCoverCache,
                           posterAspectRatio: widget.posterAspectRatio,
                           loadDetail: widget.loadDetail,
+                          compactDetails: _isHanime,
+                          statisticsBuilder: !_isHanime || _hanimeFacts.isEmpty
+                              ? null
+                              : (context, item) => hanimeWorkStatistics(
+                                  context,
+                                  _hanimeFacts[hanimeWorkPage(item.detailUrl)]
+                                          ?.metadata ??
+                                      const VideoPublicMetadata(),
+                                  widget.mode == ApiVideoView.list
+                                      ? HanimeCatalogLayout.detail
+                                      : HanimeCatalogLayout.compact,
+                                ),
                           recordNoteBuilder: (initial) => initial.remarks,
                           onDetailLoaded: widget.onDetailLoaded,
                           detailsActive: widget.active && !_selecting,
+                          tabReselectEnabled:
+                              widget.tabReselectEnabled &&
+                              widget.active &&
+                              !_searching &&
+                              !_openingFilters &&
+                              !_working,
                           selecting: _selecting,
                           selected: {
                             for (final item in items)

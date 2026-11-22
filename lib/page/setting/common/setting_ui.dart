@@ -270,12 +270,14 @@ class SettingPageShell extends StatelessWidget {
     super.key,
     required this.title,
     required this.child,
+    this.leading,
     this.actions,
     this.grouped = false,
   });
 
   final String title;
   final Widget child;
+  final Widget? leading;
   final List<Widget>? actions;
   final bool grouped;
 
@@ -286,7 +288,7 @@ class SettingPageShell extends StatelessWidget {
       return Scaffold(
         backgroundColor: background,
         appBar: AppBar(
-          leading: const SourceBackButton(),
+          leading: leading ?? const SourceBackButton(),
           title: Text(
             title,
             style: Theme.of(

@@ -548,14 +548,12 @@ void main() {
       expect(api.requests, hasLength(1));
       await tester.tap(find.byKey(const ValueKey('jm-collection.search')));
       await tester.pumpAndSettle();
-      expect(
-        tester
-            .widget<KeywordScopeMenu>(
-              find.byKey(const ValueKey('source-loaded.search-scope')),
-            )
-            .scope,
-        KeywordSearchScope.title,
+      final scope = tester.widget<KeywordScopeMenu>(
+        find.byKey(const ValueKey('source-loaded.search-scope')),
       );
+      expect(scope.scope, KeywordSearchScope.all);
+      // An exact count requires a complete index for the selected fields.
+      scope.onChanged(KeywordSearchScope.title);
       await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const ValueKey('source-loaded.search')),
@@ -629,14 +627,12 @@ void main() {
       );
       await tester.tap(find.byKey(const ValueKey('jm-collection.search')));
       await tester.pumpAndSettle();
-      expect(
-        tester
-            .widget<KeywordScopeMenu>(
-              find.byKey(const ValueKey('source-loaded.search-scope')),
-            )
-            .scope,
-        KeywordSearchScope.title,
+      final scope = tester.widget<KeywordScopeMenu>(
+        find.byKey(const ValueKey('source-loaded.search-scope')),
       );
+      expect(scope.scope, KeywordSearchScope.all);
+      // An exact count requires a complete index for the selected fields.
+      scope.onChanged(KeywordSearchScope.title);
       await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const ValueKey('source-loaded.search')),
@@ -738,18 +734,30 @@ void main() {
       );
       final appBar = tester.getRect(find.byType(AppBar));
       expect(tools.bottom - appBar.bottom, lessThanOrEqualTo(52));
-      expect(tools.width, 44);
-      expect(tools.right, 378);
+      final view = tester.getRect(find.byKey(const ValueKey('jm-cloud-view')));
+      expect(tools.size, view.size);
+      expect(tools.right + 8, view.left);
+      final results = find
+          .descendant(
+            of: find.byType(PluginPagedComicListView),
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is Scrollable &&
+                  widget.axisDirection == AxisDirection.down,
+            ),
+          )
+          .first;
+      tester.state<ScrollableState>(results).position.jumpTo(120);
+      await tester.pumpAndSettle();
+      expect(tester.state<ScrollableState>(results).position.pixels, 120);
       await tester.tap(find.byKey(const ValueKey('jm-collection.search')));
       await tester.pumpAndSettle();
-      expect(
-        tester
-            .widget<KeywordScopeMenu>(
-              find.byKey(const ValueKey('source-loaded.search-scope')),
-            )
-            .scope,
-        KeywordSearchScope.title,
+      final scope = tester.widget<KeywordScopeMenu>(
+        find.byKey(const ValueKey('source-loaded.search-scope')),
       );
+      expect(scope.scope, KeywordSearchScope.all);
+      // An exact count requires a complete index for the selected fields.
+      scope.onChanged(KeywordSearchScope.title);
       await tester.pumpAndSettle();
       await tester.enterText(
         find.byKey(const ValueKey('source-loaded.search')),
@@ -767,6 +775,13 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('source-loaded.search')), findsNothing);
       expect(find.text(t.videoLibrary.results(count: 267)), findsOneWidget);
+      expect(tester.state<ScrollableState>(results).position.pixels, 120);
+      await tester.tap(find.byKey(const ValueKey('jm-collection.search')));
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byType(ComicListPage), findsOneWidget);
+      expect(find.byKey(const ValueKey('source-loaded.search')), findsNothing);
       await tester.tap(find.byKey(const ValueKey('source-loaded.filters')));
       await tester.pumpAndSettle();
       expect(
@@ -813,15 +828,18 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        var navigation = tester.widget<JmCollectionNavigationActions>(
-          find.byType(JmCollectionNavigationActions),
+        final sortFinder = find.descendant(
+          of: find.byKey(const ValueKey('jm-collection.sort')),
+          matching: find.byType(NativeVideoMenu),
         );
+        NativeVideoMenu sort() => tester.widget<NativeVideoMenu>(sortFinder);
+        expect(sort().options.keys, api.values);
+        expect(sort().selected, api.values.first);
         expect(
-          navigation.options.keys.where((key) => key.startsWith('sort.')),
-          api.values.map((value) => 'sort.$value'),
+          find.descendant(of: find.byType(AppBar), matching: sortFinder),
+          findsNothing,
         );
-        expect(navigation.selected, 'sort.${api.values.first}');
-        navigation.onSelected('sort.${api.values.last}');
+        sort().onSelected(api.values.last);
         await tester.pumpAndSettle();
         expect(api.requests.last['page'], 1);
         expect(
@@ -860,19 +878,9 @@ void main() {
           await folderRefresh;
           expect((api.requests.last['extern'] as Map)['folderId'], '');
         }
-        navigation = tester.widget<JmCollectionNavigationActions>(
-          find.byType(JmCollectionNavigationActions),
-        );
-        navigation.onSelected('sort.${api.values.first}');
+        sort().onSelected(api.values.first);
         await tester.pumpAndSettle();
-        expect(
-          tester
-              .widget<JmCollectionNavigationActions>(
-                find.byType(JmCollectionNavigationActions),
-              )
-              .selected,
-          'sort.${api.values.first}',
-        );
+        expect(sort().selected, api.values.first);
         expect(
           tester
               .widget<PluginPagedComicListView>(

@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/collection_cover_settings.dart';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -114,16 +115,19 @@ class CollectionCoverPrivacyScope extends InheritedWidget {
     super.key,
     required super.child,
     this.enabled = true,
+    this.replacementFit = BoxFit.cover,
   });
   final bool enabled;
-  static bool contains(BuildContext context) =>
-      context
-          .dependOnInheritedWidgetOfExactType<CollectionCoverPrivacyScope>()
-          ?.enabled ??
-      false;
+  final BoxFit replacementFit;
+  static CollectionCoverPrivacyScope? of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<CollectionCoverPrivacyScope>();
+
+  static bool contains(BuildContext context) => of(context)?.enabled ?? false;
+
   @override
   bool updateShouldNotify(CollectionCoverPrivacyScope oldWidget) =>
-      enabled != oldWidget.enabled;
+      enabled != oldWidget.enabled ||
+      replacementFit != oldWidget.replacementFit;
 }
 
 class CollectionCoverPrivacy extends StatelessWidget {
@@ -134,12 +138,14 @@ class CollectionCoverPrivacy extends StatelessWidget {
     this.fit = BoxFit.cover,
     this.image,
     this.mosaicPlaceholder,
+    this.forceBlur = false,
   });
   final BoxFit fit;
   final ImageProvider? image;
   final Widget? mosaicPlaceholder;
   final Widget child;
   final bool enabled;
+  final bool forceBlur;
 
   ui.ImageFilter _filter(CollectionCoverStyle style) => ui.ImageFilter.blur(
     sigmaX: style == CollectionCoverStyle.glass ? 30 : 24,
@@ -149,7 +155,16 @@ class CollectionCoverPrivacy extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!enabled || !CollectionCoverPrivacyScope.contains(context)) {
+    if (enabled && forceBlur) {
+      return ClipRect(
+        child: ImageFiltered(
+          imageFilter: _filter(CollectionCoverStyle.blur),
+          child: child,
+        ),
+      );
+    }
+    final scope = CollectionCoverPrivacyScope.of(context);
+    if (!enabled || scope == null || !scope.enabled) {
       return child;
     }
     final controller = CollectionCoverPrivacyController.instance;
@@ -189,7 +204,10 @@ class CollectionCoverPrivacy extends StatelessWidget {
                   Positioned.fill(
                     child: IgnorePointer(
                       child: hasArtwork
-                          ? _ReplacementCover(path: path)
+                          ? _ReplacementCover(
+                              path: path,
+                              fit: scope.replacementFit,
+                            )
                           : mosaic
                           ? _MosaicCover(
                               image: this.image,
@@ -330,9 +348,10 @@ class _MosaicCoverState extends State<_MosaicCover> {
 }
 
 class _ReplacementCover extends StatelessWidget {
-  const _ReplacementCover({required this.path});
+  const _ReplacementCover({required this.path, required this.fit});
 
   final String path;
+  final BoxFit fit;
 
   @override
   Widget build(BuildContext context) => ColoredBox(
@@ -351,7 +370,7 @@ class _ReplacementCover extends StatelessWidget {
             height: limit,
             policy: ResizeImagePolicy.fit,
           ),
-          fit: BoxFit.cover,
+          fit: fit,
           errorBuilder: (_, _, _) => const SizedBox.shrink(),
         );
       },
@@ -363,9 +382,11 @@ class CollectionCoverPrivacyButton extends StatelessWidget {
   const CollectionCoverPrivacyButton({
     super.key,
     this.emphasizeProtected = false,
+    this.bare = false,
   });
 
   final bool emphasizeProtected;
+  final bool bare;
   @override
   Widget build(BuildContext context) {
     final controller = CollectionCoverPrivacyController.instance;
@@ -376,6 +397,7 @@ class CollectionCoverPrivacyButton extends StatelessWidget {
         return Semantics(
           toggled: protected,
           child: SourceChromeIconButton(
+            bare: bare,
             icon: protected
                 ? (emphasizeProtected
                       ? Icons.visibility_off
@@ -401,4 +423,18 @@ class CollectionCoverPrivacyButton extends StatelessWidget {
       },
     );
   }
+}
+
+class CollectionCoverPrivacyActions extends StatelessWidget {
+  const CollectionCoverPrivacyActions({super.key, this.buttonKey});
+  final Key? buttonKey;
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      CollectionCoverPrivacyButton(key: buttonKey),
+      const CollectionCoverSettingsMoreButton(),
+    ],
+  );
 }

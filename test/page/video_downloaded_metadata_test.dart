@@ -263,6 +263,23 @@ void main() {
       expect(values[3]!.quality, '1080p');
       expect(values[0]!.releaseDate, '2025-02-03');
       expect(values[0]!.downloadedAt!.year, 2026);
+      rows.first['metadata'] = jsonEncode([
+        {'type': 'year', 'value': '2024'},
+      ]);
+      await DownloadCenterResources.enrichVideoRows(rows);
+      final projectedRows = DownloadCenterResources.mergeVideos([], [
+        {...rows.first, 'available': true, 'filePresent': true},
+      ]);
+      final fields = projectDownloadCenter(
+        tasks: [],
+        comics: [],
+        videos: projectedRows,
+      ).single.fields;
+      expect(fields['year'], {'2024'});
+      expect(fields['area'], {'JP'});
+      final enriched = rows.first['metadata'];
+      await DownloadCenterResources.enrichVideoRows(rows);
+      expect(rows.first['metadata'], enriched);
       final encoded = (await SharedPreferences.getInstance()).getString(
         VideoDownloadedDetails.durableStorageKey,
       )!;
@@ -592,7 +609,11 @@ void main() {
       );
       await VideoDownloadedDetails.saveItem('removed-source', item);
       final row = _row('removed-source', _watch('videos/movie_8'));
-      await VideoDownloadedDetails.retainForResource(row, waitForPoster: true);
+      await VideoDownloadedDetails.retainForResource(
+        row,
+        frameFallback: false,
+        waitForPoster: true,
+      );
       await (await SharedPreferences.getInstance()).remove(
         VideoDownloadedDetails.storageKey,
       );

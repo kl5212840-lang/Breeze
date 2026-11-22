@@ -2,6 +2,7 @@ import 'package:zephyr/service/image_recovery.dart';
 import 'package:zephyr/widgets/image_recovery_region.dart';
 import 'package:zephyr/widgets/soft_cover_background.dart';
 import 'package:zephyr/page/video/video_cover_overlay.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
 import 'package:zephyr/page/video/video_downloaded_details.dart';
 import 'package:zephyr/widgets/collection_cover_fit.dart';
 import 'package:zephyr/widgets/collection_cover_privacy.dart';
@@ -29,6 +30,7 @@ class VideoThumbnail extends StatefulWidget {
     this.source,
     this.fit = BoxFit.cover,
     this.containBackground = false,
+    this.isPoster = false,
   });
   final String url;
   final String? source;
@@ -45,7 +47,7 @@ class VideoThumbnail extends StatefulWidget {
   final bool retryOnTap;
   final Uri referrer;
   final BoxFit fit;
-  final bool containBackground;
+  final bool containBackground, isPoster;
   @override
   State<VideoThumbnail> createState() => _VideoThumbnailState();
 }
@@ -232,6 +234,11 @@ class _VideoThumbnailState extends State<VideoThumbnail> {
     if (_failed && !_refreshing) unawaited(_retry());
   }
 
+  bool get _isPoster =>
+      widget.isPoster ||
+      context.findAncestorWidgetOfExactType<VideoCoverOverlay>() != null ||
+      widget.placeholderIcon == Icons.play_arrow_rounded;
+
   // The replacement file belongs to privacy, not the original image stream.
   // Keep it available while the real poster is pending, unsupported or failed;
   // Loading and fallback feedback stays outside the protected pixels.
@@ -240,6 +247,7 @@ class _VideoThumbnailState extends State<VideoThumbnail> {
         fit: StackFit.expand,
         children: [
           CollectionCoverPrivacy(
+            forceBlur: hanimePreviewCoverBlur(widget.referrer) && _isPoster,
             fit: CollectionCoverFitScope.maybeOf(context) ?? widget.fit,
             image: image,
             child: pixels,
@@ -258,9 +266,7 @@ class _VideoThumbnailState extends State<VideoThumbnail> {
             CollectionCoverFitScope.maybeOf(context) != null);
     // This image widget is shared with portraits and folder artwork. The
     // existing poster host opts in resource placeholders without changing them.
-    final poster =
-        context.findAncestorWidgetOfExactType<VideoCoverOverlay>() != null ||
-        widget.placeholderIcon == Icons.play_arrow_rounded;
+    final poster = _isPoster;
     final placeholderIcon =
         poster && widget.placeholderIcon == Icons.image_outlined
         ? Icons.play_arrow_rounded

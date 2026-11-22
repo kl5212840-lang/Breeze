@@ -343,6 +343,22 @@ void main() {
       await tester.ensureVisible(open);
       await tester.tap(open);
       await tester.pumpAndSettle();
+      final sheet = find.byType(BottomSheet);
+      expect(
+        find.descendant(of: sheet, matching: find.text(t.common.detail)),
+        findsOneWidget,
+      );
+      final noticeBody = find.descendant(
+        of: sheet,
+        matching: find.byType(SingleChildScrollView),
+      );
+      expect(
+        find.descendant(
+          of: noticeBody,
+          matching: find.text('account-a initial one'),
+        ),
+        findsOneWidget,
+      );
       expect(api.calls.where((call) => call.$1.startsWith('mark')), isEmpty);
       await tester.tap(find.byTooltip(t.common.close));
       await tester.pumpAndSettle();

@@ -21,6 +21,10 @@ class PluginAccountNeedsLogin implements Exception {
   const PluginAccountNeedsLogin();
 }
 
+class PluginAccountLoginCancelled implements Exception {
+  const PluginAccountLoginCancelled();
+}
+
 class PluginAccountSwitchFailed implements Exception {
   const PluginAccountSwitchFailed();
   @override
@@ -176,6 +180,17 @@ abstract final class PluginAccountProfiles {
       profile.bundle['account.backup'] is Map &&
       profile.bundle['account.backup']['requiresLogin'] == true;
 
+  static Map<String, dynamic> webLoginRequiredBackup(
+    String origin,
+    String serverIdentity,
+  ) => {
+    'version': 1,
+    'origin': origin,
+    'cookies': [],
+    'requiresLogin': true,
+    'serverIdentity': serverIdentity,
+  };
+
   /// Retain a real authenticated identity even when this site has no portable
   /// login payload. Empty cookies are an explicit unavailable-session marker,
   /// never a restored or authenticated browser session.
@@ -224,13 +239,10 @@ abstract final class PluginAccountProfiles {
       bundle: {
         if (existing != null && !existing.deleted) ...existing.bundle,
         if (reusable == null)
-          'account.backup': {
-            'version': 1,
-            'origin': origin,
-            'cookies': [],
-            'requiresLogin': true,
-            'serverIdentity': proof.serverIdentity,
-          },
+          'account.backup': webLoginRequiredBackup(
+            origin,
+            proof.serverIdentity,
+          ),
         if (credentials != null &&
             extern is Map &&
             extern['username'] == credentials.account)
@@ -355,6 +367,7 @@ abstract final class PluginAccountProfiles {
     String source, {
     required Future<T> Function() submit,
     Future<PluginAccountAuthentication?> Function()? verify,
+    bool webSession = false,
   }) {
     source = canonicalQjsSource(source);
     return _serial(source, () async {
@@ -377,19 +390,83 @@ abstract final class PluginAccountProfiles {
           final result = await submit();
           final proof = await verify?.call();
           if (!current()) throw const PluginSessionChanged();
+          if (webSession &&
+              (proof == null ||
+                  proof.serverIdentity.isEmpty ||
+                  proof.origin.isEmpty)) {
+            throw const PluginAccountSwitchFailed();
+          }
+          final data = read(source);
+          var active = _active(source);
+          final webProof = webSession ? proof! : null;
+          final account = webProof?.publicSummary['extern'];
+          final username = account is Map && account['username'] is String
+              ? account['username'] as String
+              : null;
+          var kind = webSession ? 'web' : 'stored';
+          var identity = webProof?.serverIdentity;
+          if (webProof != null && username != null && username.isNotEmpty) {
+            final passwordId = PluginAccountProfilesData.idFor(
+              source,
+              username,
+              webProof.origin,
+              kind: 'password',
+            );
+            final saved = data.profiles[passwordId];
+            final credentials =
+                active['account.credentials'] ??
+                saved?.bundle['account.credentials'];
+            if (saved != null &&
+                !saved.deleted &&
+                (saved.serverIdentity.isEmpty ||
+                    saved.serverIdentity == webProof.serverIdentity) &&
+                VideoAccountCredentials.decode(
+                      credentials,
+                      Uri.parse(webProof.origin),
+                    )?.account ==
+                    username) {
+              final original = active;
+              final backup = active['account.backup'];
+              active = {
+                ...active,
+                'account.credentials': credentials,
+                if (backup is Map && backup['profileId'] != null)
+                  'account.backup': {...backup, 'profileId': passwordId},
+              };
+              replaceActivePluginAccount(
+                source,
+                active,
+                expectedDigest: accountProfileDigest(original),
+                expectedGeneration: generation,
+              );
+              kind = saved.kind;
+              identity = saved.identity;
+            }
+          }
           final next = _snapshot(
-            read(source),
-            _active(source),
+            data,
+            active,
+            identity: identity,
+            origin: webProof?.origin,
+            kind: kind,
             label: proof?.label ?? '',
             serverIdentity: proof?.serverIdentity ?? '',
             avatarUrl: proof?.avatarUrl ?? '',
+            verifiedCredentialAccount: username,
+            verifiedWebSession: webSession,
             restoreDeleted: true,
           );
           await _save(next);
           if (!current()) throw const PluginSessionChanged();
-          final identity = _account(_active(source));
+          identity ??= _account(active);
           final chosen = next.profiles.values
-              .where((p) => !p.deleted && p.identity == identity)
+              .where(
+                (p) =>
+                    !p.deleted &&
+                    p.identity == identity &&
+                    (webProof == null ||
+                        p.kind == kind && p.origin == webProof.origin),
+              )
               .firstOrNull;
           if (proof != null && chosen != null) {
             await _select(source, chosen.id);

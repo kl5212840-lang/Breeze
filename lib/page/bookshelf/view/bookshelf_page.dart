@@ -1,5 +1,6 @@
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_navigation_bar.dart';
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/network/sync/portable_preferences.dart';
 import 'package:zephyr/page/search/widget/search_keyboard.dart';
@@ -414,7 +415,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
 
   void _selectMedia(String media) {
     if (_scopeLocked || _showVideos == (media == 'video')) return;
-    _flushPendingKeyword();
+    _clearSearchKeyword();
     _searchFocusNode.unfocus();
     setState(() {
       _header.changePane();
@@ -432,11 +433,12 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
 
   void _selectRecords(int index) {
     if (_currentIndex == index) return;
-    _flushPendingKeyword();
+    _clearSearchKeyword();
     _searchFocusNode.unfocus();
     setState(() {
       _header.changePane();
       _currentIndex = index;
+      _isSearchExpanded = false;
     });
     _syncRecordPanes();
   }
@@ -520,7 +522,13 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
           _applyPendingHomeSection();
         },
         child: _mediaReady
-            ? _buildContent(context)
+            ? PopScope(
+                canPop: !_isSearchExpanded,
+                onPopInvokedWithResult: (didPop, _) {
+                  if (!didPop && _isSearchExpanded) _exitSearch();
+                },
+                child: _buildContent(context),
+              )
             : const Scaffold(body: Center(child: BookshelfLoadingView())),
       );
 
@@ -532,12 +540,19 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
       _refreshAll();
     },
     child: Scaffold(
-      appBar: AppBar(
-        automaticallyImplyLeading: false,
-        titleSpacing: CollectionToolbarMetrics.sourceContentInset,
-        scrolledUnderElevation: 0,
-        toolbarHeight: _headerHeight(context),
-        title: _buildHeader(),
+      appBar: SearchToolbarScope.appBar(
+        context,
+        (_) => AppBar(
+          automaticallyImplyLeading: false,
+          titleSpacing: CollectionToolbarMetrics.sourceContentInset,
+          scrolledUnderElevation: 0,
+          toolbarHeight: SearchToolbarScope.stableHeight(
+            context,
+            _headerHeight(context),
+          ),
+          title: _buildHeader(),
+        ),
+        searching: _isSearchExpanded,
       ),
       body: Column(
         children: [
@@ -563,6 +578,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
                             isActive:
                                 !_showVideos && _currentIndex == mode.index,
                             showReturnToTop: _showReturnToTop,
+                            allowTabReselect: !_scopeLocked,
                             onSelectionChanged: (value) =>
                                 _selectionChanged(false, mode.index, value),
                           ),
@@ -586,6 +602,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
                                       _showVideos &&
                                       _currentIndex == mode.index,
                                   showReturnToTop: _showReturnToTop,
+                                  allowTabReselect: !_scopeLocked,
                                   onSelectionChanged: (value) =>
                                       _selectionChanged(
                                         true,
@@ -646,7 +663,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
         _selectRecords(ShelfPageMode.values.byName(value).index);
       },
     );
-    final sources = BlocBuilder<BookshelfSearchCubit, BookshelfSearchState>(
+    Widget sources() => BlocBuilder<BookshelfSearchCubit, BookshelfSearchState>(
       bloc: _activeSearch,
       builder: (context, state) {
         final medium = _sourceMedium, mode = _mode, cubit = _activeSearch;
@@ -654,8 +671,10 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
           systemControls: usesNativeSourceChrome(context),
           child: BookshelfSourceNavigation(
             horizontalInset: CollectionToolbarMetrics.sourceContentInset,
+            scrollStartInset: 4,
             showManage: true,
             classicChips: true,
+            scrollSafeChips: true,
             sources: _sourceControlsReady
                 ? _sourcePreferences[medium]!.arrange(_allLabelSources(medium))
                 : const {},
@@ -704,68 +723,77 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
         );
       },
     );
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final recordWidth = NativeVideoSegmentedControl.minimumHorizontalWidth(
-          context,
-          options.values,
-        ).ceilToDouble();
-        // Keep room for a complete source label, the scroll gutter and the
-        // management button. At larger type sizes the switch gets its own row.
-        final minimumSources =
-            MediaQuery.textScalerOf(context).scale(60) +
-            2 * CollectionToolbarMetrics.actionExtent +
-            (sourceFailed ? CollectionToolbarMetrics.actionExtent : 0);
-        const leadingPadding = CollectionToolbarMetrics.sourceContentInset;
-        final fits =
-            recordWidth + minimumSources + leadingPadding <=
-            constraints.maxWidth;
-        return Column(
-          children: [
-            if (fits)
-              Row(
-                children: [
-                  const SizedBox(width: leadingPadding),
-                  SizedBox(width: recordWidth, child: records),
-                  Expanded(child: sources),
-                ],
-              )
-            else ...[
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: leadingPadding),
-                child: Align(
-                  alignment: AlignmentDirectional.centerStart,
-                  child: SizedBox(
-                    width: recordWidth.clamp(
-                      0,
-                      (constraints.maxWidth - 2 * leadingPadding).clamp(
-                        0.0,
-                        double.infinity,
+    return SafeArea(
+      top: false,
+      bottom: false,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final recordWidth =
+              NativeVideoSegmentedControl.minimumHorizontalWidth(
+                context,
+                options.values,
+              ).ceilToDouble();
+          // Keep room for a complete source label, the scroll gutter and the
+          // management button. At larger type sizes the switch gets its own row.
+          final minimumSources =
+              MediaQuery.textScalerOf(context).scale(60) +
+              2 * CollectionToolbarMetrics.actionExtentOf(context) +
+              (sourceFailed
+                  ? CollectionToolbarMetrics.actionExtentOf(context)
+                  : 0);
+          const leadingPadding = CollectionToolbarMetrics.sourceContentInset;
+          final fits =
+              recordWidth + minimumSources + leadingPadding + 8 <=
+              constraints.maxWidth;
+          return Column(
+            children: [
+              if (fits)
+                Row(
+                  children: [
+                    const SizedBox(width: leadingPadding),
+                    SizedBox(width: recordWidth, child: records),
+                    const SizedBox(width: 8),
+                    Expanded(child: sources()),
+                  ],
+                )
+              else ...[
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: leadingPadding,
+                  ),
+                  child: Align(
+                    alignment: AlignmentDirectional.centerStart,
+                    child: SizedBox(
+                      width: recordWidth.clamp(
+                        0,
+                        (constraints.maxWidth - 2 * leadingPadding).clamp(
+                          0.0,
+                          double.infinity,
+                        ),
                       ),
+                      child: records,
                     ),
-                    child: records,
                   ),
                 ),
+                sources(),
+              ],
+              const Padding(
+                padding: EdgeInsets.fromLTRB(
+                  leadingPadding,
+                  2,
+                  leadingPadding,
+                  0,
+                ),
+                child: Divider(height: 1),
               ),
-              sources,
             ],
-            const Padding(
-              padding: EdgeInsets.fromLTRB(
-                leadingPadding,
-                2,
-                leadingPadding,
-                0,
-              ),
-              child: Divider(height: 1),
-            ),
-          ],
-        );
-      },
+          );
+        },
+      ),
     );
   }
 
   Widget _buildHeader() {
-    const extent = CollectionToolbarMetrics.actionExtent;
     return ListenableBuilder(
       key: const ValueKey('bookshelf.main-header'),
       listenable: _header,
@@ -774,46 +802,54 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
         final slots = _header.slots;
         final theme = Theme.of(context);
         final subtitle = slots?.subtitle ?? '';
+        final extent = CollectionToolbarMetrics.actionExtentOf(context);
         return Row(
+          spacing: CollectionToolbarMetrics.searchControlGap,
           children: [
             Expanded(child: field ?? _buildHeading(context, theme, subtitle)),
-            BlocSelector<BookshelfSearchCubit, BookshelfSearchState, String>(
-              bloc: _activeSearch,
-              selector: (state) => state.stateOf(_mode).keyword,
-              builder: (context, query) => Badge(
-                isLabelVisible: !_isSearchExpanded && query.isNotEmpty,
-                child: SourceChromeIconButton(
-                  key: const ValueKey('bookshelf.search'),
-                  icon: _isSearchExpanded ? Icons.close_rounded : Icons.search,
-                  symbol: _isSearchExpanded ? 'xmark' : 'magnifyingglass',
-                  tooltip: _isSearchExpanded
-                      ? t.common.close
-                      : query.isEmpty
-                      ? t.bookshelf.searchList
-                      : '${t.bookshelf.searchList} · $query',
-                  onPressed: _scopeLocked
-                      ? null
-                      : _isSearchExpanded
-                      ? _exitSearch
-                      : _openSearch,
+            if (field == null)
+              BlocSelector<BookshelfSearchCubit, BookshelfSearchState, String>(
+                bloc: _activeSearch,
+                selector: (state) => state.stateOf(_mode).keyword,
+                builder: (context, query) => Badge(
+                  isLabelVisible: !_isSearchExpanded && query.isNotEmpty,
+                  child: SourceChromeIconButton(
+                    key: const ValueKey('bookshelf.search'),
+                    icon: _isSearchExpanded
+                        ? Icons.close_rounded
+                        : Icons.search,
+                    symbol: _isSearchExpanded ? 'xmark' : 'magnifyingglass',
+                    tooltip: _isSearchExpanded
+                        ? t.common.close
+                        : query.isEmpty
+                        ? t.bookshelf.searchList
+                        : '${t.bookshelf.searchList} · $query',
+                    onPressed: _scopeLocked
+                        ? null
+                        : _isSearchExpanded
+                        ? _exitSearch
+                        : _openSearch,
+                  ),
                 ),
               ),
-            ),
-            const CollectionCoverPrivacyButton(
-              key: ValueKey('bookshelf.cover-privacy'),
-              emphasizeProtected: true,
-            ),
-            SizedBox.square(
-              dimension: extent,
-              child: _scopeLocked || slots?.more == null
-                  ? null
-                  : KeyedSubtree(
-                      // A menu must retire when its scope changes. Otherwise
-                      // a late choice could act on the new pane or directory.
-                      key: ValueKey((_header.generation, slots?.identity)),
-                      child: slots!.more!,
-                    ),
-            ),
+            if (field == null)
+              const CollectionCoverPrivacyButton(
+                key: ValueKey('bookshelf.cover-privacy'),
+                emphasizeProtected: true,
+              ),
+            if (field == null)
+              SizedBox(
+                height: extent,
+                width: extent,
+                child: _scopeLocked || slots?.more == null
+                    ? null
+                    : KeyedSubtree(
+                        // A menu must retire when its scope changes. Otherwise
+                        // a late choice could act on the new pane or directory.
+                        key: ValueKey((_header.generation, slots?.identity)),
+                        child: slots!.more!,
+                      ),
+              ),
           ],
         );
       },
@@ -876,21 +912,23 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
       listenable: _header,
       child: media,
       builder: (context, selector) {
-        const extent = CollectionToolbarMetrics.actionExtent;
+        final extent = CollectionToolbarMetrics.actionExtentOf(context);
         final slots = _header.slots;
         return BookshelfSelectionHeader(
           regular: Padding(
-            padding: const EdgeInsetsDirectional.symmetric(
-              horizontal: CollectionToolbarMetrics.sourceContentInset,
-            ),
+            padding: CollectionToolbarMetrics.contentPaddingOf(context),
             child: ConstrainedBox(
               constraints: const BoxConstraints(minHeight: 48),
               child: Row(
+                spacing: CollectionToolbarMetrics.searchControlGap,
                 children: [
                   Expanded(child: selector!),
-                  const SizedBox(width: 4),
                   if (slots == null)
-                    const SizedBox(width: 2 * extent)
+                    SizedBox(
+                      width:
+                          2 * extent +
+                          CollectionToolbarMetrics.searchControlGap,
+                    )
                   else
                     for (final control in slots.controls)
                       SizedBox(width: extent, child: control),
@@ -982,6 +1020,8 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
             ignoring: _scopeLocked,
             child: SearchQueryField(
               key: ValueKey('shelf-search.$_showVideos.${mode.name}'),
+              onClose: _exitSearch,
+              closeKey: const ValueKey('bookshelf.search'),
               query: state.stateOf(mode).keyword,
               inline: true,
               focusNode: _searchFocusNode,
@@ -1015,10 +1055,20 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
       );
 
   void _exitSearch() {
-    _flushPendingKeyword();
+    _clearSearchKeyword();
     _searchFocusNode.unfocus();
     setState(() => _isSearchExpanded = false);
     _applyPendingHomeSection();
+  }
+
+  void _clearSearchKeyword() {
+    if (!_isSearchExpanded) return;
+    _keywordDebouncer.cancel();
+    _pendingKeyword = null;
+    final cubit = _activeSearch;
+    if (cubit.state.stateOf(_mode).keyword.isEmpty) return;
+    cubit.setKeyword(_mode, '');
+    _refreshFor(_showVideos, _mode);
   }
 
   void _flushPendingKeyword() {

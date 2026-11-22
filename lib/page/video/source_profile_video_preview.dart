@@ -45,9 +45,10 @@ class SourceProfileVideoPreview extends StatefulWidget {
     this.countLabel,
     this.responsivePreview = false,
     this.posterAspectRatio = 2 / 3,
+    this.playlistRows = false,
   });
   final double posterAspectRatio;
-  final bool responsivePreview;
+  final bool responsivePreview, playlistRows;
   final String identity, title;
   final IconData icon;
   final List<SourceProfileVideoPreviewItem> items;
@@ -103,8 +104,24 @@ class _SourceProfileVideoPreviewState extends State<SourceProfileVideoPreview> {
               padding: const EdgeInsets.only(bottom: 8),
               child: Text(t.common.empty, style: style),
             ),
-          if (_expanded && widget.items.isNotEmpty)
+          if (_expanded && widget.playlistRows && widget.items.isNotEmpty)
             CollectionCoverPrivacyScope(
+              replacementFit: BoxFit.cover,
+              child: Column(
+                children: [
+                  for (final item in widget.items.take(3))
+                    SourceProfilePlaylistRow(
+                      title: item.title,
+                      count: item.note,
+                      cover: item.cover,
+                      onOpen: item.onOpen,
+                    ),
+                ],
+              ),
+            ),
+          if (_expanded && !widget.playlistRows && widget.items.isNotEmpty)
+            CollectionCoverPrivacyScope(
+              replacementFit: BoxFit.cover,
               child: CollectionCoverFitScope(
                 child: LayoutBuilder(
                   builder: (context, bounds) {
@@ -298,6 +315,122 @@ class _SourceProfileLocalVideoFavoritesState
 }
 
 /// Device records are source-scoped and independent of the site's signed-in user.
+class SourceProfilePlaylistRow extends StatelessWidget {
+  const SourceProfilePlaylistRow({
+    super.key,
+    required this.title,
+    required this.count,
+    required this.cover,
+    this.onOpen,
+  });
+
+  final String title, count;
+  final Widget cover;
+  final VoidCallback? onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Material(
+        color: theme.colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onOpen,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsetsDirectional.fromSTEB(10, 7, 10, 7),
+            child: Row(
+              spacing: 12,
+              children: [
+                SizedBox(
+                  width: 78,
+                  height: 46,
+                  child: Stack(
+                    children: [
+                      PositionedDirectional(
+                        start: 5,
+                        end: 0,
+                        top: 0,
+                        bottom: 5,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.secondaryContainer,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                        ),
+                      ),
+                      PositionedDirectional(
+                        start: 0,
+                        end: 5,
+                        top: 4,
+                        bottom: 0,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: cover,
+                        ),
+                      ),
+                      PositionedDirectional(
+                        end: 8,
+                        bottom: 3,
+                        child: DecoratedBox(
+                          decoration: const BoxDecoration(
+                            color: Colors.black54,
+                            borderRadius: BorderRadius.all(Radius.circular(5)),
+                          ),
+                          child: const SizedBox.square(
+                            dimension: 22,
+                            child: Icon(
+                              Icons.playlist_play_rounded,
+                              color: Colors.white,
+                              size: 17,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall,
+                      ),
+                      if (count.isNotEmpty)
+                        Text(
+                          count,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right_rounded, size: 20),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String playlistWorkCount(String value) {
+  final match = RegExp(
+    r'^([0-9][0-9,]*)\s*(?:部作品|部|(?:个|個|部)?(?:视频|影片|視頻)|videos?|items?)$',
+    caseSensitive: false,
+  ).firstMatch(value.trim());
+  final count = int.tryParse(match?.group(1)?.replaceAll(',', '') ?? '');
+  return count == null ? '' : t.videoLibrary.results(count: count);
+}
+
 class SourceProfileLocalVideoPreviews extends StatefulWidget {
   const SourceProfileLocalVideoPreviews({
     super.key,
@@ -307,12 +440,14 @@ class SourceProfileLocalVideoPreviews extends StatefulWidget {
     this.afterHistory,
     this.groupDownloads = false,
     this.responsivePreview = false,
+    this.posterAspectRatio = 2 / 3,
     this.showPrivacyAction = true,
     this.readDownloads,
   });
   final Future<List<Map<String, dynamic>>> Function()? readDownloads;
   final bool showPrivacyAction;
   final bool groupDownloads, responsivePreview;
+  final double posterAspectRatio;
   final String source;
   final VoidCallback onHistory;
   final bool active;
@@ -418,11 +553,12 @@ class _SourceProfileLocalVideoPreviewsState
       if (widget.showPrivacyAction)
         const Align(
           alignment: AlignmentDirectional.centerEnd,
-          child: CollectionCoverPrivacyButton(),
+          child: CollectionCoverPrivacyActions(),
         ),
       SourceProfileVideoPreview(
         identity: 'local-history.${widget.source}',
         responsivePreview: widget.responsivePreview,
+        posterAspectRatio: widget.posterAspectRatio,
         title: t.omoAccount.localHistory,
         icon: Icons.history_rounded,
         onViewAll: widget.onHistory,
@@ -431,6 +567,8 @@ class _SourceProfileLocalVideoPreviewsState
         onRetry: _read,
         countLabel: _historyLoading || _historyFailed
             ? null
+            : widget.posterAspectRatio > 1
+            ? t.videoLibrary.results(count: _history.length)
             : '${_history.length}',
         items: _history.take(widget.responsivePreview ? 4 : 8).map((row) {
           final item = ApiVideoItem(
@@ -465,6 +603,7 @@ class _SourceProfileLocalVideoPreviewsState
       SourceProfileVideoPreview(
         identity: 'local-downloads.${widget.source}',
         responsivePreview: widget.responsivePreview,
+        posterAspectRatio: widget.posterAspectRatio,
         title: t.bookshelf.download,
         icon: Icons.download_outlined,
         onViewAll: () => unawaited(
@@ -479,6 +618,15 @@ class _SourceProfileLocalVideoPreviewsState
         onRetry: _read,
         countLabel: _downloadsLoading || _downloadsFailed
             ? null
+            : widget.posterAspectRatio > 1
+            ? t.videoLibrary.results(
+                count: widget.groupDownloads
+                    ? sourceVideoDownloadGroups(
+                        _downloads,
+                        widget.source,
+                      ).length
+                    : _downloads.length,
+              )
             : '${widget.groupDownloads ? sourceVideoDownloadGroups(_downloads, widget.source).length : _downloads.length}',
         items: widget.groupDownloads
             ? sourceVideoDownloadGroups(

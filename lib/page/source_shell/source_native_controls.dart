@@ -1,3 +1,5 @@
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
+import 'package:zephyr/page/navigation/main_navigation_layout.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'dart:async';
 
@@ -29,9 +31,13 @@ bool usesNativeSourceChrome(BuildContext context) {
 /// Explicit exit disposes every source route on the way back to Discover.
 void exitSourceToDiscover(BuildContext context) {
   FocusManager.instance.primaryFocus?.unfocus();
-  Navigator.of(context, rootNavigator: true).popUntil(
+  final root = Navigator.of(context, rootNavigator: true);
+  final nearest = Navigator.of(context);
+  if (!identical(root, nearest)) nearest.popUntil((route) => route.isFirst);
+  root.popUntil(
     (route) => route.isFirst || route.settings.name == 'NavigationBar',
   );
+  DiscoverNavigation.select();
 }
 
 class SourceChromeIconButton extends StatelessWidget {
@@ -57,11 +63,13 @@ class SourceChromeIconButton extends StatelessWidget {
     final system = usesNativeSourceChrome(context);
     final breeze = !AppInterfaceStyleScope.usesSystem(context);
     final colors = Theme.of(context).colorScheme;
-    final fallback = SizedBox.square(
-      dimension: 44,
+    final extent = CollectionToolbarMetrics.actionExtentOf(context);
+    final fallback = SizedBox(
+      height: extent,
+      width: extent,
       child: IconButton(
         tooltip: tooltip,
-        constraints: const BoxConstraints.tightFor(width: 44, height: 44),
+        constraints: BoxConstraints.tightFor(width: extent, height: extent),
         padding: EdgeInsets.zero,
         isSelected: selected,
         style: selected == true
@@ -85,8 +93,9 @@ class SourceChromeIconButton extends StatelessWidget {
     return Center(
       widthFactor: 1,
       heightFactor: 1,
-      child: SizedBox.square(
-        dimension: 44,
+      child: SizedBox(
+        height: extent,
+        width: extent,
         child: system || breeze
             ? VideoControlAppearance(
                 systemControls: system,
@@ -119,8 +128,8 @@ class SourceFilterIconButton extends SourceChromeIconButton {
     bool active = false,
     super.bare = true,
   }) : super(
-         icon: Icons.filter_list_rounded,
-         symbol: 'line.3.horizontal.decrease',
+         icon: CollectionCommandIcons.filterIcon,
+         symbol: CollectionCommandIcons.filterSymbol,
          selected: active,
        );
 }
@@ -305,7 +314,7 @@ class _SourceMoreButtonState extends State<SourceMoreButton> {
     }
 
     final menu = NativeVideoMenu(
-      width: 44,
+      width: CollectionToolbarMetrics.actionExtent,
       label: '',
       tooltip: t.sourceShell.navigationActions,
       icon: Icons.more_horiz,
@@ -339,7 +348,10 @@ class _SourceMoreButtonState extends State<SourceMoreButton> {
     return Center(
       widthFactor: 1,
       heightFactor: 1,
-      child: SizedBox.square(dimension: 44, child: appearance(system)),
+      child: SizedBox.square(
+        dimension: CollectionToolbarMetrics.actionExtentOf(context),
+        child: appearance(system),
+      ),
     );
   }
 }

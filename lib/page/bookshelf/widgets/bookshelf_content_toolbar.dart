@@ -40,7 +40,7 @@ class BookshelfContentToolbar extends StatelessWidget {
     this.canRun,
     this.privacyAction,
     this.keyPrefix = 'shelf',
-    this.horizontalInset = CollectionToolbarMetrics.horizontalInset,
+    this.horizontalInset = CollectionToolbarMetrics.sourceContentInset,
   });
   final String title, subtitle, keyPrefix;
   final String? folderRootLabel;
@@ -150,12 +150,12 @@ class BookshelfContentToolbar extends StatelessWidget {
         ),
       SourceChromeIconButton(
         key: ValueKey('$keyPrefix.view'),
-        icon: view == BookshelfContentView.grid
-            ? Icons.view_list_outlined
-            : Icons.grid_view_outlined,
-        symbol: view == BookshelfContentView.grid
-            ? CollectionCommandIcons.list.symbol
-            : CollectionCommandIcons.grid.symbol,
+        icon: CollectionCommandIcons.toggleTarget(
+          view == BookshelfContentView.grid,
+        ).icon,
+        symbol: CollectionCommandIcons.toggleTarget(
+          view == BookshelfContentView.grid,
+        ).symbol,
         tooltip: view == BookshelfContentView.grid
             ? t.videoLibrary.detailList
             : t.videoLibrary.grid,
@@ -311,7 +311,7 @@ class BookshelfContentToolbar extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          const controlSize = CollectionToolbarMetrics.actionExtent;
+          final controlSize = CollectionToolbarMetrics.actionExtentOf(context);
           const backGap = 4.0;
           const separatorSize = 16.0;
           const linkPadding = 4.0;

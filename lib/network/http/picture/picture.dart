@@ -150,6 +150,27 @@ Future<String> getCachePicture({
   bool useDownloads = true,
   bool Function()? isCurrent,
 }) async {
+  // Downloaded reader pages own their bytes. Reading them must not wait for
+  // online images, a plugin account change, or an in-place enhancement.
+  if (pictureType == PictureType.page && useDownloads && url.isEmpty) {
+    if (isCurrent?.call() == false) throw const ImageRecoverySuperseded();
+    if (path.trim().isEmpty) return '404';
+    final downloaded = await findCachedPicturePath(
+      from: from,
+      path: path,
+      cartoonId: cartoonId,
+      chapterId: chapterId,
+      storageChapterId: storageChapterId,
+      pictureType: pictureType,
+      offlineReader: true,
+    );
+    if (isCurrent?.call() == false) throw const ImageRecoverySuperseded();
+    if (downloaded.isEmpty) {
+      throw const DownloadPictureNotFoundException('');
+    }
+    return downloaded;
+  }
+
   final source = normalizePluginId(from);
   final generation = pluginSessionWriteFence.generation(source);
   bool current() =>
@@ -302,8 +323,7 @@ Future<String> _getCachePictureRaw({
     }
   }
 
-  // Downloaded reader pages have no remote URL. The saved file must
-  // exist in the download store; a transient online cache is not a copy.
+  // A page without a remote URL must fail rather than use an online cache.
   if (pictureType == PictureType.page && url.isEmpty) {
     throw const DownloadPictureNotFoundException('');
   }

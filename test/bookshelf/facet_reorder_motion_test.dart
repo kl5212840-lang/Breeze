@@ -8,9 +8,10 @@ import 'package:zephyr/page/donwload_task/view/download_filter_sheet.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 
 const _a = 'Tag A';
+const _applied = 'Tag Z';
 const _b = 'Tag B with a fairly long label which wraps onto another line';
 final _entries = [
-  for (final value in [_a, _b, for (var i = 0; i < 10; i++) 'Other $i'])
+  for (final value in [_a, _b, _applied, for (var i = 0; i < 10; i++) 'Other $i'])
     ShelfFacetEntry(key: value, source: 'one', searchText: '', fields: {'tags': {value}}),
 ];
 
@@ -37,7 +38,7 @@ void main() {
         final style = ValueNotifier('breeze');
         addTearDown(style.dispose);
         ShelfFacetSelection? result;
-        const initial = ShelfFacetSelection(values: {'tags': {_a}});
+        const initial = ShelfFacetSelection(values: {'tags': {_applied}});
         await tester.pumpWidget(AppInterfaceStyleScope(style: style, child: MaterialApp(
           builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(
             disableAnimations: reduce, textScaler: const TextScaler.linear(1.4),
@@ -65,6 +66,7 @@ void main() {
         final prefix = branch == 'download' ? 'download-filter-option-tags-' : 'shelf-option-tags-';
         final a = find.byKey(ValueKey('$prefix$_a'));
         final b = find.byKey(ValueKey('$prefix$_b'));
+        final applied = find.byKey(ValueKey('$prefix$_applied'));
         final pin = find.byKey(ValueKey('${branch == 'download' ? 'download-star-' : 'shelf-star-'}$_b'));
         await tester.ensureVisible(pin);
         await tester.pumpAndSettle();
@@ -72,6 +74,7 @@ void main() {
         final pixels = scrollable.position.pixels;
         final before = tester.getTopLeft(b).dy;
         expect(before, greaterThan(tester.getTopLeft(a).dy));
+        expect(tester.getTopLeft(applied).dy, lessThan(tester.getTopLeft(a).dy));
         await tester.tap(pin);
         await _waitForPin(tester, pin, true);
         // forward() is requested after the reorder paint; prime the first
@@ -88,6 +91,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 160));
         final after = tester.getTopLeft(b).dy;
         expect(after, lessThan(tester.getTopLeft(a).dy));
+        expect(after, greaterThan(tester.getTopLeft(applied).dy));
         if (reduce) {
           expect(middle, closeTo(after, .1));
         } else {
@@ -97,7 +101,7 @@ void main() {
         expect(scrollable.position.pixels, closeTo(pixels, .1));
         expect(focus.hasFocus, isTrue);
         expect(editable.controller.text, 'Tag');
-        expect(find.descendant(of: a, matching: find.byIcon(Icons.check_box_outlined)), findsOneWidget);
+        expect(find.descendant(of: applied, matching: find.byIcon(Icons.check_box_outlined)), findsOneWidget);
         expect(find.descendant(of: b, matching: find.byIcon(Icons.check_box_outline_blank)), findsOneWidget);
         expect(tester.getSize(pin).width, greaterThanOrEqualTo(44));
         await tester.tap(pin);
@@ -111,7 +115,7 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(apply);
         await tester.pumpAndSettle();
-        expect(result?.values['tags'], {_a});
+        expect(result?.values['tags'], {_applied});
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pumpAndSettle();

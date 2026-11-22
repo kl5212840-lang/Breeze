@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/search/widget/search_field_surface.dart';
 import 'package:zephyr/page/search/widget/search_tool_glyph.dart';
@@ -12,10 +13,12 @@ InputDecoration searchFieldDecoration(
   required String hintText,
   Widget? prefixIcon,
   Widget? suffixIcon,
+  bool variableSuffixWidth = false,
 }) {
   final colors = Theme.of(context).colorScheme;
   final system = usesSystemSearchSurface(context);
-  final inBreezeToolbar = SearchToolbarScope.of(context) != null;
+  final touch = CollectionToolbarMetrics.actionExtentOf(context);
+  final inSearchToolbar = SearchToolbarScope.of(context) != null;
   final shape = OutlineInputBorder(
     borderRadius: searchFieldRadius(context),
     borderSide: BorderSide.none,
@@ -40,7 +43,7 @@ InputDecoration searchFieldDecoration(
     hintStyle: TextStyle(color: colors.onSurfaceVariant),
     contentPadding: EdgeInsets.symmetric(
       horizontal: 12,
-      vertical: inBreezeToolbar ? 9 : 12,
+      vertical: inSearchToolbar ? 9 : 12,
     ),
     prefixIcon:
         prefixIcon ??
@@ -50,10 +53,12 @@ InputDecoration searchFieldDecoration(
           child: SearchToolGlyph(SearchTool.search, size: 22),
         ),
     prefixIconConstraints: BoxConstraints(
-      minWidth: 44,
-      minHeight: inBreezeToolbar ? 44 : 48,
+      minWidth: touch,
+      minHeight: inSearchToolbar ? touch : 48,
     ),
-    suffixIconConstraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-    suffixIcon: SizedBox(width: 44, child: suffixIcon),
+    suffixIconConstraints: BoxConstraints(minWidth: touch, minHeight: touch),
+    suffixIcon: variableSuffixWidth
+        ? suffixIcon
+        : SizedBox(width: touch, child: suffixIcon),
   );
 }

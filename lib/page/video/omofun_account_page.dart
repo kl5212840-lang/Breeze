@@ -82,6 +82,8 @@ Future<void> openOmoSitePage(
   Future<OmoNetworkContext?>? network,
   String? credentialSource,
   String? recoveryUsername,
+  bool requireFreshSignIn = false,
+  PluginAccountAddition? addAccount,
 }) async {
   final source = credentialSource?.trim().isNotEmpty == true
       ? credentialSource!.trim()
@@ -102,9 +104,10 @@ Future<void> openOmoSitePage(
         });
     network = owned;
   }
+  final session = addAccount == null ? null : _OmoAddAccountSession(addAccount);
   try {
-    await Navigator.of(context).push<void>(
-      videoPageRoute(
+    final confirmed = await Navigator.of(context).push<bool>(
+      videoPageRoute<bool>(
         networkSource: source,
         network: network,
         builder: (_) => OmoSiteWebPage(
@@ -116,14 +119,72 @@ Future<void> openOmoSitePage(
           finishOnSignIn: path.contains('/login'),
           credentialSource: credentialSource,
           recoveryUsername: recoveryUsername,
+          requireFreshSignIn: requireFreshSignIn,
+          prepareSignIn: session?.prepare,
         ),
       ),
     );
+    await session?.finish(confirmed == true);
+    if (requireFreshSignIn && confirmed != true) {
+      throw const PluginAccountLoginCancelled();
+    }
   } finally {
     if (owned != null) {
       await owned.then<void>((owner) async {
         await owner?.close();
       }, onError: (Object _) {});
+    }
+  }
+}
+
+/// The route can show its form while the previous session is being saved.
+/// The login document may use the store only after the account transaction
+/// hands it over. Returning from the route waits for its commit or rollback.
+class _OmoAddAccountSession {
+  _OmoAddAccountSession(this.addAccount);
+
+  final PluginAccountAddition addAccount;
+  final _confirmation = Completer<bool>();
+  Future<void>? _readiness;
+  Future<void>? _transaction;
+  bool _active = true;
+
+  Future<void> prepare() {
+    if (_readiness case final pending?) return pending;
+    final ready = Completer<void>();
+    _readiness = ready.future;
+    final operation = _prepare(ready);
+    _transaction = operation;
+    // A commit failure after the form has opened belongs to the route caller.
+    unawaited(operation.then<void>((_) {}, onError: (Object _) {}));
+    return ready.future;
+  }
+
+  Future<void> _prepare(Completer<void> ready) async {
+    try {
+      if (!_active) throw const PluginAccountLoginCancelled();
+      await addAccount(() async {
+        if (!_active) throw const PluginAccountLoginCancelled();
+        ready.complete();
+        if (!await _confirmation.future) {
+          throw const PluginAccountLoginCancelled();
+        }
+      }, () => _active);
+      if (!ready.isCompleted) throw const PluginAccountNeedsLogin();
+    } catch (error, stack) {
+      if (ready.isCompleted) rethrow;
+      _readiness = null;
+      ready.completeError(error, stack);
+    }
+  }
+
+  Future<void> finish(bool confirmed) async {
+    _active = confirmed;
+    _confirmation.complete(confirmed);
+    try {
+      await _transaction;
+    } on PluginAccountLoginCancelled {
+      if (confirmed) rethrow;
     }
   }
 }
@@ -136,6 +197,16 @@ Future<void> openOmoAccountDetails(
 }) async {
   network ??= VideoNetworkScope.maybeOf(context)?.network;
   final capturedNetwork = network;
+  Future<void> login([PluginAccountAddition? addAccount]) => openOmoSitePage(
+    context,
+    client,
+    title: t.plugin.accountLogin,
+    path: '/user/login',
+    network: capturedNetwork,
+    credentialSource: source.isEmpty ? null : source,
+    requireFreshSignIn: true,
+    addAccount: addAccount,
+  );
   await Navigator.of(context).push<void>(
     videoPageRoute(
       networkSource: omoNetworkSource,
@@ -144,6 +215,8 @@ Future<void> openOmoAccountDetails(
       builder: (_) => OmoAccountDetailsPage(
         client: client,
         source: source,
+        onAddAccount: login,
+        onAddAccountWithSession: login,
         onWebsite: (pageContext, path, title) => openOmoSitePage(
           pageContext,
           client,
@@ -172,6 +245,8 @@ class OmoSiteWebPage extends StatefulWidget {
     this.credentialSource,
     this.recoveryUsername,
     this.browsingSource,
+    this.requireFreshSignIn = false,
+    this.prepareSignIn,
   });
   final Uri home, url;
   final Future<OmoNetworkContext?>? network;
@@ -181,6 +256,11 @@ class OmoSiteWebPage extends StatefulWidget {
 
   /// Owns website browsing data when the route has no account task.
   final String? browsingSource;
+
+  /// Add-account flows must wait for a newly submitted identity. An existing
+  /// WebView cookie must never be treated as the result of this transaction.
+  final bool requireFreshSignIn;
+  final Future<void> Function()? prepareSignIn;
   final OmoSiteClient? client;
   final bool finishOnSignIn;
   @override
@@ -195,6 +275,9 @@ class _OmoSiteWebPageState extends State<OmoSiteWebPage> {
       _finishingLogin = false,
       _loginCheckPending = false;
   Timer? _loginTimer;
+  Timer? _documentDeadline;
+  late Future<OmoNetworkContext?> _browserPreparation;
+  bool _networkPrepared = false;
   Object? _accountLease;
   final _verification = TextEditingController();
   Uint8List? _captchaBytes;
@@ -211,6 +294,19 @@ class _OmoSiteWebPageState extends State<OmoSiteWebPage> {
       widget.credentialSource?.trim().isNotEmpty == true
       ? widget.credentialSource!.trim()
       : omoNetworkSource;
+
+  @override
+  void initState() {
+    super.initState();
+    _browserPreparation = _prepareBrowser();
+  }
+
+  Future<OmoNetworkContext?> _prepareBrowser() async {
+    final network = await widget.network;
+    _networkPrepared = true;
+    if (mounted) await widget.prepareSignIn?.call();
+    return network;
+  }
 
   Future<PluginAccountAuthentication?> _accountIdentityForBackup() async {
     final web = _web, client = widget.client;
@@ -234,6 +330,7 @@ class _OmoSiteWebPageState extends State<OmoSiteWebPage> {
         ? PluginAccountAuthentication(
             serverIdentity: account.id,
             label: account.name,
+            avatarUrl: account.avatar?.toString() ?? '',
             origin: widget.home.origin,
             publicSummary: {
               'extern': {
@@ -283,6 +380,9 @@ class _OmoSiteWebPageState extends State<OmoSiteWebPage> {
         client == null ||
         _checkingLogin ||
         _finishingLogin ||
+        (widget.requireFreshSignIn &&
+            !_forceWebsite &&
+            _submittedAccount == null) ||
         !mounted) {
       return;
     }
@@ -307,15 +407,18 @@ class _OmoSiteWebPageState extends State<OmoSiteWebPage> {
         if (!mounted) return;
         _finishingLogin = true;
         _loginTimer?.cancel();
-        try {
-          await PluginAccountSyncCoordinator.instance.captureAuthenticated(
-            _accountSource,
-            explicitSave: true,
-          );
-        } catch (_) {
-          // A backup failure must not misreport the website's confirmed login.
+        if (widget.prepareSignIn == null) {
+          try {
+            await PluginAccountSyncCoordinator.instance.captureAuthenticated(
+              _accountSource,
+              explicitSave: true,
+            );
+          } catch (_) {
+            // A backup failure must not misreport the website's confirmed login.
+          }
         }
-        if (mounted) Navigator.of(context).pop();
+        if (mounted)
+          Navigator.of(context).pop(widget.requireFreshSignIn ? true : null);
       }
     } catch (_) {
       // An unfinished form or challenge stays visible in its normal flow.
@@ -357,7 +460,8 @@ class _OmoSiteWebPageState extends State<OmoSiteWebPage> {
           pending['requiresLogin'] == true &&
           pending['origin'] == draft.origin.origin &&
           pending['serverIdentity'] == account.id;
-      if (target?.account != draft.account && !manualTarget)
+      final newAccount = widget.requireFreshSignIn && active.isEmpty;
+      if (target?.account != draft.account && !manualTarget && !newAccount)
         throw const PluginSessionChanged();
       replaceActivePluginAccount(
         source,
@@ -424,12 +528,48 @@ class _OmoSiteWebPageState extends State<OmoSiteWebPage> {
     // A signed-in visit may redirect /user/login to its account page. Read that
     // same document before asking it for a login form. A switch transaction is
     // different: its old identity must never confirm the requested new account.
-    if (_submittedAccount == null &&
+    if (!widget.requireFreshSignIn &&
+        _submittedAccount == null &&
         !pluginSessionWriteFence.isChanging(_accountSource)) {
       await _checkLogin();
       if (!mounted || _finishingLogin) return;
     }
     await _readNativeLogin();
+  }
+
+  void _documentFailed(InAppWebViewController web) {
+    if (!mounted || !identical(web, _web)) return;
+    _documentDeadline?.cancel();
+    setState(() {
+      _failed = true;
+      _nativeEpoch++;
+      _readingNative = false;
+      _captchaBytes = null;
+    });
+  }
+
+  Future<void> _loadDocument(InAppWebViewController web) async {
+    if (!mounted || !identical(web, _web)) return;
+    setState(() {
+      _failed = false;
+      _progress = 0;
+      _nativeChecked = _nativeSupported = false;
+      _captchaBytes = null;
+    });
+    if (widget.finishOnSignIn) {
+      _documentDeadline?.cancel();
+      _documentDeadline = Timer(
+        const Duration(seconds: 12),
+        () => _documentFailed(web),
+      );
+    }
+    try {
+      await web.loadUrl(
+        urlRequest: URLRequest(url: WebUri(widget.url.toString())),
+      );
+    } catch (_) {
+      _documentFailed(web);
+    }
   }
 
   Future<String> _submitNative(
@@ -498,43 +638,26 @@ class _OmoSiteWebPageState extends State<OmoSiteWebPage> {
     }
   }
 
-  Widget _nativeLogin(BuildContext context) {
-    if (!_nativeSupported) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (!_nativeChecked || _readingNative)
-                const CircularProgressIndicator()
-              else
-                Text(
-                  _failed
-                      ? t.videoSource.readFailed
-                      : t.videoCommunity.unsupported,
-                ),
-              const SizedBox(height: 12),
-              TextButton(
-                onPressed: _readingNative ? null : () => _readNativeLogin(),
-                child: Text(t.common.retry),
-              ),
-              TextButton(
-                onPressed: () => setState(() => _forceWebsite = true),
-                child: Text(t.videoPlayback.backToWeb),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
+  Widget _nativeLogin({
+    required bool browserReady,
+    required bool preparationFailed,
+  }) {
+    final failure = preparationFailed || _failed
+        ? preparationFailed && !_networkPrepared
+              ? t.login.networkUnavailable
+              : t.videoSource.readFailed
+        : _nativeChecked && !_nativeSupported && !_readingNative
+        ? t.videoCommunity.unsupported
+        : null;
+    final captchaReady = _captchaBytes != null && !_readingNative;
     return NativeVideoAuthForm(
+      key: const ValueKey('omo-native-login'),
       registration: false,
       hasRemember: false,
       accountIsEmail: false,
       allowRegistration: false,
       loginUsername: widget.recoveryUsername,
-      credentials: widget.recoveryUsername == null
+      credentials: !widget.requireFreshSignIn && widget.recoveryUsername == null
           ? VideoAccountCredentials.load(_accountSource, widget.home)
           : null,
       siteRejected: _nativeFailure.isNotEmpty,
@@ -546,41 +669,86 @@ class _OmoSiteWebPageState extends State<OmoSiteWebPage> {
         'rejected',
       }.contains(_nativeFailure),
       submit: _submitNative,
+      submitEnabled: browserReady && failure == null && captchaReady,
       onChangeMode: () {},
-      onWebsite: () => setState(() => _forceWebsite = true),
-      verification: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          TextFormField(
-            controller: _verification,
-            enabled: !_nativeSending,
-            maxLength: 32,
-            autocorrect: false,
-            textInputAction: TextInputAction.done,
-            decoration: InputDecoration(labelText: t.videoCommunity.captcha),
-            validator: (value) => value?.trim().isNotEmpty == true
-                ? null
-                : t.videoCommunity.required,
-          ),
-          Semantics(
-            button: true,
-            label: t.login.captchaTapToRefresh,
-            child: InkWell(
-              onTap: _nativeSending || _readingNative
-                  ? null
-                  : () => _readNativeLogin(refreshCaptcha: true),
-              child: SizedBox(
-                height: 64,
-                child: _readingNative
-                    ? const Center(child: CircularProgressIndicator())
-                    : _captchaBytes == null
-                    ? Center(child: Text(t.login.captchaLoadFailed))
-                    : Image.memory(_captchaBytes!, fit: BoxFit.contain),
-              ),
+      onWebsite: browserReady
+          ? () => setState(() => _forceWebsite = true)
+          : null,
+      verification: failure != null
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Semantics(liveRegion: true, child: Text(failure)),
+                if (preparationFailed &&
+                    _networkPrepared &&
+                    widget.prepareSignIn != null)
+                  TextButton(
+                    onPressed: () =>
+                        setState(() => _browserPreparation = _prepareBrowser()),
+                    child: Text(t.common.retry),
+                  )
+                else if (_web case final web?)
+                  TextButton(
+                    onPressed: () {
+                      if (_failed || (_nativeChecked && !_nativeSupported)) {
+                        unawaited(_loadDocument(web));
+                      }
+                    },
+                    child: Text(t.common.retry),
+                  ),
+              ],
+            )
+          : !_nativeSupported
+          ? Row(
+              children: [
+                const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 12),
+                Flexible(
+                  child: Semantics(
+                    liveRegion: true,
+                    child: Text(t.common.loading),
+                  ),
+                ),
+              ],
+            )
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextFormField(
+                  controller: _verification,
+                  enabled: captchaReady && !_nativeSending,
+                  maxLength: 32,
+                  autocorrect: false,
+                  textInputAction: TextInputAction.done,
+                  decoration: InputDecoration(
+                    labelText: t.videoCommunity.captcha,
+                  ),
+                  validator: (value) => value?.trim().isNotEmpty == true
+                      ? null
+                      : t.videoCommunity.required,
+                ),
+                Semantics(
+                  button: true,
+                  label: t.login.captchaTapToRefresh,
+                  child: InkWell(
+                    onTap: _nativeSending || _readingNative
+                        ? null
+                        : () => _readNativeLogin(refreshCaptcha: true),
+                    child: SizedBox(
+                      height: 64,
+                      child: _readingNative
+                          ? const Center(child: CircularProgressIndicator())
+                          : _captchaBytes == null
+                          ? Center(child: Text(t.login.captchaLoadFailed))
+                          : Image.memory(_captchaBytes!, fit: BoxFit.contain),
+                    ),
+                  ),
+                ),
+              ],
             ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -626,6 +794,7 @@ class _OmoSiteWebPageState extends State<OmoSiteWebPage> {
     _verification.clear();
     _verification.dispose();
     _loginTimer?.cancel();
+    _documentDeadline?.cancel();
     final lease = _accountLease;
     if (lease != null)
       PluginAccountSyncCoordinator.instance.unregister(_accountSource, lease);
@@ -634,21 +803,24 @@ class _OmoSiteWebPageState extends State<OmoSiteWebPage> {
 
   @override
   Widget build(BuildContext context) => FutureBuilder<OmoNetworkContext?>(
-    future: widget.network,
-    builder: (context, snapshot) =>
-        widget.network != null &&
-            snapshot.connectionState != ConnectionState.done
-        ? _networkStatus(loading: true)
-        : snapshot.hasError
-        ? _networkStatus(loading: false)
-        : _buildPage(context, snapshot.data),
+    future: _browserPreparation,
+    builder: (context, snapshot) {
+      final loading = snapshot.connectionState != ConnectionState.done;
+      final ready = !loading && !snapshot.hasError;
+      if (!widget.finishOnSignIn && !ready) {
+        return _networkStatus(loading: loading);
+      }
+      return _buildPage(
+        context,
+        snapshot.data,
+        browserReady: ready,
+        preparationFailed: !loading && snapshot.hasError,
+      );
+    },
   );
 
   Widget _networkStatus({required bool loading}) => Scaffold(
-    appBar: AppBar(
-      leading: const SourceBackButton(),
-      title: Text(widget.title),
-    ),
+    appBar: sourceSecondaryAppBar(context, title: widget.title),
     body: Center(
       child: loading
           ? const CircularProgressIndicator()
@@ -658,11 +830,13 @@ class _OmoSiteWebPageState extends State<OmoSiteWebPage> {
 
   Widget _buildPage(
     BuildContext context,
-    OmoNetworkContext? network,
-  ) => Scaffold(
-    appBar: AppBar(
-      leading: const SourceBackButton(),
-      title: Text(widget.title),
+    OmoNetworkContext? network, {
+    required bool browserReady,
+    required bool preparationFailed,
+  }) => Scaffold(
+    appBar: sourceSecondaryAppBar(
+      context,
+      title: widget.title,
       actions: [
         if (widget.finishOnSignIn &&
             _forceWebsite &&
@@ -678,33 +852,26 @@ class _OmoSiteWebPageState extends State<OmoSiteWebPage> {
             icon: const Icon(Icons.key_outlined),
             onPressed: () => _fillCredentials(),
           ),
-        SourceChromeIconButton(
-          tooltip: t.common.retry,
-          symbol: 'arrow.clockwise',
-          icon: Icons.refresh_rounded,
-          onPressed: () {
-            setState(() => _failed = false);
-            unawaited(
-              _web?.loadUrl(
-                    urlRequest: URLRequest(url: WebUri(widget.url.toString())),
-                  ) ??
-                  Future<void>.value(),
-            );
-          },
-        ),
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(t.common.done),
-        ),
+        if (!widget.finishOnSignIn || _forceWebsite)
+          SourceChromeIconButton(
+            tooltip: t.common.retry,
+            symbol: 'arrow.clockwise',
+            icon: Icons.refresh_rounded,
+            onPressed: _web == null
+                ? null
+                : () => unawaited(_loadDocument(_web!)),
+          ),
       ],
     ),
     body: SafeArea(
       top: false,
       child: Column(
         children: [
-          if (_progress < 100 && !_failed)
+          if ((!widget.finishOnSignIn || _forceWebsite) &&
+              _progress < 100 &&
+              !_failed)
             LinearProgressIndicator(value: _progress / 100),
-          if (_failed)
+          if (_failed && (!widget.finishOnSignIn || _forceWebsite))
             Padding(
               padding: const EdgeInsets.all(16),
               child: Text(t.videoSource.readFailed),
@@ -714,84 +881,108 @@ class _OmoSiteWebPageState extends State<OmoSiteWebPage> {
               clipBehavior: Clip.none,
               fit: StackFit.expand,
               children: [
-                Offstage(
-                  offstage: widget.finishOnSignIn && !_forceWebsite,
-                  child: VideoSiteBrowser(
-                    home: widget.home,
-                    source: widget.browsingSource ?? _accountSource,
-                    networkContext: network?.token,
-                    configuration: InAppWebView(
-                      initialSettings: InAppWebViewSettings(
-                        javaScriptEnabled: true,
-                        domStorageEnabled: true,
-                        useShouldOverrideUrlLoading: true,
-                      ),
-                      onWebViewCreated: (web) async {
-                        _web = web;
-                        if (widget.browsingSource == null) {
-                          try {
-                            await _registerAccountBrowser(web);
-                          } catch (_) {}
-                        }
-                        if (!mounted || !identical(web, _web)) return;
-                        await web.loadUrl(
-                          urlRequest: URLRequest(
-                            url: WebUri(widget.url.toString()),
-                          ),
-                        );
-                      },
-                      onProgressChanged: (_, progress) {
-                        if (mounted) setState(() => _progress = progress);
-                      },
-                      onLoadStart: (_, _) {
-                        if (mounted) {
-                          setState(() {
-                            _failed = false;
-                            _progress = 0;
-                            if (widget.finishOnSignIn) {
-                              _nativeEpoch++;
-                              _readingNative = false;
-                              _nativeFailure = '';
-                              _nativeRevision++;
-                              _verification.clear();
-                              _captchaBytes = null;
+                if (browserReady)
+                  Offstage(
+                    offstage: widget.finishOnSignIn && !_forceWebsite,
+                    child: VideoSiteBrowser(
+                      home: widget.home,
+                      source: widget.browsingSource ?? _accountSource,
+                      networkContext: network?.token,
+                      configuration: InAppWebView(
+                        initialSettings: InAppWebViewSettings(
+                          javaScriptEnabled: true,
+                          domStorageEnabled: true,
+                          useShouldOverrideUrlLoading: true,
+                        ),
+                        onWebViewCreated: (web) async {
+                          _web = web;
+                          // During an account change the parent owns the source's
+                          // persistent store and reads it again after this form closes.
+                          final parentOwnsSession =
+                              widget.requireFreshSignIn &&
+                              pluginSessionWriteFence.isChanging(
+                                _accountSource,
+                              ) &&
+                              PluginAccountSyncCoordinator.instance
+                                  .hasProfileAccess(_accountSource);
+                          if (widget.browsingSource == null &&
+                              !parentOwnsSession) {
+                            try {
+                              await _registerAccountBrowser(web);
+                            } catch (_) {}
+                          }
+                          await _loadDocument(web);
+                        },
+                        onProgressChanged: (_, progress) {
+                          if (mounted) setState(() => _progress = progress);
+                        },
+                        onLoadStart: (_, _) {
+                          if (mounted) {
+                            if (_failed &&
+                                widget.finishOnSignIn &&
+                                !_forceWebsite) {
+                              return;
                             }
-                          });
-                        }
-                      },
-                      onLoadStop: (_, _) {
-                        if (widget.finishOnSignIn && !_nativeSending)
-                          unawaited(_readNativeLoginDocument());
-                        if (mounted) setState(() => _progress = 100);
-                        if (widget.finishOnSignIn &&
-                            _forceWebsite &&
-                            widget.credentialSource != null) {
-                          unawaited(_fillCredentials(silent: true));
-                        }
-                        _scheduleLoginCheck();
-                      },
-                      onUpdateVisitedHistory: (_, _, _) =>
-                          _scheduleLoginCheck(),
-                      onReceivedError: (_, request, error) {
-                        if (request.isForMainFrame == true &&
-                            error.type != WebResourceErrorType.CANCELLED &&
-                            mounted) {
-                          setState(() => _failed = true);
-                        }
-                      },
-                      shouldOverrideUrlLoading: (_, action) async =>
-                          allowVideoSiteNavigation(
-                            widget.home,
-                            Uri.tryParse(action.request.url?.toString() ?? ''),
-                            isMainFrame: action.isForMainFrame,
-                          )
-                          ? NavigationActionPolicy.ALLOW
-                          : NavigationActionPolicy.CANCEL,
+                            setState(() {
+                              _failed = false;
+                              _progress = 0;
+                              if (widget.finishOnSignIn) {
+                                _nativeEpoch++;
+                                _readingNative = false;
+                                _nativeChecked = _nativeSupported = false;
+                                _nativeFailure = '';
+                                _nativeRevision++;
+                                _verification.clear();
+                                _captchaBytes = null;
+                              }
+                            });
+                          }
+                        },
+                        onLoadStop: (_, _) {
+                          if (!mounted || _failed) return;
+                          _documentDeadline?.cancel();
+                          if (widget.finishOnSignIn && !_nativeSending)
+                            unawaited(_readNativeLoginDocument());
+                          setState(() => _progress = 100);
+                          if (widget.finishOnSignIn &&
+                              _forceWebsite &&
+                              widget.credentialSource != null) {
+                            unawaited(_fillCredentials(silent: true));
+                          }
+                          _scheduleLoginCheck();
+                        },
+                        onUpdateVisitedHistory: (_, _, _) =>
+                            _scheduleLoginCheck(),
+                        onReceivedError: (web, request, error) {
+                          if (request.isForMainFrame == true &&
+                              error.type != WebResourceErrorType.CANCELLED) {
+                            _documentFailed(web);
+                          }
+                        },
+                        onReceivedHttpError: (web, request, response) {
+                          if (request.isForMainFrame == true &&
+                              (response.statusCode ?? 0) >= 400) {
+                            _documentFailed(web);
+                          }
+                        },
+                        shouldOverrideUrlLoading: (_, action) async =>
+                            allowVideoSiteNavigation(
+                              widget.home,
+                              Uri.tryParse(
+                                action.request.url?.toString() ?? '',
+                              ),
+                              isMainFrame: action.isForMainFrame,
+                            )
+                            ? NavigationActionPolicy.ALLOW
+                            : NavigationActionPolicy.CANCEL,
+                      ),
                     ),
                   ),
-                ),
                 if (widget.finishOnSignIn && !_forceWebsite)
-                  _nativeLogin(context),
+                  _nativeLogin(
+                    browserReady: browserReady,
+                    preparationFailed: preparationFailed,
+                  ),
               ],
             ),
           ),
@@ -885,8 +1076,8 @@ class _OmoAccountPageState extends State<OmoAccountPage> {
   Future<void>? _readTask, _pullTask;
   bool _pullRefreshing = false;
 
-  Future<void> _read() {
-    final task = _readNow();
+  Future<void> _read({bool forceAvatarRefresh = false}) {
+    final task = _readNow(forceAvatarRefresh: forceAvatarRefresh);
     _readTask = task;
     return task.whenComplete(() {
       if (identical(_readTask, task)) {
@@ -908,7 +1099,7 @@ class _OmoAccountPageState extends State<OmoAccountPage> {
       return pending;
     }
     setState(() => _pullRefreshing = true);
-    final task = _readTask ?? _read();
+    final task = _readTask ?? _read(forceAvatarRefresh: true);
     _pullTask = task;
     return task.whenComplete(() {
       if (identical(_pullTask, task)) {
@@ -918,7 +1109,7 @@ class _OmoAccountPageState extends State<OmoAccountPage> {
     });
   }
 
-  Future<void> _readNow() async {
+  Future<void> _readNow({bool forceAvatarRefresh = false}) async {
     final epoch = ++_epoch;
     final generation = pluginSessionWriteFence.generation(widget.source);
     setState(() {
@@ -930,7 +1121,7 @@ class _OmoAccountPageState extends State<OmoAccountPage> {
       if (mounted &&
           epoch == _epoch &&
           pluginSessionWriteFence.generation(widget.source) == generation) {
-        _avatarRefresh++;
+        if (forceAvatarRefresh) _avatarRefresh++;
         if (widget.source.isNotEmpty) {
           if (account == null)
             PluginAccountIdentities.reject(
@@ -990,6 +1181,15 @@ class _OmoAccountPageState extends State<OmoAccountPage> {
   Future<void> _savedAccounts() async {
     if (_accountOpening) return;
     _accountOpening = true;
+    Future<void> open([PluginAccountAddition? addAccount]) => openOmoSitePage(
+      context,
+      widget.client,
+      title: t.videoSource.login,
+      path: '/user/login',
+      credentialSource: widget.source,
+      requireFreshSignIn: true,
+      addAccount: addAccount,
+    );
     try {
       await openPluginSavedAccounts(
         context,
@@ -997,13 +1197,8 @@ class _OmoAccountPageState extends State<OmoAccountPage> {
         prepareSession: () async {
           await widget.client.readAccount();
         },
-        onAddAccount: () => openOmoSitePage(
-          context,
-          widget.client,
-          title: t.videoSource.login,
-          path: '/user/login',
-          credentialSource: widget.source,
-        ),
+        onAddAccount: open,
+        onAddAccountWithSession: open,
       );
     } finally {
       _accountOpening = false;
@@ -1631,7 +1826,7 @@ class _OmoPrivateIndexPageState extends State<OmoPrivateIndexPage> {
                 scope: _keywordScope,
                 onChanged: (scope) => setState(() => _keywordScope = scope),
               ),
-              const CollectionCoverPrivacyButton(),
+              const CollectionCoverPrivacyActions(),
             ],
           ),
         ),
@@ -1989,7 +2184,7 @@ class _OmoPrivateIndexPageState extends State<OmoPrivateIndexPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(leading: const SourceBackButton(), title: Text(_title)),
+    appBar: sourceSecondaryAppBar(context, title: _title),
     body: widget.kind == 'notices'
         ? _noticeList()
         : widget.kind == 'history'

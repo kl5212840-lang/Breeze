@@ -56,6 +56,9 @@ class ReaderInputController {
   ({Matrix4Tween tween, int slot})? _zoom;
   bool _applyingZoomFrame = false;
 
+  static const _menuTapTravel = 8.0;
+  _ReaderMenuTouch? _menuTouch;
+  _ReaderMenuTouch? _previousMenuTouch;
   TapDownDetails? _tapDownDetails;
   TapDownDetails? _doubleTapDownDetails;
   bool _isCtrlPressed = false;
@@ -90,12 +93,14 @@ class ReaderInputController {
       onKeyEvent: _onKeyEvent,
       child: Listener(
         onPointerDown: _onPointerDown,
+        onPointerMove: _onPointerMove,
         onPointerUp: _onPointerUpOrCancel,
         onPointerCancel: _onPointerUpOrCancel,
         onPointerSignal: _onPointerSignal,
         child: GestureDetector(
           onTap: _onTap,
           onTapDown: (details) => _tapDownDetails = details,
+          onTapCancel: () => _tapDownDetails = null,
           onDoubleTapDown: isDoubleTapActionEnabled
               ? (details) => _doubleTapDownDetails = details
               : null,
@@ -143,27 +148,30 @@ class ReaderInputController {
   }
 
   Future<void> _onTap() async {
-    // 延迟一帧处理，减少单击和双击的手势竞争。
+    final details = _tapDownDetails;
+    _tapDownDetails = null;
+    if (details == null) return;
+    final canToggleMenu = _isStillMenuTap(details);
+
+    // 保留单击和双击之间的调度顺序，点按数据在等待前已取出。
     await Future.delayed(Duration.zero);
-    if (_tapDownDetails == null || !context.mounted) return;
+    if (!context.mounted) return;
 
     final readSetting = context.readEffectiveReadSetting();
     ReaderGestureLogic.handleTap(
       actionController: actionController,
       controller: pageController,
       context: context,
-      details: _tapDownDetails!,
-      onToggleMenu: readSetting.doubleTapOpenMenu
-          ? () {
-              final cubit = context.read<ReaderCubit>();
-              if (cubit.state.isMenuVisible) {
-                onToggleMenu();
-              }
-            }
-          : onToggleMenu,
+      details: details,
+      onToggleMenu: () {
+        if (!canToggleMenu) return;
+        if (readSetting.doubleTapOpenMenu && !readerCubit.state.isMenuVisible) {
+          return;
+        }
+        onToggleMenu();
+      },
       onBeforePageTurn: restoreScaleForPageTurnAction,
     );
-    _tapDownDetails = null;
   }
 
   void _onDoubleTap() {
@@ -174,14 +182,23 @@ class ReaderInputController {
       _onDoubleTapZoom(readSetting);
       return;
     }
-    if (readSetting.doubleTapOpenMenu) {
-      _onDoubleTapOpenMenu();
+    final details = _doubleTapDownDetails;
+    _doubleTapDownDetails = null;
+    if (!readSetting.doubleTapOpenMenu || details == null) return;
+    if (!_isStillMenuTap(details)) return;
+    if (_isTouchPointer(details.kind) &&
+        _previousMenuTouch?.isStillTap != true) {
+      return;
     }
+    onToggleMenu();
   }
 
-  void _onDoubleTapOpenMenu() {
-    onToggleMenu();
-    _doubleTapDownDetails = null;
+  bool _isStillMenuTap(TapDownDetails details) {
+    if (!_isTouchPointer(details.kind)) return true;
+    final touch = _menuTouch;
+    return touch != null &&
+        touch.origin == details.globalPosition &&
+        touch.isStillTap;
   }
 
   void _onDoubleTapZoom(ReadSettingState setting) {
@@ -274,16 +291,39 @@ class ReaderInputController {
   void _onPointerDown(PointerDownEvent event) {
     if (!_isTouchPointer(event.kind)) return;
     _activeTouchPointers.add(event.pointer);
+    _previousMenuTouch = _menuTouch;
+    _menuTouch = _ReaderMenuTouch(event.pointer, event.position);
+    if (_activeTouchPointers.length > 1) {
+      _previousMenuTouch?.isStillTap = false;
+      _menuTouch?.isStillTap = false;
+    }
     _updateMultiTouchScrollLock();
   }
 
+  void _onPointerMove(PointerMoveEvent event) => _trackMenuTouch(event);
+
   void _onPointerUpOrCancel(PointerEvent event) {
     if (!_isTouchPointer(event.kind)) return;
+    _trackMenuTouch(event);
     _activeTouchPointers.remove(event.pointer);
     _updateMultiTouchScrollLock();
   }
 
-  bool _isTouchPointer(PointerDeviceKind kind) {
+  void _trackMenuTouch(PointerEvent event) {
+    final touch = _menuTouch;
+    if (touch == null || touch.pointer != event.pointer || !touch.isStillTap) {
+      return;
+    }
+    // Scroll can leave the recognizer arena undecided for short drags.
+    // Remember movement even if the finger returns to the start before lifting.
+    if (event is PointerCancelEvent ||
+        (event.position - touch.origin).distanceSquared >
+            _menuTapTravel * _menuTapTravel) {
+      touch.isStillTap = false;
+    }
+  }
+
+  bool _isTouchPointer(PointerDeviceKind? kind) {
     return kind == PointerDeviceKind.touch ||
         kind == PointerDeviceKind.stylus ||
         kind == PointerDeviceKind.invertedStylus;
@@ -368,4 +408,12 @@ class ReaderInputController {
   void restoreScaleForPageDrag() {
     resetViewerTransformIfNeeded();
   }
+}
+
+class _ReaderMenuTouch {
+  _ReaderMenuTouch(this.pointer, this.origin);
+
+  final int pointer;
+  final Offset origin;
+  bool isStillTap = true;
 }

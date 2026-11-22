@@ -13,6 +13,7 @@ class SourceListScrollPositions {
   bool _changing = false;
   bool _disposed = false;
   int _epoch = 0;
+  (double, double)? _searchOrigin;
 
   ScrollController get controller => _detailed ? _details : _grid;
   bool get isChanging => _changing;
@@ -35,8 +36,24 @@ class SourceListScrollPositions {
 
   void reset({bool afterLayout = false}) {
     if (_disposed) return;
-    _settle(resetAfterLayout: afterLayout);
+    _settle(afterLayout: afterLayout ? _reset : null);
     if (!afterLayout) _reset();
+  }
+
+  void beginSearch() {
+    _searchOrigin ??= (_grid.savedOffset, _details.savedOffset);
+  }
+
+  void endSearch() {
+    final origin = _searchOrigin;
+    _searchOrigin = null;
+    if (_disposed || origin == null) return;
+    _settle(
+      afterLayout: () {
+        _grid.restore(origin.$1);
+        _details.restore(origin.$2);
+      },
+    );
   }
 
   void _reset() {
@@ -44,12 +61,12 @@ class SourceListScrollPositions {
     _details.reset();
   }
 
-  void _settle({bool resetAfterLayout = false}) {
+  void _settle({VoidCallback? afterLayout}) {
     _changing = true;
     final epoch = ++_epoch;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_disposed || epoch != _epoch) return;
-      if (resetAfterLayout) _reset();
+      afterLayout?.call();
       _changing = false;
     });
   }
@@ -70,6 +87,8 @@ class _RememberedScrollController extends ScrollController {
   @override
   double get initialScrollOffset => _saved;
 
+  double get savedOffset => _saved;
+
   @override
   void attach(ScrollPosition position) {
     super.attach(position);
@@ -89,6 +108,17 @@ class _RememberedScrollController extends ScrollController {
     _saved = 0;
     for (final position in positions.toList()) {
       position.jumpTo(0);
+    }
+  }
+
+  void restore(double offset) {
+    _saved = offset;
+    for (final position in positions.toList()) {
+      if (position.hasContentDimensions) {
+        position.jumpTo(
+          offset.clamp(position.minScrollExtent, position.maxScrollExtent),
+        );
+      }
     }
   }
 

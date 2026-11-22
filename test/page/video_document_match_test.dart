@@ -42,4 +42,47 @@ void main() {
       isTrue,
     );
   });
+
+  test(
+    'Hanime matches indexed and repeated tags without relaxing other criteria',
+    () {
+      final requested = Uri.https('hanime1.me', '/search', {
+        'tags[]': ['A', 'B', 'C'],
+        'broad': 'on',
+        'genre': 'Fixture',
+      });
+      final returned = Uri.https('hanime1.me', '/search', {
+        'tags[0]': 'C',
+        'tags[1]': 'B',
+        'tags[2]': 'A',
+        'broad': 'on',
+        'genre': 'Fixture',
+      });
+      expect(videoDocumentMatches(requested, returned), isTrue);
+      for (final change in [
+        {'tags[1]': 'D'},
+        {'broad': 'off'},
+        {'page': '2'},
+        {'genre': 'Other'},
+        {'tags[]': 'A'},
+      ]) {
+        expect(
+          videoDocumentMatches(
+            requested,
+            returned.replace(
+              queryParameters: {...returned.queryParameters, ...change},
+            ),
+          ),
+          isFalse,
+        );
+      }
+      expect(
+        videoDocumentMatches(
+          requested.replace(host: 'example.test'),
+          returned.replace(host: 'example.test'),
+        ),
+        isFalse,
+      );
+    },
+  );
 }

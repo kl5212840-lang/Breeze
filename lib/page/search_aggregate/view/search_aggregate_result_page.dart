@@ -1,4 +1,4 @@
-import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/widgets/read_recovery_scope.dart';
@@ -21,7 +21,7 @@ import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/cubit/plugin_registry_cubit.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
-import 'package:zephyr/page/search/widget/search_input_dialog.dart';
+import 'package:zephyr/page/search_result/view/search_bar.dart';
 import 'package:zephyr/page/search/widget/source_select_dialog.dart';
 import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/config/router/router.gr.dart';
@@ -150,52 +150,54 @@ class _SearchAggregateResultPageState
       onActiveChanged: context.read<AggregateSearchCubit>().setReadActive,
       keepActiveWhileCovered: () => _selectingSources,
       child: Scaffold(
-        appBar: SearchToolbarScope.appBar(
-          context,
-          (height) => AppBar(
-            toolbarHeight: height,
-            leadingWidth: height,
-            leading: height == null ? null : const SourceBackButton(),
-            titleSpacing: 0,
-            title: _SearchBarTrigger(
-              searchEvent: widget.searchEvent,
-              onSelectSources: _showSourceDialog,
-            ),
+        appBar: AppBar(
+          toolbarHeight: SearchResultQueryTitle.toolbarHeight(context),
+          leadingWidth: CollectionToolbarMetrics.leadingExtentOf(context),
+          leading: CollectionToolbarMetrics.leading(
+            context,
+            const SourceBackButton(bare: true),
           ),
+          titleSpacing: 0,
+          actionsPadding: CollectionToolbarMetrics.trailingPadding,
+          title: _SearchBarTrigger(searchEvent: widget.searchEvent),
         ),
-        body: Column(
-          children: [
-            const _FilterChipsRow(),
-            Expanded(
-              child: BlocBuilder<AggregateSearchCubit, AggregateSearchState>(
-                builder: (context, state) {
-                  final hasAnyResponse =
-                      state.results.isNotEmpty ||
-                      state.errors.isNotEmpty ||
-                      state.notices.isNotEmpty;
-                  if (state.status == AggregateSearchStatus.loading &&
-                      !hasAnyResponse) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  return Stack(
-                    children: [
-                      _ResultList(
-                        searchEvent: context
-                            .read<AggregateSearchCubit>()
-                            .baseEvent,
-                        state: state,
-                      ),
-                      if (state.status == AggregateSearchStatus.loading)
-                        const Align(
-                          alignment: Alignment.topCenter,
-                          child: LinearProgressIndicator(minHeight: 2),
+        body: SafeArea(
+          top: false,
+          bottom: false,
+          child: Column(
+            children: [
+              _FilterChipsRow(onSelectSources: _showSourceDialog),
+              Expanded(
+                child: BlocBuilder<AggregateSearchCubit, AggregateSearchState>(
+                  builder: (context, state) {
+                    final hasAnyResponse =
+                        state.results.isNotEmpty ||
+                        state.errors.isNotEmpty ||
+                        state.notices.isNotEmpty;
+                    if (state.status == AggregateSearchStatus.loading &&
+                        !hasAnyResponse) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    return Stack(
+                      children: [
+                        _ResultList(
+                          searchEvent: context
+                              .read<AggregateSearchCubit>()
+                              .baseEvent,
+                          state: state,
                         ),
-                    ],
-                  );
-                },
+                        if (state.status == AggregateSearchStatus.loading)
+                          const Align(
+                            alignment: Alignment.topCenter,
+                            child: LinearProgressIndicator(minHeight: 2),
+                          ),
+                      ],
+                    );
+                  },
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -254,42 +256,21 @@ class _SearchAggregateResultPageState
 }
 
 class _SearchBarTrigger extends StatelessWidget {
-  const _SearchBarTrigger({
-    required this.searchEvent,
-    required this.onSelectSources,
-  });
+  const _SearchBarTrigger({required this.searchEvent});
 
   final SearchEvent searchEvent;
-  final VoidCallback onSelectSources;
 
   @override
   Widget build(BuildContext context) {
+    final keyword = searchEvent.searchStates.searchKeyword;
     return Padding(
-      padding: const EdgeInsetsDirectional.only(end: 12),
-      child: Row(
-        children: [
-          Expanded(
-            child: SearchQueryField(
-              query: searchEvent.searchStates.searchKeyword,
-              hintText: t.search.searchHint,
-              semanticLabel: t.search.title,
-              onTap: () => _openSearchPage(context),
-            ),
-          ),
-          if (SearchToolbarScope.of(context) != null) const SizedBox(width: 4),
-          SourceSearchScopeControl(
-            aggregate: true,
-            compact: MediaQuery.sizeOf(context).width < 352,
-            onChanged: context.read<AggregateSearchCubit>().applyKeywordScope,
-          ),
-          if (SearchToolbarScope.of(context) != null) const SizedBox(width: 4),
-          SourceChromeIconButton(
-            tooltip: t.search.selectSourceTooltip,
-            onPressed: onSelectSources,
-            icon: Icons.layers_outlined,
-            symbol: 'square.stack.3d.up',
-          ),
-        ],
+      padding: const EdgeInsetsDirectional.only(
+        end: CollectionToolbarMetrics.sourceContentInset,
+      ),
+      child: SearchResultQueryTitle(
+        key: const ValueKey('aggregate.query-title'),
+        title: keyword.trim().isEmpty ? t.search.title : keyword,
+        onEdit: () => _openSearchPage(context),
       ),
     );
   }
@@ -301,7 +282,7 @@ class _SearchBarTrigger extends StatelessWidget {
       return;
     }
 
-    context.replaceRoute(
+    context.pushRoute(
       SearchRoute(
         key: ValueKey(const Uuid().v4()),
         searchState: context.read<SearchCubit>().state,
@@ -312,57 +293,71 @@ class _SearchBarTrigger extends StatelessWidget {
 }
 
 class _FilterChipsRow extends StatelessWidget {
-  const _FilterChipsRow();
+  const _FilterChipsRow({required this.onSelectSources});
+
+  final VoidCallback onSelectSources;
 
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<AggregateSearchCubit, AggregateSearchState>(
-      builder: (context, state) {
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Wrap(
-              alignment: WrapAlignment.start,
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                if (state.pendingSources.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    child: Text(
-                      '${t.common.loading} ${state.pendingSources.length}',
+      builder: (context, state) => Padding(
+        padding: CollectionToolbarMetrics.contentPaddingOf(context, bottom: 4),
+        child: Row(
+          key: const ValueKey('aggregate.result-tools'),
+          spacing: CollectionToolbarMetrics.searchControlGap,
+          children: [
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  spacing: CollectionToolbarMetrics.searchControlGap,
+                  children: [
+                    FilterChip(
+                      showCheckmark: false,
+                      label: Text(t.search.hasResults),
+                      selected: state.showHasResults,
+                      onSelected: (value) => context
+                          .read<AggregateSearchCubit>()
+                          .toggleHasResults(value),
                     ),
-                  ),
-                FilterChip(
-                  showCheckmark: false,
-                  label: Text(t.search.hasResults),
-                  selected: state.showHasResults,
-                  onSelected: (value) => context
-                      .read<AggregateSearchCubit>()
-                      .toggleHasResults(value),
+                    FilterChip(
+                      showCheckmark: false,
+                      label: Text(
+                        state.errors.isEmpty
+                            ? t.search.showErrors
+                            : t.search.aggregateUnavailable(
+                                count: state.errors.length,
+                              ),
+                      ),
+                      selected: state.showErrors,
+                      onSelected: state.errors.isEmpty
+                          ? null
+                          : (value) => context
+                                .read<AggregateSearchCubit>()
+                                .toggleShowErrors(value),
+                    ),
+                    if (state.pendingSources.isNotEmpty)
+                      Text(
+                        '${t.common.loading} ${state.pendingSources.length}',
+                      ),
+                  ],
                 ),
-                FilterChip(
-                  showCheckmark: false,
-                  label: Text(
-                    state.errors.isEmpty
-                        ? t.search.showErrors
-                        : t.search.aggregateUnavailable(
-                            count: state.errors.length,
-                          ),
-                  ),
-                  selected: state.showErrors,
-                  onSelected: state.errors.isEmpty
-                      ? null
-                      : (value) => context
-                            .read<AggregateSearchCubit>()
-                            .toggleShowErrors(value),
-                ),
-              ],
+              ),
             ),
-          ),
-        );
-      },
+            SourceSearchScopeControl(
+              aggregate: true,
+              compact: true,
+              onChanged: context.read<AggregateSearchCubit>().applyKeywordScope,
+            ),
+            SourceChromeIconButton(
+              tooltip: t.search.selectSourceTooltip,
+              onPressed: onSelectSources,
+              icon: Icons.layers_outlined,
+              symbol: 'square.stack.3d.up',
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

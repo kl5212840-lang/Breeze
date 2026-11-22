@@ -23,6 +23,16 @@ import '../test_helper.dart';
 
 /// Native package list/delete are isolated channel fixtures. The actual page,
 /// Flutter menu/confirmation, MP4 bytes, index and task records remain real.
+Future<void> _openRowActions(WidgetTester tester, String rowKey) async {
+  final more = find.byKey(ValueKey('download-row-more.$rowKey'));
+  expect(more.hitTestable(), findsOneWidget);
+  await tester.tap(more);
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 250));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 250));
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final messenger =
@@ -233,9 +243,7 @@ void main() {
           [ToastType.info],
         );
 
-        await tester.drag(card, const Offset(-160, 0));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 260));
+        await _openRowActions(tester, 'video:$id');
         final delete = find.byKey(ValueKey('download-swipe.video:$id.delete'));
         expect(delete.hitTestable(), findsOneWidget);
         expect(
@@ -304,8 +312,8 @@ void main() {
           expect(await exported.readAsBytes(), orderedEquals(bytes));
         });
         final tasks = await finish(
-          VideoExportRecords.readTasks(),
-          'read the managed replacement',
+          VideoExportRecords.readTaskSnapshot(),
+          'read the replacement task record',
         );
         expect(tasks.map((row) => row['key']), contains(replacement));
         expect(tester.takeException(), isNull);
@@ -527,10 +535,7 @@ void main() {
         );
         await tester.ensureVisible(mp4Card);
         await tester.pump();
-        // A short, ordinary swipe still opens the tray with three commands.
-        await tester.drag(mp4Card, const Offset(-90, 0));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 260));
+        await _openRowActions(tester, 'video:$mp4ID');
         final export = find.byKey(
           ValueKey('download-swipe.video:$mp4ID.export'),
         );
@@ -591,9 +596,7 @@ void main() {
           'the replacement failure is visible',
         );
         await tester.ensureVisible(failure);
-        await tester.drag(failure, const Offset(-165, 0));
-        await tester.pump();
-        await tester.pump(const Duration(milliseconds: 250));
+        await _openRowActions(tester, 'video:$mp4ID');
         final failedDelete = find.byKey(
           ValueKey('download-swipe.video:$mp4ID.delete'),
         );
@@ -633,9 +636,7 @@ void main() {
           );
           await tester.ensureVisible(hlsCard);
           await tester.pump();
-          await tester.drag(hlsCard, const Offset(-160, 0));
-          await tester.pump();
-          await tester.pump(const Duration(milliseconds: 250));
+          await _openRowActions(tester, 'video:$hlsID');
           expect(
             find.byKey(ValueKey('download-swipe.video:$hlsID.export')),
             findsNothing,

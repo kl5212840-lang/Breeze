@@ -22,8 +22,10 @@ import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/service/comic_follow/comic_follow_chapter_reader.dart';
 import 'package:zephyr/service/comic_follow/comic_follow_service.dart';
 import 'package:zephyr/service/comic_follow/comic_follow_foreground_scheduler.dart';
+import 'package:zephyr/service/comic_follow/comic_follow_reminders.dart';
 import 'package:zephyr/src/rust/frb_generated.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/widgets/tab_reselect_scope.dart';
 
 class _FollowSearchTextApi extends RustLibApi {
   @override
@@ -278,7 +280,7 @@ void main() {
   });
 
   for (final style in ['system', 'breeze']) {
-    testWidgets('follow sort shares the more-button trailing slot in $style', (
+    testWidgets('follow toolbar stays aligned across unread states in $style', (
       tester,
     ) async {
       final channels = <MethodChannel>[];
@@ -302,6 +304,10 @@ void main() {
       final now = DateTime.utc(2026, 11, 2, 12);
       final repository = _FollowHostRepository(now);
       repository.row = repository.row.copyWith(updateTime: now);
+      final mode = ComicFollowReminderController.instance.mode;
+      final previousMode = mode.value;
+      mode.value = ComicFollowReminderMode.badge;
+      addTearDown(() => mode.value = previousMode);
       final cubit = ComicFollowCubit(repository: repository, now: () => now);
       final registry = PluginRegistryCubit();
       final preference = ValueNotifier(style);
@@ -348,6 +354,7 @@ void main() {
                 ),
               ),
             );
+            (Rect, Rect)? initialLayout;
             for (final unread in [false, true]) {
               repository.row = repository.row.copyWith(
                 hasUpdate: unread,
@@ -362,14 +369,18 @@ void main() {
               final trailing = rtl ? sortRect.left : width - sortRect.right;
               final expectedInset = 16 + ((width - 768) / 2).clamp(0, width);
               expect(
-                sortRect.center.dx,
-                closeTo(moreRect.center.dx, .01),
+                rtl ? sortRect.left : sortRect.right,
+                closeTo(rtl ? moreRect.left : moreRect.right, .01),
                 reason: '$direction, width $width, unread $unread',
               );
               expect(trailing, closeTo(expectedInset, .01));
               expect(filterRect.height, greaterThanOrEqualTo(44));
-              expect(sortRect.width, 44);
+              expect(sortRect.width, greaterThanOrEqualTo(44));
               expect(tester.getSize(sort).height, greaterThanOrEqualTo(44));
+              final sortMenu = tester.widget<NativeVideoMenu>(sort);
+              if (width >= 430 && scale == 1) {
+                expect(sortMenu.label, t.comicFollow.lastRead);
+              }
               if (sortRect.top >= filterRect.bottom) {
                 expect(
                   scale,
@@ -387,20 +398,65 @@ void main() {
                     : sortRect.left - filterRect.right;
                 expect(gap, greaterThanOrEqualTo(8));
               }
-              expect(markAll, unread ? findsOneWidget : findsNothing);
+              expect(markAll, findsNothing);
+              final latest = find.byKey(
+                const ValueKey('follow-latest-fixture:1'),
+              );
+              final badge = find.descendant(
+                of: latest,
+                matching: find.text(t.comicFollow.newChaptersShort(diff: 1)),
+              );
+              expect(badge, unread ? findsOneWidget : findsNothing);
               if (unread) {
-                final markRect = tester.getRect(markAll);
-                expect(markRect.center.dy, closeTo(sortRect.center.dy, .01));
-                expect(
-                  markRect.center.dx,
-                  rtl
-                      ? greaterThan(sortRect.center.dx)
-                      : lessThan(sortRect.center.dx),
+                final bounds = tester.getRect(latest);
+                final badgeBounds = tester.getRect(badge);
+                final chapterBounds = tester.getRect(
+                  find
+                      .descendant(of: latest, matching: find.byType(Text))
+                      .first,
                 );
+                expect(badgeBounds.left, greaterThanOrEqualTo(bounds.left));
+                expect(
+                  badgeBounds.right,
+                  lessThanOrEqualTo(bounds.right + .01),
+                );
+                expect(badgeBounds.bottom, lessThanOrEqualTo(bounds.bottom));
+                if (badgeBounds.top < chapterBounds.bottom) {
+                  final gap = rtl
+                      ? chapterBounds.left - badgeBounds.right
+                      : badgeBounds.left - chapterBounds.right;
+                  expect(gap, closeTo(14, .01));
+                } else {
+                  expect(
+                    rtl ? badgeBounds.right : badgeBounds.left,
+                    closeTo(
+                      (rtl ? chapterBounds.right : chapterBounds.left) +
+                          (rtl ? -6 : 6),
+                      .01,
+                    ),
+                  );
+                }
               }
+              expect(
+                tester
+                    .widget<NativeVideoMenu>(more)
+                    .options
+                    .containsValue(t.comicFollow.markAllReadHint),
+                unread,
+              );
+              initialLayout ??= (filterRect, sortRect);
+              expect((filterRect, sortRect), initialLayout);
               expect(tester.takeException(), isNull);
             }
           }
+        }
+        if (style == 'breeze') {
+          await tester.tap(more);
+          await tester.pumpAndSettle();
+          await tester.tap(find.text(t.comicFollow.markAllReadHint));
+          await tester.pumpAndSettle();
+          expect(cubit.state.updateCount, 0);
+          expect(repository.row.lastChapterCount, 11);
         }
         expect(repository.calls, 0);
       } finally {
@@ -514,8 +570,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       final sort = find.byKey(const ValueKey('follow-sort'));
-      expect(tester.widget<NativeVideoMenu>(sort).label, isEmpty);
-      expect(tester.getSize(sort).width, 44);
+      final sortMenu = tester.widget<NativeVideoMenu>(sort);
+      expect(sortMenu.tooltip, contains(t.comicFollow.lastRead));
+      expect(tester.getSize(sort).width, greaterThanOrEqualTo(44));
       await tester.tap(sort);
       await tester.pumpAndSettle();
       await tester.tap(find.text(t.comicFollow.lastUpdate));
@@ -526,8 +583,10 @@ void main() {
       final input = find.byType(TextField);
       final privacy = find.byKey(const ValueKey('follow-cover-privacy'));
       final more = find.byKey(const ValueKey('follow-more'));
-      final privacyPosition = tester.getCenter(privacy);
-      final morePosition = tester.getCenter(more);
+      final appBar = find.byType(AppBar);
+      final bounds = tester.getRect(appBar);
+      final sortCenter = tester.getCenter(sort);
+      expect(tester.getRect(more).right, tester.getRect(sort).right);
       final toolsTop = tester.getTopLeft(sort).dy;
       expect(input, findsNothing);
       await tester.tap(toggle);
@@ -538,8 +597,11 @@ void main() {
         findsOneWidget,
       );
       expect(tester.getTopLeft(sort).dy, closeTo(toolsTop, .01));
-      expect(tester.getCenter(privacy), privacyPosition);
-      expect(tester.getCenter(more), morePosition);
+      expect(privacy, findsNothing);
+      expect(more, findsNothing);
+      expect(tester.getRect(input).left, bounds.left + 16);
+      expect(tester.getRect(input).right, bounds.right - 16);
+      expect(tester.getCenter(sort), sortCenter);
       expect(tester.testTextInput.isVisible, isTrue);
       await tester.enterText(input, '追踪 fixture');
       await tester.pumpAndSettle();
@@ -588,6 +650,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(title, findsOneWidget);
       expect(input, findsOneWidget);
+      await tester.enterText(input, 'different work');
+      await tester.pumpAndSettle();
+      expect(title, findsNothing);
       await tester.tap(toggle);
       await tester.pumpAndSettle();
       expect(input, findsNothing);
@@ -606,6 +671,88 @@ void main() {
       );
     }
   });
+
+  testWidgets(
+    'follow reselect preserves the open search, filter, and sort after editing',
+    (tester) async {
+      final now = DateTime.utc(2026, 11, 2, 12);
+      final repository = _FollowHostRepository(now);
+      repository.row = repository.row.copyWith(
+        title: 'Match entry 0',
+        hasUpdate: true,
+        detectedChapterCount: 11,
+        updateTime: now,
+      );
+      for (var i = 1; i <= 12; i++) {
+        repository.additionalRows['fixture:extra-$i'] = repository.row.copyWith(
+          id: i + 1,
+          uniqueKey: 'fixture:extra-$i',
+          comicId: 'extra-$i',
+          title: 'Match entry $i',
+          updateTime: now.subtract(Duration(minutes: i)),
+        );
+      }
+      final cubit = ComicFollowCubit(repository: repository, now: () => now);
+      final tabs = TabReselectController();
+      final registry = PluginRegistryCubit();
+      try {
+        await tester.pumpWidget(
+          MultiBlocProvider(
+            providers: [
+              BlocProvider.value(value: cubit),
+              BlocProvider.value(value: registry),
+            ],
+            child: MaterialApp(
+              home: TabReselectScope(
+                controller: tabs,
+                child: const ComicFollowPage(embedded: true, active: false),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        cubit.setFilter(ComicFollowFilter.unread);
+        cubit.setSort(ComicFollowSort.update);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('follow-search-toggle')));
+        await tester.pumpAndSettle();
+        final search = find.byType(TextField);
+        await tester.enterText(search, 'match');
+        await tester.pumpAndSettle();
+        final controller = tester
+            .widget<ListView>(find.byType(ListView))
+            .controller!;
+        controller.jumpTo(400);
+        await tester.pump();
+        tabs.request();
+        await tester.pumpAndSettle();
+        expect(controller.offset, 400);
+        expect(tester.testTextInput.isVisible, isTrue);
+
+        await tester.testTextInput.receiveAction(TextInputAction.search);
+        await tester.pumpAndSettle();
+        expect(tester.testTextInput.isVisible, isFalse);
+        tabs.request();
+        await tester.pumpAndSettle();
+        expect(controller.offset, controller.position.minScrollExtent);
+        expect(tester.widget<TextField>(search).controller!.text, 'match');
+        expect(find.text('Match entry 0'), findsOneWidget);
+        expect(cubit.state.filter, ComicFollowFilter.unread);
+        expect(cubit.state.sort, ComicFollowSort.update);
+        expect(repository.calls, 0);
+        expect(tester.takeException(), isNull);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        tabs.dispose();
+        await _followFixtureStage(tester, cubit.close, 'close reselect cubit');
+        await _followFixtureStage(
+          tester,
+          registry.close,
+          'close reselect registry',
+        );
+      }
+    },
+  );
 
   testWidgets(
     'pull on unread empty waits and distinguishes unchanged from failure',

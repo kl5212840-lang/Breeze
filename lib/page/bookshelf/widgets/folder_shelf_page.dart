@@ -95,6 +95,7 @@ class FolderShelfPage extends StatelessWidget {
     this.refreshSignal = 0,
     this.isActive = true,
     this.showReturnToTop = false,
+    this.allowTabReselect = false,
     this.backController,
     this.handleRouteBack = true,
     this.onSelectionChanged,
@@ -107,6 +108,7 @@ class FolderShelfPage extends StatelessWidget {
   final int refreshSignal;
   final bool isActive;
   final bool showReturnToTop;
+  final bool allowTabReselect;
   final FolderShelfBackController? backController;
   final bool handleRouteBack;
   final ValueChanged<bool>? onSelectionChanged;
@@ -126,6 +128,7 @@ class FolderShelfPage extends StatelessWidget {
         keywordScope: keywordScope,
         isActive: isActive,
         showReturnToTop: showReturnToTop,
+        allowTabReselect: allowTabReselect,
         backController: backController,
         handleRouteBack: handleRouteBack,
         onSelectionChanged: onSelectionChanged,
@@ -142,6 +145,7 @@ class _FolderShelfPageContent extends StatefulWidget {
     required this.keywordScope,
     required this.isActive,
     required this.showReturnToTop,
+    required this.allowTabReselect,
     required this.backController,
     required this.handleRouteBack,
     required this.onSelectionChanged,
@@ -154,6 +158,7 @@ class _FolderShelfPageContent extends StatefulWidget {
   final KeywordSearchScope keywordScope;
   final bool isActive;
   final bool showReturnToTop;
+  final bool allowTabReselect;
   final FolderShelfBackController? backController;
   final bool handleRouteBack;
   final ValueChanged<bool>? onSelectionChanged;
@@ -736,13 +741,17 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
             ComicFolderService.folderPath(f, syncIdMap: folderSyncIdMap);
 
         final storageKey = PageStorageKey((rowScope, _view));
+        final canReturnToTop =
+            widget.isActive && !state.selectionMode && !state.isLoading;
         return BookshelfReturnToTop(
           key: ValueKey(storageKey.value),
+          reselectEnabled:
+              widget.allowTabReselect &&
+              canReturnToTop &&
+              state.currentPath.isEmpty,
           enabled:
               widget.showReturnToTop &&
-              widget.isActive &&
-              !state.selectionMode &&
-              !state.isLoading &&
+              canReturnToTop &&
               filteredComics.isNotEmpty,
           child: Stack(
             children: [

@@ -26,13 +26,16 @@ Map<String, dynamic> _cookie(String value) => {
 };
 
 class _Cookies implements VideoAccountCookies {
+  _Cookies({Uri? origin}) : expectedOrigin = origin ?? _origin;
+
+  final Uri expectedOrigin;
   List<Map<String, dynamic>> values = [_cookie('A')];
   int writes = 0;
   int reads = 0;
   bool reorderReads = false;
   @override
   Future<List<Map<String, dynamic>>> read(Uri origin) async {
-    expect(origin, _origin);
+    expect(origin, expectedOrigin);
     reads++;
     final rows = values.map((row) => Map<String, dynamic>.from(row)).toList();
     return reorderReads && reads.isEven ? rows.reversed.toList() : rows;
@@ -40,7 +43,7 @@ class _Cookies implements VideoAccountCookies {
 
   @override
   Future<void> set(Uri origin, Map<String, dynamic> cookie) async {
-    expect(origin, _origin);
+    expect(origin, expectedOrigin);
     writes++;
     values.removeWhere((row) => row['name'] == cookie['name']);
     values.add(Map<String, dynamic>.from(cookie));
@@ -48,7 +51,7 @@ class _Cookies implements VideoAccountCookies {
 
   @override
   Future<void> delete(Uri origin, Map<String, dynamic> cookie) async {
-    expect(origin, _origin);
+    expect(origin, expectedOrigin);
     writes++;
     values.removeWhere((row) => row['name'] == cookie['name']);
   }
@@ -61,6 +64,7 @@ void main() {
   late PluginAccountSyncCoordinator coordinator;
   Object? lease;
   var unavailable = false;
+  var avatarUrl = '';
   Future<PluginAccountAuthentication?> identity() async {
     if (unavailable) return null;
     if (cookies.values.isEmpty)
@@ -71,6 +75,7 @@ void main() {
     return PluginAccountAuthentication(
       serverIdentity: id,
       label: 'Member $id',
+      avatarUrl: avatarUrl,
       origin: _origin.origin,
     );
   }
@@ -88,6 +93,7 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     unavailable = false;
+    avatarUrl = '';
     cookies = _Cookies();
     final user = objectbox.userSettingBox.get(1)!;
     user.globalSetting = const GlobalSettingState(
@@ -115,6 +121,278 @@ void main() {
     if (lease != null) coordinator.unregister(source, lease!);
     lease = null;
   });
+
+  test('signed-out Omo can add from an empty cookie store', () async {
+    final home = Uri.parse('https://www.omofuna.com');
+    const accountId = '42';
+    final accountCookies = [
+      for (final (name, value) in [
+        ('user_id', accountId),
+        ('user_name', 'Fixture Member'),
+        ('user_check', 'fixture-check'),
+      ])
+        <String, dynamic>{
+          'name': name,
+          'value': value,
+          'domain': '.omofuna.com',
+          'path': '/',
+          'secure': false,
+          'httpOnly': false,
+          'expires': null,
+        },
+    ];
+    cookies = _Cookies(origin: home)..values = [];
+    coordinator.unregister(source, lease!);
+    Future<PluginAccountAuthentication?> readIdentity() async {
+      if (cookies.values.isEmpty) {
+        throw const PluginAccountAuthenticationRejected();
+      }
+      expect(cookies.values, accountCookies);
+      return PluginAccountAuthentication(
+        serverIdentity: accountId,
+        label: 'Fixture Member',
+        origin: home.origin,
+      );
+    }
+
+    lease = await coordinator.registerStoredSession(
+      source: source,
+      origin: home,
+      cookies: cookies,
+      authenticated: () async => await readIdentity() != null,
+      identity: readIdentity,
+    );
+    var loginCalls = 0;
+    await coordinator.addAccount(
+      source,
+      login: () async {
+        loginCalls++;
+        expect(cookies.values, isEmpty);
+        cookies.values = accountCookies;
+      },
+    );
+
+    expect(loginCalls, 1);
+    final account = PluginAccountProfiles.read(source).profiles.values.single;
+    expect(account.origin, home.origin);
+    expect(account.serverIdentity, accountId);
+    expect(PluginAccountProfiles.requiresWebLogin(account), isFalse);
+    expect(await PluginAccountProfiles.selected(source), account.id);
+    expect(PluginAccountIdentities.current(source)?.serverIdentity, accountId);
+    expect(
+      VideoAccountBackup.parse(
+        account.bundle['account.backup'],
+        home,
+        source: source,
+      )?.cookies,
+      accountCookies,
+    );
+  });
+
+  test(
+    'new account starts signed out and preserves the previous profile',
+    () async {
+      await capture('A');
+      await coordinator.addAccount(
+        source,
+        login: () async {
+          expect(cookies.values, isEmpty);
+          cookies.values = [_cookie('B')];
+        },
+      );
+      final profiles = PluginAccountProfiles.read(
+        source,
+      ).profiles.values.toList();
+      expect(
+        profiles.map((profile) => profile.serverIdentity),
+        containsAll(['A', 'B']),
+      );
+      final b = profiles.singleWhere(
+        (profile) => profile.serverIdentity == 'B',
+      );
+      expect(b.kind, 'web');
+      expect(await PluginAccountProfiles.selected(source), b.id);
+      expect(PluginAccountIdentities.current(source)?.serverIdentity, 'B');
+      expect(cookies.values, [_cookie('B')]);
+    },
+  );
+
+  test(
+    'adding a confirmed account without portable cookies keeps its identity',
+    () async {
+      await capture('A');
+      final newCookie = {..._cookie('B'), 'httpOnly': false};
+      await coordinator.addAccount(
+        source,
+        login: () async {
+          expect(cookies.values, isEmpty);
+          cookies.values = [newCookie];
+        },
+      );
+      final profiles = PluginAccountProfiles.read(source).profiles.values;
+      final previous = profiles.singleWhere(
+        (profile) => profile.serverIdentity == 'A',
+      );
+      final added = profiles.singleWhere(
+        (profile) => profile.serverIdentity == 'B',
+      );
+      expect(PluginAccountProfiles.requiresWebLogin(previous), isFalse);
+      expect(PluginAccountProfiles.requiresWebLogin(added), isTrue);
+      expect(await PluginAccountProfiles.selected(source), added.id);
+      expect(PluginAccountIdentities.current(source)?.serverIdentity, 'B');
+      expect(cookies.values, [newCookie]);
+    },
+  );
+
+  test(
+    're-adding a saved password account keeps its existing row and credentials',
+    () async {
+      const loginName = 'legacy-login';
+      coordinator.unregister(source, lease!);
+      lease = await coordinator.registerStoredSession(
+        source: source,
+        origin: _origin,
+        cookies: cookies,
+        authenticated: () async => true,
+        identity: () async {
+          final current = await identity();
+          return PluginAccountAuthentication(
+            serverIdentity: current!.serverIdentity,
+            label: current.label,
+            origin: _origin.origin,
+            publicSummary: const {
+              'extern': {'username': loginName},
+            },
+          );
+        },
+      );
+      await savePluginConfigValue(source, 'account.credentials', {
+        'version': 1,
+        'deleted': false,
+        'origin': _origin.origin,
+        'account': loginName,
+        'password': 'synthetic-legacy-password',
+      });
+      await capture('A');
+      final previous = PluginAccountProfiles.read(
+        source,
+      ).profiles.values.single;
+      expect(previous.kind, 'password');
+      await coordinator.addAccount(
+        source,
+        login: () async {
+          expect(cookies.values, isEmpty);
+          cookies.values = [_cookie('A')];
+        },
+      );
+      final profile = PluginAccountProfiles.read(source).profiles.values.single;
+      expect(profile.id, previous.id);
+      expect(
+        profile.bundle['account.credentials'],
+        previous.bundle['account.credentials'],
+      );
+      expect(await PluginAccountProfiles.selected(source), previous.id);
+      expect(PluginAccountIdentities.current(source)?.serverIdentity, 'A');
+    },
+  );
+
+  test(
+    'capture persists and refreshes the confirmed account portrait',
+    () async {
+      avatarUrl = 'https://images.example/account-original.png';
+      await capture('A');
+      final original = PluginAccountProfiles.read(
+        source,
+      ).profiles.values.singleWhere((profile) => !profile.deleted);
+      expect(original.serverIdentity, 'A');
+      expect(
+        original.avatarUrl,
+        avatarUrl,
+        reason: 'the saved account must use its confirmed user portrait',
+      );
+
+      avatarUrl = 'https://images.example/account-updated.png';
+      await coordinator.captureAuthenticated(source, explicitSave: true);
+      final updated = PluginAccountProfiles.read(
+        source,
+      ).profiles.values.singleWhere((profile) => !profile.deleted);
+      expect(updated.id, original.id);
+      expect(
+        updated.avatarUrl,
+        avatarUrl,
+        reason: 'a fresh identity must replace the stale saved portrait',
+      );
+    },
+  );
+
+  test(
+    'leaving during old account verification never opens or clears the login store',
+    () async {
+      await capture('A');
+      final selection = await PluginAccountProfiles.selected(source);
+      final generation = pluginSessionWriteFence.generation(source);
+      final readingIdentity = Completer<void>();
+      final resumeIdentity = Completer<void>();
+      coordinator.unregister(source, lease!);
+      lease = await coordinator.registerStoredSession(
+        source: source,
+        origin: _origin,
+        cookies: cookies,
+        authenticated: () async => true,
+        identity: () async {
+          readingIdentity.complete();
+          await resumeIdentity.future;
+          return identity();
+        },
+      );
+      var open = true;
+      var loginCalls = 0;
+      final writes = cookies.writes;
+      final result = expectLater(
+        coordinator.addAccount(
+          source,
+          login: () async => loginCalls++,
+          canContinue: () => open,
+        ),
+        throwsA(isA<PluginAccountLoginCancelled>()),
+      );
+      await readingIdentity.future;
+      open = false;
+      resumeIdentity.complete();
+      await result;
+      expect(loginCalls, 0);
+      expect(cookies.writes, writes);
+      expect(cookies.values, [_cookie('A')]);
+      expect(await PluginAccountProfiles.selected(source), selection);
+      expect(pluginSessionWriteFence.generation(source), generation);
+    },
+  );
+
+  test(
+    'cancelled new account restores cookies and the previous selection',
+    () async {
+      await capture('A');
+      final selected = await PluginAccountProfiles.selected(source);
+      await expectLater(
+        coordinator.addAccount(
+          source,
+          login: () async {
+            expect(cookies.values, isEmpty);
+            throw StateError('user cancelled');
+          },
+        ),
+        throwsStateError,
+      );
+      expect(cookies.values, [_cookie('A')]);
+      expect(await PluginAccountProfiles.selected(source), selected);
+      expect(
+        PluginAccountProfiles.read(source).profiles.values
+            .where((profile) => !profile.deleted)
+            .map((profile) => profile.serverIdentity),
+        ['A'],
+      );
+    },
+  );
 
   test(
     'a confirmed nonportable account stays saved and can complete manual login later, while cancellation restores the current account',
