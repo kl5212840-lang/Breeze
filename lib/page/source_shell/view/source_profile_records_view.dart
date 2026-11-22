@@ -1,5 +1,7 @@
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/page/source_shell/view/jm_collection_toolbar.dart';
+import 'package:zephyr/page/source_shell/source_list_scroll_positions.dart';
 import 'package:zephyr/widgets/work_list_divider.dart';
 import 'package:zephyr/page/search/widget/search_keyboard.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
@@ -471,9 +473,17 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
   bool get _compact => widget.jmCollection || widget.compactLayout;
   final _jmSearch = TextEditingController();
   final _jmSearchFocus = FocusNode();
+  final _scrollPositions = SourceListScrollPositions(detailed: true);
   bool _jmSearchOpen = false;
   final _jmHeaderOwner = Object();
   String? _jmHeaderSignature;
+
+  void _closeJmSearch() {
+    _jmSearchFocus.unfocus();
+    _jmSearch.clear();
+    _scrollPositions.endSearch();
+    setState(() => _jmSearchOpen = false);
+  }
 
   @override
   void didUpdateWidget(SourceProfileRecordsView oldWidget) {
@@ -487,6 +497,8 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
         oldWidget.mode != widget.mode ||
         oldWidget.jmCollection != widget.jmCollection ||
         oldWidget.compactLayout != widget.compactLayout) {
+      _scrollPositions.endSearch();
+      _scrollPositions.reset(afterLayout: true);
       _jmSearch.clear();
       _jmSearchFocus.unfocus();
       _jmSearchOpen = false;
@@ -503,6 +515,7 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
     scheduleMicrotask(() => controller?.release(_jmHeaderOwner));
     _jmSearch.dispose();
     _jmSearchFocus.dispose();
+    _scrollPositions.dispose();
     super.dispose();
   }
 
@@ -609,7 +622,7 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
   @override
   Widget build(BuildContext context) {
     if (_compact) {
-      return SourceListPresentation(
+      final records = SourceListPresentation(
         source:
             widget.source ??
             (widget.entries.map((e) => e.source).toSet().length == 1
@@ -618,6 +631,15 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
         detailedByDefault: true,
         builder: (context, detailed, selectView) =>
             _buildFilter(context, detailed, selectView),
+      );
+      return PopScope(
+        canPop: widget.jmHeaderController != null || !_jmSearchOpen,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop && widget.jmHeaderController == null && _jmSearchOpen) {
+            _closeJmSearch();
+          }
+        },
+        child: records,
       );
     }
     return _buildFilter(
@@ -632,6 +654,7 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
     bool detailed,
     ValueChanged<bool> selectView,
   ) {
+    _scrollPositions.select(detailed);
     final sources = widget.entries.map((entry) => entry.source).toSet().toList()
       ..sort();
     final scope =
@@ -643,6 +666,9 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
         searchController: _compact ? _jmSearch : null,
         searchFocusNode: _compact ? _jmSearchFocus : null,
         searchExpanded: !_compact || _jmSearchOpen,
+        onChanged: () {
+          if (_jmSearchOpen) _scrollPositions.reset(afterLayout: true);
+        },
         focusedFacets: _compact,
         chromeBuilder: _compact
             ? (context, chrome) => _jmChrome(
@@ -700,7 +726,6 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
         'category.${Uri.encodeComponent(category)}': category,
     };
     final options = {
-      for (final entry in sortOptions.entries) 'sort.${entry.key}': entry.value,
       collectionCoverSettingsAction: collectionCoverSettingsLabel(context),
       for (final entry in categoryActions.entries)
         entry.key:
@@ -713,20 +738,19 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
       keyPrefix: 'jm-record',
       inlineSearch: true,
       searching: _jmSearchOpen,
-      selected: 'sort.$_sort',
       options: options,
       onSearch: () {
         if (!mounted) return;
+        if (_jmSearchOpen) {
+          _closeJmSearch();
+          return;
+        }
         final accountGeneration = pluginSessionWriteFence.generation(
           source ?? '',
         );
-        setState(() {
-          _jmSearchOpen = !_jmSearchOpen;
-          if (!_jmSearchOpen) {
-            _jmSearchFocus.unfocus();
-          }
-        });
-        if (_jmSearchOpen && widget.jmHeaderController == null)
+        _scrollPositions.beginSearch();
+        setState(() => _jmSearchOpen = true);
+        if (widget.jmHeaderController == null) {
           requestSearchKeyboard(
             _jmSearchFocus,
             isCurrent: () =>
@@ -739,9 +763,9 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
                     accountGeneration &&
                 ModalRoute.of(context)?.isCurrent != false,
           );
+        }
       },
       groups: [
-        [for (final key in sortOptions.keys) 'sort.$key'],
         [collectionCoverSettingsAction],
         [
           for (final key in [
@@ -754,10 +778,7 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
       ],
       onSelected: (value) {
         if (!mounted || widget.mode != mode || widget.source != source) return;
-        if (value.startsWith('sort.') &&
-            sortOptions.containsKey(value.substring(5)))
-          setState(() => _sort = value.substring(5));
-        else if (categoryActions[value] case final category?)
+        if (categoryActions[value] case final category?)
           _toggleCategory(category, blocked, onBlockedChanged);
         else if (value == 'clear-blocked')
           onBlockedChanged({});
@@ -817,7 +838,7 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
       children: [
         if (controller == null)
           Padding(
-            padding: const EdgeInsets.only(left: 12),
+            padding: CollectionToolbarMetrics.contentPaddingOf(context),
             child: SizedBox(
               height: SearchToolbarScope.stableHeight(
                 context,
@@ -848,7 +869,7 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
                               style: Theme.of(context).textTheme.titleMedium,
                             ),
                     ),
-                    navigation,
+                    if (!_jmSearchOpen) navigation,
                   ],
                 ),
               ),
@@ -864,6 +885,19 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
             knownTotal: chrome.knownTotal,
           ),
           filterButton: chrome.filterButton,
+          sortAction: JmCollectionSortAction(
+            key: const ValueKey('jm-record.sort'),
+            options: sortOptions,
+            selected: _sort,
+            onSelected: (next) {
+              if (mounted &&
+                  widget.mode == mode &&
+                  widget.source == source &&
+                  sortOptions.containsKey(next)) {
+                setState(() => _sort = next);
+              }
+            },
+          ),
           viewAction: SourceListViewToggle(
             key: const ValueKey('jm-record-view'),
             detailed: detailed,
@@ -989,6 +1023,7 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
                 onRefresh: _refresh,
                 child: visibleEntries.isEmpty
                     ? CustomScrollView(
+                        controller: _scrollPositions.controller,
                         physics: const AlwaysScrollableScrollPhysics(),
                         slivers: [
                           SliverFillRemaining(
@@ -1009,6 +1044,7 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
                     : detailed
                     ? ListView.builder(
                         key: const ValueKey('profile-detailed-list'),
+                        controller: _scrollPositions.controller,
                         physics: const AlwaysScrollableScrollPhysics(),
                         padding: EdgeInsets.only(
                           bottom: NativeNavigationInset.scrollBottom(context),
@@ -1032,6 +1068,7 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
                     : LayoutBuilder(
                         builder: (context, constraints) => GridView.builder(
                           key: const ValueKey('profile-cover-grid'),
+                          controller: _scrollPositions.controller,
                           physics: const AlwaysScrollableScrollPhysics(),
                           padding: EdgeInsets.fromLTRB(
                             12,

@@ -5,9 +5,11 @@ import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
+import 'package:zephyr/page/setting/common/plugin_account_avatar.dart';
 import 'package:zephyr/page/donwload_task/view/download_swipe_actions.dart';
 import 'package:zephyr/network/http/plugin/qjs_network_route.dart';
 import 'package:zephyr/page/source_shell/source_experience_scope.dart';
+import 'package:zephyr/page/video/omo_network.dart' show omoNetworkSource;
 import 'package:zephyr/page/video/video_page_route.dart';
 import 'package:zephyr/service/plugin_account_authentication.dart';
 import 'package:zephyr/service/plugin_account_profiles.dart';
@@ -18,11 +20,18 @@ import 'package:zephyr/widgets/work_list_divider.dart';
 
 const pluginSavedAccountsRouteName = 'breeze.source.saved-accounts';
 
+typedef PluginAccountAddition =
+    Future<void> Function(
+      Future<void> Function() login,
+      bool Function() canContinue,
+    );
+
 /// true means the existing source browser must be revealed for sign-in.
 Future<bool> openPluginSavedAccounts(
   BuildContext context, {
   required String source,
   required Future<void> Function() onAddAccount,
+  Future<void> Function(PluginAccountAddition)? onAddAccountWithSession,
   Future<void> Function()? prepareSession,
 }) async {
   final route = videoPageRoute<bool>(
@@ -30,6 +39,7 @@ Future<bool> openPluginSavedAccounts(
     builder: (_) => PluginSavedAccountsPage(
       source: source,
       onAddAccount: onAddAccount,
+      onAddAccountWithSession: onAddAccountWithSession,
       prepareSession: prepareSession,
     ),
   );
@@ -43,11 +53,13 @@ class PluginSavedAccountsPage extends StatefulWidget {
     super.key,
     required this.source,
     required this.onAddAccount,
+    this.onAddAccountWithSession,
     this.prepareSession,
     this.authentication,
   });
   final String source;
   final Future<void> Function() onAddAccount;
+  final Future<void> Function(PluginAccountAddition)? onAddAccountWithSession;
 
   /// Reconnect the source's own live store after a login window has closed.
   /// A retained identity receipt alone cannot capture or switch that store.
@@ -162,6 +174,7 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
         try {
           proof ??= await coordinator.refreshCurrentIdentity(widget.source);
         } catch (_) {}
+        if (!mounted || epoch != _epoch) return;
         try {
           await coordinator.captureAuthenticated(widget.source);
         } catch (_) {
@@ -254,7 +267,7 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
       if (mounted) {
         final copySwitch = _isCopy && switching;
         await _load(verifyApi: !copySwitch);
-        if (mounted) {
+        if (mounted && error is! PluginAccountLoginCancelled) {
           setState(() {
             if (copySwitch) _retry = () => _run(id, action, switching: true);
             if (copySwitch && _copyNeedsLogin(error)) {
@@ -300,12 +313,36 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
   }
 
   Future<void> _add() async {
+    if (_busy != null) return;
     final coordinator = PluginAccountSyncCoordinator.instance;
     if (coordinator.hasProfileLogin(widget.source)) {
       Navigator.of(context).pop(true);
       return;
     }
-    await _run('add', widget.onAddAccount);
+    if (widget.source != omoNetworkSource) {
+      await _run('add', widget.onAddAccount);
+      return;
+    }
+    final source = widget.source;
+    _epoch++;
+    Future<void> add(
+      Future<void> Function() login,
+      bool Function() canContinue,
+    ) async {
+      if (!coordinator.hasProfileAccess(source)) {
+        await widget.prepareSession?.call();
+      }
+      await coordinator.addAccount(
+        source,
+        login: login,
+        canContinue: canContinue,
+      );
+    }
+
+    await _run('add', () {
+      final open = widget.onAddAccountWithSession;
+      return open == null ? add(widget.onAddAccount, () => mounted) : open(add);
+    });
   }
 
   Future<void> _remove(PluginAccountProfile profile) async {
@@ -452,7 +489,7 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
                 ),
             ],
           ),
-          if (_busy != null)
+          if (_busy != null && !_loading)
             const Positioned(
               top: 0,
               left: 0,
@@ -482,6 +519,8 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
         rowKey: 'saved-account-${profile.id}',
         openRow: _openSwipe,
         exposeActions: true,
+        groupSecondaryActions: false,
+        swipeActionIds: const ['delete'],
         actionVersion: (profile.revision, selected),
         actions: [
           if (_busy == null && !_loading)
@@ -501,17 +540,30 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
             minTileHeight: 68,
             contentPadding: const EdgeInsets.symmetric(horizontal: 12),
             key: ValueKey('saved-account-${profile.id}'),
-            leading: ClipOval(
-              child: SizedBox.square(
-                dimension: 40,
-                child: PluginIcon(
-                  url: profile.avatarUrl,
-                  placeholder: CircleAvatar(
-                    child: Text(label.isEmpty ? '?' : label.characters.first),
+            leading: profile.kind == 'web' || widget.source == omoNetworkSource
+                ? PluginAccountAvatar(
+                    source: widget.source,
+                    identity: profile.serverIdentity.isNotEmpty
+                        ? profile.serverIdentity
+                        : profile.identity,
+                    url: profile.avatarUrl,
+                    path: '',
+                    origin: profile.origin,
+                    size: 40,
+                  )
+                : ClipOval(
+                    child: SizedBox.square(
+                      dimension: 40,
+                      child: PluginIcon(
+                        url: profile.avatarUrl,
+                        placeholder: CircleAvatar(
+                          child: Text(
+                            label.isEmpty ? '?' : label.characters.first,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ),
-            ),
             title: Text(label, style: theme.textTheme.titleMedium),
             subtitle: Text(
               profile.id == _selected

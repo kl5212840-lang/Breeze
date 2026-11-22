@@ -293,8 +293,8 @@ class _BreezeSegmentButton extends StatelessWidget {
             onPressed: onPressed,
             style:
                 TextButton.styleFrom(
-                  minimumSize: const Size.square(
-                    CollectionToolbarMetrics.actionExtent,
+                  minimumSize: Size.square(
+                    CollectionToolbarMetrics.actionExtentOf(context),
                   ),
                   visualDensity: VisualDensity.standard,
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,

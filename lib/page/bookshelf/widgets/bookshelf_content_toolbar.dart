@@ -40,7 +40,7 @@ class BookshelfContentToolbar extends StatelessWidget {
     this.canRun,
     this.privacyAction,
     this.keyPrefix = 'shelf',
-    this.horizontalInset = CollectionToolbarMetrics.horizontalInset,
+    this.horizontalInset = CollectionToolbarMetrics.sourceContentInset,
   });
   final String title, subtitle, keyPrefix;
   final String? folderRootLabel;
@@ -311,7 +311,7 @@ class BookshelfContentToolbar extends StatelessWidget {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          const controlSize = CollectionToolbarMetrics.actionExtent;
+          final controlSize = CollectionToolbarMetrics.actionExtentOf(context);
           const backGap = 4.0;
           const separatorSize = 16.0;
           const linkPadding = 4.0;

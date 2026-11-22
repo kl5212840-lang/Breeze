@@ -6,6 +6,7 @@ import 'package:zephyr/network/http/picture/picture.dart';
 import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/service/image_recovery.dart';
+import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/widgets/picture_bloc/bloc/picture_event.dart';
 import 'package:zephyr/widgets/picture_bloc/bloc/picture_state.dart';
@@ -78,6 +79,7 @@ class PictureBloc extends Bloc<Object, PictureLoadState> {
   Object? _failure;
   bool _active, _inflight = false, _waitingForSession = false;
   int _epoch = 0, _decodeRepairs = 0;
+  int _activation = 0;
   bool get recovering => _recovery?.recovering ?? false;
   bool get isLoading => _inflight;
   Object? get lastFailure => _failure;
@@ -105,6 +107,7 @@ class PictureBloc extends Bloc<Object, PictureLoadState> {
   void setRecoveryActive(bool active) {
     if (_active == active) return;
     _active = active;
+    if (active) _activation++;
     _recovery?.setActive(active);
     if (active &&
         _last != null &&
@@ -131,12 +134,18 @@ class PictureBloc extends Bloc<Object, PictureLoadState> {
     _inflight = true;
     _waitingForSession = false;
     final epoch = ++_epoch;
-    final source = normalizePluginId(event.pictureInfo.from);
+    final activation = _activation;
+    final info = event.pictureInfo;
+    final source = normalizePluginId(info.from);
     final session = pluginSessionWriteFence.generation(source);
+    final usesSession =
+        event.usePlugin &&
+        (!_useDownloads ||
+            info.pictureType != PictureType.page ||
+            info.url.isNotEmpty);
     var resumeWhenActive = false;
     _publish(state.copyWith(status: PictureLoadStatus.initial, result: null));
     try {
-      final info = event.pictureInfo;
       final path =
           await (_loader?.call(event) ??
               getCachePicture(
@@ -169,14 +178,14 @@ class PictureBloc extends Bloc<Object, PictureLoadState> {
     } catch (error) {
       if (isClosed || epoch != _epoch) return;
       if (error is ImageRecoverySuperseded) {
-        _waitingForSession = event.usePlugin;
-        // A request cancelled by a changing account must wait for that
-        // boundary to settle. Retrying immediately would spin while the
-        // session fence keeps refusing admission.
+        _waitingForSession = usesSession;
+        // Returning before an offscreen cancellation settles must reload.
+        // An online request still waits for a changing account to settle.
         resumeWhenActive =
-            event.usePlugin &&
-            !pluginSessionWriteFence.isChanging(source) &&
-            session != pluginSessionWriteFence.generation(source);
+            (!usesSession || !pluginSessionWriteFence.isChanging(source)) &&
+            (activation != _activation ||
+                usesSession &&
+                    session != pluginSessionWriteFence.generation(source));
         _failure = null;
         _publish(state.copyWith(status: PictureLoadStatus.initial));
       } else {

@@ -9,7 +9,16 @@ class CollectionPressFeedback extends StatefulWidget {
     super.key,
     required Widget this.child,
     this.enabled = true,
-  }) : pressedBuilder = null;
+  }) : pressedBuilder = null,
+       _surface = false;
+
+  /// A large list item needs less motion than a compact toolbar button.
+  const CollectionPressFeedback.surface({
+    super.key,
+    required Widget this.child,
+    this.enabled = true,
+  }) : pressedBuilder = null,
+       _surface = true;
 
   /// Reuses the passive pointer observer for a control that paints its own
   /// hover, focus and pressed states. The original button handles activation.
@@ -17,11 +26,16 @@ class CollectionPressFeedback extends StatefulWidget {
     super.key,
     required Widget Function(BuildContext, bool) this.pressedBuilder,
     this.enabled = true,
-  }) : child = null;
+  }) : child = null,
+       _surface = false;
 
   final Widget? child;
   final Widget Function(BuildContext, bool)? pressedBuilder;
   final bool enabled;
+  final bool _surface;
+
+  static Color surfaceHighlight(BuildContext context) =>
+      Theme.of(context).colorScheme.onSurface.withValues(alpha: .035);
 
   @override
   State<CollectionPressFeedback> createState() =>
@@ -102,7 +116,15 @@ class _CollectionPressFeedbackState extends State<CollectionPressFeedback>
     child:
         widget.pressedBuilder?.call(context, _pressed) ??
         (MediaQuery.disableAnimationsOf(context)
-            ? Opacity(opacity: _pressed ? .84 : 1, child: widget.child!)
-            : BreezePressedContent(pressed: _pressed, child: widget.child!)),
+            ? Opacity(
+                opacity: _pressed ? (widget._surface ? .97 : .84) : 1,
+                child: widget.child!,
+              )
+            : BreezePressedContent(
+                pressed: _pressed,
+                scaleDelta: widget._surface ? .01 : .04,
+                verticalOffset: widget._surface ? 0 : .6,
+                child: widget.child!,
+              )),
   );
 }

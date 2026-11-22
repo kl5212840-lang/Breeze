@@ -334,8 +334,11 @@ String videoCatalogSnapshotScript(
     // Subscription ownership comes from actual per-card links and a separate
     // authenticated directory, never DOM ancestry or filter names.
     const creatorGroups = [];
+    const subscriptionFilterUsers = location.pathname === '/subscriptions' ?
+      Array.from(new Set(Array.from(document.querySelectorAll('.subscriptions-artist-card[data-user-id]'),
+        node => node.getAttribute('data-user-id')).filter(id => /^[0-9]+\$/.test(id)))).slice(0, 500) : [];
     return JSON.stringify({ ${includeFilters ? 'searchFilters: filterSchema(document),' : ''} rows, cards, categoryLinks, genreOptions, searchPageReady, searchState, pagination, currentPage,
-      account, publicProfile, personalPageReady, playlists, artists, creatorGroups,
+      account, publicProfile, personalPageReady, playlists, artists, creatorGroups, subscriptionFilterUsers,
       pageTitle: document.querySelector('.playlist-title')?.textContent?.trim() || '',
       resultCardCount: searchResult ? searchResult.roots.length : normal.length });
   })()

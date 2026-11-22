@@ -304,6 +304,32 @@ void main() {
     },
   );
   testWidgets(
+    'persistent Web portraits are scoped to the verified account origin',
+    (tester) async {
+      await tester.runAsync(() async {
+        var downloads = 0;
+        Future<Uint8List> load(String origin, Uint8List bytes) =>
+            loadPluginAccountAvatar(
+              source: 'origin-scoped-portrait',
+              identity: 'shared-id',
+              url: 'https://images.example/same-avatar.jpg',
+              path: '',
+              origin: origin,
+              download: (_, _) async {
+                downloads++;
+                return bytes;
+              },
+            );
+
+        expect(await load('https://first.example', _red), _red);
+        expect(await load('https://second.example', _blue), _blue);
+        expect(await load('https://first.example', _blue), _red);
+        expect(await load('https://second.example', _red), _blue);
+        expect(downloads, 2);
+      });
+    },
+  );
+  testWidgets(
     'URL-only Web avatar has a cache key; old-account completion cannot replace it',
     (tester) async {
       await tester.runAsync(() async {
@@ -368,6 +394,81 @@ void main() {
       });
     },
   );
+
+  testWidgets('Web portrait reentry reads the account-scoped persistent cache', (
+    tester,
+  ) async {
+    const webSource = 'web-portrait-persistence';
+    const identity = 'web-portrait-42';
+    const url = 'https://images.example/avatar.jpg';
+    const origin = 'https://images.example';
+    final visibility = VisibilityDetectorController.instance;
+    final previousInterval = visibility.updateInterval;
+    visibility.updateInterval = Duration.zero;
+    addTearDown(() => visibility.updateInterval = previousInterval);
+    await tester.runAsync(() async {
+      await loadPluginAccountAvatar(
+        source: webSource,
+        identity: identity,
+        url: url,
+        path: '',
+        origin: origin,
+        download: (_, _) async => _blue,
+      );
+    });
+    Widget host() => const MaterialApp(
+      home: Scaffold(
+        body: PluginAccountAvatar(
+          source: webSource,
+          identity: identity,
+          url: url,
+          path: '',
+          origin: origin,
+        ),
+      ),
+    );
+    for (final visit in [1, 2]) {
+      await tester.pumpWidget(host());
+      if (visit == 2) {
+        expect(
+          find.byType(Image),
+          findsOneWidget,
+          reason:
+              'returning to the same account should paint the saved image on its first frame',
+        );
+      }
+      final deadline = Stopwatch()..start();
+      while (find.byType(Image).evaluate().isEmpty &&
+          deadline.elapsed < const Duration(seconds: 5)) {
+        await tester.pump(const Duration(milliseconds: 16));
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+      }
+      await tester.pump();
+      final memoryImages = tester
+          .widgetList<Image>(find.byType(Image))
+          .where(
+            (image) =>
+                image.image is MemoryImage ||
+                image.image is ResizeImage &&
+                    (image.image as ResizeImage).imageProvider is MemoryImage,
+          );
+      expect(
+        memoryImages,
+        hasLength(1),
+        reason:
+            'visit $visit must use the saved portrait without a network fetch',
+      );
+      final provider = memoryImages.single.image;
+      final memory = provider is ResizeImage
+          ? provider.imageProvider
+          : provider;
+      expect((memory as MemoryImage).bytes, _blue);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
+  });
 
   testWidgets('same-URL refresh survives hiding, supersession and a 503', (
     tester,

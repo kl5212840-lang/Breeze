@@ -92,6 +92,7 @@ void main() {
           AppInterfaceStyleScope(
             style: preference,
             child: MaterialApp(
+              theme: ThemeData(platform: TargetPlatform.iOS),
               builder: (context, child) => Directionality(
                 textDirection: direction,
                 child: MediaQuery(
@@ -131,8 +132,18 @@ void main() {
         expect(tester.getCenter(privacy), startPrivacy);
         expect(tester.getSize(more), const Size(44, 44));
         final back = tester.getCenter(find.byType(SourceBackButton));
-        expect(back.dx, direction == TextDirection.ltr ? 28 : 292);
+        expect(back.dx, direction == TextDirection.ltr ? 38 : 282);
         expect(back.dy, startSearch.dy);
+        await tester.tap(search);
+        await tester.pumpAndSettle();
+        expect(more, findsNothing);
+        await tester.enterText(find.byType(TextField), 'No matching work');
+        await tester.pumpAndSettle();
+        expect(find.text(first.title), findsNothing);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(find.byType(TextField), findsNothing);
+        expect(find.text(first.title), findsOneWidget);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
       },

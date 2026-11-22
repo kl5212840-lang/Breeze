@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/page/search/widget/search_field_decoration.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
@@ -7,14 +8,97 @@ import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 import 'package:zephyr/page/search/widget/search_history_section.dart';
 import 'package:zephyr/page/search/widget/search_tool_glyph.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
-import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/page/video/video_browse_theme.dart';
+import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_search_filters.dart';
 import 'package:zephyr/page/video/video_search_history.dart';
 import 'package:zephyr/page/video/video_interaction.dart';
+
+class VideoSearchResultTitle extends StatelessWidget {
+  const VideoSearchResultTitle({
+    super.key,
+    required this.query,
+    required this.onTap,
+  });
+
+  final String query;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    child: InkWell(
+      onTap: onTap,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          minHeight: CollectionToolbarMetrics.actionExtentOf(context),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          spacing: 8,
+          children: [
+            Flexible(
+              child: Text(query, maxLines: 1, overflow: TextOverflow.ellipsis),
+            ),
+            const Icon(Icons.edit_outlined, size: 16),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class VideoSearchSubmitButton extends StatelessWidget {
+  const VideoSearchSubmitButton({super.key, required this.onPressed});
+
+  final VoidCallback? onPressed;
+
+  bool _compactSubmit(BuildContext context) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: t.videoSearch.submit,
+        style: Theme.of(context).textTheme.labelLarge,
+      ),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout();
+    final available =
+        MediaQuery.sizeOf(context).width -
+        MediaQuery.paddingOf(context).horizontal -
+        CollectionToolbarMetrics.leadingExtentOf(context) -
+        CollectionToolbarMetrics.trailingPadding.horizontal -
+        painter.width -
+        16;
+    painter.dispose();
+    return available < 160;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_compactSubmit(context)) {
+      return NativeVideoIconButton(
+        tooltip: t.videoSearch.submit,
+        symbol: 'magnifyingglass',
+        icon: Icons.search_rounded,
+        light: false,
+        bare: true,
+        onPressed: onPressed,
+      );
+    }
+    final extent = CollectionToolbarMetrics.actionExtentOf(context);
+    return TextButton(
+      style: TextButton.styleFrom(
+        minimumSize: Size.square(extent),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+      ),
+      onPressed: onPressed,
+      child: Text(t.videoSearch.submit),
+    );
+  }
+}
 
 /// The catalog's only keyword field. Editing and results share this entry.
 class VideoSearchEntry extends StatelessWidget {
@@ -23,6 +107,7 @@ class VideoSearchEntry extends StatelessWidget {
     required this.query,
     required this.onTap,
     this.onSubmitted,
+    this.onChanged,
     this.onClear,
     this.onClose,
     this.leadingControl,
@@ -30,16 +115,19 @@ class VideoSearchEntry extends StatelessWidget {
     this.focusNode,
     this.queryRevision = 0,
     this.hint,
+    this.showInlineSubmit = true,
   });
   final String query;
   final VoidCallback onTap;
   final ValueChanged<String>? onSubmitted;
+  final ValueChanged<String>? onChanged;
   final VoidCallback? onClear, onClose;
   final Widget? leadingControl;
   final double leadingControlWidth;
   final FocusNode? focusNode;
   final int queryRevision;
   final String? hint;
+  final bool showInlineSubmit;
 
   @override
   Widget build(BuildContext context) => SearchQueryField(
@@ -50,9 +138,11 @@ class VideoSearchEntry extends StatelessWidget {
     semanticLabel: t.videoPlayback.search,
     focusNode: focusNode,
     inline: onSubmitted != null,
-    showSubmit: onSubmitted != null && leadingControl == null,
+    showSubmit:
+        showInlineSubmit && onSubmitted != null && leadingControl == null,
     onTap: onTap,
     onSubmitted: onSubmitted,
+    onChanged: onChanged,
     onClear: onClear,
     onClose: onClose,
     leadingControl: leadingControl,
@@ -156,6 +246,7 @@ class VideoSearchPage extends StatefulWidget {
     this.initialScope = KeywordSearchScope.all,
     this.onSubmitScope,
     this.filterBuilder,
+    this.countFilters,
   });
   final String source;
   final VideoSearchFilters initial;
@@ -164,6 +255,7 @@ class VideoSearchPage extends StatefulWidget {
   final KeywordSearchScope initialScope;
   final ValueChanged<KeywordSearchScope>? onSubmitScope;
   final Widget Function(BuildContext, VideoSearchFilters)? filterBuilder;
+  final int Function(VideoSearchFilters)? countFilters;
 
   @override
   State<VideoSearchPage> createState() => _VideoSearchPageState();
@@ -243,6 +335,53 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
     super.dispose();
   }
 
+  Widget _searchOptions(BuildContext context) => Row(
+    key: const ValueKey('video-search.filters-row'),
+    crossAxisAlignment: CrossAxisAlignment.center,
+    spacing: CollectionToolbarMetrics.searchControlGap,
+    children: [
+      Expanded(
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            if (widget.authorEnabled)
+              for (final author in [false, true])
+                ChoiceChip(
+                  label: Text(
+                    author ? t.videoFilters.authors : t.videoFilters.videos,
+                  ),
+                  selected: _author == author,
+                  chipAnimationStyle: VideoMotion.chip(context),
+                  onSelected: (_) => setState(() => _author = author),
+                ),
+            if (!_author && widget.onSubmitScope != null)
+              KeywordScopeMenu(
+                compact: true,
+                scope: _scope,
+                onChanged: (value) => setState(() => _scope = value),
+              ),
+          ],
+        ),
+      ),
+      if (widget.filterBuilder != null)
+        Badge(
+          isLabelVisible:
+              (widget.countFilters?.call(_draft) ?? _draft.activeCount) != 0,
+          backgroundColor: Theme.of(context).colorScheme.primary,
+          child: SourceFilterIconButton(
+            key: const ValueKey('video-search.filters'),
+            tooltip: t.videoFilters.title,
+            active:
+                (widget.countFilters?.call(_draft) ?? _draft.activeCount) != 0,
+            bare: true,
+            onPressed: _editFilters,
+          ),
+        ),
+    ],
+  );
+
   @override
   Widget build(BuildContext context) => Theme(
     data: videoBrowseTheme(Theme.of(context)),
@@ -251,12 +390,22 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
         context,
         (height) => AppBar(
           toolbarHeight: height,
-          leadingWidth: height == null ? null : 56,
-          titleSpacing: 0,
-          leading: SourceBackButton(
-            tooltip: t.videoSearch.cancel,
-            onPressed: _cancel,
+          automaticallyImplyLeading: false,
+          leadingWidth: CollectionToolbarMetrics.leadingExtentOf(context),
+          leading: CollectionToolbarMetrics.leading(
+            context,
+            NativeVideoIconButton(
+              tooltip: t.videoSearch.cancel,
+              symbol: 'chevron.left',
+              icon: Icons.arrow_back_ios_new_rounded,
+              iconSize: 18,
+              mirrorFallbackIcon: true,
+              light: false,
+              bare: true,
+              onPressed: _cancel,
+            ),
           ),
+          titleSpacing: 0,
           title: SearchFieldSurface(
             child: TextField(
               key: const ValueKey('video-search.input'),
@@ -277,60 +426,35 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
               decoration: searchFieldDecoration(
                 context,
                 hintText: widget.hint ?? t.videoSearch.submit,
-                prefixIcon: ValueListenableBuilder(
-                  valueListenable: _query,
-                  builder: (_, value, _) => IconButton(
-                    tooltip: t.videoSearch.submit,
-                    visualDensity: VisualDensity.standard,
-                    onPressed: VideoSearchHistory.clean(value.text).isEmpty
-                        ? null
-                        : _submit,
-                    icon: const SearchToolGlyph(SearchTool.search, size: 22),
-                  ),
-                ),
                 suffixIcon: ValueListenableBuilder(
                   valueListenable: _query,
                   builder: (_, value, _) => value.text.isEmpty
-                      ? const SizedBox(width: 44)
+                      ? const SizedBox.shrink()
                       : IconButton(
                           tooltip: t.videoSearch.clearQuery,
-                          onPressed: _query.clear,
                           icon: const SearchToolGlyph(
                             SearchTool.clear,
                             size: 20,
                           ),
+                          onPressed: _query.clear,
                         ),
                 ),
               ),
               onSubmitted: (_) => _submit(),
             ),
           ),
+          actionsPadding: CollectionToolbarMetrics.trailingPadding,
           actions: [
-            if (height != null && widget.onSubmitScope != null && !_author)
-              const SizedBox(width: 4),
-            if (widget.onSubmitScope != null && !_author)
-              KeywordScopeMenu(
-                compact: MediaQuery.sizeOf(context).width < 352,
-                scope: _scope,
-                onChanged: (value) => setState(() => _scope = value),
-              ),
-            if (widget.filterBuilder != null) ...[
-              const SizedBox(width: 8),
-              Badge(
-                isLabelVisible: _draft.activeCount != 0,
-                backgroundColor: Theme.of(context).colorScheme.primary,
-                child: SourceFilterIconButton(
-                  key: const ValueKey('video-search.filters'),
-                  tooltip: _draft.activeCount == 0
-                      ? t.videoFilters.title
-                      : '${t.videoFilters.title} · ${t.videoFilters.selected(count: _draft.activeCount)}',
-                  active: _draft.activeCount != 0,
-                  bare: false,
-                  onPressed: _editFilters,
-                ),
-              ),
-            ],
-            const SizedBox(width: 12),
+            ValueListenableBuilder(
+              valueListenable: _query,
+              builder: (context, value, _) {
+                final enabled = VideoSearchHistory.clean(value.text).isNotEmpty;
+                return VideoSearchSubmitButton(
+                  key: const ValueKey('video-search.submit'),
+                  onPressed: enabled ? _submit : null,
+                );
+              },
+            ),
           ],
         ),
       ),
@@ -349,24 +473,10 @@ class _VideoSearchPageState extends State<VideoSearchPage> {
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Text(hint, style: settingNoteTextStyle(context)),
                   ),
-                if (widget.authorEnabled) ...[
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (final author in [false, true])
-                        ChoiceChip(
-                          label: Text(
-                            author
-                                ? t.videoFilters.authors
-                                : t.videoFilters.videos,
-                          ),
-                          selected: _author == author,
-                          chipAnimationStyle: VideoMotion.chip(context),
-                          onSelected: (_) => setState(() => _author = author),
-                        ),
-                    ],
-                  ),
+                if (widget.authorEnabled ||
+                    widget.onSubmitScope != null ||
+                    widget.filterBuilder != null) ...[
+                  _searchOptions(context),
                   const SizedBox(height: 8),
                 ],
                 VideoSearchHistoryPanel(

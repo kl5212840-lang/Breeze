@@ -1,4 +1,3 @@
-import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/page/source_shell/source_loading_indicator.dart';
 import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 import 'package:zephyr/page/search/method/search_history_entries.dart';
@@ -168,24 +167,19 @@ class _SearchResultPageState extends State<_SearchResultPage>
         builder: (context, detailedView, onViewChanged) {
           _scrollPositions.select(detailedView);
           return Scaffold(
-            appBar: SearchToolbarScope.appBar(
-              context,
-              (height) => SearchResultBar(
-                searchEvent: searchEvent,
-                toolbarHeight: height,
-              ),
-              searching: context
-                  .read<SearchCubit>()
-                  .state
-                  .searchKeyword
-                  .trim()
-                  .isNotEmpty,
+            appBar: SearchResultBar(
+              searchEvent: searchEvent,
+              toolbarHeight: SearchResultQueryTitle.toolbarHeight(context),
             ),
-            body: _resultBody(
-              context,
-              resultState,
-              detailedView,
-              onViewChanged,
+            body: SafeArea(
+              top: false,
+              bottom: false,
+              child: _resultBody(
+                context,
+                resultState,
+                detailedView,
+                onViewChanged,
+              ),
             ),
             floatingActionButtonLocation:
                 context.watch<GlobalSettingCubit>().state.leftHandModeEnabled
@@ -267,6 +261,7 @@ class _SearchResultPageState extends State<_SearchResultPage>
       pageLabel: pageLabel,
       onPageTap: _jumpToPage,
       onViewChanged: onViewChanged,
+      leading: const SearchResultOptions(),
       trailingAction: filter,
     );
     Widget content(Widget controls, [List<UnifiedComicListItem>? entries]) =>

@@ -2,6 +2,7 @@ import 'package:zephyr/page/bookshelf/service/shelf_facet_preferences.dart';
 import 'dart:async';
 import 'package:flutter/cupertino.dart' show CupertinoPicker;
 import 'package:zephyr/widgets/year_filter_picker.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/services.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 
@@ -48,7 +49,7 @@ Future<VideoSiteResult<VideoFilterSchema>> read() async =>
     (status: VideoSiteStatus.ok, value: schema, writeUnconfirmed: false);
 void main() {
   testWidgets(
-    'applied filters reveal a fixed-size remove button and confirm bulk clearing',
+    'applied filters reveal an accessible remove button and confirm bulk clearing',
     (tester) async {
       var filters = const VideoSearchFilters(
         query: 'Fixture',
@@ -60,8 +61,10 @@ void main() {
         page: 3,
       );
       var edits = 0;
+      final platform = defaultTargetPlatform;
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(platform: platform),
           home: Scaffold(
             body: StatefulBuilder(
               builder: (context, setState) => VideoActiveFilters(
@@ -90,8 +93,12 @@ void main() {
       expect(remove, findsOneWidget);
       expect(tester.getRect(tag), rect);
       expect(tester.getRect(beside), besideRect);
-      expect(tester.getRect(tag).contains(tester.getCenter(remove)), isTrue);
-      await tester.tap(remove);
+      final removeRect = tester.getRect(remove);
+      final actionExtent = platform == TargetPlatform.android ? 48.0 : 44.0;
+      expect(removeRect.size, Size.square(actionExtent));
+      expect(rect.contains(removeRect.center), isTrue);
+      expect(removeRect.overlaps(besideRect), isFalse);
+      await tester.tapAt(removeRect.centerLeft + const Offset(3, 0));
       await tester.pumpAndSettle();
       expect(filters.tags, ['60FPS']);
       expect(filters.anyTag, isFalse);
@@ -119,6 +126,10 @@ void main() {
         ),
       );
     },
+    variant: TargetPlatformVariant({
+      TargetPlatform.iOS,
+      TargetPlatform.android,
+    }),
   );
 
   testWidgets('Hanime match choices share the title row at phone width', (

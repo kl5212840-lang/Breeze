@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/search/widget/search_field_surface.dart';
 import 'package:zephyr/page/search/widget/search_tool_glyph.dart';
@@ -16,6 +17,7 @@ InputDecoration searchFieldDecoration(
 }) {
   final colors = Theme.of(context).colorScheme;
   final system = usesSystemSearchSurface(context);
+  final touch = CollectionToolbarMetrics.actionExtentOf(context);
   final inSearchToolbar = SearchToolbarScope.of(context) != null;
   final shape = OutlineInputBorder(
     borderRadius: searchFieldRadius(context),
@@ -51,12 +53,12 @@ InputDecoration searchFieldDecoration(
           child: SearchToolGlyph(SearchTool.search, size: 22),
         ),
     prefixIconConstraints: BoxConstraints(
-      minWidth: 44,
-      minHeight: inSearchToolbar ? 44 : 48,
+      minWidth: touch,
+      minHeight: inSearchToolbar ? touch : 48,
     ),
-    suffixIconConstraints: const BoxConstraints(minWidth: 44, minHeight: 44),
+    suffixIconConstraints: BoxConstraints(minWidth: touch, minHeight: touch),
     suffixIcon: variableSuffixWidth
         ? suffixIcon
-        : SizedBox(width: 44, child: suffixIcon),
+        : SizedBox(width: touch, child: suffixIcon),
   );
 }

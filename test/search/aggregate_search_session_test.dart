@@ -10,8 +10,8 @@ import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/cubit/plugin_registry_cubit.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
+import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/page/search/widget/history.dart';
-import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 import 'package:zephyr/page/search_aggregate/cubit/search_aggregate_cubit.dart';
 import 'package:zephyr/page/search_aggregate/view/search_aggregate_result_page.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
@@ -103,6 +103,13 @@ void main() {
         of: find.byType(SearchAggregateResultPage),
         matching: find.byTooltip(t.search.selectSourceTooltip),
       );
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('aggregate.result-tools')),
+          matching: select,
+        ),
+        findsOneWidget,
+      );
       await tester.tap(select);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));
@@ -126,7 +133,11 @@ void main() {
       slow.complete([]);
       await tester.pumpAndSettle();
 
-      tester.widget<SearchQueryField>(find.byType(SearchQueryField)).onTap!();
+      final resultTitle = find.byKey(const ValueKey('aggregate.query-title'));
+      expect(find.byType(TextField), findsNothing);
+      await tester.tap(
+        find.descendant(of: resultTitle, matching: find.text('水原')),
+      );
       await tester.pumpAndSettle();
       await tester.showKeyboard(field);
       const composition = TextEditingValue(
@@ -146,7 +157,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(submissions.last.selectedSources['fast'], isFalse);
-      tester.widget<SearchQueryField>(find.byType(SearchQueryField)).onTap!();
+      await tester.tap(
+        find.descendant(of: resultTitle, matching: find.text('水原')),
+      );
       await tester.pumpAndSettle();
       expect(tester.widget<TextField>(field).controller!.text, '水原');
 
@@ -155,6 +168,40 @@ void main() {
       await tester.pumpAndSettle();
       expect(submissions.last.searchEvent.searchStates.searchKeyword, '新查询');
       expect(calls.where((call) => call.$2 == '新查询'), [('slow', '新查询')]);
+
+      router.popUntilRoot();
+      await tester.pumpAndSettle();
+      const directState = SearchStates(
+        searchKeyword: '直接结果',
+        aggregateSources: {'fast': false, 'slow': true},
+      );
+      final directSession = SearchCubit(directState);
+      addTearDown(directSession.close);
+      router.push(
+        SearchAggregateResultRoute(
+          searchEvent: const SearchEvent(searchStates: directState),
+          searchCubit: directSession,
+          selectedSources: directState.aggregateSources,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final directResults = searches.last;
+      final submittedCount = submissions.length;
+      await tester.tap(
+        find.descendant(of: resultTitle, matching: find.text('直接结果')),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextField>(field).controller!.text, '直接结果');
+      await tester.enterText(field, '取消编辑');
+      await tester.tap(find.byKey(const ValueKey('comic-search.back')));
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(of: resultTitle, matching: find.text('直接结果')),
+        findsOneWidget,
+      );
+      expect(searches.last, same(directResults));
+      expect(submissions, hasLength(submittedCount));
+      expect(directResults.state.selectedSources['fast'], isFalse);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     },

@@ -131,7 +131,10 @@ class BookshelfSourceNavigation extends StatelessWidget {
             ),
           ),
         if (statusAction case final action?)
-          SizedBox(width: CollectionToolbarMetrics.actionExtent, child: action),
+          SizedBox(
+            width: CollectionToolbarMetrics.actionExtentOf(context),
+            child: action,
+          ),
         if (showManage) ...[
           SizedBox(
             height: 20,
@@ -144,7 +147,7 @@ class BookshelfSourceNavigation extends StatelessWidget {
           Padding(
             padding: EdgeInsetsDirectional.only(end: horizontalInset),
             child: SizedBox(
-              width: CollectionToolbarMetrics.actionExtent,
+              width: CollectionToolbarMetrics.actionExtentOf(context),
               child: SourceChromeIconButton(
                 key: const ValueKey('bookshelf.sources.manage'),
                 icon: Icons.label_outline,

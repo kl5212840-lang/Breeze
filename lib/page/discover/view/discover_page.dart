@@ -1,3 +1,5 @@
+import 'package:zephyr/widgets/tab_reselect_scope.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'dart:async';
 import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:auto_route/auto_route.dart';
@@ -24,7 +26,6 @@ import 'package:zephyr/service/local_plugin_installation_state.dart';
 import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
-import 'package:zephyr/widgets/breeze_navigation_bar.dart';
 
 @RoutePage()
 class DiscoverPage extends StatelessWidget {
@@ -118,6 +119,8 @@ class _DiscoverViewState extends State<_DiscoverView> {
     return Scaffold(
       appBar: AppBar(
         title: Text(t.discover.title),
+        titleSpacing: CollectionToolbarMetrics.sourceContentInset,
+        actionsPadding: CollectionToolbarMetrics.trailingPadding,
         actions: [
           SourceChromeIconButton(
             tooltip: t.discover.search,
@@ -146,26 +149,32 @@ class _DiscoverViewState extends State<_DiscoverView> {
               },
             ),
           ),
-          const SizedBox(width: 8),
         ],
       ),
       resizeToAvoidBottomInset: false,
-      body: PullRefreshFeedback.indicator(
-        indicatorKey: _refreshIndicator,
-        onRefresh: () async {
-          final cubit = context.read<DiscoverCubit>();
-          final reloaded = await cubit.reload();
-          if (!context.mounted || cubit.isClosed || !reloaded) {
-            // Cold card failures and retained metadata each have an inline retry.
-            return PullRefreshResult.ignored;
+      body: TabReselectListener(
+        onReselect: () {
+          if (!_managementOpen) {
+            TabReselectScope.scrollToStart(context, _scrollController);
           }
-          return PullRefreshResult.checked;
         },
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 800),
-            child: _buildPluginHome(context),
+        child: PullRefreshFeedback.indicator(
+          indicatorKey: _refreshIndicator,
+          onRefresh: () async {
+            final cubit = context.read<DiscoverCubit>();
+            final reloaded = await cubit.reload();
+            if (!context.mounted || cubit.isClosed || !reloaded) {
+              // Cold card failures and retained metadata each have an inline retry.
+              return PullRefreshResult.ignored;
+            }
+            return PullRefreshResult.checked;
+          },
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 800),
+              child: _buildPluginHome(context),
+            ),
           ),
         ),
       ),
@@ -534,87 +543,57 @@ class _DiscoverViewState extends State<_DiscoverView> {
   }
 
   Widget _buildSectionHeader(BuildContext context, String title) {
-    final android = AppInterfaceStyleScope.usesAndroidSystem(context);
     final colors = Theme.of(context).colorScheme;
+    final label = Text(
+      title,
+      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+        color: colors.onSurfaceVariant,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+    final options = {
+      'list': t.discover.listLayout,
+      'grid': t.discover.gridLayout,
+    };
+    final selector = VideoControlAppearance(
+      systemControls: usesNativeSourceChrome(context),
+      child: NativeVideoSegmentedControl(
+        options: options,
+        selected: _layout.name,
+        dragEnabled: true,
+        onSelected: (value) => _setLayout(_DiscoverLayout.values.byName(value)),
+      ),
+    );
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 4, 16, 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              title,
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                color: AppInterfaceStyleScope.usesSystem(context)
-                    ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).colorScheme.onSurfaceVariant,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          SizedBox(
-            width: 168,
-            child: android
-                ? SegmentedButton<_DiscoverLayout>(
-                    segments: [
-                      ButtonSegment(
-                        value: _DiscoverLayout.list,
-                        label: Text(t.discover.listLayout),
-                      ),
-                      ButtonSegment(
-                        value: _DiscoverLayout.grid,
-                        label: Text(t.discover.gridLayout),
-                      ),
-                    ],
-                    selected: {_layout},
-                    style: ButtonStyle(
-                      backgroundColor: WidgetStateProperty.resolveWith(
-                        (states) => states.contains(WidgetState.selected)
-                            ? colors.primaryContainer
-                            : Colors.transparent,
-                      ),
-                      foregroundColor: WidgetStateProperty.resolveWith(
-                        (states) => states.contains(WidgetState.selected)
-                            ? colors.onPrimaryContainer
-                            : colors.onSurfaceVariant,
-                      ),
-                      side: WidgetStatePropertyAll(
-                        BorderSide(color: colors.outline),
-                      ),
-                    ),
-                    onSelectionChanged: (value) => _setLayout(value.single),
-                  )
-                : !AppInterfaceStyleScope.usesSystem(context)
-                ? BreezeSectionSelector(
-                    options: {
-                      'list': t.discover.listLayout,
-                      'grid': t.discover.gridLayout,
-                    },
-                    selected: _layout.name,
-                    dragEnabled: true,
-                    onSelected: (value) => _setLayout(
-                      value == 'grid'
-                          ? _DiscoverLayout.grid
-                          : _DiscoverLayout.list,
-                    ),
-                  )
-                : VideoControlAppearance(
-                    systemControls: usesNativeSourceChrome(context),
-                    child: NativeVideoSegmentedControl(
-                      options: {
-                        'list': t.discover.listLayout,
-                        'grid': t.discover.gridLayout,
-                      },
-                      selected: _layout.name,
-                      dragEnabled: true,
-                      onSelected: (value) => _setLayout(
-                        value == 'grid'
-                            ? _DiscoverLayout.grid
-                            : _DiscoverLayout.list,
-                      ),
-                    ),
-                  ),
-          ),
-        ],
+      padding: CollectionToolbarMetrics.contentPaddingOf(
+        context,
+        top: 4,
+        bottom: 8,
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final controlWidth =
+              NativeVideoSegmentedControl.minimumHorizontalWidth(
+                context,
+                options.values,
+              ).ceilToDouble();
+          final labelWidth = MediaQuery.textScalerOf(context).scale(96);
+          const gap = CollectionToolbarMetrics.searchControlGap;
+          if (constraints.maxWidth < labelWidth + gap + controlWidth) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              spacing: gap,
+              children: [label, selector],
+            );
+          }
+          return Row(
+            spacing: gap,
+            children: [
+              Expanded(child: label),
+              SizedBox(width: controlWidth, child: selector),
+            ],
+          );
+        },
       ),
     );
   }

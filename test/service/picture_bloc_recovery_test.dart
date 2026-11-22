@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 import 'package:zephyr/service/image_recovery.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/widgets/picture_bloc/bloc/picture_bloc.dart';
 import 'package:zephyr/widgets/picture_bloc/models/picture_info.dart';
 import 'package:zephyr/widgets/picture_bloc/picture_recovery_region.dart';
@@ -157,6 +158,39 @@ void main() {
       expect(bloc.state.imagePath, '/fixture/current.jpg');
       await bloc.close();
       await hub.dispose();
+    },
+  );
+
+  test(
+    'an offscreen cancellation still reloads after returning before it settles',
+    () async {
+      final pending = Completer<String>();
+      var calls = 0;
+      final bloc =
+          PictureBloc(
+            autoRecover: false,
+            loader: (_) => ++calls == 1
+                ? pending.future
+                : Future.value('/fixture/local.png'),
+          )..add(
+            const GetPicture(
+              PictureInfo(
+                from: 'offline-source',
+                path: 'page.png',
+                pictureType: PictureType.page,
+              ),
+              usePlugin: false,
+            ),
+          );
+      addTearDown(bloc.close);
+      await Future<void>.delayed(Duration.zero);
+      expect(calls, 1);
+      bloc.setRecoveryActive(false);
+      pending.completeError(const ImageRecoverySuperseded());
+      bloc.setRecoveryActive(true);
+      await Future<void>.delayed(Duration.zero);
+      expect(calls, 2);
+      expect(bloc.state.imagePath, '/fixture/local.png');
     },
   );
 

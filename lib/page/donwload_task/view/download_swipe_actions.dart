@@ -1,10 +1,15 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
-import 'package:zephyr/page/donwload_task/service/download_interaction_trace.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/donwload_task/service/download_interaction_trace.dart';
+import 'package:zephyr/page/video/video_interaction.dart';
 import 'package:zephyr/widgets/breeze_theme_colors.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 
 typedef DownloadSwipeAction = ({
   String id,
@@ -23,6 +28,10 @@ class DownloadSwipeActions extends StatefulWidget {
     required this.actions,
     required this.child,
     this.exposeActions = false,
+    this.swipeActionIds = const [],
+    this.information,
+    this.groupSecondaryActions = true,
+    this.title,
     this.actionVersion,
     this.completedAt,
     this.lastReadAt,
@@ -33,19 +42,133 @@ class DownloadSwipeActions extends StatefulWidget {
   final List<DownloadSwipeAction> actions;
   final Widget child;
   final bool exposeActions;
+
+  /// Ordered shortcuts selected by the row's scope and transfer state.
+  final List<String> swipeActionIds;
+
+  /// Local information for rows that own a download rather than a work route.
+  final List<String>? information;
+  final bool groupSecondaryActions;
+  final String? title;
   final Object? actionVersion;
   final DateTime? completedAt;
   final DateTime? lastReadAt;
+
+  static bool bodyEnabled(BuildContext context) =>
+      context
+          .dependOnInheritedWidgetOfExactType<_DownloadMoreScope>()
+          ?.bodyEnabled ??
+      true;
 
   @override
   State<DownloadSwipeActions> createState() => _DownloadSwipeActionsState();
 }
 
+/// The row menu has a full touch target and a quiet mark on the title line.
+class DownloadRowMoreButton extends StatelessWidget {
+  const DownloadRowMoreButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final scope = context
+        .dependOnInheritedWidgetOfExactType<_DownloadMoreScope>();
+    final show = scope?.onPressed;
+    if (show == null) return const SizedBox.shrink();
+    final extent = CollectionToolbarMetrics.actionExtentOf(context);
+    final colors = Theme.of(context).colorScheme;
+    final titleStyle = Theme.of(context).textTheme.titleSmall;
+    final lineHeight =
+        MediaQuery.textScalerOf(context).scale(titleStyle?.fontSize ?? 14) *
+        (titleStyle?.height ?? 1.2);
+    const glyphSize = 16.0;
+    final markInset = ((lineHeight - glyphSize) / 2).clamp(
+      2.0,
+      extent - glyphSize,
+    );
+    final surface = _rowSurface(context);
+    final highContrast = MediaQuery.highContrastOf(context);
+    final iconColor = BreezeThemeColors.readableOn(
+      Color.lerp(surface, colors.onSurfaceVariant, .54)!,
+      surface,
+      minimumContrast: highContrast ? 4.5 : 3,
+    );
+    return IconButton(
+      key: key == null ? ValueKey('download-row-more.${scope!.rowKey}') : null,
+      onPressed: show,
+      tooltip: t.common.more,
+      icon: const Icon(Icons.more_vert_rounded, size: glyphSize),
+      style: IconButton.styleFrom(
+        fixedSize: Size.square(extent),
+        minimumSize: Size.square(extent),
+        visualDensity: VisualDensity.standard,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        alignment: Alignment.topCenter,
+        padding: EdgeInsets.only(top: markInset),
+        foregroundColor: iconColor,
+      ),
+    );
+  }
+}
+
+/// Keeps the command in its layout slot while the row is sliding.
+class DownloadRowControl extends StatelessWidget {
+  const DownloadRowControl({
+    super.key,
+    required this.child,
+    this.visible = true,
+  });
+
+  final Widget child;
+  final bool visible;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      ignoring: !DownloadSwipeActions.bodyEnabled(context),
+      child: Visibility(
+        visible: visible,
+        maintainAnimation: true,
+        maintainState: true,
+        maintainSize: true,
+        child: child,
+      ),
+    );
+  }
+}
+
+class _DownloadMoreScope extends InheritedWidget {
+  const _DownloadMoreScope({
+    required this.rowKey,
+    required this.onPressed,
+    required this.bodyEnabled,
+    required super.child,
+  });
+
+  final String rowKey;
+  final VoidCallback? onPressed;
+  final bool bodyEnabled;
+
+  @override
+  bool updateShouldNotify(_DownloadMoreScope oldWidget) =>
+      rowKey != oldWidget.rowKey ||
+      onPressed != oldWidget.onPressed ||
+      bodyEnabled != oldWidget.bodyEnabled;
+}
+
+Color _rowSurface(BuildContext context) {
+  final theme = Theme.of(context);
+  return Color.alphaBlend(
+    Scaffold.maybeOf(context)?.widget.backgroundColor ??
+        theme.scaffoldBackgroundColor,
+    theme.colorScheme.surface,
+  );
+}
+
 class _DownloadSwipeActionsState extends State<DownloadSwipeActions>
     with SingleTickerProviderStateMixin {
-  static const _inset = 6.0;
-  static const _verticalInset = 5.0;
   static const _backGestureEdge = 28.0;
+  static const _labelSize = 12.0;
+  static const _rowRadius = BorderRadius.all(Radius.circular(12));
   late final _slide = AnimationController(vsync: this);
   late final _outsideTap = _DownloadDismissTap()
     ..onTap = _dismiss
@@ -53,24 +176,22 @@ class _DownloadSwipeActionsState extends State<DownloadSwipeActions>
   bool _dragging = false;
   bool _wasOpen = false;
   bool _dispatching = false;
-  final _loggedLayouts = <String>{};
+  int _actionEpoch = 0;
 
-  double _actionExtent([DownloadSwipeAction? action]) {
-    final labelSize = MediaQuery.textScalerOf(context).scale(12);
-    if (widget.actions.length == 1 &&
-        labelSize <= 16 &&
-        (widget.completedAt != null || widget.lastReadAt != null)) {
-      return 100;
-    }
-    final width = switch (widget.actions.length) {
-      <= 2 => 66.0,
-      3 => 60.0,
-      _ => 54.0,
-    };
-    final slot = action?.id == 'pin' || action?.id == 'unpin' ? 66.0 : width;
-    return slot +
-        (MediaQuery.textScalerOf(context).scale(13) - 13).clamp(0.0, 16.0);
-  }
+  List<DownloadSwipeAction> get _actions => [
+    ...widget.actions,
+    if (widget.information != null)
+      (
+        id: 'info',
+        label: Localizations.localeOf(context).languageCode == 'zh'
+            ? '下载详情'
+            : 'Download details',
+        icon: Icons.info_outline_rounded,
+        run: _openInformation,
+      ),
+  ];
+
+  double get _minimumTarget => CollectionToolbarMetrics.actionExtentOf(context);
 
   bool get _open => widget.openRow.value == widget.rowKey;
   double get _direction =>
@@ -100,14 +221,21 @@ class _DownloadSwipeActionsState extends State<DownloadSwipeActions>
       oldWidget.openRow.removeListener(_sync);
       widget.openRow.addListener(_sync);
     }
-    if (oldWidget.rowKey != widget.rowKey ||
+    final ownerChanged =
+        oldWidget.rowKey != widget.rowKey ||
         oldWidget.openRow != widget.openRow ||
-        oldWidget.actionVersion != widget.actionVersion ||
+        oldWidget.actionVersion != widget.actionVersion;
+    if (ownerChanged ||
+        oldWidget.groupSecondaryActions != widget.groupSecondaryActions ||
+        !listEquals(oldWidget.swipeActionIds, widget.swipeActionIds) ||
+        (oldWidget.information == null) != (widget.information == null) ||
         !listEquals(
           oldWidget.actions.map((action) => (action.id, action.label)).toList(),
           widget.actions.map((action) => (action.id, action.label)).toList(),
         )) {
-      _reset();
+      // Loading an additional shortcut may redraw the tray without changing
+      // the download owned by an already open menu.
+      _reset(invalidateActions: ownerChanged);
     }
   }
 
@@ -117,7 +245,8 @@ class _DownloadSwipeActionsState extends State<DownloadSwipeActions>
     if (!TickerMode.valuesOf(context).enabled && _open) _reset();
   }
 
-  void _reset() {
+  void _reset({bool invalidateActions = true}) {
+    if (invalidateActions) _actionEpoch++;
     _dragging = false;
     _slide.value = 0;
     if (!_open) return;
@@ -164,9 +293,7 @@ class _DownloadSwipeActionsState extends State<DownloadSwipeActions>
     if (!_dragging) return;
     final velocity = -(details.primaryVelocity ?? 0) * _direction;
     // Adding another command widens the tray without making it harder to open.
-    final openThreshold =
-        (_actionExtent() * widget.actions.length.clamp(1, 2) + _inset * 2) *
-        .42;
+    final openThreshold = width.clamp(0.0, 132.0) * .42;
     final reveal = velocity.abs() > 420
         ? velocity > 0
         : _slide.value * width >= (_wasOpen ? width * .34 : openThreshold);
@@ -183,12 +310,16 @@ class _DownloadSwipeActionsState extends State<DownloadSwipeActions>
     if (reveal) {
       _animateTo(1);
     } else {
-      widget.openRow.value = null;
+      if (_open) {
+        widget.openRow.value = null;
+      } else {
+        _animateTo(0);
+      }
     }
   }
 
   void _reveal() {
-    if (_dispatching || widget.actions.isEmpty || _open) return;
+    if (_dispatching || _actions.isEmpty || _open) return;
     widget.openRow.value = widget.rowKey;
   }
 
@@ -196,17 +327,17 @@ class _DownloadSwipeActionsState extends State<DownloadSwipeActions>
     if (_open) widget.openRow.value = null;
   }
 
-  Future<void> _run(DownloadSwipeAction action) async {
+  Future<void> _run(String id) async {
     if (_dispatching || !_open || _slide.value < 1) return;
-    final trace = DownloadInteractionTrace('swipe.${action.id}');
-    final version = widget.actionVersion;
+    final trace = DownloadInteractionTrace('swipe.$id');
+    final epoch = _actionEpoch;
     _dispatching = true;
     try {
       await _animateTo(0).orCancel;
       trace.mark('close-complete');
-      if (!mounted || !_open) return;
+      if (!_open || !_ownsAction(epoch)) return;
       widget.openRow.value = null;
-      _perform(action, version);
+      _perform(id, epoch);
       trace.mark('callback-dispatched');
     } on TickerCanceled {
       // A row that has scrolled out or changed scope no longer owns the action.
@@ -215,57 +346,247 @@ class _DownloadSwipeActionsState extends State<DownloadSwipeActions>
     }
   }
 
-  void _perform(DownloadSwipeAction action, Object? version) {
-    if (mounted &&
-        widget.actionVersion == version &&
-        ModalRoute.of(context)?.isCurrent == true &&
-        widget.actions.any((current) => current.id == action.id)) {
-      action.run();
+  bool _ownsAction(int epoch) =>
+      mounted &&
+      _actionEpoch == epoch &&
+      TickerMode.valuesOf(context).enabled &&
+      ModalRoute.of(context)?.isCurrent == true;
+
+  void _perform(String id, int epoch) {
+    if (!_ownsAction(epoch)) return;
+    _actions.where((action) => action.id == id).firstOrNull?.run();
+  }
+
+  Future<void> _openMore() async {
+    final epoch = _actionEpoch;
+    if (_dispatching ||
+        _dragging ||
+        !widget.groupSecondaryActions ||
+        _actions.isEmpty ||
+        !_ownsAction(epoch)) {
+      return;
     }
+    final rowKey = widget.rowKey;
+    final title = widget.title?.trim() ?? '';
+    final actions = _actions;
+    _dispatching = true;
+    widget.openRow.value = null;
+    ModalRoute<String>? sheetRoute;
+    try {
+      final selected = await showVideoTaskSheet<String>(
+        context: context,
+        useRootNavigator: true,
+        builder: (sheetContext) {
+          sheetRoute = ModalRoute.of<String>(sheetContext);
+          return _DownloadActionSheet(
+            rowKey: rowKey,
+            title: title.isEmpty ? t.common.more : title,
+            actions: actions,
+            completedAt: widget.information == null ? widget.completedAt : null,
+            lastReadAt: widget.information == null ? widget.lastReadAt : null,
+          );
+        },
+      );
+      if (selected == null) return;
+      await sheetRoute?.completed;
+      await WidgetsBinding.instance.endOfFrame;
+      _perform(selected, epoch);
+    } finally {
+      if (mounted) setState(() => _dispatching = false);
+    }
+  }
+
+  void _openInformation() {
+    final information = widget.information;
+    if (information == null) return;
+    unawaited(
+      showVideoTaskSheet<void>(
+        context: context,
+        useRootNavigator: true,
+        builder: (_) => _DownloadActionSheet(
+          rowKey: widget.rowKey,
+          title: widget.title?.trim().isNotEmpty == true
+              ? widget.title!.trim()
+              : t.common.detail,
+          actions: const [],
+          information: information,
+          completedAt: widget.completedAt,
+          lastReadAt: widget.lastReadAt,
+        ),
+      ),
+    );
+  }
+
+  String _caption(BuildContext context, DownloadSwipeAction action) {
+    final chinese = Localizations.localeOf(context).languageCode == 'zh';
+    return switch (action.id) {
+      'delete' => t.common.delete,
+      'details' || 'info' => t.common.detail,
+      'next' when chinese => '优先',
+      'unpin' when chinese => '取消',
+      _ => action.label,
+    };
   }
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, constraints) => _buildSlide(
-      (widget.actions.fold(
-                0.0,
-                (width, action) => width + _actionExtent(action),
-              ) +
-              _inset * 2)
-          .clamp(0.0, constraints.maxWidth),
-    ),
+    builder: (context, constraints) {
+      final actions = _actions;
+      final shortcuts = [
+        for (final id in widget.swipeActionIds)
+          ?actions.where((action) => action.id == id).firstOrNull,
+      ];
+      if (shortcuts.isEmpty || constraints.maxWidth < 2 * _minimumTarget) {
+        return _buildSlide(
+          const [],
+          0,
+          const [],
+          const TextStyle(),
+          actions.isNotEmpty,
+        );
+      }
+
+      final labelStyle = DefaultTextStyle.of(context).style
+          .merge(Theme.of(context).textTheme.labelMedium)
+          .copyWith(inherit: false, fontSize: _labelSize, height: 1.15);
+      final width = !widget.groupSecondaryActions
+          ? 76.0
+          : math.min(
+              64.0 * shortcuts.length,
+              math.max(
+                _minimumTarget * shortcuts.length,
+                constraints.maxWidth * .46,
+              ),
+            );
+      final slot = widget.groupSecondaryActions
+          ? width / shortcuts.length
+          : 64.0;
+      final captions = [
+        for (final action in shortcuts)
+          _captionThatFits(
+            context,
+            _caption(context, action),
+            labelStyle,
+            slot,
+          ),
+      ];
+      return _buildSlide(
+        shortcuts,
+        width,
+        captions,
+        labelStyle,
+        actions.isNotEmpty,
+      );
+    },
   );
 
-  Widget _buildSlide(double width) => AnimatedBuilder(
+  String _captionThatFits(
+    BuildContext context,
+    String text,
+    TextStyle style,
+    double width,
+  ) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      locale: Localizations.maybeLocaleOf(context),
+    )..layout();
+    final fits = painter.width <= width - 8;
+    painter.dispose();
+    return fits ? text : '';
+  }
+
+  Widget _buildSlide(
+    List<DownloadSwipeAction> shortcuts,
+    double width,
+    List<String> captions,
+    TextStyle labelStyle,
+    bool hasActions,
+  ) => AnimatedBuilder(
     animation: Listenable.merge([_slide, widget.openRow]),
     child: widget.child,
     builder: (context, child) {
-      final direction = _direction;
-      final revealed = _slide.value > 0;
-      final revealedWidth = _slide.value * width;
+      final shortcut = shortcuts.firstOrNull;
+      final reveal = width * _slide.value;
+      final revealed = reveal > 0;
       final interactive = _open && !_dispatching && _slide.value == 1;
-      final version = widget.actionVersion;
-      final exposeActions = widget.exposeActions;
-      final theme = Theme.of(context);
-      final colors = theme.colorScheme;
-      final surface = Color.alphaBlend(
-        Scaffold.maybeOf(context)?.widget.backgroundColor ??
-            theme.scaffoldBackgroundColor,
-        colors.surface,
-      );
+      final suspended = revealed || _dispatching;
+      final direction = _direction;
+      final epoch = _actionEpoch;
+      final flat = widget.groupSecondaryActions;
+      final surface = _rowSurface(context);
+      final colors = Theme.of(context).colorScheme;
+      final tone = shortcuts.length == 1 && shortcuts.first.id == 'delete'
+          ? colors.error
+          : colors.primary;
       final well = Color.alphaBlend(
-        colors.onSurface.withValues(alpha: .06),
+        flat
+            ? tone.withValues(
+                alpha: colors.brightness == Brightness.dark ? .17 : .09,
+              )
+            : colors.onSurface.withValues(alpha: .06),
         surface,
       );
-      final tray = Color.alphaBlend(
-        colors.primary.withValues(alpha: .045),
+      final legacyPlate = Color.alphaBlend(
+        colors.primary.withValues(alpha: .05),
         surface,
       );
-      final separation = Curves.easeOut.transform(_slide.value);
-      // Observe outside pointers without consuming their drags. Only a tap
-      // wins dismissal ahead of the underlying button's ordinary arena sweep.
+
+      Widget actionWell() => DecoratedBox(
+        key: ValueKey('download-swipe-well.${widget.rowKey}'),
+        decoration: BoxDecoration(color: well, borderRadius: _rowRadius),
+      );
+
+      Widget tray() {
+        final background = flat ? well : legacyPlate;
+        final error = flat
+            ? colors.error
+            : colors.brightness == Brightness.dark
+            ? const Color(0xffff453a)
+            : const Color(0xffd51920);
+        final material = Material(
+          key: ValueKey('download-swipe-tray.${widget.rowKey}'),
+          type: flat ? MaterialType.transparency : MaterialType.canvas,
+          color: flat ? null : background,
+          surfaceTintColor: flat ? null : Colors.transparent,
+          borderRadius: flat ? null : _rowRadius,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < shortcuts.length; i++)
+                Expanded(
+                  child: _command(
+                    shortcuts[i],
+                    caption: captions[i],
+                    style: labelStyle.copyWith(
+                      color: BreezeThemeColors.readableOn(
+                        shortcuts[i].id == 'delete' ? error : colors.primary,
+                        background,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+        return IgnorePointer(
+          ignoring: !interactive,
+          child: ExcludeSemantics(
+            excluding: !interactive,
+            child: flat
+                ? material
+                : Center(
+                    child: SizedBox(width: 64, height: 54, child: material),
+                  ),
+          ),
+        );
+      }
+
+      // Outside taps close the revealed row. Drags still reach the scroll view.
       return TapRegion(
-        enabled: _open,
+        groupId: widget.openRow,
+        enabled: width > 0 && _open,
         onTapOutside: (event) {
           if (!_open) return;
           if (event.pointer != 0) {
@@ -276,107 +597,94 @@ class _DownloadSwipeActionsState extends State<DownloadSwipeActions>
         },
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: _open ? _dismiss : null,
+          onTap: width > 0 && _open ? _dismiss : null,
           child: ClipRect(
             clipBehavior: revealed ? Clip.hardEdge : Clip.none,
             child: Stack(
               children: [
-                if (revealed)
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: DecoratedBox(
-                        key: ValueKey('download-swipe-well.${widget.rowKey}'),
-                        decoration: BoxDecoration(
-                          color: well,
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                    ),
-                  ),
-                if (revealed)
+                if (revealed) ...[
+                  Positioned.fill(child: IgnorePointer(child: actionWell())),
                   PositionedDirectional(
                     top: 0,
                     bottom: 0,
                     end: 0,
                     width: width,
-                    child: IgnorePointer(
-                      ignoring: !interactive,
-                      child: ExcludeSemantics(
-                        excluding: !interactive,
-                        child: _tray(context, tray),
-                      ),
-                    ),
+                    child: tray(),
                   ),
+                ],
                 Transform.translate(
-                  offset: Offset(-revealedWidth * direction, 0),
+                  offset: Offset(-reveal * direction, 0),
                   child: RawGestureDetector(
                     behavior: HitTestBehavior.opaque,
+                    excludeFromSemantics: true,
                     gestures: {
-                      _DownloadRowDrag:
-                          GestureRecognizerFactoryWithHandlers<
-                            _DownloadRowDrag
-                          >(_DownloadRowDrag.new, (gesture) {
-                            final screen = MediaQuery.sizeOf(context).width;
-                            gesture.canStart = (point) =>
-                                width > 0 &&
-                                widget.actions.isNotEmpty &&
-                                !_dispatching &&
-                                (direction == 1
-                                    ? point.dx >= _backGestureEdge
-                                    : point.dx <= screen - _backGestureEdge);
-                            gesture
-                              ..onStart = _start
-                              ..onUpdate = (details) {
-                                _update(details, width);
-                              }
-                              ..onEnd = (details) {
-                                _end(details, width);
-                              }
-                              ..onCancel = _cancel;
-                          }),
+                      if (width > 0)
+                        _DownloadRowDrag:
+                            GestureRecognizerFactoryWithHandlers<
+                              _DownloadRowDrag
+                            >(_DownloadRowDrag.new, (gesture) {
+                              final screen = MediaQuery.sizeOf(context).width;
+                              gesture.canStart = (point) =>
+                                  !_dispatching &&
+                                  (direction == 1
+                                      ? point.dx >= _backGestureEdge
+                                      : point.dx <= screen - _backGestureEdge);
+                              gesture
+                                ..onStart = _start
+                                ..onUpdate = (details) {
+                                  _update(details, width);
+                                }
+                                ..onEnd = (details) {
+                                  _end(details, width);
+                                }
+                                ..onCancel = _cancel;
+                            }),
                     },
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      onSecondaryTap: exposeActions && widget.actions.isNotEmpty
+                      onSecondaryTap: !widget.exposeActions || suspended
+                          ? null
+                          : width > 0
                           ? _reveal
+                          : flat && hasActions
+                          ? _openMore
                           : null,
                       child: Semantics(
-                        customSemanticsActions: exposeActions && !revealed
+                        customSemanticsActions:
+                            widget.exposeActions &&
+                                !flat &&
+                                !suspended &&
+                                shortcut != null
                             ? {
-                                for (final action in widget.actions)
-                                  CustomSemanticsAction(
-                                    label: action.label,
-                                  ): () {
-                                    if (!_dispatching) {
-                                      _perform(action, version);
-                                    }
-                                  },
+                                CustomSemanticsAction(
+                                  label: shortcut.label,
+                                ): () =>
+                                    _perform(shortcut.id, epoch),
                               }
                             : null,
                         child: AbsorbPointer(
-                          absorbing: revealed || _dispatching,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: revealed ? surface : Colors.transparent,
-                              borderRadius: BorderRadius.circular(14),
-                              boxShadow: revealed
-                                  ? [
-                                      BoxShadow(
-                                        color: colors.shadow.withValues(
-                                          alpha:
-                                              (colors.brightness ==
-                                                      Brightness.dark
-                                                  ? .14
-                                                  : .07) *
-                                              separation,
-                                        ),
-                                        blurRadius: 5,
-                                        offset: Offset(direction, 1),
-                                      ),
-                                    ]
-                                  : const [],
+                          absorbing: !flat && suspended,
+                          child: ExcludeSemantics(
+                            excluding: !flat && suspended,
+                            child: ExcludeFocus(
+                              excluding: !flat && suspended,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: revealed
+                                      ? surface
+                                      : Colors.transparent,
+                                  borderRadius: _rowRadius,
+                                ),
+                                child: _DownloadMoreScope(
+                                  rowKey: widget.rowKey,
+                                  onPressed: flat && hasActions
+                                      ? _openMore
+                                      : null,
+                                  bodyEnabled: !suspended,
+                                  child: child!,
+                                ),
+                              ),
                             ),
-                            child: child,
                           ),
                         ),
                       ),
@@ -391,202 +699,181 @@ class _DownloadSwipeActionsState extends State<DownloadSwipeActions>
     },
   );
 
-  Widget _tray(BuildContext context, Color background) {
+  Widget _command(
+    DownloadSwipeAction action, {
+    required String caption,
+    required TextStyle style,
+  }) => Tooltip(
+    message: action.label,
+    excludeFromSemantics: true,
+    child: InkWell(
+      key: ValueKey('download-swipe.${widget.rowKey}.${action.id}'),
+      borderRadius: _rowRadius,
+      onTap: () => _run(action.id),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          spacing: 3,
+          children: [
+            Icon(
+              action.icon,
+              size: caption.isEmpty ? 20 : 17,
+              color: style.color,
+              semanticLabel: caption.isEmpty ? action.label : null,
+            ),
+            if (caption.isNotEmpty)
+              Flexible(
+                child: Text(
+                  caption,
+                  semanticsLabel: action.label,
+                  maxLines: 1,
+                  style: style,
+                ),
+              ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+String? downloadRowTimeLabel(
+  BuildContext context, {
+  DateTime? completedAt,
+  DateTime? lastReadAt,
+}) {
+  final timestamp = completedAt ?? lastReadAt;
+  if (timestamp == null || timestamp.millisecondsSinceEpoch <= 0) return null;
+  final local = timestamp.toLocal();
+  final locale = MaterialLocalizations.of(context);
+  final date = local.year == DateTime.now().year
+      ? locale.formatShortMonthDay(local)
+      : locale.formatShortDate(local);
+  final time = locale.formatTimeOfDay(
+    TimeOfDay.fromDateTime(local),
+    alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
+  );
+  final chinese = Localizations.localeOf(context).languageCode == 'zh';
+  final label = completedAt != null
+      ? (chinese ? '下载于' : 'Downloaded')
+      : (chinese ? '阅读于' : 'Read');
+  return '$label $date $time';
+}
+
+class _DownloadActionSheet extends StatelessWidget {
+  const _DownloadActionSheet({
+    required this.rowKey,
+    required this.title,
+    required this.actions,
+    this.completedAt,
+    this.lastReadAt,
+    this.information = const [],
+  });
+
+  final String rowKey, title;
+  final List<DownloadSwipeAction> actions;
+  final DateTime? completedAt, lastReadAt;
+  final List<String> information;
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final scaler = MediaQuery.textScalerOf(context);
-    final scaled = scaler.scale(12);
-    final timeHeight = (scaler.scale(10) * 1.1).ceilToDouble() + 2;
-    final detail = widget.completedAt ?? widget.lastReadAt;
-    final local = detail != null && detail.millisecondsSinceEpoch > 0
-        ? detail.toLocal()
-        : null;
-    final locale = MaterialLocalizations.of(context);
-    final date = local == null
-        ? null
-        : local.year == DateTime.now().year
-        ? locale.formatShortMonthDay(local)
-        : locale.formatShortDate(local);
-    final time = local == null
-        ? null
-        : locale.formatTimeOfDay(
-            TimeOfDay.fromDateTime(local),
-            alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
-          );
-    final chinese = Localizations.localeOf(context).languageCode == 'zh';
-    return LayoutBuilder(
-      builder: (context, box) {
-        final available = (box.maxHeight - 2 * _verticalInset).clamp(
-          0.0,
-          box.maxHeight,
-        );
-        final showTime =
-            date != null && scaled <= 16 && available >= 44 + timeHeight;
-        final tall = available >= 100;
-        final trayHeight = tall
-            ? 72.0
-            : showTime
-            ? 44 + timeHeight
-            : (scaled > 16 ? 62.0 : 52.0);
-        return Align(
-          alignment: Alignment.center,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: _inset / 2),
-            child: SizedBox(
-              height: trayHeight.clamp(0.0, available),
-              child: Material(
-                key: ValueKey('download-swipe-tray.${widget.rowKey}'),
-                color: background,
-                surfaceTintColor: Colors.transparent,
-                borderRadius: BorderRadius.circular(9),
-                clipBehavior: Clip.hardEdge,
-                child: Column(
-                  children: [
-                    Expanded(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          for (final action in widget.actions)
-                            Expanded(
-                              flex: (_actionExtent(action) * 100).round(),
-                              child: _command(
-                                context,
-                                action,
-                                background,
-                                tall: tall,
-                              ),
-                            ),
-                        ],
-                      ),
+    final extent = CollectionToolbarMetrics.actionExtentOf(context);
+    final normal = actions.where((action) => action.id != 'delete').toList();
+    final destructive = actions
+        .where((action) => action.id == 'delete')
+        .toList();
+    final ink = BreezeThemeColors.readableOn(colors.onSurface, colors.surface);
+    final error = BreezeThemeColors.readableOn(colors.error, colors.surface);
+    final metadata = downloadRowTimeLabel(
+      context,
+      completedAt: completedAt,
+      lastReadAt: lastReadAt,
+    );
+    Widget tile(DownloadSwipeAction action, Color color) => ListTile(
+      key: ValueKey('download-swipe.$rowKey.${action.id}'),
+      minTileHeight: extent,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 18),
+      tileColor: Colors.transparent,
+      leading: Icon(action.icon, size: 20, color: color),
+      title: Text(
+        action.label,
+        style: theme.textTheme.bodyMedium?.copyWith(color: color),
+      ),
+      onTap: () => Navigator.of(context).pop(action.id),
+    );
+
+    return SingleChildScrollView(
+      key: ValueKey('download-action-sheet.$rowKey'),
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsetsDirectional.only(start: 18, end: 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Semantics(
+                    header: true,
+                    child: Text(
+                      title,
+                      key: ValueKey('download-action-sheet-title.$rowKey'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleMedium?.copyWith(color: ink),
                     ),
-                    if (showTime)
-                      SizedBox(
-                        height: timeHeight,
-                        child: Text(
-                          '$date $time',
-                          key: ValueKey('download-swipe-time.${widget.rowKey}'),
-                          semanticsLabel: widget.completedAt != null
-                              ? (chinese
-                                    ? '下载于 $date $time'
-                                    : 'Downloaded $date $time')
-                              : (chinese
-                                    ? '阅读于 $date $time'
-                                    : 'Read $date $time'),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: BreezeThemeColors.readableOn(
-                              colors.onSurfaceVariant,
-                              background,
-                            ),
-                            fontSize: 10,
-                            height: 1.1,
-                          ),
-                        ),
-                      ),
-                  ],
+                  ),
+                ),
+                IconButton(
+                  key: ValueKey('download-action-sheet-close.$rowKey'),
+                  tooltip: t.common.close,
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: IconButton.styleFrom(
+                    fixedSize: Size.square(extent),
+                    minimumSize: Size.square(extent),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.standard,
+                    foregroundColor: ink,
+                  ),
+                  icon: const Icon(Icons.close_rounded, size: 20),
+                ),
+              ],
+            ),
+          ),
+          if (metadata != null)
+            Padding(
+              padding: const EdgeInsetsDirectional.fromSTEB(18, 0, 18, 8),
+              child: Text(
+                metadata,
+                key: ValueKey('download-action-sheet-time.$rowKey'),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: BreezeThemeColors.readableOn(
+                    colors.onSurfaceVariant,
+                    colors.surface,
+                  ),
                 ),
               ),
             ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _command(
-    BuildContext context,
-    DownloadSwipeAction action,
-    Color background, {
-    required bool tall,
-  }) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final destructive = colors.brightness == Brightness.dark
-        ? const Color(0xffff453a)
-        : const Color(0xffd51920);
-    final color = BreezeThemeColors.readableOn(
-      action.id == 'delete' ? destructive : colors.onSurface,
-      background,
-    );
-    final caption = switch (action.id) {
-      'details' => t.common.detail,
-      'export' => t.common.export,
-      'delete' => t.common.delete,
-      'cancel' => t.common.cancel,
-      'unpin' when Localizations.localeOf(context).languageCode == 'zh' => '取消',
-      'next' when Localizations.localeOf(context).languageCode == 'zh' => '优先',
-      _ => action.label,
-    };
-    return InkWell(
-      key: ValueKey('download-swipe.${widget.rowKey}.${action.id}'),
-      borderRadius: BorderRadius.circular(12),
-      onTap: () => _run(action),
-      child: LayoutBuilder(
-        builder: (context, box) {
-          assert(() {
-            final style = theme.textTheme.labelMedium?.copyWith(
-              color: color,
-              fontSize: tall ? 13 : null,
-            );
-            final painter = TextPainter(
-              text: TextSpan(text: caption, style: style),
-              textDirection: Directionality.of(context),
-              textScaler: MediaQuery.textScalerOf(context),
-            )..layout();
-            final signature = '${action.id}:${box.maxWidth}:${painter.width}';
-            if (_loggedLayouts.add(signature)) {
-              debugPrint(
-                '[download-layout] action=${action.id} '
-                'count=${widget.actions.length} slot=${box.maxWidth} '
-                'textAvailable=${box.maxWidth - 10} '
-                'textIntrinsic=${painter.width} '
-                'font=${style?.fontFamily} size=${style?.fontSize} '
-                'scale13=${MediaQuery.textScalerOf(context).scale(13)}',
-              );
-            }
-            painter.dispose();
-            return true;
-          }());
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 5),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                spacing: tall ? 5 : 3,
-                children: [
-                  if (box.maxHeight >= 36 &&
-                      MediaQuery.textScalerOf(context).scale(14) <= 20)
-                    Icon(action.icon, size: tall ? 20 : 16, color: color),
-                  Flexible(
-                    child: SizedBox(
-                      height:
-                          tall &&
-                              MediaQuery.textScalerOf(context).scale(13) > 16
-                          ? MediaQuery.textScalerOf(context).scale(13) * 2.6
-                          : null,
-                      child: Align(
-                        alignment: Alignment.topCenter,
-                        heightFactor: 1,
-                        child: Text(
-                          caption,
-                          semanticsLabel: action.label,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.center,
-                          style: theme.textTheme.labelMedium?.copyWith(
-                            color: color,
-                            fontSize: tall ? 13 : null,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+          for (final line in information)
+            Padding(
+              padding: const EdgeInsetsDirectional.fromSTEB(18, 0, 18, 8),
+              child: Text(
+                line,
+                style: theme.textTheme.bodyMedium?.copyWith(color: ink),
               ),
             ),
-          );
-        },
+          for (final action in normal) tile(action, ink),
+          if (normal.isNotEmpty && destructive.isNotEmpty)
+            Divider(
+              key: ValueKey('download-action-sheet-divider.$rowKey'),
+              indent: 18,
+              endIndent: 18,
+              color: colors.outlineVariant.withValues(alpha: .7),
+            ),
+          for (final action in destructive) tile(action, error),
+        ],
       ),
     );
   }

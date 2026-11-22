@@ -192,7 +192,11 @@ void main() {
           expect(find.byType(VideoNativeNavigation), findsOneWidget);
           expect(find.byType(AppBar), findsOneWidget);
           expect(find.byKey(const ValueKey('outer.back')), findsOneWidget);
-          expect(find.byType(VideoSearchEntry), findsOneWidget);
+          expect(find.byType(VideoSearchEntry), findsNothing);
+          expect(
+            find.byKey(const ValueKey('api-catalog.open-search')),
+            findsOneWidget,
+          );
           expect(find.byType(SourceMoreButton), findsOneWidget);
           expect(scope().options.keys, ['0', '1', '2']);
           expect(details, isEmpty);

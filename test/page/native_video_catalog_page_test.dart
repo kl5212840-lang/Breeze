@@ -10,6 +10,7 @@ import 'package:zephyr/page/source_shell/source_return_preferences.dart';
 import 'package:zephyr/page/source_shell/source_diagnostic_preferences.dart';
 import 'package:zephyr/page/video/video_verification_gate.dart';
 import 'package:zephyr/page/video/video_personal_overview.dart';
+import 'package:zephyr/widgets/app_interface_style.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -136,6 +137,9 @@ class _WebPlatform extends InAppWebViewPlatform {
   Map<String, dynamic>? publicWorkFacts;
   Map<String, dynamic>? personalPageResponse;
   Map<String, dynamic>? creatorDirectory;
+  Map<String, dynamic>? subscriptionShelf;
+  Future<dynamic>? nextShelfRead;
+  int shelfReads = 0;
   Map<String, dynamic>? resolvedCreator;
   Future<dynamic>? nextCreatorRead;
   Future<dynamic>? siteInteraction;
@@ -371,6 +375,16 @@ class _WebController extends PlatformInAppWebViewController
       return pending;
     }
     if (source.contains('const breezeCreatorDirectoryStart')) {
+      if (source.contains("target.searchParams.set('artist_id'")) {
+        host.shelfReads++;
+        if (host.currentUrl?.path != '/subscriptions') {
+          return {'status': 'changed'};
+        }
+        final pending = host.nextShelfRead;
+        host.nextShelfRead = null;
+        if (pending != null) return pending;
+        return {'status': 'ok', 'value': host.subscriptionShelf};
+      }
       final resolving = source.contains('let watch = ');
       if (resolving) {
         host.creatorResolutions++;
@@ -540,6 +554,7 @@ Future<void> _mount(
   List<Uri> externalAuthenticationEntries = const [],
   VideoFilterSchema? filters,
   Brightness brightness = Brightness.light,
+  ValueNotifier<String>? interfaceStyle,
   bool nestedRoot = false,
   bool returnToCallerAfterPlayback = false,
   bool structuredHanime = false,
@@ -574,7 +589,9 @@ Future<void> _mount(
         data: MediaQuery.of(
           context,
         ).copyWith(textScaler: TextScaler.linear(textScale)),
-        child: child!,
+        child: interfaceStyle == null
+            ? child!
+            : AppInterfaceStyleScope(style: interfaceStyle, child: child!),
       ),
       home: withDiscoverRoot(
         NativeVideoCatalogPage(
@@ -634,6 +651,16 @@ Future<void> _mount(
     await tester.tap(find.text('Open fixture source'));
   }
   await _pump(tester);
+}
+
+Finder _catalogTab(String title) => find.descendant(
+  of: find.byType(VideoNativeNavigation),
+  matching: find.text(title),
+);
+
+Future<void> _pullCatalogRefresh(WidgetTester tester) async {
+  await tester.drag(find.byType(RefreshIndicator), const Offset(0, 300));
+  await _pump(tester, 3);
 }
 
 Future<void> _chooseMode(WidgetTester tester, String title) async {
@@ -697,11 +724,13 @@ Future<void> _openNativeLogin(
   await _mount(tester, plugin, nativePersonal: true, nativeAuth: true);
   web.finishLastLoad();
   await _pump(tester);
-  await tester.tap(find.text('订阅'));
+  await tester.tap(_catalogTab('订阅'));
   await _pump(tester);
   web.finishLastLoad();
   await _pump(tester);
-  await tester.tap(find.text(t.videoCommunity.login));
+  await tester.tap(
+    find.widgetWithText(TextButton, t.videoCommunity.login).last,
+  );
   await _pump(tester);
   web.finishLastLoad();
   await _pump(tester);
@@ -794,6 +823,114 @@ void main() {
   });
 
   testWidgets(
+    'reselecting Hanime root lists keeps data and only scrolls to top',
+    (tester) async {
+      Map<String, dynamic> card(int i) => {
+        'title': 'List item $i',
+        'watchUrl': 'https://hanime1.me/watch?v=$i',
+      };
+      plugin.catalog = (core) async {
+        final subscribed =
+            Uri.parse(core['pageUrl'] as String).path == '/subscriptions';
+        return {
+          'data': {
+            'sections': [
+              if (subscribed)
+                for (var i = 1; i <= 12; i++)
+                  {
+                    'title': 'Subscription section $i',
+                    'videos': [card(i)],
+                  },
+            ],
+            'videos': [
+              if (!subscribed)
+                for (var i = 1; i <= 36; i++) card(i),
+            ],
+            if (subscribed) 'account': {'status': 'signedIn'},
+          },
+        };
+      };
+      await _mount(
+        tester,
+        plugin,
+        structuredHanime: true,
+        nativePersonal: true,
+        filters: _filters,
+      );
+      web.finishLastLoad();
+      await _pump(tester);
+      ScrollPosition catalogPosition() {
+        final scroll = find.byWidgetPredicate(
+          (widget) =>
+              widget is CustomScrollView &&
+              widget.key is PageStorageKey &&
+              widget.controller != null,
+        );
+        return tester.widget<CustomScrollView>(scroll).controller!.position;
+      }
+
+      catalogPosition().jumpTo(410);
+      await _pump(tester);
+      await tester.tap(_catalogTab('排行'));
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      await tester.tap(find.byKey(const ValueKey('hanime.ranking.week')));
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      final ranking = catalogPosition();
+      ranking.jumpTo(540);
+      await _pump(tester);
+      final rankUrl = web.loads.last;
+      final reads = plugin.calls.length;
+      final loads = web.loads.length;
+      await tester.tap(_catalogTab('排行'));
+      await _pump(tester);
+      expect(ranking.pixels, 0);
+      expect(web.loads.length, loads);
+      expect(plugin.calls.length, reads);
+      expect(web.loads.last, rankUrl);
+      expect(rankUrl.queryParameters['sort'], '本週排行');
+
+      await tester.tap(_catalogTab('推荐'));
+      await _pump(tester);
+      expect(catalogPosition().pixels, 410);
+      final homeReads = plugin.calls.length;
+      final homeLoads = web.loads.length;
+      await tester.tap(_catalogTab('推荐'));
+      await _pump(tester);
+      expect(catalogPosition().pixels, 0);
+      expect(plugin.calls.length, homeReads);
+      expect(web.loads.length, homeLoads);
+
+      await tester.tap(_catalogTab('订阅'));
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      catalogPosition().jumpTo(360);
+      await _pump(tester);
+      expect(catalogPosition().pixels, 360);
+      final subscriptionsLoads = web.loads.length;
+      await tester.tap(_catalogTab('订阅'));
+      await _pump(tester);
+      expect(catalogPosition().pixels, 0);
+      expect(web.loads.length, subscriptionsLoads);
+
+      await tester.tap(find.byTooltip(t.common.search));
+      await _pump(tester);
+      final editing = catalogPosition();
+      editing.jumpTo(270);
+      await _pump(tester);
+      await tester.tap(_catalogTab('订阅'));
+      await _pump(tester);
+      expect(editing.pixels, 270);
+      expect(find.byType(TextField), findsOneWidget);
+      expect(web.loads.length, subscriptionsLoads);
+    },
+  );
+
+  testWidgets(
     'Hanime category and rank own their destinations and public filter sections',
     (tester) async {
       plugin.catalog = (core) async => {
@@ -842,7 +979,7 @@ void main() {
       );
       expect(find.byKey(const ValueKey('hanime-results.filter')), findsNothing);
 
-      await tester.tap(find.text('排行'));
+      await tester.tap(_catalogTab('排行'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -953,6 +1090,11 @@ void main() {
       expect(categoryWeb.loads.last.queryParameters['sort'], 'views');
       expect(tester.widget<NativeVideoMenu>(sort).label, 'Views');
       expect(tester.widget<NativeVideoMenu>(sort).selected, 'views');
+      expect(
+        find.byKey(const ValueKey('applied-filter.clear-all')),
+        findsNothing,
+        reason: 'changing the result order does not apply a filter',
+      );
       expect(likes, findsOneWidget);
       expect(categoryWeb.publicWorkReads, hasLength(1));
       await tester.tap(find.byKey(const ValueKey('hanime-results.filter')));
@@ -1176,7 +1318,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       web.profileHref = '/user/42';
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -1402,7 +1544,7 @@ void main() {
       await _mount(tester, plugin, filters: _filters);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('排行'));
+      await tester.tap(_catalogTab('排行'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -1599,7 +1741,7 @@ void main() {
       await _mount(tester, plugin, filters: _filters);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('排行'));
+      await tester.tap(_catalogTab('排行'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -1905,15 +2047,15 @@ void main() {
     await _mount(tester, plugin);
     web.finishLastLoad();
     await _pump(tester);
-    await tester.tap(find.text('排行'));
+    await tester.tap(_catalogTab('排行'));
     await _pump(tester);
     web.finishLastLoad();
     await _pump(tester);
     for (var i = 0; i < 3; i++) {
-      await tester.tap(find.text('推荐'));
+      await tester.tap(_catalogTab('推荐'));
       await tester.pump();
       expect(find.text('Home card'), findsOneWidget);
-      await tester.tap(find.text('排行'));
+      await tester.tap(_catalogTab('排行'));
       await tester.pump();
       expect(find.text('Rank card'), findsOneWidget);
     }
@@ -1973,17 +2115,16 @@ void main() {
       await _mount(tester, plugin);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('排行'));
+      await tester.tap(_catalogTab('排行'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
       expect(find.text('Rank card'), findsOneWidget);
-      await tester.tap(find.text('推荐'));
+      await tester.tap(_catalogTab('推荐'));
       await tester.pump();
       expect(find.text('Home card'), findsOneWidget);
-      // A fresh tab revisit is local. An explicit re-tap requests refresh.
-      await tester.tap(find.text('推荐'));
-      await tester.pump();
+      // A fresh tab revisit is local. Pull to request an explicit refresh.
+      await _pullCatalogRefresh(tester);
       expect(
         find.byKey(const ValueKey('catalog-background-refresh')),
         findsOneWidget,
@@ -2047,13 +2188,13 @@ void main() {
     await _mount(tester, plugin);
     web.finishLastLoad();
     await _pump(tester);
-    await tester.tap(find.text('排行'));
+    await tester.tap(_catalogTab('排行'));
     await _pump(tester);
     web.finishLastLoad();
     await _pump(tester);
     await _chooseMode(tester, t.videoPlayback.website);
     await _chooseMode(tester, t.videoPlayback.nativeCatalog);
-    await tester.tap(find.text('推荐'));
+    await tester.tap(_catalogTab('推荐'));
     await _pump(tester);
     expect(
       find.text('Home card'),
@@ -2074,7 +2215,7 @@ void main() {
     web.finishLastLoad();
     await _pump(tester);
     expect(plugin.calls.where((c) => c.$1 == 'catalog'), hasLength(1));
-    await tester.tap(find.text('推荐'));
+    await _pullCatalogRefresh(tester);
     await _pump(tester, 20);
     expect(find.text('Home card'), findsOneWidget);
     expect(
@@ -2097,15 +2238,14 @@ void main() {
     await _mount(tester, plugin);
     web.finishLastLoad();
     await _pump(tester);
-    await tester.tap(find.text('排行'));
+    await tester.tap(_catalogTab('排行'));
     await _pump(tester);
     web.finishLastLoad();
     await _pump(tester);
-    await tester.tap(find.text('推荐'));
+    await tester.tap(_catalogTab('推荐'));
     await tester.pump();
     expect(find.text('Home card'), findsOneWidget);
-    await tester.tap(find.text('推荐'));
-    await tester.pump();
+    await _pullCatalogRefresh(tester);
     web.challenge = true;
     web.currentUrl = web.loads.last;
     final url = WebUri(web.currentUrl.toString());
@@ -2133,7 +2273,7 @@ void main() {
     web.finishLastLoad();
     await _pump(tester);
     final stops = web.stops;
-    expect(find.byType(BottomNavigationBar), findsNothing);
+    expect(find.byType(VideoNativeNavigation), findsNothing);
     for (final title in ['排行', '订阅', '我的', '推荐']) {
       expect(find.text(title), findsNothing);
     }
@@ -2426,7 +2566,7 @@ void main() {
       );
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('排行'));
+      await tester.tap(_catalogTab('排行'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -2516,18 +2656,18 @@ void main() {
       await _chooseMode(tester, t.videoPlayback.website);
       web.finishLastLoad();
       await _pump(tester);
-      expect(find.byType(BottomNavigationBar), findsNothing);
+      expect(find.byType(VideoNativeNavigation), findsNothing);
       await web.navigateWebsite(
         Uri.parse('https://hanime1.me/search?sort=views'),
       );
       await _pump(tester);
-      expect(find.byType(BottomNavigationBar), findsNothing);
+      expect(find.byType(VideoNativeNavigation), findsNothing);
       await tester.tap(find.byTooltip(t.common.back));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
       expect(web.loads.last.path, '/');
-      expect(find.byType(BottomNavigationBar), findsNothing);
+      expect(find.byType(VideoNativeNavigation), findsNothing);
       await web.navigateWebsite(
         Uri.parse('https://hanime1.me/search?sort=views'),
       );
@@ -2536,7 +2676,7 @@ void main() {
       await _pump(tester);
       expect(
         tester
-            .widget<BottomNavigationBar>(find.byType(BottomNavigationBar))
+            .widget<VideoNativeNavigation>(find.byType(VideoNativeNavigation))
             .currentIndex,
         1,
       );
@@ -2571,7 +2711,7 @@ void main() {
       );
       expect(verificationViewport.width, viewport.width);
       expect(verificationViewport.height, greaterThan(viewport.height));
-      expect(find.byType(BottomNavigationBar), findsNothing);
+      expect(find.byType(VideoNativeNavigation), findsNothing);
       await _verificationAction(tester, 'website');
       await _verificationAction(tester, 'native');
       expect(web.loads, hasLength(loads));
@@ -2644,7 +2784,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       web.profileHref = '/user/42';
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -2657,11 +2797,14 @@ void main() {
       await _pump(tester);
       expect(
         tester
-            .widget<BottomNavigationBar>(find.byType(BottomNavigationBar))
+            .widget<VideoNativeNavigation>(find.byType(VideoNativeNavigation))
             .currentIndex,
         0,
       );
-      expect(find.byType(VideoSearchEntry), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('video-search.query-title')),
+        findsOneWidget,
+      );
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
@@ -2710,7 +2853,7 @@ void main() {
           findsOneWidget,
           reason: path,
         );
-        expect(find.byType(BottomNavigationBar), findsNothing, reason: path);
+        expect(find.byType(VideoNativeNavigation), findsNothing, reason: path);
         expect(find.byType(NativeVideoPage), findsNothing, reason: path);
         expect(find.byType(NativeVideoAuthForm), findsNothing, reason: path);
         expect(find.byType(NativeVideoAccountForm), findsNothing, reason: path);
@@ -2750,18 +2893,18 @@ void main() {
         ),
         findsOneWidget,
       );
-      expect(find.byType(BottomNavigationBar), findsNothing);
+      expect(find.byType(VideoNativeNavigation), findsNothing);
       await web.navigateWebsite(
         Uri.parse('https://hanime1.me/search?sort=views'),
       );
       await _pump(tester);
-      expect(find.byType(BottomNavigationBar), findsNothing);
+      expect(find.byType(VideoNativeNavigation), findsNothing);
       expect(find.byType(NativeVideoPage), findsNothing);
       await _chooseMode(tester, t.videoPlayback.nativeCatalog);
       await _pump(tester);
       expect(
         tester
-            .widget<BottomNavigationBar>(find.byType(BottomNavigationBar))
+            .widget<VideoNativeNavigation>(find.byType(VideoNativeNavigation))
             .currentIndex,
         1,
       );
@@ -2783,7 +2926,7 @@ void main() {
         await _mount(tester, plugin);
         web.finishLastLoad();
         await _pump(tester);
-        await tester.tap(find.text('订阅'));
+        await tester.tap(_catalogTab('订阅'));
         await _pump(tester);
         web.finishLastLoad();
         await _pump(tester);
@@ -2872,7 +3015,7 @@ void main() {
             find.byTooltip(t.videoPlayback.browserActions),
             findsOneWidget,
           );
-          expect(find.byType(BottomNavigationBar), findsNothing);
+          expect(find.byType(VideoNativeNavigation), findsNothing);
           await web.navigateWebsite(Uri.parse('https://hanime1.me/'));
           await _pump(tester);
           expect(find.text('Home card'), findsOneWidget);
@@ -2895,7 +3038,7 @@ void main() {
       await _mount(tester, plugin);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('订阅'));
+      await tester.tap(_catalogTab('订阅'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -2980,7 +3123,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       final loads = web.loads.length;
-      final outside = tester.getCenter(find.byType(BottomNavigationBar));
+      final outside = tester.getCenter(find.byType(VideoNativeNavigation));
       for (var i = 0; i < 10; i++) {
         await tester.tap(find.byTooltip(t.videoPlayback.websiteToggle));
         await tester.pump();
@@ -3257,6 +3400,106 @@ void main() {
   });
 
   testWidgets(
+    'cached subscriptions reattach their document after a cancelled shelf read',
+    (tester) async {
+      const owner = 'https://hanime1.me/user/42';
+      const watch = 'https://hanime1.me/watch?v=31';
+      final author = {
+        'role': 'artist',
+        'entityKey': 'artist:7',
+        'artistId': '7',
+        'name': 'Author fixture',
+        'profileUrl': 'https://hanime1.me/user/88',
+        'profileId': '88',
+      };
+      web.domSnapshot = {
+        'account': {'profileUrl': owner},
+        'subscriptionFilterUsers': ['88'],
+      };
+      web.creatorDirectory = {
+        'ownerUrl': owner,
+        'creators': [author],
+      };
+      web.subscriptionShelf = {
+        'ownerUrl': owner,
+        'profileId': '88',
+        'pageUrl': 'https://hanime1.me/subscriptions?artist_id=88',
+        'cards': [
+          {'href': watch},
+        ],
+      };
+      plugin.catalog = (args) async {
+        final authorPage =
+            Uri.parse(args['pageUrl'] as String).queryParameters['artist_id'] ==
+            '88';
+        return {
+          'data': {
+            'account': {'status': 'signedIn', 'profileUrl': owner},
+            'videos': [
+              {'title': 'Only this work', 'watchUrl': watch},
+            ],
+            if (!authorPage)
+              'creatorGroups': [
+                {'creator': author, 'videos': []},
+              ],
+          },
+        };
+      };
+      await _mount(
+        tester,
+        plugin,
+        nativePersonal: true,
+        structuredHanime: true,
+        filters: _filters,
+      );
+      web.finishLastLoad();
+      await _pump(tester);
+      final firstRead = Completer<dynamic>();
+      web.nextShelfRead = firstRead.future;
+      await tester.tap(_catalogTab('订阅'));
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      final shelf = find.byKey(const PageStorageKey('creator.videos.artist:7'));
+      expect(web.shelfReads, 1);
+      expect(shelf, findsNothing);
+      await tester.tap(_catalogTab('排行'));
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(web.currentUrl?.path, '/search');
+      firstRead.complete({'status': 'ok', 'value': web.subscriptionShelf});
+      await _pump(tester);
+      await tester.tap(_catalogTab('订阅'));
+      await _pump(tester);
+      expect(find.text('Author fixture'), findsOneWidget);
+      expect(web.loads.last.path, '/subscriptions');
+      expect(web.shelfReads, 1);
+      web.finishLastLoad();
+      await _pump(tester);
+      expect(web.shelfReads, 2);
+      expect(
+        find.descendant(of: shelf, matching: find.text('Only this work')),
+        findsOneWidget,
+      );
+      expect(
+        find.text(t.videoCommunity.unassignedSubscriptionUpdates),
+        findsNothing,
+      );
+      await tester.tap(find.byTooltip(t.common.search));
+      await _pump(tester);
+      final search = find.byType(EditableText);
+      expect(search, findsOneWidget);
+      expect(find.byTooltip(t.videoPlayback.websiteToggle), findsNothing);
+      await tester.enterText(search, 'missing sample');
+      await _pump(tester);
+      expect(find.text(t.search.noResults), findsOneWidget);
+      expect(web.shelfReads, 2);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
     'subscription works and avatar resolve to the same real author with one directory read',
     (tester) async {
       final author = {
@@ -3303,7 +3546,7 @@ void main() {
       await _mount(tester, plugin, nativePersonal: true);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('订阅'));
+      await tester.tap(_catalogTab('订阅'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -3385,7 +3628,7 @@ void main() {
       await _mount(tester, plugin, nativePersonal: true);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('订阅'));
+      await tester.tap(_catalogTab('订阅'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -3460,7 +3703,7 @@ void main() {
       await _mount(tester, plugin, nativePersonal: true);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('订阅'));
+      await tester.tap(_catalogTab('订阅'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -3480,7 +3723,7 @@ void main() {
       };
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('订阅'));
+      await tester.tap(_catalogTab('订阅'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -3540,7 +3783,7 @@ void main() {
       await _mount(tester, plugin, nativePersonal: true);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('订阅'));
+      await tester.tap(_catalogTab('订阅'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -3658,16 +3901,18 @@ void main() {
       await _mount(tester, plugin, textScale: 2);
       web.finishLastLoad();
       await _pump(tester);
-      final search = tester.getRect(find.byType(VideoSearchEntry));
+      final search = tester.getRect(
+        find.byKey(const ValueKey('video-search.entry')),
+      );
       final more = tester.getRect(find.byType(NativeVideoMenu));
-      expect(more.left - search.right, greaterThanOrEqualTo(8));
+      expect(more.left - search.right, greaterThanOrEqualTo(4));
       expect(320 - more.right, greaterThanOrEqualTo(8));
       expect(more.width, greaterThanOrEqualTo(44));
       expect(more.height, greaterThanOrEqualTo(44));
       expect(search.height, greaterThanOrEqualTo(44));
-      expect(search.height, more.height);
       expect(search.center.dy, more.center.dy);
-      expect(search.width, greaterThanOrEqualTo(190));
+      expect(search.width, greaterThanOrEqualTo(44));
+      expect(search.width, search.height);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     },
@@ -3752,7 +3997,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       web.profileHref = '/user/42';
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -3873,7 +4118,7 @@ void main() {
       await _mount(tester, plugin, nativePersonal: true);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('订阅'));
+      await tester.tap(_catalogTab('订阅'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -3926,6 +4171,146 @@ void main() {
     },
   );
 
+  final authorInterface = ValueVariant<String>({'system', 'breeze'});
+  testWidgets(
+    'Hanime author entries keep profile and localized uploads distinct',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(320, 720);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final style = ValueNotifier(authorInterface.currentValue!);
+      addTearDown(style.dispose);
+      final profile = Uri.https('hanime1.me', '/user/11');
+      final uploads = Uri.https('hanime1.me', '/user/11/uploaded', {
+        'sort': 'newest',
+      });
+      const name = 'Harbor Studio';
+      final subscription = find.byKey(const ValueKey('creator.open'));
+      final allWorks = find.byKey(const ValueKey('creator.works'));
+      Map<String, dynamic> card(String title, int id) => {
+        'title': title,
+        'watchUrl': 'https://hanime1.me/watch?v=$id',
+        'coverUrl': '',
+      };
+      plugin.catalog = (core) async {
+        final page = Uri.parse(core['pageUrl'] as String);
+        return {
+          'data': {
+            'sections': [],
+            'videos': [
+              if (page == profile)
+                card('Profile preview', 1)
+              else if (page == uploads)
+                card('Only in the uploads tab', 2),
+            ],
+            'account': {
+              'status': 'signedIn',
+              'isOwnProfile': false,
+              'profileUrl': 'https://hanime1.me/user/42',
+            },
+            if (page.path == '/subscriptions')
+              'creatorGroups': [
+                {
+                  'creator': {'name': name, 'profileUrl': profile.toString()},
+                  'videos': [card('Subscription preview', 3)],
+                },
+              ],
+            if (page == profile || page == uploads)
+              'publicProfile': {
+                'status': 'profile',
+                'name': name,
+                'profileUrl': profile.toString(),
+                'links': [
+                  {'title': '首頁', 'url': profile.toString()},
+                  {'title': '影片', 'url': uploads.toString()},
+                ],
+              },
+          },
+        };
+      };
+      await _mount(
+        tester,
+        plugin,
+        nativePersonal: true,
+        structuredHanime: true,
+        textScale: 1.6,
+        interfaceStyle: style,
+      );
+      web.finishLastLoad();
+      await _pump(tester);
+      await tester.tap(_catalogTab('订阅'));
+      await _pump(tester);
+      web.finishLastLoad();
+      await _pump(tester);
+      final initialListLoads = web.loads.length;
+
+      await tester.tap(allWorks);
+      await _pump(tester);
+      final worksDocument = web.documents.last;
+      expect(worksDocument.loads.last, profile);
+      worksDocument.finishLastLoad();
+      await _pump(tester);
+      expect(worksDocument.loads.last, uploads);
+      worksDocument.finishLastLoad();
+      await _pump(tester);
+      expect(find.text('Only in the uploads tab'), findsOneWidget);
+      expect(find.text('Subscription preview'), findsNothing);
+      expect(find.text('Profile preview'), findsNothing);
+      final sections = find.byType(NativeVideoSegmentedControl);
+      expect(
+        tester.widget<NativeVideoSegmentedControl>(sections).selected,
+        uploads.path,
+      );
+      expect(find.byType(PinnedHeaderSliver), findsOneWidget);
+      final appBar = find.byType(AppBar);
+      final back = find.byTooltip(t.common.back);
+      final more = find.descendant(
+        of: appBar,
+        matching: find.byType(NativeVideoMenu),
+      );
+      final backFrame = tester.getRect(back);
+      final moreFrame = tester.getRect(more);
+      expect(backFrame.center.dy, closeTo(moreFrame.center.dy, .1));
+      expect(backFrame.left, greaterThanOrEqualTo(12));
+      expect(320 - moreFrame.right, greaterThanOrEqualTo(12));
+      await tester.tap(find.byTooltip(t.common.search));
+      await _pump(tester);
+      await tester.enterText(find.byType(TextField), 'Missing work');
+      await _pump(tester);
+      expect(find.text('Only in the uploads tab'), findsNothing);
+      expect(find.text(t.search.noResults), findsOneWidget);
+      expect(worksDocument.loads.last, uploads);
+      await tester.tap(find.byTooltip(t.common.close));
+      await _pump(tester);
+      expect(find.text('Only in the uploads tab'), findsOneWidget);
+      await tester.tap(find.byTooltip(t.common.search));
+      await _pump(tester);
+      await tester.enterText(find.byType(TextField), 'Missing work');
+      await tester.binding.handlePopRoute();
+      await _pump(tester);
+      expect(find.byType(TextField), findsNothing);
+      expect(find.text('Only in the uploads tab'), findsOneWidget);
+      expect(worksDocument.loads.last, uploads);
+      await tester.tap(back);
+      await _pump(tester);
+      expect(subscription, findsOneWidget);
+      expect(web.loads, hasLength(initialListLoads));
+
+      await tester.tap(subscription);
+      await _pump(tester);
+      final profileDocument = web.documents.last;
+      expect(profileDocument.loads.last, profile);
+      profileDocument.finishLastLoad();
+      await _pump(tester);
+      expect(find.text('Profile preview'), findsOneWidget);
+      expect(find.text('Only in the uploads tab'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: authorInterface,
+  );
+
   testWidgets(
     'personal tabs restore independent scroll positions using the fresh cache',
     (tester) async {
@@ -3956,7 +4341,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       web.profileHref = '/user/42';
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -4054,7 +4439,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       web.profileHref = '/user/42';
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -4117,7 +4502,7 @@ void main() {
       await _mount(tester, plugin, nativePersonal: true);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('订阅'));
+      await tester.tap(_catalogTab('订阅'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -4177,7 +4562,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       web.profileHref = '/user/42';
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -4209,10 +4594,16 @@ void main() {
             .map((v) => v.title),
         ['Even tagged'],
       );
-      await tester.tap(
-        find.byKey(const ValueKey('personal-records.search-toggle')),
-      );
+      await tester.binding.handlePopRoute();
       await _pump(tester, 2);
+      expect(find.byType(TextField), findsNothing);
+      expect(
+        tester
+            .widget<ApiVideoCollection>(find.byType(ApiVideoCollection))
+            .items
+            .map((item) => item.title),
+        ['Even tagged', 'Odd tagged'],
+      );
       final afterLikes = web.loads.length;
       await _openPersonalLibrary(tester, 'saves');
       await _pump(tester);
@@ -4238,14 +4629,14 @@ void main() {
             .widget<ApiVideoCollection>(find.byType(ApiVideoCollection))
             .items
             .map((v) => v.title),
-        ['Even tagged'],
+        ['Even tagged', 'Odd tagged'],
       );
       await tester.tap(find.byTooltip(t.common.back).hitTestable().last);
       await _pump(tester);
-      await tester.tap(find.text('推荐'));
+      await tester.tap(_catalogTab('推荐'));
       await _pump(tester);
       final beforeMy = web.loads.length;
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       expect(
         web.loads.length,
@@ -4315,7 +4706,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       web.profileHref = '/user/42';
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -4384,7 +4775,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       web.profileHref = '/user/42';
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -4491,7 +4882,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       web.profileHref = '/user/42';
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -4508,11 +4899,11 @@ void main() {
       await _pump(tester);
       await tester.tap(find.byTooltip(t.common.back).hitTestable().last);
       await _pump(tester);
-      await tester.tap(find.text('推荐'));
+      await tester.tap(_catalogTab('推荐'));
       await _pump(tester);
       user = 99;
       web.profileHref = '/user/99';
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -4599,7 +4990,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       web.profileHref = oldOwner.path;
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -4684,7 +5075,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       web.profileHref = '/user/42';
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -4792,7 +5183,7 @@ void main() {
       await _mount(tester, plugin, nativePersonal: true);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('订阅'));
+      await tester.tap(_catalogTab('订阅'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -4825,7 +5216,7 @@ void main() {
       await _mount(tester, plugin, nativePersonal: true);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -4835,7 +5226,9 @@ void main() {
         ),
         findsOneWidget,
       );
-      await tester.tap(find.text(t.videoCommunity.login));
+      await tester.tap(
+        find.widgetWithText(TextButton, t.videoCommunity.login).last,
+      );
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -4963,11 +5356,13 @@ void main() {
       await _mount(tester, plugin, nativePersonal: true);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('订阅'));
+      await tester.tap(_catalogTab('订阅'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text(t.videoCommunity.login));
+      await tester.tap(
+        find.widgetWithText(TextButton, t.videoCommunity.login).last,
+      );
       await _pump(tester);
       expect(web.loads.last.path, '/login');
       web.finishLastLoad();
@@ -5008,7 +5403,7 @@ void main() {
       await _mount(tester, plugin, nativePersonal: true);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('订阅'));
+      await tester.tap(_catalogTab('订阅'));
       await _pump(tester);
       final loads = web.loads.length;
       web.currentUrl = Uri.parse('https://hanime1.me/login');
@@ -5079,7 +5474,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       web.profileHref = '/user/42';
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -5211,11 +5606,13 @@ void main() {
       await _mount(tester, plugin, nativePersonal: true, nativeAuth: true);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('订阅'));
+      await tester.tap(_catalogTab('订阅'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text(t.videoCommunity.login));
+      await tester.tap(
+        find.widgetWithText(TextButton, t.videoCommunity.login).last,
+      );
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -5270,7 +5667,7 @@ void main() {
       await _mount(tester, plugin, nativePersonal: true, nativeAuth: true);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -5310,7 +5707,7 @@ void main() {
       await _mount(tester, plugin, nativePersonal: true, nativeAuth: true);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -5342,27 +5739,27 @@ void main() {
     await _mount(tester, plugin);
     web.finishLastLoad();
     await _pump(tester);
-    expect(find.byType(BottomNavigationBar), findsOneWidget);
+    expect(find.byType(VideoNativeNavigation), findsOneWidget);
     await _chooseMode(tester, t.videoPlayback.website);
     web.finishLastLoad();
     await _pump(tester);
-    expect(find.byType(BottomNavigationBar), findsNothing);
+    expect(find.byType(VideoNativeNavigation), findsNothing);
     expect(find.byKey(const ValueKey('website-document')), findsOneWidget);
     await _chooseMode(tester, t.videoPlayback.nativeCatalog);
     web.finishLastLoad();
     await _pump(tester);
-    expect(find.byType(BottomNavigationBar), findsOneWidget);
+    expect(find.byType(VideoNativeNavigation), findsOneWidget);
     expect(find.text('Home card'), findsOneWidget);
     web.challenge = true;
-    await tester.tap(find.text('排行'));
+    await tester.tap(_catalogTab('排行'));
     await _pump(tester);
     web.finishLastLoad();
     await _pump(tester);
     expect(find.text(t.videoPlayback.verificationTitle), findsOneWidget);
-    expect(find.byType(BottomNavigationBar), findsNothing);
+    expect(find.byType(VideoNativeNavigation), findsNothing);
     web.challenge = false;
     await _pump(tester, 40);
-    expect(find.byType(BottomNavigationBar), findsOneWidget);
+    expect(find.byType(VideoNativeNavigation), findsOneWidget);
     expect(find.text('Rank card'), findsOneWidget);
     expect(web.creations, 1);
     await tester.pumpWidget(const SizedBox.shrink());
@@ -5390,16 +5787,16 @@ void main() {
       await _mount(tester, plugin, nativePersonal: true);
       web.finishLastLoad();
       await _pump(tester);
-      expect(find.byType(BottomNavigationBar), findsNothing);
+      expect(find.byType(VideoNativeNavigation), findsNothing);
       await web.navigateWebsite(Uri.parse('https://hanime1.me/user/42'));
       await _pump(tester);
-      expect(find.byType(BottomNavigationBar), findsNothing);
+      expect(find.byType(VideoNativeNavigation), findsNothing);
       await _chooseMode(tester, t.videoPlayback.nativeCatalog);
       await _pump(tester);
       expect(find.text('Confirmed account'), findsOneWidget);
       expect(
         tester
-            .widget<BottomNavigationBar>(find.byType(BottomNavigationBar))
+            .widget<VideoNativeNavigation>(find.byType(VideoNativeNavigation))
             .currentIndex,
         3,
       );
@@ -5409,10 +5806,10 @@ void main() {
       await _pump(tester);
       expect(web.loads.last.path, '/');
       // A newer explicit native choice takes precedence over old web history.
-      expect(find.byType(BottomNavigationBar), findsOneWidget);
+      expect(find.byType(VideoNativeNavigation), findsOneWidget);
       expect(
         tester
-            .widget<BottomNavigationBar>(find.byType(BottomNavigationBar))
+            .widget<VideoNativeNavigation>(find.byType(VideoNativeNavigation))
             .currentIndex,
         0,
       );
@@ -5463,7 +5860,7 @@ void main() {
         );
         web.finishLastLoad();
         await _pump(tester);
-        await tester.tap(find.text('我的'));
+        await tester.tap(_catalogTab('我的'));
         await _pump(tester);
         web.finishLastLoad();
         await _pump(tester);
@@ -5585,7 +5982,7 @@ void main() {
       await _mount(tester, plugin);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('订阅'));
+      await tester.tap(_catalogTab('订阅'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -5597,7 +5994,7 @@ void main() {
       web.params.onLoadStop?.call(web.wrapped, url);
       await _pump(tester);
       expect(find.text(t.videoPlayback.verificationTitle), findsOneWidget);
-      expect(find.byType(BottomNavigationBar), findsNothing);
+      expect(find.byType(VideoNativeNavigation), findsNothing);
       expect(web.loads, hasLength(loads));
       web.challenge = false;
       await _pump(tester, 40);
@@ -5638,7 +6035,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       web.profileHref = '/user/42';
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -5674,7 +6071,7 @@ void main() {
       await _mount(tester, plugin);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('订阅'));
+      await tester.tap(_catalogTab('订阅'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -5786,11 +6183,11 @@ void main() {
       if (entry != 'home') {
         web.challenge = true;
         if (entry == 'ranking') {
-          await tester.tap(find.text('排行'));
+          await tester.tap(_catalogTab('排行'));
         } else if (entry == 'detail') {
           await tester.tap(find.text('Home card'));
         } else {
-          await tester.tap(find.byType(VideoSearchEntry));
+          await tester.tap(find.byKey(const ValueKey('video-search.entry')));
           await _pump(tester);
           await tester.enterText(find.byType(TextField), 'Home');
           await tester.testTextInput.receiveAction(TextInputAction.search);
@@ -5900,7 +6297,7 @@ void main() {
     await _mount(tester, plugin);
     web.finishLastLoad();
     await _pump(tester, 1);
-    await tester.tap(find.text('排行'));
+    await tester.tap(_catalogTab('排行'));
     await _pump(tester);
     web.finishLastLoad();
     await _pump(tester);
@@ -6183,14 +6580,14 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       expect(find.text(t.videoPlayback.verificationTitle), findsOneWidget);
-      expect(find.byType(BottomNavigationBar), findsNothing);
+      expect(find.byType(VideoNativeNavigation), findsNothing);
       expect(web.loads, hasLength(loads + 1));
       web.challenge = false;
       web.finishLastLoad();
       await _pump(tester);
       expect(find.text('Home card'), findsOneWidget);
       expect(find.text(t.videoPlayback.verificationTitle), findsNothing);
-      await tester.tap(find.text('排行'));
+      await tester.tap(_catalogTab('排行'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -6346,7 +6743,7 @@ void main() {
       await _mount(tester, plugin, nativePersonal: true, nativeAuth: true);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       expect(web.loads.last.path, '/');
       expect(web.loads.any((uri) => uri.path == '/login'), isFalse);
@@ -6385,7 +6782,7 @@ void main() {
       await _mount(tester, plugin, nativePersonal: true, nativeAuth: true);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -6473,7 +6870,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       web.profileHref = '/user/42';
-      await tester.tap(find.text('我的'));
+      await tester.tap(_catalogTab('我的'));
       await _pump(tester);
       expect(find.text(t.videoPlayback.watchHistory), findsNothing);
       expect(web.loads.last.path, '/user/42');
@@ -6504,20 +6901,23 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       expect(find.byTooltip(t.settings.title), findsNothing);
-      expect(
-        tester.getSize(find.byKey(const ValueKey('video-search.entry'))).width,
-        greaterThan(220),
-      );
+      final searchEntry = find.byKey(const ValueKey('video-search.entry'));
+      expect(tester.getSize(searchEntry).width, lessThan(60));
+      expect(find.byType(VideoSearchEntry), findsNothing);
       final menu = tester.widget<NativeVideoMenu>(find.byType(NativeVideoMenu));
       expect(menu.label, isEmpty);
       expect(menu.width, 44);
-      await tester.tap(find.text('排行'));
+      await tester.tap(_catalogTab('排行'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
       final count = web.loads.length;
       await tester.tap(find.byKey(const ValueKey('video-search.entry')));
       await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('video-search.filters')),
+        findsOneWidget,
+      );
       await tester.enterText(
         find.byKey(const ValueKey('video-search.input')),
         'Discard',
@@ -6541,9 +6941,10 @@ void main() {
       await _pump(tester);
       await tester.tap(find.byTooltip(t.common.back));
       await _pump(tester);
+      expect(searchEntry, findsOneWidget);
       expect(
-        tester.widget<VideoSearchEntry>(find.byType(VideoSearchEntry)).query,
-        isEmpty,
+        find.byKey(const ValueKey('video-search.query-title')),
+        findsNothing,
       );
       expect(find.text('Rank card'), findsOneWidget);
       expect(
@@ -6659,7 +7060,7 @@ void main() {
       await _mount(tester, plugin, filters: _filters);
       web.finishLastLoad();
       await _pump(tester);
-      await tester.tap(find.text('排行'));
+      await tester.tap(_catalogTab('排行'));
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
@@ -6673,6 +7074,14 @@ void main() {
       await _pump(tester);
       web.finishLastLoad();
       await _pump(tester);
+      expect(web.loads.last.queryParameters['sort'], 'views');
+      final sortCondition = find.descendant(
+        of: find.byKey(const ValueKey('sort')),
+        matching: find.byType(ActionChip),
+      );
+      expect(sortCondition, findsOneWidget);
+      await tester.longPress(sortCondition);
+      await _pump(tester);
       expect(find.byTooltip(t.videoFilters.removeFilter), findsOneWidget);
       expect(find.widgetWithText(InputChip, 'Series'), findsNothing);
       await tester.tap(find.byTooltip(t.videoFilters.removeFilter).first);
@@ -6682,12 +7091,9 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       expect(find.byTooltip(t.videoFilters.removeFilter), findsNothing);
-      await tester.tap(
-        find.descendant(
-          of: find.byType(VideoSearchEntry),
-          matching: find.byTooltip(t.common.clear),
-        ),
-      );
+      await tester.tap(find.byTooltip(t.videoPlayback.websiteToggle));
+      await _pump(tester, 3);
+      await tester.tap(find.text(t.videoSearch.clearQuery));
       await _pump(tester);
       expect(web.loads.last.queryParameters['query'], isNull);
       await tester.pumpWidget(const SizedBox.shrink());
@@ -6919,7 +7325,7 @@ void main() {
     await tester.tap(localRecords);
     await _pump(tester);
     expect(find.text(t.videoSource.localHistory), findsOneWidget);
-    expect(find.byType(BottomNavigationBar), findsNothing);
+    expect(find.byType(VideoNativeNavigation), findsNothing);
     expect(find.byTooltip(t.settings.title), findsNothing);
     expect(find.byType(VideoPersonalOverview), findsNothing);
 
@@ -7008,7 +7414,7 @@ void main() {
       expect(find.text('Rank card'), findsOneWidget);
       expect(
         tester
-            .widget<BottomNavigationBar>(find.byType(BottomNavigationBar))
+            .widget<VideoNativeNavigation>(find.byType(VideoNativeNavigation))
             .currentIndex,
         1,
       );
@@ -7056,7 +7462,7 @@ void main() {
     await _mount(tester, plugin);
     web.finishLastLoad();
     await _pump(tester);
-    await tester.tap(find.text('排行'));
+    await tester.tap(_catalogTab('排行'));
     await _pump(tester);
     web.finishLastLoad();
     await _pump(tester);
@@ -7432,7 +7838,7 @@ void main() {
         await _mount(tester, plugin, nativePersonal: true, nativeAuth: true);
         web.finishLastLoad();
         await _pump(tester);
-        await tester.tap(find.text('我的'));
+        await tester.tap(_catalogTab('我的'));
         await _pump(tester);
         web.finishLastLoad();
         await _pump(tester);
@@ -7521,7 +7927,7 @@ void main() {
       web.finishWebsiteNavigation(web.currentUrl!);
       await _pump(tester);
       expect(find.text('Home card'), findsOneWidget);
-      expect(find.byType(BottomNavigationBar), findsOneWidget);
+      expect(find.byType(VideoNativeNavigation), findsOneWidget);
       expect(web.creations, 1);
       await tester.pumpWidget(const SizedBox.shrink());
     },
@@ -7571,7 +7977,7 @@ void main() {
       expect(find.byKey(const ValueKey('website-document')), findsNothing);
       expect(tester.state(find.byType(VideoSiteBrowser)), same(original));
       expect(web.creations, 1);
-      expect(find.byType(BottomNavigationBar), findsOneWidget);
+      expect(find.byType(VideoNativeNavigation), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
@@ -7593,7 +7999,7 @@ void main() {
       web.finishLastLoad();
       await _pump(tester);
       expect(find.byKey(const ValueKey('website-document')), findsOneWidget);
-      expect(find.byType(BottomNavigationBar), findsNothing);
+      expect(find.byType(VideoNativeNavigation), findsNothing);
       await _chooseMode(tester, t.videoPlayback.nativeCatalog);
       await _pump(tester);
       web.finishLastLoad();

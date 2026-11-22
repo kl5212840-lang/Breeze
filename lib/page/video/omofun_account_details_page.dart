@@ -7,9 +7,9 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/page/video/omofun_site_client.dart';
-import 'package:zephyr/page/video/video_thumbnail.dart';
+import 'package:zephyr/page/setting/common/plugin_account_avatar.dart';
+import 'package:zephyr/page/video/omo_network.dart';
 import 'package:zephyr/service/local_appearance_images.dart';
-import 'package:zephyr/widgets/collection_cover_privacy.dart';
 import 'package:zephyr/widgets/local_appearance_image_picker.dart';
 import 'package:zephyr/widgets/toast.dart';
 
@@ -22,11 +22,15 @@ class OmoAccountDetailsPage extends StatefulWidget {
     required this.client,
     required this.source,
     required this.onWebsite,
+    this.onAddAccount,
+    this.onAddAccountWithSession,
     this.images,
   });
   final OmoSiteClient client;
   final String source;
   final Future<void> Function(BuildContext, String, String) onWebsite;
+  final Future<void> Function()? onAddAccount;
+  final Future<void> Function(PluginAccountAddition)? onAddAccountWithSession;
   final LocalAppearanceImages? images;
 
   @override
@@ -48,17 +52,19 @@ class _OmoAccountDetailsPageState extends State<OmoAccountDetailsPage> {
     _read();
   }
 
-  Future<void> _read() =>
-      _readTask ??= _readNow().whenComplete(() => _readTask = null);
+  Future<void> _read({bool forceAvatarRefresh = false}) =>
+      _readTask ??= _readNow(
+        forceAvatarRefresh: forceAvatarRefresh,
+      ).whenComplete(() => _readTask = null);
 
-  Future<void> _readNow() async {
+  Future<void> _readNow({bool forceAvatarRefresh = false}) async {
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
       await widget.client.readAccount(includeProfile: true);
-      if (mounted) _avatarRevision++;
+      if (mounted && forceAvatarRefresh) _avatarRevision++;
     } catch (error) {
       if (mounted) _error = error;
     } finally {
@@ -108,8 +114,10 @@ class _OmoAccountDetailsPageState extends State<OmoAccountDetailsPage> {
       prepareSession: () async {
         await widget.client.readAccount();
       },
-      onAddAccount: () =>
-          widget.onWebsite(context, '/user/login', t.plugin.accountLogin),
+      onAddAccount:
+          widget.onAddAccount ??
+          () => widget.onWebsite(context, '/user/login', t.plugin.accountLogin),
+      onAddAccountWithSession: widget.onAddAccountWithSession,
     );
     if (mounted) await _read();
   }
@@ -193,7 +201,7 @@ class _OmoAccountDetailsPageState extends State<OmoAccountDetailsPage> {
         title: t.omoAccount.title,
         grouped: true,
         child: RefreshIndicator(
-          onRefresh: _read,
+          onRefresh: () => _read(forceAvatarRefresh: true),
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.only(top: 8, bottom: 32),
@@ -370,25 +378,16 @@ class OmoAccountAvatar extends StatelessWidget {
   final double size;
   final String? source;
   @override
-  Widget build(BuildContext context) => ClipOval(
-    child: SizedBox.square(
-      dimension: size,
-      child: CollectionCoverPrivacyScope(
-        enabled: false,
-        child: VideoThumbnail(
-          source: source?.trim().isNotEmpty == true ? source : null,
-          url: client.account?.avatar?.toString() ?? '',
-          referrer: client.home,
-          cacheWidth: (size * MediaQuery.devicePixelRatioOf(context))
-              .round()
-              .clamp(1, 512),
-          retryOnTap: false,
-          refreshToken: revision,
-          refreshHealthyOnTokenChange: true,
-          placeholderIcon: Icons.person_outline_rounded,
-        ),
-      ),
-    ),
+  Widget build(BuildContext context) => PluginAccountAvatar(
+    source: source?.trim().isNotEmpty == true
+        ? source!.trim()
+        : omoNetworkSource,
+    identity: client.account?.id ?? '',
+    url: client.account?.avatar?.toString() ?? '',
+    path: '',
+    origin: client.home.origin,
+    revision: revision,
+    size: size,
   );
 }
 

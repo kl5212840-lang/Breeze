@@ -1,7 +1,7 @@
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/widgets/applied_filter_bar.dart';
 import 'package:zephyr/widgets/collection_command_icons.dart';
 import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
-import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/service/read_recovery.dart';
 import 'package:zephyr/widgets/read_recovery_scope.dart';
 import 'package:zephyr/widgets/pull_refresh_feedback.dart';
@@ -35,6 +35,7 @@ import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 import 'package:zephyr/page/video/api_video_collection.dart';
+import 'package:zephyr/widgets/tab_reselect_scope.dart';
 import 'package:zephyr/page/video/api_video_catalog_index.dart';
 import 'package:zephyr/page/bookshelf/models/shelf_facets.dart';
 import 'package:zephyr/page/bookshelf/widgets/shelf_filter_sheet.dart';
@@ -55,6 +56,7 @@ import 'package:zephyr/page/video/video_search_page.dart';
 import 'package:zephyr/page/video/omofun_site_client.dart';
 import 'package:zephyr/page/video/omofun_account_page.dart';
 import 'package:zephyr/page/video/source_profile_video_preview.dart';
+import 'package:zephyr/page/video/source_video_list_header.dart';
 import 'package:zephyr/page/video/omofun_favorites_page.dart';
 import 'package:zephyr/page/video/video_thumbnail.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
@@ -196,7 +198,9 @@ class ApiVideoLibraryPage extends StatefulWidget {
   State<ApiVideoLibraryPage> createState() => _ApiVideoLibraryPageState();
 }
 
-class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
+class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage>
+    with WidgetsBindingObserver {
+  final _tabReselect = TabReselectController();
   late final ApiVideoRepository _repository;
   ApiVideoBrowserSession? _browser;
   Future<OmoNetworkContext?>? _network;
@@ -211,6 +215,12 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
   bool get _omo => _site != null && _repository.capabilities.animePresentation;
   bool get _recordTask =>
       !_omo && const {'favorite', 'history'}.contains(widget.initialSection);
+  bool get _ownsTabNavigation =>
+      !_embedded &&
+      !_remoteSearchTask &&
+      !_recordTask &&
+      widget.bookshelfItem == null &&
+      widget.initialBrowseUrl == null;
   bool get _compactBrowsing =>
       (_embedded || _remoteSearchTask) && widget.browseOnly;
   bool get _websiteSearch => _repository.capabilities.search == 'website';
@@ -221,14 +231,40 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
       !_repository.capabilities.browserCatalog;
   bool get _siteSearchInHeader =>
       _repository.capabilities.canSearch && _browseUrl == null;
+  bool get _showEditableSearchTitle =>
+      _tab == 0 && _siteSearchInHeader && !_websiteSearch && _query.isNotEmpty;
+  bool get _dedicatedSearchInput =>
+      _remoteSearchTask && _editingCatalogSearch && _query.isEmpty;
 
-  bool _putCatalogViewInMore(BuildContext context) =>
-      _showOmoRecommendations &&
-      _tab == 0 &&
-      _siteSearchInHeader &&
-      (MediaQuery.sizeOf(context).width <
-              (AppInterfaceStyleScope.usesSystem(context) ? 400 : 460) ||
-          MediaQuery.textScalerOf(context).scale(14) > 20);
+  bool get _showsCatalogFilter {
+    final capabilities = _repository.capabilities;
+    return (!_remoteSearchTask || _query.isNotEmpty) &&
+        widget.initialBrowseUrl == null &&
+        (_query.isNotEmpty && capabilities.filtersOnSearch ||
+            capabilities.year ||
+            capabilities.sourceSort ||
+            _compactBrowsing && _localCatalogSupported);
+  }
+
+  Widget _catalogFilterButton() => SourceChromeIconButton(
+    key: const ValueKey('api-library.filters'),
+    tooltip: t.videoFilters.title,
+    symbol: CollectionCommandIcons.filter.symbol,
+    icon: CollectionCommandIcons.filter.icon,
+    onPressed: () => _catalogKey.currentState?.editFilters(),
+  );
+
+  Widget _omoLayoutButton() {
+    final grid = _mode == ApiVideoView.grid;
+    final target = CollectionCommandIcons.toggleTarget(grid);
+    return SourceChromeIconButton(
+      key: const ValueKey('api-library.view-mode'),
+      tooltip: grid ? t.videoLibrary.detailList : t.videoLibrary.grid,
+      symbol: target.symbol,
+      icon: target.icon,
+      onPressed: _savingView ? null : _toggleView,
+    );
+  }
 
   Widget? _catalogViewButton() {
     if (_repository.capabilities.animePresentation) return null;
@@ -293,6 +329,7 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
   late Uri? _browseUrl = widget.initialBrowseUrl;
   int _tab = 0;
   final _catalogSearchFocus = FocusNode();
+  final _catalogDraftText = ValueNotifier<String>('');
   bool _editingCatalogSearch = false;
   int _catalogQueryRevision = 0;
   late KeywordSearchScope _draftKeywordScope;
@@ -312,6 +349,7 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     final borrowedNetwork = widget._borrowedNetwork;
     if (borrowedNetwork == null) {
       _networkLease = SourceNetworkPolicies.supports(widget.repository.source)
@@ -427,7 +465,10 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _tabReselect.dispose();
     _catalogSearchFocus.dispose();
+    _catalogDraftText.dispose();
     final retry = _downloadRetryResolver;
     if (retry != null) VideoDownloadRetry.unregister(_repository.source, retry);
     unawaited(_accountLoginEvents?.cancel());
@@ -706,13 +747,36 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
     _submitCatalogSearch(result.query, filters: result, selectedScope: scope);
   }
 
+  void _activateCatalogSearch() {
+    if (_remoteSearchTask || _websiteSearch) {
+      _beginCatalogSearch();
+    } else if (_opensRemoteSearchTask) {
+      unawaited(_openCatalogSearchTask());
+    } else {
+      unawaited(_openSearchEditor());
+    }
+  }
+
+  void _cancelCatalogSearch() {
+    if (_remoteSearchTask && _query.isEmpty) {
+      Navigator.of(context).pop();
+    } else {
+      _endCatalogSearch();
+    }
+  }
+
   void _beginCatalogSearch() {
     if (_editingCatalogSearch) return;
+    _catalogDraftText.value = _websiteSearch ? _localCatalogQuery : _query;
     setState(() {
       _editingCatalogSearch = true;
       _draftKeywordScope = _keywordScope;
       _draftSearchFilters = _initialKeywordFilters;
     });
+    requestSearchKeyboard(
+      _catalogSearchFocus,
+      isCurrent: () => mounted && _editingCatalogSearch,
+    );
   }
 
   Widget _catalogScopeMenu(BuildContext context) => KeywordScopeMenu(
@@ -817,6 +881,7 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
     setState(() {
       if (_remoteSearchTask) {
         _query = '';
+        _catalogDraftText.value = '';
         _searchFilters = _repository.capabilities.filtersOnSearch
             ? _searchFilters.copyWith(query: '', page: 1)
             : const VideoSearchFilters();
@@ -858,6 +923,37 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
       ),
     );
   }
+
+  void _onDestinationSelected(int index) {
+    if (index != _tab) {
+      _selectTab(index);
+    } else {
+      _reselectCurrentTab();
+    }
+  }
+
+  @override
+  void handleStatusBarTap() {
+    if (defaultTargetPlatform == TargetPlatform.iOS) _reselectCurrentTab();
+  }
+
+  void _reselectCurrentTab() {
+    if (!mounted ||
+        !widget.active ||
+        !_ownsTabNavigation ||
+        _editingCatalogSearch ||
+        _openingOfficialSearch ||
+        _openingCatalogSearchTask ||
+        _browser?.visible == true ||
+        !TabReselectScope.canHandle(context)) {
+      return;
+    }
+    _tabReselect.request();
+  }
+
+  Widget _scopeCatalogTabs(Widget child) => _ownsTabNavigation
+      ? TabReselectScope(controller: _tabReselect, child: child)
+      : child;
 
   void _selectTab(int value) {
     _endCatalogSearch();
@@ -1016,24 +1112,26 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
             onClose: _remoteSearchTask && _query.isEmpty
                 ? null
                 : _endCatalogSearch,
-            controls: _keywordFilterBuilder == null
-                ? null
-                : Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: SourceFilterIconButton(
-                      key: const ValueKey('video-search.filters'),
-                      tooltip: t.videoFilters.title,
-                      active: (_draftSearchFilters?.activeCount ?? 0) != 0,
-                      onPressed: _editKeywordFilters,
-                    ),
+            controls: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                _catalogScopeMenu(context),
+                if (_keywordFilterBuilder != null)
+                  SourceFilterIconButton(
+                    key: const ValueKey('video-search.filters'),
+                    tooltip: t.videoFilters.title,
+                    active: (_draftSearchFilters?.activeCount ?? 0) != 0,
+                    onPressed: _editKeywordFilters,
                   ),
+              ],
+            ),
           ),
         ),
     ],
   );
 
   Widget _embeddedBody(Widget content) {
-    final catalog = _catalogBody(content);
+    final catalog = _catalogBody(_scopeCatalogTabs(content));
     if (!_embedded) return catalog;
     return Column(
       children: [
@@ -1121,24 +1219,46 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                               context,
                               56,
                             ),
-                            leadingWidth: height == null ? null : 56,
-                            leading: _editingCatalogSearch && !_remoteSearchTask
+                            leadingWidth:
+                                CollectionToolbarMetrics.leadingExtentOf(
+                                  context,
+                                ),
+                            actionsPadding:
+                                CollectionToolbarMetrics.trailingPadding,
+                            leading: _dedicatedSearchInput
+                                ? CollectionToolbarMetrics.leading(
+                                    context,
+                                    SourceBackButton(
+                                      bare: true,
+                                      onPressed: _cancelCatalogSearch,
+                                    ),
+                                  )
+                                : _editingCatalogSearch
                                 ? null
-                                : _embedded
-                                ? widget.leading
-                                : SourceBackButton(
-                                    onPressed: _remoteSearchTask
-                                        ? () => Navigator.of(context).pop()
-                                        : null,
+                                : _embedded && widget.leading == null
+                                ? null
+                                : CollectionToolbarMetrics.leading(
+                                    context,
+                                    widget.leading ??
+                                        SourceBackButton(
+                                          onPressed: _remoteSearchTask
+                                              ? () =>
+                                                    Navigator.of(context).pop()
+                                              : null,
+                                        ),
                                   ),
                             automaticallyImplyLeading:
-                                !_embedded &&
-                                (!_editingCatalogSearch || _remoteSearchTask),
+                                !_embedded && !_editingCatalogSearch,
                             titleSpacing:
-                                _editingCatalogSearch && !_remoteSearchTask
-                                ? 16
+                                _editingCatalogSearch &&
+                                        !_dedicatedSearchInput ||
+                                    _embedded && widget.leading == null
+                                ? CollectionToolbarMetrics.sourceContentInset
                                 : 0,
-                            title: _tab == 0 && _siteSearchInHeader
+                            title:
+                                _tab == 0 &&
+                                    _siteSearchInHeader &&
+                                    _editingCatalogSearch
                                 ? VideoSearchEntry(
                                     query: _websiteSearch
                                         ? _localCatalogQuery
@@ -1150,30 +1270,30 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                                             .isEmpty
                                         ? t.videoLibrary.searchHint
                                         : _repository.capabilities.searchHint,
-                                    onTap: _remoteSearchTask || _websiteSearch
-                                        ? _beginCatalogSearch
-                                        : _opensRemoteSearchTask
-                                        ? _openCatalogSearchTask
-                                        : _openSearchEditor,
+                                    onTap: _activateCatalogSearch,
                                     onSubmitted:
                                         _remoteSearchTask || _websiteSearch
                                         ? _submitCatalogSearch
                                         : null,
-                                    onClear: _opensRemoteSearchTask
-                                        ? null
-                                        : _clearCatalogQuery,
+                                    onChanged: (value) =>
+                                        _catalogDraftText.value = value,
                                     focusNode: _catalogSearchFocus,
-                                    onClose: _editingCatalogSearch
-                                        ? _endCatalogSearch
-                                        : null,
-                                    leadingControl: _editingCatalogSearch
-                                        ? _catalogScopeMenu(context)
-                                        : null,
-                                    leadingControlWidth:
-                                        KeywordScopeMenu.leadingWidth(context),
+                                    onClose: _dedicatedSearchInput
+                                        ? null
+                                        : _cancelCatalogSearch,
+                                    showInlineSubmit: !_dedicatedSearchInput,
                                     queryRevision: _catalogQueryRevision,
                                   )
+                                : _showEditableSearchTitle
+                                ? VideoSearchResultTitle(
+                                    key: const ValueKey(
+                                      'api-catalog.query-title',
+                                    ),
+                                    query: _query,
+                                    onTap: _activateCatalogSearch,
+                                  )
                                 : _tab == 0 &&
+                                      !_siteSearchInHeader &&
                                       _compactBrowsing &&
                                       _localCatalogSupported
                                 ? SearchQueryField(
@@ -1198,115 +1318,109 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                                             _omoRecommendationGroups[_tab - 1],
                                           )
                                         : widget.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
                                   ),
-                            actions: [
-                              const SizedBox(width: 8),
-                              if (_tab == 0 &&
-                                  !_editingCatalogSearch &&
-                                  (_siteSearchInHeader ||
-                                      _compactBrowsing &&
-                                          _localCatalogSupported))
-                                _catalogScopeMenu(context),
-                              if (_tab == 0 &&
-                                  !_editingCatalogSearch &&
-                                  (!_remoteSearchTask || _query.isNotEmpty) &&
-                                  widget.initialBrowseUrl == null &&
-                                  (_query.isNotEmpty &&
-                                          _repository
-                                              .capabilities
-                                              .filtersOnSearch ||
-                                      _repository.capabilities.year ||
-                                      _repository.capabilities.sourceSort ||
-                                      _compactBrowsing &&
-                                          _localCatalogSupported))
-                                SourceChromeIconButton(
-                                  key: const ValueKey('api-library.filters'),
-                                  tooltip: t.videoFilters.title,
-                                  symbol: CollectionCommandIcons.filter.symbol,
-                                  icon: CollectionCommandIcons.filter.icon,
-                                  onPressed: () =>
-                                      _catalogKey.currentState?.editFilters(),
-                                ),
-                              if (!_editingCatalogSearch &&
-                                  (_omoRecommendationActive ||
-                                      _showOmoRecommendations &&
-                                          _tab == 0 &&
-                                          !_putCatalogViewInMore(context)))
-                                SourceChromeIconButton(
-                                  key: const ValueKey('api-library.view-mode'),
-                                  tooltip: _mode == ApiVideoView.grid
-                                      ? t.videoLibrary.detailList
-                                      : t.videoLibrary.grid,
-                                  symbol: CollectionCommandIcons.toggleTarget(
-                                    _mode == ApiVideoView.grid,
-                                  ).symbol,
-                                  icon: CollectionCommandIcons.toggleTarget(
-                                    _mode == ApiVideoView.grid,
-                                  ).icon,
-                                  onPressed: _savingView ? null : _toggleView,
-                                ),
-                              if (_omo && _tab == _omoAccountIndex)
-                                const CollectionCoverPrivacyButton(),
-                              if (!_remoteSearchTask)
-                                SourceMoreButton(
-                                  source: _repository.source,
-                                  showSettings:
-                                      !(_omo && _tab == _omoAccountIndex) &&
-                                      SourceSettingsShortcutScope.maybeOf(
-                                            context,
-                                          )?.source !=
-                                          _repository.source,
-                                  showCoverSettings:
-                                      _omo && _tab == _omoAccountIndex,
-                                  actions: [
-                                    if (_putCatalogViewInMore(context) ||
-                                        _tab == 0 &&
-                                            !_showOmoRecommendations &&
-                                            _repository
-                                                .capabilities
-                                                .animePresentation)
-                                      SourceMenuAction(
-                                        id: 'display',
-                                        label: _mode == ApiVideoView.grid
-                                            ? t.videoLibrary.detailList
-                                            : t.videoLibrary.grid,
-                                        icon:
-                                            CollectionCommandIcons.toggleTarget(
-                                              _mode == ApiVideoView.grid,
-                                            ).icon,
-                                        symbol:
-                                            CollectionCommandIcons.toggleTarget(
-                                              _mode == ApiVideoView.grid,
-                                            ).symbol,
-                                        onSelected: () =>
-                                            unawaited(_toggleView()),
-                                      ),
-                                    if (_diagnostics)
-                                      SourceMenuAction(
-                                        id: 'analysis',
-                                        label: t.videoPlayback.pageAnalysis,
-                                        icon: Icons.analytics_outlined,
-                                        symbol: 'waveform.path.ecg',
-                                        onSelected: () =>
-                                            unawaited(_analyzeLibrary()),
-                                      ),
-                                    SourceMenuAction(
-                                      id: 'plugin',
-                                      label: t.discover.settings,
-                                      icon: Icons.settings_outlined,
-                                      symbol: 'gearshape',
-                                      onSelected: () => unawaited(
-                                        openSourceSettings(
-                                          context,
-                                          source: _repository.source,
-                                          sourceName: widget.title,
-                                        ),
-                                      ),
+                            actions: _dedicatedSearchInput
+                                ? [
+                                    ValueListenableBuilder(
+                                      valueListenable: _catalogDraftText,
+                                      builder: (context, value, _) =>
+                                          VideoSearchSubmitButton(
+                                            onPressed: value.trim().isEmpty
+                                                ? null
+                                                : () => _submitCatalogSearch(
+                                                    value,
+                                                  ),
+                                          ),
                                     ),
+                                  ]
+                                : _editingCatalogSearch
+                                ? const []
+                                : [
+                                    if (_tab == 0 &&
+                                        _siteSearchInHeader &&
+                                        !_showEditableSearchTitle)
+                                      SourceChromeIconButton(
+                                        key: const ValueKey(
+                                          'api-catalog.open-search',
+                                        ),
+                                        tooltip: t.common.search,
+                                        icon: Icons.search_rounded,
+                                        symbol: 'magnifyingglass',
+                                        onPressed: _activateCatalogSearch,
+                                      ),
+                                    if (_tab == 0 &&
+                                        !_siteSearchInHeader &&
+                                        _compactBrowsing &&
+                                        _localCatalogSupported)
+                                      _catalogScopeMenu(context),
+                                    if (!_omo &&
+                                        _tab == 0 &&
+                                        _showsCatalogFilter)
+                                      _catalogFilterButton(),
+                                    if (_omo && _tab == _omoAccountIndex)
+                                      const CollectionCoverPrivacyButton(),
+                                    if (!_remoteSearchTask)
+                                      SourceMoreButton(
+                                        source: _repository.source,
+                                        showSettings:
+                                            !(_omo &&
+                                                _tab == _omoAccountIndex) &&
+                                            SourceSettingsShortcutScope.maybeOf(
+                                                  context,
+                                                )?.source !=
+                                                _repository.source,
+                                        showCoverSettings:
+                                            _omo && _tab == _omoAccountIndex,
+                                        actions: [
+                                          if (!_omo &&
+                                              _tab == 0 &&
+                                              _repository
+                                                  .capabilities
+                                                  .animePresentation)
+                                            SourceMenuAction(
+                                              id: 'display',
+                                              label: _mode == ApiVideoView.grid
+                                                  ? t.videoLibrary.detailList
+                                                  : t.videoLibrary.grid,
+                                              icon:
+                                                  CollectionCommandIcons.toggleTarget(
+                                                    _mode == ApiVideoView.grid,
+                                                  ).icon,
+                                              symbol:
+                                                  CollectionCommandIcons.toggleTarget(
+                                                    _mode == ApiVideoView.grid,
+                                                  ).symbol,
+                                              onSelected: () =>
+                                                  unawaited(_toggleView()),
+                                            ),
+                                          if (_diagnostics)
+                                            SourceMenuAction(
+                                              id: 'analysis',
+                                              label:
+                                                  t.videoPlayback.pageAnalysis,
+                                              icon: Icons.analytics_outlined,
+                                              symbol: 'waveform.path.ecg',
+                                              onSelected: () =>
+                                                  unawaited(_analyzeLibrary()),
+                                            ),
+                                          SourceMenuAction(
+                                            id: 'plugin',
+                                            label: t.discover.settings,
+                                            icon: Icons.settings_outlined,
+                                            symbol: 'gearshape',
+                                            onSelected: () => unawaited(
+                                              openSourceSettings(
+                                                context,
+                                                source: _repository.source,
+                                                sourceName: widget.title,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                   ],
-                                ),
-                              const SizedBox(width: 8),
-                            ],
                           ),
                           searching:
                               _tab == 0 &&
@@ -1324,6 +1438,10 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                               compactBrowsing: _compactBrowsing,
                               siteSearchInHeader: _siteSearchInHeader,
                               headingAction: _catalogViewButton(),
+                              toolbarFilter: _omo && _showsCatalogFilter
+                                  ? _catalogFilterButton()
+                                  : null,
+                              toolbarLayout: _omo ? _omoLayoutButton() : null,
                               localQuery: _compactBrowsing || _websiteSearch
                                   ? _localCatalogQuery
                                   : null,
@@ -1335,6 +1453,11 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                               loadDetail: _repository.enrich,
                               onDetailLoaded: _rememberDetail,
                               active: widget.active && _tab == 0,
+                              tabReselectEnabled:
+                                  (_embedded || _ownsTabNavigation) &&
+                                  !_editingCatalogSearch &&
+                                  !_openingOfficialSearch &&
+                                  !_openingCatalogSearchTask,
                               key: _catalogKey,
                               keywordScope: _keywordScope,
                               remoteKeywordScope: _remoteKeywordScope,
@@ -1377,6 +1500,7 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                                       loadChoices: () =>
                                           _readRecommendationChoices(group),
                                       mode: _modeFor('library'),
+                                      layout: _omoLayoutButton(),
                                       active:
                                           widget.active && _tab == offset + 1,
                                       onOpen: _open,
@@ -1426,6 +1550,8 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                                 onOpen: _open,
                                 repository: _repository,
                                 active: widget.active && _tab == 1,
+                                tabReselectEnabled:
+                                    _embedded || _ownsTabNavigation,
                                 onExplore: _recordTask
                                     ? null
                                     : () => _selectTab(0),
@@ -1447,6 +1573,8 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                                 loadDetail: _repository.enrich,
                                 onDetailLoaded: _rememberDetail,
                                 active: widget.active && _tab == 2,
+                                tabReselectEnabled:
+                                    _embedded || _ownsTabNavigation,
                                 source: _repository.source,
                                 home: _repository.home,
                                 itemNamespace:
@@ -1464,15 +1592,11 @@ class _ApiVideoLibraryPageState extends State<ApiVideoLibraryPage> {
                       ),
                     ),
                   ),
-                  bottomNavigationBar:
-                      _embedded ||
-                          _remoteSearchTask ||
-                          _recordTask ||
-                          widget.initialBrowseUrl != null
+                  bottomNavigationBar: !_ownsTabNavigation
                       ? null
                       : VideoNativeNavigation(
                           currentIndex: _tab,
-                          onTap: _selectTab,
+                          onTap: _onDestinationSelected,
                           symbols: _omo
                               ? const [
                                   'sparkles',
@@ -1548,6 +1672,7 @@ class _ApiRecommendationTab extends StatefulWidget {
     required this.choices,
     required this.loadChoices,
     required this.mode,
+    required this.layout,
     required this.active,
     required this.onOpen,
     required this.onDetailLoaded,
@@ -1557,6 +1682,7 @@ class _ApiRecommendationTab extends StatefulWidget {
   final List<ApiVideoCategory> choices;
   final Future<List<ApiVideoCategory>> Function() loadChoices;
   final ApiVideoView mode;
+  final Widget layout;
   final bool active;
   final Future<void> Function(ApiVideoItem, {Uri? resume}) onOpen;
   final ValueChanged<ApiVideoItem> onDetailLoaded;
@@ -1643,6 +1769,7 @@ class _ApiRecommendationTabState extends State<_ApiRecommendationTab> {
     initialType: type,
     showFilters: false,
     active: widget.active && visible,
+    tabReselectEnabled: !_choosing,
     loadDetail: widget.repository.enrich,
     onDetailLoaded: widget.onDetailLoaded,
     onCategories: (values) {
@@ -1660,33 +1787,54 @@ class _ApiRecommendationTabState extends State<_ApiRecommendationTab> {
 
   Widget _recommendations() {
     final selected = _selected;
-    if (selected == null) {
-      return ApiVideoEmpty(
-        title: _loading
-            ? t.common.loading
-            : _failed
-            ? t.common.loadingFailed
-            : t.videoLibrary.noResults,
-        action: _loading
-            ? null
-            : TextButton(onPressed: _readChoices, child: Text(t.common.retry)),
-      );
-    }
+    final weekly = widget.group == 'week';
+    final selection = selected == null
+        ? null
+        : ListTile(
+            key: const ValueKey('api-recommendation.selection'),
+            contentPadding: weekly
+                ? null
+                : const EdgeInsetsDirectional.only(end: 8),
+            title: Text(
+              _choices
+                      .where((choice) => choice.id == selected)
+                      .firstOrNull
+                      ?.name ??
+                  selected,
+            ),
+            trailing: _choices.length > 1
+                ? const Icon(Icons.expand_more)
+                : null,
+            onTap: _choices.length > 1 ? _choose : null,
+          );
     return Column(
       children: [
-        ListTile(
-          key: const ValueKey('api-recommendation.selection'),
-          title: Text(
-            _choices
-                    .where((choice) => choice.id == selected)
-                    .firstOrNull
-                    ?.name ??
-                selected,
+        if (weekly)
+          ?selection
+        else
+          SourceVideoResultsToolbar(
+            count: '',
+            keyPrefix: 'api-recommendation.${widget.group}',
+            leading: selection,
+            layout: widget.layout,
           ),
-          trailing: _choices.length > 1 ? const Icon(Icons.expand_more) : null,
-          onTap: _choices.length > 1 ? _choose : null,
+        Expanded(
+          child: selected == null
+              ? ApiVideoEmpty(
+                  title: _loading
+                      ? t.common.loading
+                      : _failed
+                      ? t.common.loadingFailed
+                      : t.videoLibrary.noResults,
+                  action: _loading
+                      ? null
+                      : TextButton(
+                          onPressed: _readChoices,
+                          child: Text(t.common.retry),
+                        ),
+                )
+              : _catalog(selected, visible: !_recent),
         ),
-        Expanded(child: _catalog(selected, visible: !_recent)),
       ],
     );
   }
@@ -1696,10 +1844,12 @@ class _ApiRecommendationTabState extends State<_ApiRecommendationTab> {
     children: [
       if (widget.group == 'week')
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: SizedBox(
-            width: double.infinity,
-            child: NativeVideoSegmentedControl(
+          padding: const EdgeInsets.only(top: 8),
+          child: SourceVideoResultsToolbar(
+            count: '',
+            keyPrefix: 'api-recommendation.week',
+            layout: widget.layout,
+            leading: NativeVideoSegmentedControl(
               key: const ValueKey('api-recommendation.week-feed'),
               selected: _recent ? 'feed' : 'week',
               options: {
@@ -1784,6 +1934,8 @@ class _ApiCatalog extends StatefulWidget {
     this.compactBrowsing = false,
     this.siteSearchInHeader = false,
     this.headingAction,
+    this.toolbarFilter,
+    this.toolbarLayout,
     this.localQuery,
     this.keywordScope = KeywordSearchScope.all,
     this.remoteKeywordScope,
@@ -1806,13 +1958,14 @@ class _ApiCatalog extends StatefulWidget {
     this.loadDetail,
     this.onDetailLoaded,
     this.active = true,
+    this.tabReselectEnabled = false,
   });
   final ApiVideoRepository repository;
   final Future<ApiVideoItem> Function(ApiVideoItem)? loadDetail;
   final ValueChanged<ApiVideoItem>? onDetailLoaded;
-  final bool active;
+  final bool active, tabReselectEnabled;
   final bool compactBrowsing, siteSearchInHeader;
-  final Widget? headingAction;
+  final Widget? headingAction, toolbarFilter, toolbarLayout;
   final String? localQuery;
   final KeywordSearchScope keywordScope;
   final KeywordSearchScope? remoteKeywordScope;
@@ -2565,6 +2718,73 @@ class _ApiCatalogState extends State<_ApiCatalog> {
             }),
           ),
     ];
+    final categoryStrip =
+        widget.showFilters &&
+            _browseUrl == null &&
+            (_categories.isNotEmpty || _loading) &&
+            (!searching || widget.repository.capabilities.filtersOnSearch)
+        ? SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                category('', t.videoLibrary.all),
+                if (widget.repository.capabilities.recent)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                      label: Text(t.videoLibrary.recent24Hours),
+                      selected: _recent,
+                      onSelected: (value) {
+                        setState(() => _recent = value);
+                        _load();
+                      },
+                      chipAnimationStyle: VideoMotion.chip(context),
+                    ),
+                  ),
+                for (final type in major) category(type.id, type.name),
+                if (_categories.isEmpty && _loading)
+                  for (var i = 0; i < 5; i++)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: SizedBox(
+                        width: 58,
+                        height: 44,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.surfaceContainerHigh,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                    ),
+                ActionChip(
+                  label: Text(t.videoLibrary.moreCategories),
+                  onPressed: _categories.isEmpty ? null : _allCategories,
+                ),
+              ],
+            ),
+          )
+        : null;
+    final hasListToolbar =
+        widget.toolbarFilter != null || widget.toolbarLayout != null;
+    final toolbarUsesCategories =
+        hasListToolbar && !searching && categoryStrip != null;
+    final catalogSummary = _items.isEmpty && _failed
+        ? ''
+        : _loading && _items.isEmpty
+        ? t.common.loading
+        : !searching
+        ? (_heading.isEmpty ? t.videoLibrary.updatedFirst : _heading)
+        : useLoadedSearchCount
+        ? t.videoLibrary.filteredLoaded(
+            shown: visibleItems.length,
+            loaded: _items.length,
+          )
+        : _totalKnown
+        ? t.videoLibrary.results(count: _total)
+        : t.videoLibrary.loadedResults(count: _items.length);
     final catalogHeader = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2618,54 +2838,10 @@ class _ApiCatalogState extends State<_ApiCatalog> {
             posterAspectRatio: widget.repository.capabilities.posterAspectRatio,
             onOpen: widget.onResume,
           ),
-        if (widget.showFilters &&
-            _browseUrl == null &&
-            (_categories.isNotEmpty || _loading) &&
-            (widget.query.isEmpty ||
-                widget.repository.capabilities.filtersOnSearch))
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
+        if (!toolbarUsesCategories && categoryStrip != null)
+          Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Row(
-              children: [
-                category('', t.videoLibrary.all),
-                if (widget.repository.capabilities.recent)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: FilterChip(
-                      label: Text(t.videoLibrary.recent24Hours),
-                      selected: _recent,
-                      onSelected: (value) {
-                        setState(() => _recent = value);
-                        _load();
-                      },
-                      chipAnimationStyle: VideoMotion.chip(context),
-                    ),
-                  ),
-                for (final type in major) category(type.id, type.name),
-                if (_categories.isEmpty && _loading)
-                  for (var i = 0; i < 5; i++)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: SizedBox(
-                        width: 58,
-                        height: 44,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.surfaceContainerHigh,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                      ),
-                    ),
-                ActionChip(
-                  label: Text(t.videoLibrary.moreCategories),
-                  onPressed: _categories.isEmpty ? null : _allCategories,
-                ),
-              ],
-            ),
+            child: categoryStrip,
           ),
         if (widget.showFilters &&
             _browseUrl == null &&
@@ -2681,33 +2857,19 @@ class _ApiCatalogState extends State<_ApiCatalog> {
               ],
             ),
           ),
-        if (!(widget.repository.capabilities.animePresentation &&
-            widget.query.isEmpty &&
-            _type.isEmpty &&
-            _year.isEmpty &&
-            _browseUrl == null))
+        if (!hasListToolbar &&
+            !(widget.repository.capabilities.animePresentation &&
+                widget.query.isEmpty &&
+                _type.isEmpty &&
+                _year.isEmpty &&
+                _browseUrl == null))
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 4, 12, 0),
             child: Row(
               children: [
                 Expanded(
                   child: Text(
-                    _items.isEmpty && _failed
-                        ? ''
-                        : _loading && _items.isEmpty
-                        ? t.common.loading
-                        : !searching
-                        ? (_heading.isEmpty
-                              ? t.videoLibrary.updatedFirst
-                              : _heading)
-                        : useLoadedSearchCount
-                        ? t.videoLibrary.filteredLoaded(
-                            shown: visibleItems.length,
-                            loaded: _items.length,
-                          )
-                        : _totalKnown
-                        ? t.videoLibrary.results(count: _total)
-                        : t.videoLibrary.loadedResults(count: _items.length),
+                    catalogSummary,
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
                 ),
@@ -2808,6 +2970,17 @@ class _ApiCatalogState extends State<_ApiCatalog> {
     );
     return Column(
       children: [
+        if (hasListToolbar)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: SourceVideoResultsToolbar(
+              count: catalogSummary,
+              keyPrefix: 'api-catalog.tools',
+              leading: toolbarUsesCategories ? categoryStrip : null,
+              filter: widget.toolbarFilter,
+              layout: widget.toolbarLayout,
+            ),
+          ),
         if (_usesLocalCatalog && !widget.compactBrowsing)
           Padding(
             padding: const EdgeInsetsDirectional.fromSTEB(16, 6, 16, 4),
@@ -2898,6 +3071,10 @@ class _ApiCatalogState extends State<_ApiCatalog> {
                 }
               },
               detailsActive: widget.active,
+              tabReselectEnabled:
+                  widget.tabReselectEnabled &&
+                  widget.active &&
+                  !_openingLocalFilters,
               key: ValueKey(
                 'library.${widget.query}.$_type.$_year.$_recent.$_hasLocalConditions',
               ),

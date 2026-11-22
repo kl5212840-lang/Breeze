@@ -19,6 +19,7 @@ import 'package:zephyr/widgets/collection_record_time.dart';
 import 'package:zephyr/widgets/collection_press_feedback.dart';
 import 'package:zephyr/widgets/collection_selection_mark.dart';
 import 'package:zephyr/widgets/work_list_divider.dart';
+import 'package:zephyr/widgets/tab_reselect_scope.dart';
 
 enum ApiVideoView { grid, list }
 
@@ -39,6 +40,7 @@ class ApiVideoCollection extends StatefulWidget {
     this.badges = const {},
     this.header,
     this.pinHeader = false,
+    this.tabReselectEnabled = false,
     this.onRefresh,
     this.continuationKey,
     this.compactAnime = false,
@@ -55,6 +57,7 @@ class ApiVideoCollection extends StatefulWidget {
     this.contentBottomPadding = 24,
     this.sourceByItem = const {},
     this.gridColumns,
+    this.minimumGridItemWidth,
     this.gridItemExtent,
     this.listItemExtent,
     this.listTileBuilder,
@@ -82,7 +85,7 @@ class ApiVideoCollection extends StatefulWidget {
   final Widget? footer;
   final Map<String, String> badges;
   final Widget? header;
-  final bool pinHeader;
+  final bool pinHeader, tabReselectEnabled;
   final Future<void> Function()? onRefresh;
   final Object? continuationKey;
   final bool compactAnime;
@@ -91,6 +94,10 @@ class ApiVideoCollection extends StatefulWidget {
   final Map<String, String> sourceByItem;
   final Widget? emptyState;
   final int? gridColumns;
+
+  /// When set, treat [gridColumns] as the preferred maximum and fit enough
+  /// width for each caption at the user's text scale.
+  final double? minimumGridItemWidth;
   final double? gridItemExtent;
   final double gridMainAxisSpacing, leadingListExtent, posterRadius;
   final double posterAspectRatio;
@@ -311,15 +318,19 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
     builder: (context, constraints) {
       final scale = MediaQuery.textScalerOf(context);
       final grid = widget.mode == ApiVideoView.grid;
-      _columns = grid ? 3 : 1;
-      if (grid && widget.gridColumns != null) {
-        _columns = widget.gridColumns!;
+      const columnSpacing = 12.0;
+      final contentWidth =
+          constraints.maxWidth - widget.contentPadding.horizontal;
+      _columns = grid ? widget.gridColumns ?? 3 : 1;
+      if (widget.minimumGridItemWidth case final minimum? when grid) {
+        final textScale = math.max(1.0, scale.scale(14) / 14);
+        final fittingCount =
+            ((contentWidth + columnSpacing) /
+                    (minimum * textScale + columnSpacing))
+                .floor();
+        _columns = fittingCount.clamp(1, _columns);
       }
-      final width =
-          (constraints.maxWidth -
-              widget.contentPadding.horizontal -
-              (_columns - 1) * 12) /
-          _columns;
+      final width = (contentWidth - (_columns - 1) * columnSpacing) / _columns;
       final theme = Theme.of(context);
       _titleExtent =
           _textExtent(
@@ -442,11 +453,17 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
               : null,
           excludeSemantics: widget.editing,
           onTap: widget.editing ? () => widget.onOpen(item) : null,
-          child: CollectionPressFeedback(
+          child: CollectionPressFeedback.surface(
             enabled: widget.onLongPress != null,
             child: InkWell(
               key: ValueKey('api-video.${item.id}'),
               borderRadius: BorderRadius.circular(12),
+              highlightColor: widget.onLongPress != null
+                  ? Colors.transparent
+                  : null,
+              splashFactory: widget.onLongPress != null
+                  ? NoSplash.splashFactory
+                  : null,
               onTap: () => widget.onOpen(item),
               onLongPress: widget.onLongPress == null
                   ? null
@@ -528,7 +545,7 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: _columns,
                         mainAxisExtent: _extent,
-                        crossAxisSpacing: 12,
+                        crossAxisSpacing: columnSpacing,
                         mainAxisSpacing: widget.gridMainAxisSpacing,
                       ),
                       delegate: SliverChildBuilderDelegate(
@@ -569,9 +586,18 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
           ),
         ],
       );
-      final body = widget.onRefresh == null
-          ? scroll
-          : RefreshIndicator(onRefresh: widget.onRefresh!, child: scroll);
+      final body = TabReselectListener(
+        enabled:
+            widget.tabReselectEnabled && !widget.selecting && !widget.editing,
+        onReselect: () {
+          if (_pendingAnchor == null && _activeAnchor == null) {
+            TabReselectScope.scrollToStart(context, _scroll);
+          }
+        },
+        child: widget.onRefresh == null
+            ? scroll
+            : RefreshIndicator(onRefresh: widget.onRefresh!, child: scroll),
+      );
       if (!widget.pinHeader || widget.header == null) return body;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,

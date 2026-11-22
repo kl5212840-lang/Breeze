@@ -92,10 +92,14 @@ class BreezePressedContent extends StatelessWidget {
     super.key,
     required this.pressed,
     required this.child,
+    this.scaleDelta = .04,
+    this.verticalOffset = .6,
   });
 
   final bool pressed;
   final Widget child;
+  final double scaleDelta;
+  final double verticalOffset;
 
   @override
   Widget build(BuildContext context) {
@@ -106,10 +110,10 @@ class BreezePressedContent extends StatelessWidget {
       curve: BreezeControlMotion.curve,
       child: child,
       builder: (context, value, child) => Transform.translate(
-        offset: Offset(0, .6 * value),
+        offset: Offset(0, verticalOffset * value),
         transformHitTests: false,
         child: Transform.scale(
-          scale: 1 - .04 * value,
+          scale: 1 - scaleDelta * value,
           transformHitTests: false,
           child: child,
         ),

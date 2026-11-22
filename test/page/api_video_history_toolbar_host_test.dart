@@ -126,6 +126,9 @@ void main() {
             ),
           );
           final style = ValueNotifier('breeze');
+          final safeInsets = size.width > size.height
+              ? const EdgeInsets.only(left: 24, right: 16)
+              : EdgeInsets.zero;
           addTearDown(style.dispose);
           var toggles = 0;
           await tester.pumpWidget(
@@ -133,9 +136,10 @@ void main() {
               style: style,
               child: MaterialApp(
                 builder: (context, child) => MediaQuery(
-                  data: MediaQuery.of(
-                    context,
-                  ).copyWith(textScaler: TextScaler.linear(scale)),
+                  data: MediaQuery.of(context).copyWith(
+                    textScaler: TextScaler.linear(scale),
+                    padding: safeInsets,
+                  ),
                   child: child!,
                 ),
                 home: Scaffold(
@@ -171,7 +175,7 @@ void main() {
             expect(tester.getSize(action).width, greaterThanOrEqualTo(44));
             expect(tester.getSize(action).height, greaterThanOrEqualTo(44));
           }
-          expect(tester.getTopLeft(count).dx, 16);
+          expect(tester.getTopLeft(count).dx, safeInsets.left + 16);
           expect(tester.getCenter(view).dx, tester.getCenter(more).dx);
           expect(
             tester.getCenter(sort).dx,
@@ -191,11 +195,19 @@ void main() {
             const ValueKey('api-history.search-toggle'),
           );
           final resultBefore = tester.getRect(results);
-          final moreBefore = tester.getCenter(more);
+          final commandBefore = tester.getRect(command);
           await tester.tap(search);
           await tester.pumpAndSettle();
           expect(tester.getRect(results), resultBefore);
-          expect(tester.getCenter(more).dx, moreBefore.dx);
+          expect(more, findsNothing);
+          expect(
+            tester.getRect(find.byType(TextField)).left,
+            commandBefore.left + 16,
+          );
+          expect(
+            tester.getRect(find.byType(TextField)).right,
+            commandBefore.right - 16,
+          );
           expect(
             find.descendant(of: find.byType(TextField), matching: search),
             findsOneWidget,
@@ -208,11 +220,21 @@ void main() {
                 .hasFocus,
             isTrue,
           );
-          await tester.enterText(find.byType(TextField), 'Work');
+          await tester.enterText(find.byType(TextField), 'No matching work');
           await tester.pumpAndSettle();
+          expect(find.text(t.videoLibrary.noResults), findsOneWidget);
           await tester.tap(search);
           await tester.pumpAndSettle();
           expect(find.byType(TextField), findsNothing);
+          expect(find.text(t.videoSource.localHistory), findsOneWidget);
+          expect(find.text(t.videoLibrary.noResults), findsNothing);
+          await tester.tap(search);
+          await tester.pumpAndSettle();
+          await tester.enterText(find.byType(TextField), 'No matching work');
+          await tester.binding.handlePopRoute();
+          await tester.pumpAndSettle();
+          expect(find.byType(TextField), findsNothing);
+          expect(find.text(t.videoLibrary.noResults), findsNothing);
           await tester.tap(view);
           await tester.pumpAndSettle();
           expect(toggles, 1);

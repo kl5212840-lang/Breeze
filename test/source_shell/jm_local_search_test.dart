@@ -149,7 +149,7 @@ void main() {
   );
 
   testWidgets(
-    'JM records search reopens with focus and scopes the same local result',
+    'JM records refresh keeps the active query and closing restores all rows',
     (tester) async {
       final style = ValueNotifier('breeze');
       addTearDown(style.dispose);
@@ -178,6 +178,7 @@ void main() {
                       ),
                     ],
                   ),
+                  row('two'),
                 ],
                 onBack: () {},
                 onRefresh: () {},
@@ -188,6 +189,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('source-loaded.search')), findsNothing);
+      final unmatched = find.byKey(
+        const ValueKey('profile-record.jm-search:two'),
+      );
+      expect(unmatched, findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('jm-record.search')));
       await tester.pumpAndSettle();
       TextField search() => tester.widget<TextField>(
@@ -223,6 +228,7 @@ void main() {
       await refreshed;
       expect(search().focusNode, same(ownedFocus));
       expect(search().controller!.text, '作者词');
+      expect(unmatched, findsNothing);
       expect(
         tester.testTextInput.isVisible,
         isFalse,
@@ -256,6 +262,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('jm-record.search')));
       await tester.pumpAndSettle();
       expect(tester.testTextInput.isVisible, isFalse);
+      expect(find.byKey(const ValueKey('source-loaded.search')), findsNothing);
+      expect(unmatched, findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('jm-record.search')));
       final changing = pluginSessionWriteFence.beginSessionChange('jm-search');
       try {
@@ -274,12 +282,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('jm-record.search')));
       await tester.pumpAndSettle();
       expect(search().focusNode!.hasFocus, isTrue);
-      expect(
-        search().controller!.text,
-        '作者词',
-        reason:
-            'Closing the editor retains its query; this fixture only changes the write fence, not the record owner',
-      );
+      expect(search().controller!.text, isEmpty);
+      expect(unmatched, findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
     },

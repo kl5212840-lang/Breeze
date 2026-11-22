@@ -14,8 +14,9 @@ Future<T?> retainVideoModalExitBarrier<T>(
   if (route == null ||
       overlay == null ||
       !overlay.mounted ||
-      route.animation?.status != AnimationStatus.reverse)
+      route.animation?.status != AnimationStatus.reverse) {
     return value;
+  }
   final shield = OverlayEntry(
     builder: (_) =>
         const ExcludeSemantics(child: AbsorbPointer(child: SizedBox.expand())),
@@ -23,7 +24,7 @@ Future<T?> retainVideoModalExitBarrier<T>(
   overlay.insert(shield);
   unawaited(
     route.completed.whenComplete(() {
-      if (overlay.mounted) shield.remove();
+      shield.remove();
       shield.dispose();
     }),
   );

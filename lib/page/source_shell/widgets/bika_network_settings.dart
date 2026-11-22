@@ -222,9 +222,9 @@ class _BikaNetworkSettingsPageState extends State<BikaNetworkSettingsPage> {
       : SourceExperienceBoundary(
           source: widget.source,
           builder: (context) => Scaffold(
-            appBar: AppBar(
-              leading: const SourceBackButton(),
-              title: Text(t.sourceShell.bikaNetworkTitle),
+            appBar: sourceSecondaryAppBar(
+              context,
+              title: t.sourceShell.bikaNetworkTitle,
             ),
             body: _loading
                 ? Center(child: SourceLoadingIndicator(source: widget.source))

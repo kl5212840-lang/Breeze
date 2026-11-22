@@ -337,9 +337,14 @@ void main() {
       const trailingCenter =
           CollectionToolbarMetrics.sourceContentInset + extent / 2;
 
-      for (final (width, scale, direction) in [
-        (430.0, 1.0, TextDirection.ltr),
-        (320.0, 2.0, TextDirection.rtl),
+      for (final (width, scale, direction, safeInsets) in [
+        (430.0, 1.0, TextDirection.ltr, EdgeInsets.zero),
+        (
+          320.0,
+          2.0,
+          TextDirection.rtl,
+          const EdgeInsets.only(left: 9, right: 4),
+        ),
       ]) {
         tester.view.physicalSize = Size(width, 850);
         await tester.pumpWidget(
@@ -355,6 +360,7 @@ void main() {
                   data: MediaQuery.of(context).copyWith(
                     disableAnimations: true,
                     textScaler: TextScaler.linear(scale),
+                    padding: safeInsets,
                   ),
                   child: child!,
                 ),
@@ -382,8 +388,8 @@ void main() {
           await tester.pump();
           await tester.pump();
           final expected = direction == TextDirection.ltr
-              ? width - trailingCenter
-              : trailingCenter;
+              ? width - trailingCenter - safeInsets.right
+              : trailingCenter + safeInsets.left;
           for (final action in [search, privacy, labels, more, view, filter]) {
             expect(tester.getSize(action).width, extent);
           }
@@ -398,7 +404,7 @@ void main() {
             final directionFactor = direction == TextDirection.ltr ? -1 : 1;
             expect(
               tester.getCenter(action).dx,
-              closeTo(expected + directionFactor * offset * extent, .1),
+              closeTo(expected + directionFactor * offset * (extent + 8), .1),
             );
           }
           expect(
@@ -452,7 +458,12 @@ void main() {
           final headerBefore = tester.getRect(appBar);
           final viewBefore = tester.getRect(view);
           final labelsBefore = tester.getRect(labels);
-          final moreBefore = tester.getRect(more);
+          final expectedField = Rect.fromLTRB(
+            headerBefore.left + 16 + safeInsets.left,
+            headerBefore.top,
+            headerBefore.right - 16 - safeInsets.right,
+            headerBefore.bottom,
+          );
           tester.widget<SourceChromeIconButton>(search).onPressed!();
           await tester.pump();
           final input = find.descendant(
@@ -465,9 +476,18 @@ void main() {
           expect(tester.getRect(appBar), headerBefore);
           expect(tester.getRect(view), viewBefore);
           expect(tester.getRect(labels), labelsBefore);
-          expect(tester.getCenter(more).dx, moreBefore.center.dx);
+          expect(more, findsNothing);
+          expect(tester.getRect(input).left, expectedField.left);
+          expect(tester.getRect(input).right, expectedField.right);
+          await tester.enterText(input, '本次搜索应在关闭后清空');
+          final visibleShelf = tester.element(
+            find.byType(FolderShelfPage).hitTestable(),
+          );
+          final cubit = visibleShelf.read<BookshelfSearchCubit>();
           await tester.tap(search);
-          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 600));
+          expect(cubit.state.favorite.keyword, isEmpty);
+          expect(cubit.state.history.keyword, isEmpty);
           expect(tester.getRect(appBar), headerBefore);
           expect(tester.getRect(view), viewBefore);
           expect(tester.getRect(labels), labelsBefore);

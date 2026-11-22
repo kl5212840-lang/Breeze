@@ -16,11 +16,13 @@ class VideoProfileHeader extends StatelessWidget {
     this.onAccountSettings,
     this.personal = true,
     this.compact = false,
+    this.showName = true,
   });
   final Map<String, dynamic> account;
   final Uri page;
   final bool personal;
   final bool compact;
+  final bool showName;
   final VoidCallback onOpenSite;
   final VoidCallback? onRegister;
   final VoidCallback? onAccountSettings;
@@ -63,7 +65,9 @@ class VideoProfileHeader extends StatelessWidget {
       children: [
         if (personal) ...[
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: showName
+                ? CrossAxisAlignment.start
+                : CrossAxisAlignment.center,
             children: [
               PluginAccountAvatarButton(
                 key: const ValueKey('video-profile.account-avatar'),
@@ -85,18 +89,19 @@ class VideoProfileHeader extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      hasIdentity && name.isNotEmpty
-                          ? name
-                          : t.videoPlayback.siteAccount,
-                      maxLines: compact ? 2 : null,
-                      overflow: compact ? TextOverflow.ellipsis : null,
-                      style: compact
-                          ? Theme.of(context).textTheme.titleMedium
-                          : Theme.of(context).textTheme.titleLarge,
-                    ),
+                    if (showName)
+                      Text(
+                        hasIdentity && name.isNotEmpty
+                            ? name
+                            : t.videoPlayback.siteAccount,
+                        maxLines: compact ? 2 : null,
+                        overflow: compact ? TextOverflow.ellipsis : null,
+                        style: compact
+                            ? Theme.of(context).textTheme.titleMedium
+                            : Theme.of(context).textTheme.titleLarge,
+                      ),
                     if (statistics.isNotEmpty) ...[
-                      const SizedBox(height: 6),
+                      if (showName) const SizedBox(height: 6),
                       Wrap(
                         spacing: 12,
                         runSpacing: 4,

@@ -45,6 +45,12 @@ const hanimeResultFilters = [
   VideoFilterSection.duration,
 ];
 
+int hanimeResultFilterCount(VideoSearchFilters filters) =>
+    filters.tags.length +
+    (filters.anyTag ? 1 : 0) +
+    (filters.date.isEmpty ? 0 : 1) +
+    (filters.duration.isEmpty ? 0 : 1);
+
 enum HanimeRanking {
   today('本日排行'),
   week('本週排行'),

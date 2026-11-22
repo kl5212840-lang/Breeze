@@ -1632,10 +1632,12 @@ class VideoActiveFilters extends StatelessWidget {
           })
         >[];
     for (final section in [
+      VideoFilterSection.sort,
       VideoFilterSection.date,
       VideoFilterSection.duration,
     ]) {
       final value = switch (section) {
+        VideoFilterSection.sort => filters.sort,
         VideoFilterSection.date => filters.date,
         _ => filters.duration,
       };
@@ -1703,6 +1705,7 @@ class VideoActiveFilters extends StatelessWidget {
           anyTag: sections.contains(VideoFilterSection.tags)
               ? false
               : filters.anyTag,
+          sort: sections.contains(VideoFilterSection.sort) ? '' : filters.sort,
           date: sections.contains(VideoFilterSection.date) ? '' : filters.date,
           duration: sections.contains(VideoFilterSection.duration)
               ? ''

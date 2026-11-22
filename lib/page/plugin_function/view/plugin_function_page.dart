@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:zephyr/widgets/read_recovery_scope.dart';
+import 'package:zephyr/widgets/tab_reselect_scope.dart';
 import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 import 'package:zephyr/page/source_shell/source_loading_indicator.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
@@ -57,12 +58,14 @@ class PluginFunctionContent extends StatelessWidget {
     required this.functionId,
     required this.onAction,
     this.extern = const {},
+    this.tabReselectEnabled = false,
   });
 
   final String from;
   final String functionId;
   final Future<void> Function(Map<String, dynamic> action) onAction;
   final Map<String, dynamic> extern;
+  final bool tabReselectEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -78,6 +81,7 @@ class PluginFunctionContent extends StatelessWidget {
             functionId: functionId,
             extern: extern,
             onAction: onAction,
+            tabReselectEnabled: tabReselectEnabled,
           ),
         ),
       ),
@@ -85,12 +89,13 @@ class PluginFunctionContent extends StatelessWidget {
   }
 }
 
-class _PluginFunctionView extends StatelessWidget {
+class _PluginFunctionView extends StatefulWidget {
   const _PluginFunctionView({
     required this.from,
     required this.functionId,
     required this.onAction,
     required this.extern,
+    required this.tabReselectEnabled,
   });
 
   final String from;
@@ -98,10 +103,26 @@ class _PluginFunctionView extends StatelessWidget {
   final Future<void> Function(Map<String, dynamic> action) onAction;
   final Map<String, dynamic> extern;
 
+  final bool tabReselectEnabled;
+
+  @override
+  State<_PluginFunctionView> createState() => _PluginFunctionViewState();
+}
+
+class _PluginFunctionViewState extends State<_PluginFunctionView> {
+  final _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final _PluginFunctionView(:from, :functionId, :onAction, :extern) = widget;
     final renderer = const DiscoverSchemeRenderer();
-    return BlocBuilder<PluginFunctionCubit, PluginFunctionState>(
+    final body = BlocBuilder<PluginFunctionCubit, PluginFunctionState>(
       builder: (context, state) {
         final cubit = context.read<PluginFunctionCubit>();
         Future<bool> reload() => cubit.load(
@@ -178,6 +199,7 @@ class _PluginFunctionView extends StatelessWidget {
                   from: from,
                   scheme: state.scheme,
                   data: state.data,
+                  scrollController: widget.tabReselectEnabled ? _scroll : null,
                   onReachBottom: () async {},
                   onAction: onAction,
                   isLoadingMore: false,
@@ -196,6 +218,11 @@ class _PluginFunctionView extends StatelessWidget {
           child: child,
         );
       },
+    );
+    return TabReselectListener(
+      enabled: widget.tabReselectEnabled && ReadRecoveryScope.activeOf(context),
+      onReselect: () => TabReselectScope.scrollToStart(context, _scroll),
+      child: body,
     );
   }
 }

@@ -177,7 +177,7 @@ void main() {
               action('filter'),
             );
             expect(selectedFilter.tooltip, t.videoFilters.active);
-            expect(selectedFilter.symbol, 'line.3.horizontal.decrease');
+            expect(selectedFilter.symbol, 'slider.horizontal.3');
             expect(selectedFilter.selected, isTrue);
             expect(
               find.ancestor(

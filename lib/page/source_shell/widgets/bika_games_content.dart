@@ -9,6 +9,7 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/page/plugin_function/cubit/plugin_function_cubit.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 import 'package:zephyr/page/source_shell/source_loading_indicator.dart';
 import 'package:zephyr/type/enum.dart';
@@ -476,11 +477,9 @@ class _BikaGameDetailsState extends State<_BikaGameDetails> {
   Widget build(BuildContext context) => SourceExperienceBoundary(
     source: widget.source,
     builder: (context) => Scaffold(
-      appBar: AppBar(
-        leading: SourceBackButton(
-          onPressed: () => Navigator.of(context).maybePop(),
-        ),
-        title: Text(convertChineseForDisplay(_gameText(widget.game, 'title'))),
+      appBar: sourceSecondaryAppBar(
+        context,
+        title: convertChineseForDisplay(_gameText(widget.game, 'title')),
       ),
       body: _loginRequired
           ? _GameMessage(
@@ -490,7 +489,11 @@ class _BikaGameDetailsState extends State<_BikaGameDetails> {
               login: true,
             )
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: CollectionToolbarMetrics.contentPaddingOf(
+                context,
+                top: 16,
+                bottom: 16,
+              ),
               children: [
                 _GameCard(source: widget.source, game: _detail ?? widget.game),
                 const SizedBox(height: 20),

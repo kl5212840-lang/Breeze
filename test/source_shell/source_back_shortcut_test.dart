@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,6 +7,7 @@ import 'package:zephyr/page/source_shell/models/source_shell_section.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_return_preferences.dart';
 import 'package:zephyr/page/source_shell/view/source_shell_page.dart';
+import 'package:zephyr/widgets/app_interface_style.dart';
 
 void main() {
   setUp(() async {
@@ -33,39 +35,52 @@ void main() {
     expect(SourceReturnPreferences.changes.value, SourceReturnMode.byFunction);
   });
 
-  testWidgets('back is a plain 44pt button without long-press exit actions', (
-    tester,
-  ) async {
-    var backs = 0;
-    var contentTaps = 0;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          appBar: AppBar(leading: SourceBackButton(onPressed: () => backs++)),
-          body: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => contentTaps++,
-            child: const SizedBox.expand(),
+  testWidgets(
+    'back has a platform-sized target and no long-press exit action',
+    (tester) async {
+      final android = defaultTargetPlatform == TargetPlatform.android;
+      final style = ValueNotifier(android ? 'system' : 'breeze');
+      addTearDown(style.dispose);
+      var backs = 0;
+      var contentTaps = 0;
+      await tester.pumpWidget(
+        AppInterfaceStyleScope(
+          style: style,
+          child: MaterialApp(
+            home: Scaffold(
+              appBar: AppBar(
+                leading: SourceBackButton(onPressed: () => backs++),
+              ),
+              body: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => contentTaps++,
+                child: const SizedBox.expand(),
+              ),
+            ),
           ),
         ),
-      ),
-    );
-    final button = find.descendant(
-      of: find.byType(SourceBackButton),
-      matching: find.byType(IconButton),
-    );
-    expect(tester.getSize(button), const Size(44, 44));
-    expect(find.byIcon(Icons.more_horiz), findsNothing);
-    await tester.tap(button);
-    expect(backs, 1);
-    await tester.longPress(button);
-    await tester.pumpAndSettle();
-    expect(find.text(t.sourceShell.exitPlugin), findsNothing);
-    expect(backs, 1);
-    await tester.tapAt(const Offset(300, 400));
-    await tester.pumpAndSettle();
-    expect(contentTaps, 1);
-  });
+      );
+      final button = find.descendant(
+        of: find.byType(SourceBackButton),
+        matching: find.byType(IconButton),
+      );
+      expect(tester.getSize(button), Size.square(android ? 48 : 44));
+      expect(find.byIcon(Icons.more_horiz), findsNothing);
+      await tester.tap(button);
+      expect(backs, 1);
+      await tester.longPress(button);
+      await tester.pumpAndSettle();
+      expect(find.text(t.sourceShell.exitPlugin), findsNothing);
+      expect(backs, 1);
+      await tester.tapAt(const Offset(300, 400));
+      await tester.pumpAndSettle();
+      expect(contentTaps, 1);
+    },
+    variant: const TargetPlatformVariant({
+      TargetPlatform.iOS,
+      TargetPlatform.android,
+    }),
+  );
 
   testWidgets('explicit More exit skips nested source pages', (tester) async {
     await tester.pumpWidget(

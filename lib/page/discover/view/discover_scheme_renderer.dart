@@ -35,6 +35,7 @@ class DiscoverSchemeRenderer {
     required VoidCallback onRetryLoadMore,
     bool shrinkWrap = false,
     ScrollPhysics? physics,
+    ScrollController? scrollController,
   }) {
     final body = asJsonMap(scheme['body']);
     final content = _buildNode(
@@ -79,6 +80,7 @@ class DiscoverSchemeRenderer {
         return false;
       },
       child: ListView(
+        controller: scrollController,
         physics: physics ?? const AlwaysScrollableScrollPhysics(),
         shrinkWrap: shrinkWrap,
         children: children,

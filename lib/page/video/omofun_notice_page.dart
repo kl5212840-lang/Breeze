@@ -47,10 +47,7 @@ class _OmoNoticePageState extends State<OmoNoticePage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(
-      leading: const SourceBackButton(),
-      title: Text(t.videoSource.siteNotices),
-    ),
+    appBar: sourceSecondaryAppBar(context, title: t.videoSource.siteNotices),
     body: RefreshIndicator(
       onRefresh: _read,
       child: ListView(

@@ -2,6 +2,7 @@ import 'package:flutter/services.dart' show HapticFeedback;
 import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 
 typedef AppliedFilter = ({
   String id,
@@ -104,8 +105,9 @@ class _AppliedFilterBarState extends State<AppliedFilterBar> {
         !widget.clearWhenEmpty)
       return const SizedBox.shrink();
     final colors = Theme.of(context).colorScheme;
+    final actionExtent = CollectionToolbarMetrics.actionExtentOf(context);
     final height = (MediaQuery.textScalerOf(context).scale(14) * 1.5 + 22)
-        .clamp(44.0, double.infinity);
+        .clamp(actionExtent, double.infinity);
     return Semantics(
       label: t.videoFilters.active,
       child: Padding(
@@ -153,54 +155,63 @@ class _AppliedFilterBarState extends State<AppliedFilterBar> {
                             HapticFeedback.selectionClick();
                             setState(() => _revealed = entry.id);
                           },
-                          child: Stack(
-                            alignment: AlignmentDirectional.centerEnd,
-                            children: [
-                              ActionChip(
-                                label: Text(entry.label),
-                                onPressed: revealed
-                                    ? () => setState(() => _revealed = null)
-                                    : entry.edit ??
-                                          () =>
-                                              setState(() => _revealed = null),
-                              ),
-                              if (revealed)
-                                PositionedDirectional(
-                                  end: 0,
-                                  top: 0,
-                                  bottom: 0,
-                                  width: 32,
-                                  child: IconButton(
-                                    key: ValueKey(
-                                      'applied-filter.remove.${entry.id}',
-                                    ),
-                                    tooltip: t.videoFilters.removeFilter,
-                                    padding: EdgeInsets.zero,
-                                    style: IconButton.styleFrom(
-                                      minimumSize: Size.zero,
-                                      tapTargetSize:
-                                          MaterialTapTargetSize.shrinkWrap,
-                                    ),
-                                    onPressed: () {
-                                      setState(() => _revealed = null);
-                                      entry.remove();
-                                    },
-                                    icon: DecoratedBox(
-                                      decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(8),
-                                        color: colors.surfaceContainerHigh,
+                          child: SizedBox(
+                            height: height,
+                            child: Stack(
+                              alignment: AlignmentDirectional.centerEnd,
+                              children: [
+                                ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    minWidth: actionExtent,
+                                  ),
+                                  child: ActionChip(
+                                    label: Text(entry.label),
+                                    onPressed: revealed
+                                        ? () => setState(() => _revealed = null)
+                                        : entry.edit ??
+                                              () => setState(
+                                                () => _revealed = null,
+                                              ),
+                                  ),
+                                ),
+                                if (revealed)
+                                  PositionedDirectional(
+                                    end: 0,
+                                    top: (height - actionExtent) / 2,
+                                    width: actionExtent,
+                                    height: actionExtent,
+                                    child: IconButton(
+                                      key: ValueKey(
+                                        'applied-filter.remove.${entry.id}',
                                       ),
-                                      child: const Padding(
-                                        padding: EdgeInsets.all(5),
-                                        child: Icon(
-                                          Icons.close_rounded,
-                                          size: 16,
+                                      tooltip: t.videoFilters.removeFilter,
+                                      alignment: AlignmentDirectional.centerEnd,
+                                      padding: const EdgeInsetsDirectional.only(
+                                        end: 3,
+                                      ),
+                                      onPressed: () {
+                                        setState(() => _revealed = null);
+                                        entry.remove();
+                                      },
+                                      icon: DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                          color: colors.surfaceContainerHigh,
+                                        ),
+                                        child: const Padding(
+                                          padding: EdgeInsets.all(5),
+                                          child: Icon(
+                                            Icons.close_rounded,
+                                            size: 16,
+                                          ),
                                         ),
                                       ),
                                     ),
                                   ),
-                                ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       ),

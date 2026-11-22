@@ -11,10 +11,10 @@ import 'package:zephyr/page/donwload_task/view/download_card_details.dart';
 import 'package:zephyr/page/donwload_task/view/download_swipe_actions.dart';
 import 'package:zephyr/page/donwload_task/view/download_task_cover.dart';
 import 'package:zephyr/page/donwload_task/view/download_video_work_page.dart';
+import 'package:zephyr/page/video/video_cover_overlay.dart';
 import 'package:zephyr/page/video/video_download.dart';
 import 'package:zephyr/page/video/video_download_cancel_action.dart';
 import 'package:zephyr/page/video/video_export_records.dart';
-import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/page/video/video_download_panel.dart';
 import 'package:zephyr/page/video/video_download_retry.dart';
 import 'package:zephyr/page/video/video_download_retry_action.dart';
@@ -85,6 +85,12 @@ Future<void> openSourceDownloadedWork(
           work.identity.source,
         ),
         matches: (_) => true,
+        onOpenDetails: (origin, row) => openVideoDownloadWork(
+          origin,
+          row,
+          includeEpisode: false,
+          forDownloadRecovery: false,
+        ),
         onContinueWatching: (origin, item) async {
           final row = item.video!;
           try {
@@ -213,20 +219,26 @@ class SourceDownloadedCardFrame extends StatelessWidget {
     required this.row,
     required this.title,
     required this.metadata,
-    required this.trailing,
     required this.onOpen,
+    this.footer,
     this.onManage,
     this.selecting = false,
     this.selected = false,
   });
+
   final Map<String, dynamic> row;
   final String title;
-  final Widget metadata, trailing;
+  final Widget metadata;
+  final Widget? footer;
   final VoidCallback? onOpen, onManage;
   final bool selecting, selected;
+
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final rowEnabled = DownloadSwipeActions.bodyEnabled(context);
+    const coverHeight = 132.0;
     return Material(
       color: selected
           ? colors.primary.withValues(alpha: .06)
@@ -234,74 +246,63 @@ class SourceDownloadedCardFrame extends StatelessWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.all(Radius.circular(14)),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: InkWell(
-              onTap: onOpen,
-              onLongPress: onManage,
-              borderRadius: BorderRadius.circular(14),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 0, 12),
-                child: Row(
-                  children: [
-                    Stack(
-                      children: [
-                        DownloadVideoTaskCover(
-                          width: 88,
-                          height: 132,
-                          row: row,
-                          localOnly: true,
-                          fallback: const Icon(Icons.play_arrow_rounded),
-                        ),
-                        if (selecting)
-                          DownloadCardSelection(
-                            label: title,
-                            selected: selected,
-                            onTap: onOpen,
-                          ),
-                      ],
+      child: InkWell(
+        onTap: rowEnabled ? onOpen : null,
+        onLongPress: rowEnabled ? onManage : null,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: DownloadCardMetrics.padding,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            spacing: 12,
+            children: [
+              Stack(
+                children: [
+                  DownloadVideoTaskCover(
+                    width: 88,
+                    height: coverHeight,
+                    row: row,
+                    localOnly: true,
+                    fallback: const Icon(Icons.play_arrow_rounded),
+                  ),
+                  if (selecting)
+                    DownloadCardSelection(
+                      label: title,
+                      selected: selected,
+                      onTap: onOpen,
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(minHeight: 132),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              title,
-                              key: const ValueKey('source-download-card.title'),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.titleSmall
-                                  ?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                    height: 1.2,
-                                  ),
-                            ),
-                            const SizedBox(height: 6),
-                            DefaultTextStyle.merge(
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: colors.onSurfaceVariant,
-                                    height: 1.25,
-                                  ),
-                              child: metadata,
-                            ),
-                          ],
-                        ),
+                ],
+              ),
+              Expanded(
+                child: DownloadCardDetails(
+                  minimumHeight: coverHeight,
+                  identityAction: const DownloadRowMoreButton(),
+                  identity: [
+                    Text(
+                      title,
+                      key: const ValueKey('source-download-card.title'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        height: 1.2,
                       ),
                     ),
+                    DefaultTextStyle.merge(
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                        height: 1.25,
+                      ),
+                      child: metadata,
+                    ),
                   ],
+                  heading: const [],
+                  footer: [?footer],
                 ),
               ),
-            ),
+            ],
           ),
-          SizedBox(width: 44, child: trailing),
-        ],
+        ),
       ),
     );
   }
@@ -314,93 +315,100 @@ class SourceDownloadedWorkCard extends StatelessWidget {
     required this.onOpen,
     required this.onManage,
     required this.onRemove,
+    required this.openSwipe,
     this.selecting = false,
     this.selected = false,
     this.enabled = true,
     this.hanimeFacts,
   });
   final DownloadVideoWork work;
+  final ValueNotifier<String?> openSwipe;
   final Future<Map<Uri, HanimeWorkFacts>>? hanimeFacts;
   final VoidCallback onOpen, onManage, onRemove;
   final bool selecting, selected, enabled;
   @override
-  Widget build(BuildContext context) => SourceDownloadedCardFrame(
-    row: {...work.poster.video!, 'durationMs': null, 'sourceDuration': ''},
-    title: work.title,
-    selecting: selecting,
-    selected: selecting && selected,
-    onOpen: enabled ? onOpen : null,
-    onManage: enabled && !selecting ? onManage : null,
-    metadata: Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(t.download.workEpisodeCount(count: work.episodes.length)),
-        if (work.knownBytes != null) Text(downloadByteAmount(work.knownBytes!)),
-        if (hanimeFacts != null)
-          HanimeCachedWorkStatistics(
-            facts: hanimeFacts,
-            url: work.poster.video?['url'],
+  Widget build(BuildContext context) {
+    final sourceRow = work.episodes
+        .map((item) => item.video!)
+        .where(
+          (row) =>
+              videoDownloadSourceTarget(row, includeEpisode: false) != null,
+        )
+        .firstOrNull;
+    return DownloadSwipeActions(
+      rowKey: work.key,
+      swipeActionIds: [sourceRow == null ? 'info' : 'details', 'delete'],
+      information: !selecting && enabled && sourceRow == null
+          ? [
+              t.download.workEpisodeCount(count: work.episodes.length),
+              if (work.knownBytes case final bytes?) downloadByteAmount(bytes),
+            ]
+          : null,
+      openRow: openSwipe,
+      title: work.title,
+      exposeActions: true,
+      actionVersion: jsonEncode([
+        for (final item in work.episodes)
+          [
+            item.video!['key'],
+            item.video!['attempt'],
+            item.video!['resourceId'],
+            item.video!['resourceVersion'],
+            item.video!['status'],
+            item.video!['at'],
+          ],
+      ]),
+      actions: [
+        if (!selecting && enabled && sourceRow != null)
+          (
+            id: 'details',
+            label: t.download.workDetails,
+            icon: Icons.info_outline_rounded,
+            run: () => unawaited(
+              openVideoDownloadWork(
+                context,
+                sourceRow,
+                includeEpisode: false,
+                forDownloadRecovery: false,
+              ),
+            ),
+          ),
+        if (!selecting && enabled)
+          (
+            id: 'delete',
+            label: downloadVideoWorkDeleteLabel(context, work),
+            icon: Icons.delete_outline_rounded,
+            run: onRemove,
           ),
       ],
-    ),
-    trailing: selecting
-        ? const SizedBox.shrink()
-        : Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              NativeVideoMenu(
-                key: ValueKey(
-                  jsonEncode([
-                    for (final item in work.episodes)
-                      [
-                        item.video!['key'],
-                        item.video!['attempt'],
-                        item.video!['resourceVersion'],
-                        item.video!['at'],
-                      ],
-                  ]),
-                ),
-                label: '',
-                tooltip: t.common.more,
-                selected: '',
-                hostPresentation: true,
-                width: 44,
-                icon: Icons.more_horiz_rounded,
-                symbol: 'ellipsis',
-                options: {
-                  'open': t.videoPlayback.episodes,
-                  'manage': t.videoSource.manage,
-                  'delete': t.common.delete,
-                },
-                optionIcons: const {
-                  'open': (
-                    icon: Icons.video_library_outlined,
-                    symbol: 'list.bullet',
-                  ),
-                  'manage': (
-                    icon: Icons.checklist_rounded,
-                    symbol: 'checklist',
-                  ),
-                  'delete': (
-                    icon: Icons.delete_outline_rounded,
-                    symbol: 'trash',
-                  ),
-                },
-                onSelected: (action) {
-                  if (!enabled) return;
-                  if (action == 'open')
-                    onOpen();
-                  else if (action == 'manage')
-                    onManage();
-                  else
-                    onRemove();
-                },
+      child: SourceDownloadedCardFrame(
+        row: {...work.poster.video!, 'durationMs': null, 'sourceDuration': ''},
+        title: work.title,
+        selecting: selecting,
+        selected: selecting && selected,
+        onOpen: enabled ? onOpen : null,
+        onManage: enabled && !selecting ? onManage : null,
+        metadata: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(t.download.workEpisodeCount(count: work.episodes.length)),
+            if (hanimeFacts != null)
+              HanimeCachedWorkStatistics(
+                facts: hanimeFacts,
+                url: work.poster.video?['url'],
               ),
-              const Icon(Icons.chevron_right_rounded, size: 18),
-            ],
-          ),
-  );
+          ],
+        ),
+        footer: work.knownBytes == null
+            ? null
+            : DownloadCardFooter(
+                itemKey: work.key,
+                metrics: [downloadByteAmount(work.knownBytes!)],
+              ),
+      ),
+    );
+  }
 }
 
 /// Source content uses the same exact resource/attempt recovery and removal
@@ -417,10 +425,13 @@ class SourceDownloadedEpisodeRow extends StatefulWidget {
     this.hanimeFacts,
     this.onSelect,
     this.onManage,
+    this.openSwipe,
+    this.enabled = true,
   });
   final DownloadCenterItem item;
   final Future<Map<Uri, HanimeWorkFacts>>? hanimeFacts;
-  final bool selecting, selected, episodeContext, showFileFormat;
+  final bool selecting, selected, episodeContext, showFileFormat, enabled;
+  final ValueNotifier<String?>? openSwipe;
   final Duration? resumeAt;
   final VoidCallback? onSelect, onManage;
   @override
@@ -430,9 +441,17 @@ class SourceDownloadedEpisodeRow extends StatefulWidget {
 
 class _SourceDownloadedEpisodeRowState
     extends State<SourceDownloadedEpisodeRow> {
+  ValueNotifier<String?>? _ownedSwipe;
   bool _busy = false;
   String? _cancellingKey;
   int? _cancellingAttempt;
+
+  @override
+  void dispose() {
+    _ownedSwipe?.dispose();
+    super.dispose();
+  }
+
   Future<void> _action(String action) async {
     if (_busy) return;
     final item = widget.item, row = widget.item.video!;
@@ -540,7 +559,7 @@ class _SourceDownloadedEpisodeRowState
     final episode = DownloadEpisodeRowScope.of(context);
     final selecting = episode?.selecting ?? widget.selecting;
     final selected = episode?.selected ?? widget.selected;
-    final busy = _busy || episode?.busy == true;
+    final busy = _busy || !widget.enabled || episode?.busy == true;
     final onSelect = episode == null ? widget.onSelect : episode.onSelect;
     final onManage = episode == null ? widget.onManage : episode.onManage;
     final playable =
@@ -567,117 +586,123 @@ class _SourceDownloadedEpisodeRowState
         : workTitle.isNotEmpty
         ? workTitle
         : item.title;
-    final menu = NativeVideoMenu(
-      key: ValueKey((
-        row['key'],
-        row['attempt'],
-        row['resourceVersion'],
-        row['at'],
-      )),
-      label: '',
-      tooltip: t.common.more,
-      selected: '',
-      hostPresentation: true,
-      selectAfterDismissal: const {'export'},
-      width: 44,
-      icon: Icons.more_horiz_rounded,
-      symbol: 'ellipsis',
-      options: {
+    final actions = <DownloadSwipeAction>[
+      if (!selecting && !busy) ...[
         if (playable &&
             row['format'] != 'hls' &&
             row['resourceVersion'] is String)
-          'export': t.download.exportVideo,
-        if (active) 'cancel': t.download.cancelTask,
-        'delete': t.common.delete,
-      },
-      optionIcons: const {
-        'export': (
-          icon: Icons.ios_share_rounded,
-          symbol: 'square.and.arrow.up',
-        ),
-        'delete': (icon: Icons.delete_outline_rounded, symbol: 'trash'),
-        'cancel': (icon: Icons.close_rounded, symbol: 'xmark'),
-      },
-      onSelected: (action) {
-        if (!_busy && !(action == 'cancel' && cancelling))
-          unawaited(_action(action));
-      },
+          (
+            id: 'export',
+            label: t.download.exportVideo,
+            icon: Icons.ios_share_rounded,
+            run: () => unawaited(_action('export')),
+          ),
+        if (canManageDownloadedVideoEpisode(row))
+          (
+            id: 'delete',
+            label: t.common.delete,
+            icon: Icons.delete_outline_rounded,
+            run: () => unawaited(_action('delete')),
+          ),
+      ],
+    ];
+    final showInformation = !selecting && !busy;
+    final watchPosition = widget.resumeAt;
+    const more = DownloadRowMoreButton();
+    final status = cancelling
+        ? t.download.statusCancelling
+        : switch (row['status']) {
+            'failed' => t.download.failed,
+            'cancelled' => t.download.cancelled,
+            'paused' => t.download.paused,
+            'preparing' || 'queued' || 'pending' => t.download.videoQueued,
+            'saving' => t.download.videoSaving,
+            'interrupted' => t.download.videoInterrupted,
+            'saved' => t.download.fileUnavailable,
+            _ => t.download.downloading,
+          };
+    Widget withTray(Widget child) => DownloadSwipeActions(
+      rowKey: item.key,
+      openRow:
+          episode?.openSwipe ??
+          widget.openSwipe ??
+          (_ownedSwipe ??= ValueNotifier<String?>(null)),
+      title: title,
+      exposeActions: true,
+      swipeActionIds: ['info', if (!active) 'delete'],
+      information: showInformation
+          ? [
+              if (!playable) status,
+              if ('${row['quality'] ?? ''}'.trim().isNotEmpty)
+                '${row['quality']}',
+              if ('${row['format'] ?? ''}'.trim().isNotEmpty)
+                '${row['format']}'.toUpperCase(),
+              if (item.sizeBytes case final bytes?) downloadByteAmount(bytes),
+              if (episode?.watchCompleted == true)
+                t.videoPlayback.watchedComplete
+              else if (watchPosition != null && watchPosition > Duration.zero)
+                t.bookshelf.watchTo(
+                  position: formatKnownVideoDuration(watchPosition),
+                ),
+            ]
+          : null,
+      completedAt: playable ? item.completedAt : null,
+      actionVersion: (
+        row['key'],
+        row['attempt'],
+        row['status'],
+        row['resourceId'],
+        row['resourceVersion'],
+        row['fileRemoved'],
+        row['fileInvalid'],
+        row['url'],
+        row['at'],
+      ),
+      actions: actions,
+      child: child,
     );
-    Widget withTray(Widget child) {
-      if (episode == null) return child;
-      return DownloadSwipeActions(
-        rowKey: item.key,
-        openRow: episode.openSwipe,
-        exposeActions: true,
-        completedAt: playable ? item.completedAt : null,
-        actionVersion: (
-          row['key'],
-          row['attempt'],
-          row['status'],
-          row['resourceId'],
-          row['resourceVersion'],
-          row['fileRemoved'],
-          row['fileInvalid'],
-          row['url'],
-          row['at'],
-        ),
-        actions: [
-          if (!selecting && !busy) ...[
-            if (playable &&
-                row['format'] != 'hls' &&
-                row['resourceVersion'] is String)
-              (
-                id: 'export',
-                label: t.download.exportVideo,
-                icon: Icons.ios_share_rounded,
-                run: () => unawaited(_action('export')),
-              ),
-            if (canManageDownloadedVideoEpisode(row))
-              (
-                id: 'delete',
-                label: t.common.delete,
-                icon: Icons.delete_outline_rounded,
-                run: () => unawaited(_action('delete')),
-              ),
-          ],
-        ],
-        child: child,
-      );
-    }
 
-    if (widget.episodeContext && playable && (!selecting || episode != null)) {
+    if (widget.episodeContext && playable) {
       final quality = '${row['quality'] ?? ''}'.trim();
       final variant = [
         if (quality.isNotEmpty) quality,
         if (widget.showFileFormat) '${row['format']}'.toUpperCase(),
       ].join(' · ');
-      final play = DownloadEpisodePlayRow(
-        title: title,
-        variant: variant,
-        bytes: item.sizeBytes,
-        resumeAt: widget.resumeAt,
-        additionalMetadata: statistics,
-        onPlay: busy
-            ? null
-            : selecting
-            ? onSelect
-            : () => unawaited(_action('play')),
-        onManage: busy || selecting ? null : onManage,
-        selecting: selecting,
-        selected: selected,
-      );
-      final key = ValueKey('source-download.${row['resourceId']}');
-      if (episode != null) {
-        return withTray(KeyedSubtree(key: key, child: play));
-      }
-      return Row(
-        key: key,
-        children: [
-          Expanded(child: play),
-          menu,
-        ],
+      return withTray(
+        DownloadEpisodePlayRow(
+          key: ValueKey('source-download.${row['resourceId']}'),
+          title: title,
+          variant: variant,
+          bytes: item.sizeBytes,
+          resumeAt: widget.resumeAt,
+          additionalMetadata: statistics,
+          onPlay: busy
+              ? null
+              : selecting
+              ? onSelect
+              : () => unawaited(_action('play')),
+          onManage: busy || selecting ? null : onManage,
+          selecting: selecting,
+          selected: selected,
+          trailing: more,
+        ),
       );
     }
+
+    final action = active
+        ? TextButton(
+            key: ValueKey('source-download-cancel.${row['key']}'),
+            onPressed: busy || cancelling
+                ? null
+                : () => unawaited(_action('cancel')),
+            child: Text(t.download.cancelTask),
+          )
+        : VideoDownloadRetry.canRetry(row) ||
+              VideoDownloadRetry.needsSource(row) &&
+                  videoDownloadSourceTarget(row) != null
+        ? VideoDownloadRetryAction(row: row, enabled: !busy)
+        : null;
+    final bytes = item.sizeBytes;
     return withTray(
       SourceDownloadedCardFrame(
         key: ValueKey('source-download.${row['resourceId'] ?? row['key']}'),
@@ -704,47 +729,23 @@ class _SourceDownloadedEpisodeRowState
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-            if (playable && item.sizeBytes != null)
-              Text(downloadByteAmount(item.sizeBytes!)),
             if (!playable)
-              Text(switch (row['status']) {
-                'failed' => t.download.failed,
-                'cancelled' => t.download.cancelled,
-                'paused' => t.download.paused,
-                'preparing' || 'queued' || 'pending' => t.download.videoQueued,
-                'saving' => t.download.videoSaving,
-                'interrupted' => t.download.videoInterrupted,
-                'saved' => t.download.fileUnavailable,
-                _ => t.download.downloading,
-              }),
-            if (row['status'] == 'downloading' && row['key'] is String)
-              VideoDownloadTaskProgress(taskKey: row['key'] as String),
-          ],
-        ),
-        trailing: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (!selecting && episode == null) menu,
-            if (active && !selecting)
-              IconButton(
-                key: ValueKey('source-download-cancel.${row['key']}'),
-                tooltip: t.download.cancelTask,
-                onPressed: busy || cancelling
-                    ? null
-                    : () => unawaited(_action('cancel')),
-                icon: const Icon(Icons.close_rounded),
-              ),
-            if (!selecting &&
-                (VideoDownloadRetry.canRetry(row) ||
-                    VideoDownloadRetry.needsSource(row) &&
-                        videoDownloadSourceTarget(row) != null))
-              VideoDownloadRetryAction(
-                row: row,
-                iconOnly: true,
-                enabled: !busy,
+              DownloadCardTransfer(
+                status: Text(status),
+                progress: row['status'] == 'downloading' && row['key'] is String
+                    ? VideoDownloadTaskProgress(taskKey: row['key'] as String)
+                    : null,
+                action: action,
+                showAction: !selecting,
               ),
           ],
         ),
+        footer: playable && bytes != null
+            ? DownloadCardFooter(
+                itemKey: item.key,
+                metrics: [downloadByteAmount(bytes)],
+              )
+            : null,
       ),
     );
   }

@@ -163,13 +163,17 @@ void main() {
           );
           final pause = find.descendant(
             of: transfer,
-            matching: find.byIcon(Icons.pause_rounded),
+            matching: find.widgetWithText(TextButton, 'Pause downloads'),
           );
           final statusRect = tester.getRect(status);
           final progressRect = tester.getRect(workProgress);
           expect(tester.getRect(summaryLabel).bottom, lessThan(statusRect.top));
-          expect(progressRect.top - statusRect.bottom, closeTo(4, .1));
-          expect(progressRect.right, lessThan(tester.getRect(pause).left));
+          expect(
+            progressRect.top - tester.getRect(pause).bottom,
+            closeTo(4, .1),
+          );
+          expect(progressRect.left, tester.getRect(transfer).left);
+          expect(progressRect.right, tester.getRect(transfer).right);
           expect(
             tester.getRect(transfer).contains(progressRect.center),
             isTrue,

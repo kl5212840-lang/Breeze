@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_thumbnail.dart';
 import 'package:zephyr/page/video/video_interaction.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 
 /// Keep part of the next cover visible, including at accessibility text sizes.
 double videoShelfCardWidth(BuildContext context, double available) {
@@ -23,6 +24,9 @@ class VideoCreatorShelf extends StatefulWidget {
     required this.onOpenCreator,
     this.onOpenWorks,
     this.opening = false,
+    this.loading = false,
+    this.onRetry,
+    this.overview = false,
     required this.cardBuilder,
     required this.cardExtent,
   });
@@ -31,7 +35,8 @@ class VideoCreatorShelf extends StatefulWidget {
   final Uri page;
   final VoidCallback onOpenCreator;
   final VoidCallback? onOpenWorks;
-  final bool opening;
+  final bool opening, loading, overview;
+  final VoidCallback? onRetry;
   final Widget Function(Map<String, dynamic>) cardBuilder;
   final double Function(double) cardExtent;
   @override
@@ -44,6 +49,14 @@ class _VideoCreatorShelfState extends State<VideoCreatorShelf> {
   late ScrollController _scroll;
   double _offset = 0;
   String get _identity => widget.creator['entityKey']?.toString() ?? '';
+
+  double _previewWidth(double available) {
+    if (!widget.overview) return videoShelfCardWidth(context, available);
+    final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    final columns = (available / (112 * scale.clamp(1, 2))).floor().clamp(1, 4);
+    return (available - 12 * (columns - 1)) / columns;
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -167,6 +180,7 @@ class _VideoCreatorShelfState extends State<VideoCreatorShelf> {
             .trim() ??
         '';
     final theme = Theme.of(context);
+    final targetSize = CollectionToolbarMetrics.actionExtentOf(context);
     return Padding(
       padding: const EdgeInsets.only(bottom: 24),
       child: Column(
@@ -187,7 +201,8 @@ class _VideoCreatorShelfState extends State<VideoCreatorShelf> {
               label.dispose();
               final identityWidth = 60 + scaler.scale(72);
               final inline =
-                  constraints.maxWidth >= identityWidth + labelWidth + 44 + 40;
+                  constraints.maxWidth >=
+                  identityWidth + labelWidth + targetSize + 40;
               final identity = Semantics(
                 button: true,
                 enabled: !widget.opening,
@@ -253,7 +268,8 @@ class _VideoCreatorShelfState extends State<VideoCreatorShelf> {
                                 overflow: TextOverflow.ellipsis,
                                 style: theme.textTheme.titleMedium,
                               ),
-                              if (widget.creator['followed'] == true)
+                              if (!widget.overview &&
+                                  widget.creator['followed'] == true)
                                 Text(
                                   t.videoCommunity.following,
                                   style: theme.textTheme.bodySmall?.copyWith(
@@ -274,7 +290,7 @@ class _VideoCreatorShelfState extends State<VideoCreatorShelf> {
                     ? null
                     : widget.onOpenWorks ?? widget.onOpenCreator,
                 style: TextButton.styleFrom(
-                  minimumSize: const Size(44, 44),
+                  minimumSize: Size.square(targetSize),
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                 ),
                 child: Row(
@@ -306,9 +322,9 @@ class _VideoCreatorShelfState extends State<VideoCreatorShelf> {
                       ? t.videoCommunity.expandCreator(name: name)
                       : t.videoCommunity.collapseCreator(name: name),
                   onPressed: _toggle,
-                  constraints: const BoxConstraints(
-                    minWidth: 44,
-                    minHeight: 44,
+                  constraints: BoxConstraints(
+                    minWidth: targetSize,
+                    minHeight: targetSize,
                   ),
                   icon: VideoDisclosureIndicator(expanded: !_collapsed),
                 ),
@@ -340,7 +356,69 @@ class _VideoCreatorShelfState extends State<VideoCreatorShelf> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const SizedBox(height: 8),
-                if (widget.videos.isEmpty)
+                if (widget.loading && widget.videos.isEmpty)
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final width = _previewWidth(constraints.maxWidth);
+                      return Semantics(
+                        label: t.common.loading,
+                        child: SizedBox(
+                          height: widget.cardExtent(width),
+                          child: Align(
+                            alignment: AlignmentDirectional.topStart,
+                            child: ExcludeSemantics(
+                              child: Wrap(
+                                spacing: 12,
+                                children: [
+                                  for (
+                                    var i = 0;
+                                    i <
+                                        ((constraints.maxWidth + 12) /
+                                                    (width + 12) +
+                                                .001)
+                                            .floor();
+                                    i++
+                                  )
+                                    SizedBox(
+                                      width: width,
+                                      height: width * 9 / 16,
+                                      child: DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          color: theme
+                                              .colorScheme
+                                              .surfaceContainerHighest,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  )
+                else if (widget.onRetry != null && widget.videos.isEmpty)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          t.videoSource.readFailed,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: widget.onRetry,
+                        child: Text(t.common.retry),
+                      ),
+                    ],
+                  )
+                else if (widget.videos.isEmpty)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     child: Text(
@@ -353,10 +431,7 @@ class _VideoCreatorShelfState extends State<VideoCreatorShelf> {
                 else
                   LayoutBuilder(
                     builder: (context, constraints) {
-                      final width = videoShelfCardWidth(
-                        context,
-                        constraints.maxWidth,
-                      );
+                      final width = _previewWidth(constraints.maxWidth);
                       return SizedBox(
                         height: widget.cardExtent(width),
                         child: ListView.separated(

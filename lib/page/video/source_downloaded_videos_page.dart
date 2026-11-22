@@ -92,6 +92,7 @@ class _SourceDownloadedVideosPageState
   final _selected = <String>{};
   int _readEpoch = 0;
   final _searchFocus = FocusNode();
+  final _openSwipe = ValueNotifier<String?>(null);
   @override
   void initState() {
     super.initState();
@@ -151,6 +152,28 @@ class _SourceDownloadedVideosPageState
     onChanged: (scope) => setState(() => _keywordScope = scope),
   );
 
+  void _closeSearch() {
+    _openSwipe.value = null;
+    _searchFocus.unfocus();
+    setState(() {
+      _searching = false;
+      _query = '';
+    });
+  }
+
+  void _toggleSearch() {
+    _openSwipe.value = null;
+    if (_searching) {
+      _closeSearch();
+      return;
+    }
+    setState(() => _searching = true);
+    requestSearchKeyboard(
+      _searchFocus,
+      isCurrent: () => mounted && _searching && !_managing,
+    );
+  }
+
   ShelfFacetEntry _facetEntry(DownloadCenterItem item) => ShelfFacetEntry(
     key: item.key,
     source: item.source,
@@ -160,6 +183,7 @@ class _SourceDownloadedVideosPageState
   Future<void> _editFilters() async {
     if (_openingFilters || _busy) return;
     _openingFilters = true;
+    _openSwipe.value = null;
     _searchFocus.unfocus();
     final source = widget.source;
     try {
@@ -198,7 +222,7 @@ class _SourceDownloadedVideosPageState
   });
   void _manageItems(List<DownloadCenterItem> items) => setState(() {
     _managing = true;
-    _searching = false;
+    _openSwipe.value = null;
     _searchFocus.unfocus();
     _selected.addAll(items.map((item) => item.key));
   });
@@ -296,34 +320,38 @@ class _SourceDownloadedVideosPageState
   void dispose() {
     VideoLocalResources.changes.removeListener(_changed);
     _searchFocus.dispose();
+    _openSwipe.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) => PopScope(
-    canPop: !widget.groupDownloads || (!_managing && !_busy),
+    canPop: !_searching && !_managing && !_busy,
     onPopInvokedWithResult: (didPop, _) {
-      if (!didPop && !_busy)
+      if (didPop) {
+        _openSwipe.value = null;
+        return;
+      }
+      if (_busy) return;
+      if (_managing) {
         setState(() {
           _managing = false;
           _selected.clear();
         });
+      } else if (_searching) {
+        _closeSearch();
+      }
     },
     child: Scaffold(
       appBar: AppBar(
-        toolbarHeight: widget.groupDownloads && !_managing
-            ? SearchToolbarScope.stableHeight(context, 56)
-            : widget.groupDownloads &&
-                  _managing &&
-                  MediaQuery.textScalerOf(context).scale(16) > 22
-            ? 80
-            : 56,
-        automaticallyImplyLeading: !widget.groupDownloads,
-        leading: widget.groupDownloads ? null : const SourceBackButton(),
-        titleSpacing: widget.groupDownloads ? 0 : null,
-        title: !widget.groupDownloads
-            ? Text(t.bookshelf.download)
-            : _managing
+        toolbarHeight: _managing
+            ? MediaQuery.textScalerOf(context).scale(16) > 22
+                  ? 80
+                  : 56
+            : SearchToolbarScope.stableHeight(context, 56),
+        automaticallyImplyLeading: false,
+        titleSpacing: 0,
+        title: _managing
             ? BookshelfSelectionToolbar(
                 keyPrefix: 'source-downloads.selection',
                 selectedCount: _visibleItems
@@ -346,8 +374,11 @@ class _SourceDownloadedVideosPageState
               )
             : SourceVideoListHeader(
                 keyPrefix: 'source-downloads',
-                leading: const SourceBackButton(),
-                title: _query.isEmpty ? t.bookshelf.download : _query,
+                leading: TapRegion(
+                  groupId: _openSwipe,
+                  child: const SourceBackButton(bare: true),
+                ),
+                title: t.bookshelf.download,
                 searching: _searching,
                 searchScope: _keywordMenu(),
                 searchField: SearchQueryField(
@@ -359,96 +390,50 @@ class _SourceDownloadedVideosPageState
                   hintText: t.common.search,
                   onChanged: (value) => setState(() => _query = value),
                 ),
-                onSearch: _busy
-                    ? null
-                    : () {
-                        setState(() => _searching = !_searching);
-                        if (_searching)
-                          requestSearchKeyboard(
-                            _searchFocus,
-                            isCurrent: () => mounted && _searching,
-                          );
-                        else
-                          _searchFocus.unfocus();
-                      },
+                onSearch: _busy ? null : _toggleSearch,
                 options: {
-                  'recent': t.videoPersonal.recent,
-                  'title': t.videoLibrary.titleOrder,
-                  if (_visibleItems.isNotEmpty) 'manage': t.videoSource.manage,
+                  if (widget.groupDownloads && _visibleItems.isNotEmpty)
+                    'manage': t.videoSource.manage,
                 },
                 onMore: (value) {
-                  if (_busy) return;
-                  if (value == 'manage')
-                    _manageItems([]);
-                  else
-                    setState(() => _sort = value);
+                  if (!_busy && value == 'manage') _manageItems([]);
                 },
               ),
-        actions: widget.groupDownloads
-            ? null
-            : const [CollectionCoverPrivacyActions()],
       ),
       body: _selectionBody(
         Column(
           children: [
-            if (widget.groupDownloads)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
-                child: Align(
-                  alignment: AlignmentDirectional.centerStart,
-                  child: FutureBuilder<List<Map<String, dynamic>>>(
-                    future: _rows,
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData)
-                        return Text(
-                          snapshot.hasError
-                              ? t.common.unknown
-                              : t.common.loading,
-                        );
-                      final entries = _entries(snapshot.data!);
-                      return Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              t.videoLibrary.results(count: entries.length),
-                              key: const ValueKey('source-downloads.count'),
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ),
-                          SourceChromeIconButton(
-                            key: const ValueKey('source-downloads.filters'),
-                            tooltip: t.videoFilters.title,
-                            symbol: CollectionCommandIcons.filter.symbol,
-                            selected: _facets.isActive,
-                            onPressed: _openingFilters || _busy
-                                ? null
-                                : _editFilters,
-                            icon: CollectionCommandIcons.filter.icon,
-                          ),
-                        ],
-                      );
-                    },
+            if (widget.groupDownloads && !_managing)
+              FutureBuilder<List<Map<String, dynamic>>>(
+                future: _rows,
+                builder: (context, snapshot) => SourceVideoResultsToolbar(
+                  keyPrefix: 'source-downloads',
+                  count: snapshot.hasData
+                      ? t.videoLibrary.results(
+                          count: _entries(snapshot.data!).length,
+                        )
+                      : snapshot.hasError
+                      ? t.common.unknown
+                      : t.common.loading,
+                  sort: _sort,
+                  sortOptions: {
+                    'recent': t.videoPersonal.recent,
+                    'title': t.videoLibrary.titleOrder,
+                  },
+                  showSortValue: true,
+                  onSort: _busy || !snapshot.hasData
+                      ? null
+                      : (value) => setState(() => _sort = value),
+                  filter: SourceChromeIconButton(
+                    key: const ValueKey('source-downloads.filters'),
+                    tooltip: t.videoFilters.title,
+                    symbol: CollectionCommandIcons.filter.symbol,
+                    selected: _facets.isActive,
+                    onPressed: _openingFilters || _busy || !snapshot.hasData
+                        ? null
+                        : _editFilters,
+                    icon: CollectionCommandIcons.filter.icon,
                   ),
-                ),
-              ),
-            if (!widget.groupDownloads)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: SearchQueryField(
-                        query: _query,
-                        inline: true,
-                        focusNode: _searchFocus,
-                        closeOnSubmit: false,
-                        hintText: t.common.search,
-                        onChanged: (value) => setState(() => _query = value),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    _keywordMenu(),
-                  ],
                 ),
               ),
             Expanded(
@@ -470,6 +455,10 @@ class _SourceDownloadedVideosPageState
                       return Center(child: Text(t.common.empty));
                     return CollectionCoverPrivacyScope(
                       child: ListView.separated(
+                        key: PageStorageKey(
+                          'source-downloads.${widget.source}'
+                          '${_query.trim().isEmpty ? '' : '.lookup'}',
+                        ),
                         padding: EdgeInsets.fromLTRB(
                           16,
                           4,
@@ -488,6 +477,8 @@ class _SourceDownloadedVideosPageState
                           if (work == null)
                             return SourceDownloadedEpisodeRow(
                               item: entry.item,
+                              openSwipe: _openSwipe,
+                              enabled: !_busy,
                               hanimeFacts: _hanimeFacts,
                               selecting: _managing,
                               selected: _selected.contains(entry.item.key),
@@ -497,6 +488,7 @@ class _SourceDownloadedVideosPageState
                           return SourceDownloadedWorkCard(
                             key: ValueKey('source-download-work.${work.key}'),
                             work: work,
+                            openSwipe: _openSwipe,
                             hanimeFacts: _hanimeFacts,
                             selecting: _managing,
                             selected: _selected.containsAll(
@@ -528,6 +520,10 @@ class _SourceDownloadedVideosPageState
                   if (rows.isEmpty) return Center(child: Text(t.common.empty));
                   return CollectionCoverPrivacyScope(
                     child: ListView.separated(
+                      key: PageStorageKey(
+                        'source-downloads.playable.${widget.source}'
+                        '${_query.trim().isEmpty ? '' : '.lookup'}',
+                      ),
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
                       itemCount: rows.length,
                       separatorBuilder: (_, _) =>

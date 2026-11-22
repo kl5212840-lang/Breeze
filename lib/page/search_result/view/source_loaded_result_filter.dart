@@ -2,6 +2,7 @@ import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 import 'package:zephyr/widgets/applied_filter_bar.dart';
 import 'package:zephyr/widgets/collection_command_icons.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'dart:async';
 import 'package:zephyr/page/search_result/source_result_filter_preferences.dart';
 import 'package:zephyr/network/sync/portable_preferences.dart';
@@ -107,7 +108,7 @@ class SourceLoadedFacetSummary extends StatelessWidget {
     if (!chrome.filtersActive) return const SizedBox.shrink();
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsetsDirectional.fromSTEB(12, 0, 8, 4),
+      padding: CollectionToolbarMetrics.contentPaddingOf(context, bottom: 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -646,7 +647,11 @@ class _SourceLoadedResultFilterState extends State<SourceLoadedResultFilter> {
       );
     }
     final controls = Padding(
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      padding: CollectionToolbarMetrics.contentPaddingOf(
+        context,
+        top: 4,
+        bottom: 4,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

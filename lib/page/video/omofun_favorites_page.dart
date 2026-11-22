@@ -95,6 +95,26 @@ class _OmoSiteFavoritesPageState extends State<OmoSiteFavoritesPage> {
     if (mounted) setState(() {});
   }
 
+  void _closeSearch() {
+    _searchFocus.unfocus();
+    setState(() {
+      _searching = false;
+      _search.clear();
+    });
+  }
+
+  void _toggleSearch() {
+    if (_searching) {
+      _closeSearch();
+      return;
+    }
+    setState(() => _searching = true);
+    requestSearchKeyboard(
+      _searchFocus,
+      isCurrent: () => mounted && widget.active && _searching,
+    );
+  }
+
   @override
   void didUpdateWidget(covariant OmoSiteFavoritesPage old) {
     super.didUpdateWidget(old);
@@ -596,19 +616,7 @@ class _OmoSiteFavoritesPageState extends State<OmoSiteFavoritesPage> {
                 icon: Icon(
                   _searching ? Icons.close_rounded : Icons.search_rounded,
                 ),
-                onPressed: _writing
-                    ? null
-                    : () {
-                        setState(() => _searching = !_searching);
-                        if (_searching)
-                          requestSearchKeyboard(
-                            _searchFocus,
-                            isCurrent: () =>
-                                mounted && widget.active && _searching,
-                          );
-                        else
-                          _searchFocus.unfocus();
-                      },
+                onPressed: _writing ? null : _toggleSearch,
               ),
               onCancel: _writing
                   ? null
@@ -663,10 +671,8 @@ class _OmoSiteFavoritesPageState extends State<OmoSiteFavoritesPage> {
       bottom: false,
       child: SourceVideoListHeader(
         keyPrefix: 'omo-favorites',
-        leading: widget.standalone ? const SourceBackButton() : null,
-        title: _search.text.isEmpty
-            ? t.videoSource.siteFavorites
-            : _search.text,
+        leading: widget.standalone ? const SourceBackButton(bare: true) : null,
+        title: t.videoSource.siteFavorites,
         searching: _searching,
         searchScope: _keywordMenu(),
         searchField: SearchQueryField(
@@ -679,18 +685,7 @@ class _OmoSiteFavoritesPageState extends State<OmoSiteFavoritesPage> {
               : t.videoSource.searchFollows,
           onChanged: (value) => setState(() => _search.text = value),
         ),
-        onSearch: _writing
-            ? null
-            : () {
-                setState(() => _searching = !_searching);
-                if (_searching)
-                  requestSearchKeyboard(
-                    _searchFocus,
-                    isCurrent: () => mounted && widget.active && _searching,
-                  );
-                else
-                  _searchFocus.unfocus();
-              },
+        onSearch: _writing ? null : _toggleSearch,
         options: {
           if (_items.isNotEmpty) 'manage': t.videoSource.manage,
           if (_items.isNotEmpty && widget.onImportMode != null)
@@ -705,7 +700,6 @@ class _OmoSiteFavoritesPageState extends State<OmoSiteFavoritesPage> {
             _searchFocus.unfocus();
             setState(() {
               _managing = true;
-              _searching = false;
               _selected.clear();
             });
           }
@@ -754,16 +748,13 @@ class _OmoSiteFavoritesPageState extends State<OmoSiteFavoritesPage> {
         child: PopScope(
           canPop:
               !widget.active ||
-              (!widget.importing &&
-                  !_managing &&
-                  !_writing &&
-                  !_searchFocus.hasFocus),
+              (!widget.importing && !_managing && !_writing && !_searching),
           onPopInvokedWithResult: (didPop, _) {
             if (didPop) {
               _closeNotice();
             } else if (widget.active && !_writing) {
-              if (_searchFocus.hasFocus) {
-                _searchFocus.unfocus();
+              if (_searching) {
+                _closeSearch();
               } else if (widget.importing) {
                 _cancelImport();
               } else if (_managing) {
@@ -834,7 +825,9 @@ class _OmoSiteFavoritesPageState extends State<OmoSiteFavoritesPage> {
                     editing: _managing,
                     editLabel: t.videoSource.manage,
                     loading: _loading && _items.isEmpty && !_pullRefreshing,
-                    storageKey: '${widget.source}.site-favorites.$_identity',
+                    storageKey:
+                        '${widget.source}.site-favorites.$_identity'
+                        '${_search.text.trim().isEmpty ? '' : '.lookup'}',
                     header: widget.importing || _managing
                         ? null
                         : _collectionHeader(visible),

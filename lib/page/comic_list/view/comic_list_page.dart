@@ -6,6 +6,7 @@ import 'dart:async';
 import 'package:zephyr/page/search/widget/search_field_surface.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search/widget/search_keyboard.dart';
+import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/page/search_result/view/source_loaded_result_filter.dart';
 import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
@@ -43,6 +44,7 @@ class ComicListPage extends StatelessWidget {
     this.sceneBundleFnPathFallback,
     this.embedded = false,
     this.jmCollection = false,
+    this.titleInParent = false,
   });
 
   final String? title;
@@ -54,6 +56,7 @@ class ComicListPage extends StatelessWidget {
   /// Render inside a source shell without a second navigation scaffold.
   final bool embedded;
   final bool jmCollection;
+  final bool titleInParent;
 
   @override
   Widget build(BuildContext context) => SourceExperienceBoundary(
@@ -80,6 +83,7 @@ class ComicListPage extends StatelessWidget {
           child: _ComicListView(
             title: title,
             embedded: embedded,
+            titleInParent: titleInParent,
             jmCollection: jmCollection,
             cloudFavoriteEntryPoint:
                 sceneBundleFnPath == 'getCloudFavoriteSceneBundle' ||
@@ -95,12 +99,13 @@ class _ComicListView extends StatefulWidget {
   const _ComicListView({
     this.title,
     required this.embedded,
+    required this.titleInParent,
     this.jmCollection = false,
     required this.cloudFavoriteEntryPoint,
   });
 
   final String? title;
-  final bool embedded, jmCollection;
+  final bool embedded, jmCollection, titleInParent;
   final bool cloudFavoriteEntryPoint;
 
   @override
@@ -185,6 +190,12 @@ class _ComicListViewState extends State<_ComicListView>
     );
   }
 
+  void _closeJmSearch() {
+    _jmSearchFocus.unfocus();
+    _jmSearch.clear();
+    setState(() => _jmSearching = false);
+  }
+
   Widget _buildJmCollection(
     BuildContext context,
     ComicListState state,
@@ -196,36 +207,52 @@ class _ComicListViewState extends State<_ComicListView>
     final remoteFilters = cloudFavoriteHasRemoteResultFilters(
       state.filterBundle,
     );
+    final searching = _jmSearching && !remoteFilters;
+    final sortSession = _sessionOf(state);
+    final sortAction = sort == null
+        ? null
+        : JmCollectionSortAction(
+            key: const ValueKey('jm-collection.sort'),
+            options: {
+              for (final option in sort.options) option.value: option.label,
+            },
+            selected:
+                state.filterSelections[sort.key] ??
+                state.filterBundle?.defaultSelections[sort.key] ??
+                sort.options.first.value,
+            onSelected: (value) {
+              if (!context.mounted) return;
+              final cubit = context.read<ComicListCubit>();
+              if (_sessionOf(cubit.state) != sortSession ||
+                  pluginSessionWriteFence.isChanging(state.currentFrom)) {
+                return;
+              }
+              cubit.applyFilterSelections({
+                ...cubit.state.filterSelections,
+                sort.key: value,
+              });
+            },
+          );
     final body = Column(
       children: [
         if (remoteFilters)
-          Padding(
-            padding: const EdgeInsetsDirectional.symmetric(
-              horizontal: CollectionToolbarMetrics.horizontalInset,
+          JmCollectionResultsRow(
+            scope: _cloudFolderChoice(state),
+            countLabel: '',
+            sortAction: sortAction,
+            filterButton: SourceChromeIconButton(
+              key: const ValueKey('jm-cloud-remote-filter'),
+              tooltip: t.comicList.filter,
+              icon: CollectionCommandIcons.filter.icon,
+              symbol: CollectionCommandIcons.filter.symbol,
+              onPressed: _filterOpening
+                  ? null
+                  : () => _openFilterDialog(context),
             ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: _cloudFolderChoice(state),
-                  ),
-                ),
-                SourceChromeIconButton(
-                  key: const ValueKey('jm-cloud-remote-filter'),
-                  tooltip: t.comicList.filter,
-                  icon: CollectionCommandIcons.filter.icon,
-                  symbol: CollectionCommandIcons.filter.symbol,
-                  onPressed: _filterOpening
-                      ? null
-                      : () => _openFilterDialog(context),
-                ),
-                SourceListViewToggle(
-                  key: const ValueKey('jm-cloud-view'),
-                  detailed: detailed,
-                  onChanged: onViewChanged,
-                ),
-              ],
+            viewAction: SourceListViewToggle(
+              key: const ValueKey('jm-cloud-view'),
+              detailed: detailed,
+              onChanged: onViewChanged,
             ),
           ),
         if (remoteFilters)
@@ -241,6 +268,7 @@ class _ComicListViewState extends State<_ComicListView>
               detailed,
               blocked,
               jmViewChanged: onViewChanged,
+              jmSortAction: sortAction,
             ),
           ),
         ),
@@ -248,50 +276,34 @@ class _ComicListViewState extends State<_ComicListView>
     );
     final actions = <Widget>[
       JmCollectionNavigationActions(
-        searching: _jmSearching,
-        selected: sort == null
-            ? ''
-            : 'sort.${state.filterSelections[sort.key] ?? state.filterBundle?.defaultSelections[sort.key] ?? sort.options.first.value}',
+        showSearch: !remoteFilters,
         onSearch: remoteFilters
             ? null
             : () {
                 final accountGeneration = pluginSessionWriteFence.generation(
                   state.currentFrom,
                 );
-                setState(() {
-                  _jmSearching = !_jmSearching;
-                  if (!_jmSearching) {
-                    _jmSearch.clear();
-                    _jmSearchFocus.unfocus();
-                  }
-                });
-                if (_jmSearching)
-                  requestSearchKeyboard(
-                    _jmSearchFocus,
-                    isCurrent: () =>
-                        mounted &&
-                        _jmSearching &&
-                        context.read<ComicListCubit>().state.currentFrom ==
-                            state.currentFrom &&
-                        !pluginSessionWriteFence.isChanging(
-                          state.currentFrom,
-                        ) &&
-                        pluginSessionWriteFence.generation(state.currentFrom) ==
-                            accountGeneration &&
-                        ModalRoute.of(context)?.isCurrent != false,
-                  );
+                setState(() => _jmSearching = true);
+                requestSearchKeyboard(
+                  _jmSearchFocus,
+                  isCurrent: () =>
+                      mounted &&
+                      _jmSearching &&
+                      context.read<ComicListCubit>().state.currentFrom ==
+                          state.currentFrom &&
+                      !pluginSessionWriteFence.isChanging(state.currentFrom) &&
+                      pluginSessionWriteFence.generation(state.currentFrom) ==
+                          accountGeneration &&
+                      ModalRoute.of(context)?.isCurrent != false,
+                );
               },
         options: {
-          if (sort != null)
-            for (final option in sort.options)
-              'sort.${option.value}': option.label,
           if (!remoteFilters &&
               cloudFavoriteNeedsFilterDialog(state.filterBundle))
             'remote-filter': t.comicList.filter,
           collectionCoverSettingsAction: collectionCoverSettingsLabel(context),
         },
         groups: [
-          if (sort != null) [for (final o in sort.options) 'sort.${o.value}'],
           [
             if (!remoteFilters &&
                 cloudFavoriteNeedsFilterDialog(state.filterBundle))
@@ -300,12 +312,7 @@ class _ComicListViewState extends State<_ComicListView>
           ],
         ],
         onSelected: (value) {
-          if (value.startsWith('sort.') && sort != null) {
-            context.read<ComicListCubit>().applyFilterSelections({
-              ...state.filterSelections,
-              sort.key: value.substring(5),
-            });
-          } else if (value == 'remote-filter') {
+          if (value == 'remote-filter') {
             unawaited(_openFilterDialog(context));
           } else if (value == collectionCoverSettingsAction) {
             unawaited(openCollectionCoverSettings(context));
@@ -316,22 +323,54 @@ class _ComicListViewState extends State<_ComicListView>
     if (widget.embedded)
       return Column(
         children: [
-          Row(
-            children: [
-              Expanded(child: Text(widget.title ?? '站点收藏')),
-              ...actions,
-            ],
-          ),
+          if (!searching)
+            Padding(
+              padding: CollectionToolbarMetrics.contentPaddingOf(context),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: widget.titleInParent
+                        ? const SizedBox.shrink()
+                        : Text(widget.title ?? '站点收藏'),
+                  ),
+                  ...actions,
+                ],
+              ),
+            ),
           Expanded(child: body),
         ],
       );
-    return Scaffold(
-      appBar: AppBar(
-        leading: const SourceBackButton(),
-        title: Text(widget.title ?? state.scene?.title ?? '站点收藏'),
-        actions: actions,
+    return PopScope(
+      canPop: !searching,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && searching) _closeJmSearch();
+      },
+      child: Scaffold(
+        appBar: searching
+            ? null
+            : AppBar(
+                leadingWidth: CollectionToolbarMetrics.leadingExtentOf(context),
+                leading: CollectionToolbarMetrics.leading(
+                  context,
+                  const SourceBackButton(),
+                ),
+                title: Text(
+                  widget.title ?? state.scene?.title ?? '站点收藏',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                titleSpacing: 0,
+                actionsPadding: CollectionToolbarMetrics.trailingPadding,
+                actions: actions,
+              ),
+        body: SafeArea(
+          top: searching,
+          bottom: false,
+          left: false,
+          right: false,
+          child: body,
+        ),
       ),
-      body: body,
     );
   }
 
@@ -341,6 +380,7 @@ class _ComicListViewState extends State<_ComicListView>
     SourceLoadedResultChrome chrome,
     bool detailed,
     ValueChanged<bool> onViewChanged,
+    Widget? sortAction,
   ) => Column(
     mainAxisSize: MainAxisSize.min,
     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -350,8 +390,17 @@ class _ComicListViewState extends State<_ComicListView>
         alignment: Alignment.topCenter,
         child: _jmSearching
             ? Padding(
-                padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
-                child: chrome.searchField,
+                padding: CollectionToolbarMetrics.contentPaddingOf(
+                  context,
+                  top: 4,
+                  bottom: 8,
+                ),
+                child: SearchToolbarScope(
+                  extent: SearchToolbarScope.fieldExtent(context),
+                  onClose: _closeJmSearch,
+                  closeKey: const ValueKey('jm-collection.search'),
+                  child: chrome.searchField,
+                ),
               )
             : const SizedBox.shrink(),
       ),
@@ -359,6 +408,7 @@ class _ComicListViewState extends State<_ComicListView>
         scope: _cloudFolderChoice(state),
         countLabel: chrome.countLabel,
         filterButton: chrome.filterButton,
+        sortAction: sortAction,
         viewAction: SourceListViewToggle(
           key: const ValueKey('jm-cloud-view'),
           detailed: detailed,
@@ -508,7 +558,9 @@ class _ComicListViewState extends State<_ComicListView>
                   ) => _publicLoadedToolbar(
                     context,
                     chrome,
-                    title: widget.embedded ? title : null,
+                    title: widget.embedded && !widget.titleInParent
+                        ? title
+                        : null,
                     detailed: detailed,
                     onViewChanged: onViewChanged,
                   );
@@ -551,12 +603,14 @@ class _ComicListViewState extends State<_ComicListView>
                             child: Row(
                               children: [
                                 Expanded(
-                                  child: Text(
-                                    title,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.titleMedium,
-                                  ),
+                                  child: widget.titleInParent
+                                      ? const SizedBox.shrink()
+                                      : Text(
+                                          title,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.titleMedium,
+                                        ),
                                 ),
                                 if (isBikaRanking)
                                   _rankingTypeChoice(context, state),
@@ -680,14 +734,14 @@ class _ComicListViewState extends State<_ComicListView>
     mainAxisSize: MainAxisSize.min,
     children: [
       Padding(
-        padding: const EdgeInsetsDirectional.fromSTEB(
-          CollectionToolbarMetrics.sourceContentInset,
-          4,
-          CollectionToolbarMetrics.sourceContentInset,
-          4,
+        padding: CollectionToolbarMetrics.contentPaddingOf(
+          context,
+          top: 4,
+          bottom: 4,
         ),
         child: Row(
           key: const ValueKey('comic-list.public-loaded-tools'),
+          spacing: CollectionToolbarMetrics.searchControlGap,
           children: [
             Expanded(
               child: Text(
@@ -835,6 +889,7 @@ class _ComicListViewState extends State<_ComicListView>
     Set<String> blocked, {
     Widget Function(BuildContext, SourceLoadedResultChrome)? publicLoadedTools,
     ValueChanged<bool>? jmViewChanged,
+    Widget? jmSortAction,
   }) {
     final currentFrom = state.currentFrom;
 
@@ -913,6 +968,7 @@ class _ComicListViewState extends State<_ComicListView>
         blocked,
         publicLoadedTools,
         jmViewChanged,
+        jmSortAction,
       );
     }
 
@@ -926,6 +982,7 @@ class _ComicListViewState extends State<_ComicListView>
     Set<String> blocked,
     Widget Function(BuildContext, SourceLoadedResultChrome)? publicLoadedTools,
     ValueChanged<bool>? jmViewChanged,
+    Widget? jmSortAction,
   ) {
     final request = scene.body.request!;
     final filterCore = state.resolvedFilterCore;
@@ -944,6 +1001,11 @@ class _ComicListViewState extends State<_ComicListView>
       ),
       pluginId: state.currentFrom,
       fnPath: request.fnPath,
+      tabReselectEnabled:
+          widget.embedded &&
+          !_jmSearching &&
+          !_filterOpening &&
+          !_systemSearchSurface,
       coreBuilder: (page) => {'page': page, ...listCore},
       externBuilder: (_) => listExtern,
       collectionTargetId: collectionTargetId,
@@ -961,8 +1023,14 @@ class _ComicListViewState extends State<_ComicListView>
       loadedSearchExpanded: !_compactCloud(state) || _jmSearching,
       focusedFacets: _compactCloud(state),
       loadedChromeBuilder: _compactCloud(state) && jmViewChanged != null
-          ? (context, chrome) =>
-                _jmControls(context, state, chrome, detailed, jmViewChanged)
+          ? (context, chrome) => _jmControls(
+              context,
+              state,
+              chrome,
+              detailed,
+              jmViewChanged,
+              jmSortAction,
+            )
           : publicLoadedTools,
     );
   }

@@ -4,6 +4,7 @@ import 'package:zephyr/page/donwload_task/view/download_task.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_control_colors.dart';
 import 'package:zephyr/widgets/breeze_navigation_bar.dart';
+import 'package:zephyr/widgets/tab_reselect_scope.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -338,6 +339,7 @@ class _NavigationBarState extends State<NavigationBar> {
     final media = MediaQuery.of(context);
     final system = AppInterfaceStyleScope.usesSystem(context);
     final floating = system && Platform.isIOS;
+    final selectedDestination = _selectedDestination;
     final height = switch ((system, floating)) {
       (true, true) => _nativeNavHeight ?? 49 + media.viewPadding.bottom,
       (true, false) when AppInterfaceStyleScope.usesAndroidSystem(context) =>
@@ -353,46 +355,61 @@ class _NavigationBarState extends State<NavigationBar> {
       navBarHeight: height,
       onAndroidRootBack: () =>
           _handleAndroidRootBack(exitEnabled: backPressExitEnabled),
-      navigation: MediaQuery(
-        data: media,
-        child: system
-            ? VideoNativeNavigation(
-                currentIndex: selected,
-                onTap: onSelected,
-                onHeightChanged: floating
-                    ? (height) {
-                        if (mounted && height != _nativeNavHeight) {
-                          setState(() => _nativeNavHeight = height);
-                        }
-                      }
-                    : null,
-                symbols: [for (final entry in entries) entry.symbol],
-                selectedSymbols: [
-                  for (final entry in entries) entry.selectedSymbol,
-                ],
-                badgeValues: [for (final entry in entries) entry.badgeLabel],
-                items: [
-                  for (final entry in entries)
-                    BottomNavigationBarItem(
-                      icon: entry.icon,
-                      activeIcon: entry.selectedIcon,
-                      label: entry.label,
-                    ),
-                ],
-              )
-            : BreezeNavigationBar(
-                contentHeight: BreezeNavigationBar.contentHeightOf(context),
-                selectedIndex: selected,
-                destinations: [
-                  for (final entry in entries)
-                    NavigationDestination(
-                      icon: entry.icon,
-                      selectedIcon: entry.selectedIcon,
-                      label: entry.label,
-                    ),
-                ],
-                onSelected: onSelected,
-              ),
+      navigation: Builder(
+        builder: (tabContext) {
+          void onTap(int index) {
+            if (index == selected &&
+                _selectedDestination == selectedDestination) {
+              MainNativeTabHost.requestCurrentTabReselection(tabContext);
+            } else {
+              onSelected(index);
+            }
+          }
+
+          return MediaQuery(
+            data: media,
+            child: system
+                ? VideoNativeNavigation(
+                    currentIndex: selected,
+                    onTap: onTap,
+                    onHeightChanged: floating
+                        ? (height) {
+                            if (mounted && height != _nativeNavHeight) {
+                              setState(() => _nativeNavHeight = height);
+                            }
+                          }
+                        : null,
+                    symbols: [for (final entry in entries) entry.symbol],
+                    selectedSymbols: [
+                      for (final entry in entries) entry.selectedSymbol,
+                    ],
+                    badgeValues: [
+                      for (final entry in entries) entry.badgeLabel,
+                    ],
+                    items: [
+                      for (final entry in entries)
+                        BottomNavigationBarItem(
+                          icon: entry.icon,
+                          activeIcon: entry.selectedIcon,
+                          label: entry.label,
+                        ),
+                    ],
+                  )
+                : BreezeNavigationBar(
+                    contentHeight: BreezeNavigationBar.contentHeightOf(context),
+                    selectedIndex: selected,
+                    destinations: [
+                      for (final entry in entries)
+                        NavigationDestination(
+                          icon: entry.icon,
+                          selectedIcon: entry.selectedIcon,
+                          label: entry.label,
+                        ),
+                    ],
+                    onSelected: onTap,
+                  ),
+          );
+        },
       ),
     );
   }
@@ -858,18 +875,59 @@ class MainNativeTabHost extends StatefulWidget {
   final bool floatingNavigation;
   final bool handleAndroidBackButtonPress;
   final Future<void> Function()? onAndroidRootBack;
+
+  static void requestCurrentTabReselection(BuildContext context) =>
+      context.findAncestorStateOfType<_MainNativeTabHostState>()?._reselect();
+
   @override
   State<MainNativeTabHost> createState() => _MainNativeTabHostState();
 }
 
-class _MainNativeTabHostState extends State<MainNativeTabHost> {
+class _MainNativeTabHostState extends State<MainNativeTabHost>
+    with WidgetsBindingObserver {
   // Each tab owns its own real Navigator stack, including plain Flutter pages.
   // Keep the same observer/list identity when parent preferences rebuild.
   final _routes = <RouteAndNavigatorSettings>[];
+  final _reselection = <TabReselectController>[];
   bool _handlingAndroidBack = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    for (final controller in _reselection) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  void handleStatusBarTap() {
+    if (defaultTargetPlatform == TargetPlatform.iOS) _reselect();
+  }
+
+  void _reselect() {
+    final index = widget.controller.index;
+    if (!mounted ||
+        index < 0 ||
+        index >= widget.screens.length ||
+        !TabReselectScope.canHandle(context)) {
+      return;
+    }
+    final navigator = _routes[index].navigatorKey?.currentState;
+    if (navigator != null && !navigator.canPop()) {
+      _reselection[index].request();
+    }
+  }
 
   void _ensureRoutes() {
     while (_routes.length < widget.screens.length) {
+      _reselection.add(TabReselectController());
       _routes.add(
         RouteAndNavigatorSettings(
           navigatorKey: GlobalKey<NavigatorState>(),
@@ -911,9 +969,12 @@ class _MainNativeTabHostState extends State<MainNativeTabHost> {
         for (var index = 0; index < widget.screens.length; index++)
           CustomNavBarScreen(
             routeAndNavigatorSettings: _routes[index],
-            screen: NativeNavigationInset(
-              bottom: widget.floatingNavigation ? widget.navBarHeight : 0,
-              child: widget.screens[index],
+            screen: TabReselectScope(
+              controller: _reselection[index],
+              child: NativeNavigationInset(
+                bottom: widget.floatingNavigation ? widget.navBarHeight : 0,
+                child: widget.screens[index],
+              ),
             ),
           ),
       ],

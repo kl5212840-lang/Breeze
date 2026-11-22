@@ -23,6 +23,7 @@ class SourceQuickCategoryBar extends StatefulWidget {
     required this.onViewChanged,
     this.pageLabel,
     this.onPageTap,
+    this.leading,
     this.trailingAction,
   });
 
@@ -31,6 +32,7 @@ class SourceQuickCategoryBar extends StatefulWidget {
   final ValueChanged<bool> onViewChanged;
   final String? pageLabel;
   final VoidCallback? onPageTap;
+  final Widget? leading;
   final Widget? trailingAction;
 
   @override
@@ -216,6 +218,7 @@ class _SourceQuickCategoryBarState extends State<SourceQuickCategoryBar> {
                       onViewChanged: widget.onViewChanged,
                       pageLabel: widget.pageLabel,
                       onPageTap: widget.onPageTap,
+                      leading: widget.leading,
                       trailingAction: widget.trailingAction,
                     );
                   },

@@ -609,7 +609,11 @@ void main() {
       );
       await VideoDownloadedDetails.saveItem('removed-source', item);
       final row = _row('removed-source', _watch('videos/movie_8'));
-      await VideoDownloadedDetails.retainForResource(row, waitForPoster: true);
+      await VideoDownloadedDetails.retainForResource(
+        row,
+        frameFallback: false,
+        waitForPoster: true,
+      );
       await (await SharedPreferences.getInstance()).remove(
         VideoDownloadedDetails.storageKey,
       );

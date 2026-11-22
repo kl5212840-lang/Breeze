@@ -382,9 +382,11 @@ class CollectionCoverPrivacyButton extends StatelessWidget {
   const CollectionCoverPrivacyButton({
     super.key,
     this.emphasizeProtected = false,
+    this.bare = false,
   });
 
   final bool emphasizeProtected;
+  final bool bare;
   @override
   Widget build(BuildContext context) {
     final controller = CollectionCoverPrivacyController.instance;
@@ -395,6 +397,7 @@ class CollectionCoverPrivacyButton extends StatelessWidget {
         return Semantics(
           toggled: protected,
           child: SourceChromeIconButton(
+            bare: bare,
             icon: protected
                 ? (emphasizeProtected
                       ? Icons.visibility_off

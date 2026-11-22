@@ -11,8 +11,10 @@ import 'package:zephyr/main.dart' show eventBus;
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/plugin_settings/cubit/plugin_settings_cubit.dart';
 import 'package:zephyr/page/source_shell/models/source_shell_section.dart';
+import 'package:zephyr/page/source_shell/view/source_profile_content.dart';
 import 'package:zephyr/page/source_shell/view/source_shell_page.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/src/rust/frb_generated.dart';
 import 'package:zephyr/util/event/event.dart';
@@ -263,7 +265,19 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(_accountControl(), findsNothing);
-      expect(find.widgetWithText(NavigationDestination, '我的'), findsOneWidget);
+      final navigation = find.byType(VideoNativeNavigation);
+      final profileTab = find.descendant(
+        of: navigation,
+        matching: find.text(t.videoSource.me),
+      );
+      expect(profileTab.hitTestable(), findsOneWidget);
+      expect(find.byType(SourceProfileContent), findsNothing);
+      await tester.tap(profileTab);
+      await tester.pumpAndSettle();
+      expect(tester.widget<VideoNativeNavigation>(navigation).currentIndex, 1);
+      expect(find.byType(SourceProfileContent), findsOneWidget);
+      expect(api.calls, contains((_source, 'getUserInfoBundle')));
+      expect(_accountControl(), findsNothing);
       expect(
         api.calls.where(
           (call) => ['getSettingsBundle', 'getLoginBundle'].contains(call.$2),

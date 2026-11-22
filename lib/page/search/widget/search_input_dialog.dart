@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -649,31 +650,43 @@ class SearchFieldCloseActions extends StatelessWidget {
     required this.onClear,
     required this.onClose,
     this.closeKey,
+    this.clearTooltip,
+    this.closeTooltip,
   });
 
   final bool hasText;
   final VoidCallback? onClear;
   final VoidCallback? onClose;
   final Key? closeKey;
+  final String? clearTooltip, closeTooltip;
 
   @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      if (hasText)
+  Widget build(BuildContext context) {
+    final extent = CollectionToolbarMetrics.actionExtentOf(context);
+    final target = IconButton.styleFrom(
+      minimumSize: Size.square(extent),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    );
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (hasText)
+          IconButton(
+            style: target,
+            tooltip: clearTooltip ?? t.common.clear,
+            onPressed: onClear,
+            icon: const SearchToolGlyph(SearchTool.clear, size: 20),
+          ),
         IconButton(
-          tooltip: t.common.clear,
-          onPressed: onClear,
-          icon: const SearchToolGlyph(SearchTool.clear, size: 20),
+          key: closeKey,
+          style: target,
+          tooltip: closeTooltip ?? t.common.close,
+          onPressed: onClose,
+          icon: const SearchToolGlyph(SearchTool.close, size: 22),
         ),
-      IconButton(
-        key: closeKey,
-        tooltip: t.common.close,
-        onPressed: onClose,
-        icon: const SearchToolGlyph(SearchTool.close, size: 22),
-      ),
-    ],
-  );
+      ],
+    );
+  }
 }
 
 @Preview(name: 'Search query field', group: 'Search')

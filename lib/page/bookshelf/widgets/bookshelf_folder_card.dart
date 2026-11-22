@@ -1,4 +1,5 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_content_layout.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_folder_visual.dart';
@@ -33,21 +34,28 @@ class BookshelfFolderCard extends StatelessWidget {
   final BookshelfContentView view;
 
   static const _listTopPadding = 12.0;
-  static const _menuSize = 44.0;
   static const _countGap = 4.0;
 
   /// The video list uses fixed extents for its leading folder rows. Allow
-  /// two title lines and a work count stacked above the menu at large sizes.
+  /// two title lines and a work count at large sizes.
   static double videoListHeight(BuildContext context) =>
-      (_listTopPadding +
+      (_listTopPadding * 2 +
               BookshelfContentLayout.titleHeight(context) +
               _countGap +
-              BookshelfContentLayout.subtitleHeight(context) +
-              _menuSize)
+              BookshelfContentLayout.subtitleHeight(context))
           .clamp(120.0, double.infinity);
 
   @override
   Widget build(BuildContext context) {
+    final titleStyle = Theme.of(
+      context,
+    ).textTheme.titleSmall?.copyWith(height: 1.3);
+    final actionExtent = CollectionToolbarMetrics.actionExtentOf(context);
+    final titleLineHeight =
+        MediaQuery.textScalerOf(context).scale(titleStyle?.fontSize ?? 14) *
+        1.3;
+    final listMenuTop = (_listTopPadding + (titleLineHeight - actionExtent) / 2)
+        .clamp(0.0, double.infinity);
     final poster = AspectRatio(
       aspectRatio: BookshelfContentLayout.coverAspectRatio,
       child: Stack(
@@ -76,9 +84,7 @@ class BookshelfFolderCard extends StatelessWidget {
             title,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: Theme.of(
-              context,
-            ).textTheme.titleSmall?.copyWith(height: 1.3),
+            style: titleStyle,
           )
         : BookshelfCardCaption(
             title: title,
@@ -90,7 +96,7 @@ class BookshelfFolderCard extends StatelessWidget {
       selected: selectionMode ? isSelected : null,
       child: Stack(
         children: [
-          CollectionPressFeedback(
+          CollectionPressFeedback.surface(
             enabled: onLongPress != null || onTap != null,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
@@ -112,8 +118,8 @@ class BookshelfFolderCard extends StatelessWidget {
                             padding: EdgeInsetsDirectional.fromSTEB(
                               0,
                               _listTopPadding,
-                              8,
-                              menu == null ? _listTopPadding : _menuSize,
+                              menu == null ? 8 : actionExtent + 8,
+                              _listTopPadding,
                             ),
                             child: workCount == null
                                 ? caption
@@ -126,9 +132,11 @@ class BookshelfFolderCard extends StatelessWidget {
           ),
           if (!selectionMode && menu != null)
             PositionedDirectional(
-              top: view == BookshelfContentView.grid ? 3 : null,
-              bottom: view == BookshelfContentView.list ? 0 : null,
-              end: 0,
+              top: view == BookshelfContentView.grid ? 3 : listMenuTop,
+              end: view == BookshelfContentView.grid
+                  ? 0
+                  : CollectionToolbarMetrics.sourceContentInset -
+                        BookshelfContentLayout.horizontalPadding,
               child: menu!,
             ),
         ],
@@ -142,55 +150,33 @@ class BookshelfFolderCard extends StatelessWidget {
       color: theme.colorScheme.onSurfaceVariant,
       height: 1.3,
     );
-    final counts = Column(
-      key: const ValueKey('shelf-folder.counts'),
-      crossAxisAlignment: CrossAxisAlignment.end,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
+      spacing: _countGap,
       children: [
-        Text(
-          t.videoLibrary.results(count: workCount!),
-          textAlign: TextAlign.end,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: style,
-        ),
-        if (subfolderCount != null)
-          Text(
-            t.bookshelf.subfolderCount(count: subfolderCount!),
-            textAlign: TextAlign.end,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: style,
-          ),
-      ],
-    );
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth <
-            MediaQuery.textScalerOf(context).scale(154)) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              caption,
-              const SizedBox(height: _countGap),
-              counts,
-            ],
-          );
-        }
-        return Row(
+        caption,
+        Wrap(
+          key: const ValueKey('shelf-folder.counts'),
+          spacing: 8,
+          runSpacing: 2,
           children: [
-            Expanded(child: caption),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Align(
-                alignment: AlignmentDirectional.centerEnd,
-                child: counts,
-              ),
+            Text(
+              t.videoLibrary.results(count: workCount!),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: style,
             ),
+            if (subfolderCount case final count?)
+              Text(
+                t.bookshelf.subfolderCount(count: count),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: style,
+              ),
           ],
-        );
-      },
+        ),
+      ],
     );
   }
 }

@@ -741,7 +741,13 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
       context,
       source: widget.from,
       onAddAccount: () async {
-        await _openAccountLogin();
+        await _openAccountLogin(requireFreshSignIn: true);
+      },
+      onAddAccountWithSession: (addAccount) async {
+        await _openAccountLogin(
+          requireFreshSignIn: true,
+          addAccount: addAccount,
+        );
       },
       prepareSession: () =>
           context.read<PluginSettingsCubit>().loadUserInfo(widget.from),
@@ -799,7 +805,11 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
     return target.home != null || target.catalog != null;
   }
 
-  Future<bool> _openAccountLogin({bool recoverCurrent = false}) async {
+  Future<bool> _openAccountLogin({
+    bool recoverCurrent = false,
+    bool requireFreshSignIn = false,
+    PluginAccountAddition? addAccount,
+  }) async {
     final state = context.read<PluginSettingsCubit>().state;
     final source = widget.from;
     if (state.loginSupported) {
@@ -856,6 +866,8 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
           path: '/user/login',
           credentialSource: source,
           recoveryUsername: username,
+          requireFreshSignIn: requireFreshSignIn,
+          addAccount: addAccount,
         );
         return client.account?.id.isNotEmpty == true;
       } finally {

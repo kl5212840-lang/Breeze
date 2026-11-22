@@ -1,7 +1,13 @@
 import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
+import 'package:auto_route/auto_route.dart';
+import 'package:zephyr/config/router/router.gr.dart'
+    show SearchResultRoute, SearchResultRouteArgs;
 import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/widgets/breeze_navigation_bar.dart';
+import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:zephyr/page/comic_list/scene_filter/plugin_list_filter_dialog.dart';
 import 'package:zephyr/page/comic_list/scene_filter/plugin_list_filter_schema.dart';
 import 'package:zephyr/widgets/comic_entry/comic_record_time.dart';
@@ -22,6 +28,8 @@ import 'package:zephyr/page/comic_list/view/plugin_comic_grid_sliver.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search/widget/search_input_dialog.dart';
+import 'package:zephyr/page/search/widget/advanced_search_dialog.dart';
+import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
 import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/page/search_result/models/comic_number.dart';
 import 'package:zephyr/page/search_result/view/search_result_page.dart';
@@ -29,13 +37,15 @@ import 'package:zephyr/page/search_result/view/source_list_categories.dart';
 import 'package:zephyr/page/search_result/view/source_search_detail_list.dart';
 import 'package:zephyr/page/source_shell/source_list_presentation.dart';
 import 'package:zephyr/page/source_shell/source_list_view_toggle.dart';
+import 'package:zephyr/page/source_shell/models/source_shell_section.dart';
+import 'package:zephyr/page/source_shell/view/source_shell_page.dart';
 import 'package:zephyr/src/rust/frb_generated.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
 import 'package:zephyr/page/search/view/search_page.dart';
 import 'package:zephyr/page/search/widget/search_bar.dart' as search_entry;
 import 'package:zephyr/page/search_result/view/source_search_scope_control.dart';
-import 'package:zephyr/widgets/source_choice_menu.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 
 import '../test_helper.dart';
 
@@ -254,6 +264,7 @@ void main() {
         'fields': [
           {
             'key': 'category',
+            'semantic': 'theme',
             'kind': 'choice',
             'label': '子分类',
             'options': [
@@ -375,7 +386,116 @@ void main() {
   });
 
   testWidgets(
-    'source landing iOS style and theme matrix keeps scope in its toolbar',
+    'a selected comic destination scrolls its own list without refetching',
+    (tester) async {
+      final settings = GlobalSettingCubit();
+      final style = ValueNotifier('breeze');
+      addTearDown(settings.close);
+      addTearDown(style.dispose);
+      SourceShellSection destination(String id) => SourceShellSection(
+        id: id,
+        title: id,
+        scene: ComicListScene(
+          title: id,
+          from: _copy,
+          body: ComicListBodyConfig(
+            request: ComicListRequestConfig(
+              fnPath: 'getCopyListFixture',
+              core: {'genre': id},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(
+        BlocProvider.value(
+          value: settings,
+          child: AppInterfaceStyleScope(
+            style: style,
+            child: MaterialApp(
+              home: SourceShellPage(
+                source: _copy,
+                sourceName: 'Source fixture',
+                sections: [destination('First'), destination('Second')],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final grid = find.byType(PluginComicGridSliver);
+      ScrollPosition position() =>
+          tester.widget<PluginComicGridSliver>(grid).controller!.position;
+      Future<void> select(String title) async {
+        await tester.tap(
+          find.descendant(
+            of: find.byType(BreezeNavigationBar),
+            matching: find.text(title),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      position().jumpTo(250);
+      await tester.pumpAndSettle();
+      expect(position().pixels, 250);
+
+      await select('Second');
+      position().jumpTo(310);
+      await tester.pumpAndSettle();
+      expect(position().pixels, 310);
+      await select('First');
+      expect(position().pixels, 250);
+      final calls = api.calls.length;
+
+      final listContext = tester.element(grid);
+      unawaited(
+        showDialog<void>(
+          context: listContext,
+          builder: (_) => const AlertDialog(title: Text('Modal')),
+        ),
+      );
+      await tester.pumpAndSettle();
+      tester
+          .widget<VideoNativeNavigation>(find.byType(VideoNativeNavigation))
+          .onTap!(0);
+      await tester.pumpAndSettle();
+      expect(position().pixels, 250);
+      Navigator.of(listContext).pop();
+      await tester.pumpAndSettle();
+
+      await select('First');
+      expect(position().pixels, position().minScrollExtent);
+      await select('First');
+      expect(position().pixels, position().minScrollExtent);
+      position().jumpTo(250);
+      await tester.pumpAndSettle();
+      await messenger.handlePlatformMessage(
+        SystemChannels.statusBar.name,
+        SystemChannels.statusBar.codec.encodeMethodCall(
+          const MethodCall('handleScrollToTop'),
+        ),
+        (_) {},
+      );
+      await tester.pumpAndSettle();
+      expect(
+        position().pixels,
+        defaultTargetPlatform == TargetPlatform.iOS ? 0 : 250,
+      );
+      await select('Second');
+      expect(position().pixels, 310);
+      expect(api.calls.length, calls);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: TargetPlatformVariant({
+      TargetPlatform.android,
+      TargetPlatform.iOS,
+    }),
+  );
+
+  testWidgets(
+    'source landing keeps scope below the native editing row in both themes',
     (tester) async {
       for (final style in ['system', 'breeze']) {
         for (final brightness in Brightness.values) {
@@ -413,23 +533,32 @@ void main() {
             ),
             findsOneWidget,
           );
-          expect(
-            tester.getCenter(scope).dy,
-            closeTo(tester.getCenter(find.byType(SearchQueryField)).dy, .5),
+          final input = find.byType(SearchQueryField);
+          final options = find.byKey(
+            const ValueKey('comic-search.options-row'),
           );
+          final back = find.byKey(const ValueKey('comic-search.back'));
+          final submit = find.byKey(const ValueKey('comic-search.submit'));
+          expect(find.descendant(of: options, matching: scope), findsOneWidget);
+          final center = tester.getCenter(input).dy;
+          expect(tester.getCenter(back).dy, closeTo(center, .5));
+          expect(tester.getCenter(submit).dy, closeTo(center, .5));
+          expect(
+            tester.getTopLeft(options).dy,
+            greaterThan(tester.getBottomLeft(input).dy),
+          );
+          expect(tester.widget<SourceChromeIconButton>(back).bare, isTrue);
+          expect(tester.widget<TextButton>(submit).onPressed, isNull);
           final context = tester.element(scope);
           final cubit = context.read<SearchCubit>();
-          final menu = tester.widget<SourceChoiceMenu<KeywordSearchScope>>(
-            find.descendant(
-              of: scope,
-              matching: find.byType(SourceChoiceMenu<KeywordSearchScope>),
-            ),
+          final menu = tester.widget<KeywordScopeMenu>(
+            find.descendant(of: scope, matching: find.byType(KeywordScopeMenu)),
           );
-          expect(menu.value, KeywordSearchScope.title);
-          expect(menu.options.keys, KeywordSearchScope.values);
-          menu.onChanged!(KeywordSearchScope.all);
+          expect(menu.scope, KeywordSearchScope.all);
+          expect(menu.scopes, sourceKeywordSearchScopes(_copy));
+          menu.onChanged(KeywordSearchScope.title);
           await tester.pumpAndSettle();
-          expect(cubit.state.pluginExtern[keywordSearchScopeKey], 'all');
+          expect(cubit.state.pluginExtern[keywordSearchScopeKey], 'title');
           expect(
             api.calls.where((call) => call.function.contains('SearchData')),
             isEmpty,
@@ -441,6 +570,79 @@ void main() {
       }
     },
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'dedicated comic Search submits a narrow, large-type draft and scope',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 740);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final settings = GlobalSettingCubit();
+      SearchResultRouteArgs? submitted;
+      final router = RootStackRouter.build(
+        routes: [
+          NamedRouteDef(
+            name: 'FixtureComicSearch',
+            path: '/',
+            initial: true,
+            builder: (_, _) => const SearchPage(
+              searchState: SearchStates(from: _copy),
+              aggregateMode: false,
+            ),
+          ),
+          NamedRouteDef(
+            name: SearchResultRoute.name,
+            path: '/matches',
+            builder: (_, data) {
+              submitted = data.argsAs<SearchResultRouteArgs>();
+              return const Scaffold(body: Text('Opened comic results'));
+            },
+          ),
+        ],
+      );
+      addTearDown(settings.close);
+      addTearDown(router.dispose);
+      await tester.pumpWidget(
+        BlocProvider.value(
+          value: settings,
+          child: MaterialApp.router(
+            routerConfig: router.config(),
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(3)),
+              child: child!,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final scope = tester.widget<KeywordScopeMenu>(
+        find.descendant(
+          of: find.byType(SourceSearchScopeControl),
+          matching: find.byType(KeywordScopeMenu),
+        ),
+      );
+      scope.onChanged(KeywordSearchScope.title);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '  独立搜索  ');
+      await tester.pumpAndSettle();
+      final submit = find.byKey(const ValueKey('comic-search.submit'));
+      expect(tester.widget<SourceChromeIconButton>(submit).bare, isTrue);
+      await tester.tap(submit);
+      await tester.pumpAndSettle();
+      expect(find.text('Opened comic results'), findsOneWidget);
+      expect(submitted?.searchEvent.searchStates.searchKeyword, '独立搜索');
+      expect(
+        submitted?.searchEvent.searchStates.pluginExtern[keywordSearchScopeKey],
+        KeywordSearchScope.title.name,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    },
   );
 
   for (final embedded in [true, false]) {
@@ -771,14 +973,15 @@ void main() {
       expect(tester.getRect(toggle).right, toggleRight);
       expect(find.descendant(of: tools, matching: filter), findsOneWidget);
       expect(find.descendant(of: tools, matching: toggle), findsOneWidget);
-      expect(tester.getSize(filter), const Size(44, 44));
+      expect(tester.getSize(filter).width, greaterThanOrEqualTo(44));
+      expect(tester.getSize(filter).height, greaterThanOrEqualTo(44));
       expect(
         tester.getCenter(filter).dy,
         closeTo(tester.getCenter(toggle).dy, .5),
       );
       expect(
-        tester.getRect(filter).right,
-        closeTo(tester.getRect(toggle).left, .5),
+        tester.getRect(toggle).left - tester.getRect(filter).right,
+        closeTo(8, .5),
       );
       expect(find.byType(TextField), findsNothing);
       final grid = find.byType(PluginComicGridSliver);
@@ -842,6 +1045,72 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
   }
+
+  testWidgets(
+    'plugin shell and embedded result toolbar share safe-area edges',
+    (tester) async {
+      tester.view.physicalSize = const Size(844, 390);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      const scene = ComicListScene(
+        title: '拷贝作品',
+        from: _copy,
+        body: ComicListBodyConfig(
+          request: ComicListRequestConfig(fnPath: 'getHomeRecommend'),
+        ),
+      );
+
+      for (final style in ['system', 'breeze']) {
+        api.publicListGate = Completer<void>();
+        final preference = ValueNotifier(style);
+        addTearDown(preference.dispose);
+        final settings = GlobalSettingCubit();
+        addTearDown(settings.close);
+        await tester.pumpWidget(
+          BlocProvider.value(
+            value: settings,
+            child: AppInterfaceStyleScope(
+              style: preference,
+              child: MaterialApp(
+                builder: (context, child) => MediaQuery(
+                  data: MediaQuery.of(context).copyWith(
+                    padding: const EdgeInsets.only(left: 24, right: 8),
+                    viewPadding: const EdgeInsets.only(left: 24, right: 8),
+                  ),
+                  child: child!,
+                ),
+                home: const SourceShellPage(
+                  source: _copy,
+                  sourceName: '拷贝',
+                  sections: [
+                    SourceShellSection(
+                      id: 'recommend',
+                      title: '推荐',
+                      scene: scene,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        api.publicListGate!.complete();
+        await tester.pumpAndSettle();
+
+        final appBar = tester.getRect(find.byType(AppBar));
+        final more = tester.getRect(find.byType(SourceMoreButton));
+        final viewToggle = tester.getRect(find.byType(SourceListViewToggle));
+        expect(more.right, closeTo(appBar.right - 8 - 16, .5));
+        expect(viewToggle.right, closeTo(more.right, .5));
+        expect(viewToggle.center.dx, closeTo(more.center.dx, .5));
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
 
   testWidgets(
     'Copy Discover still sends declared theme changes and restarts page one',
@@ -1018,6 +1287,7 @@ void main() {
         ],
       );
       final bloc = _SeededSearchBloc(first);
+      const safePadding = EdgeInsets.only(left: 24, right: 8);
       addTearDown(search.close);
       addTearDown(settings.close);
       addTearDown(selection.close);
@@ -1030,20 +1300,42 @@ void main() {
             BlocProvider.value(value: selection),
             BlocProvider<SearchBloc>.value(value: bloc),
           ],
-          child: const MaterialApp(home: SearchResultPage(searchEvent: event)),
+          child: MaterialApp(
+            builder: (context, child) {
+              return MediaQuery(
+                data: MediaQuery.of(
+                  context,
+                ).copyWith(padding: safePadding, viewPadding: safePadding),
+                child: child!,
+              );
+            },
+            home: const SearchResultPage(searchEvent: event),
+          ),
         ),
       );
       await tester.pumpAndSettle();
       final filter = find.byKey(const ValueKey('source-loaded.filters'));
       final toggle = find.byType(SourceListViewToggle);
+      final appBar = tester.getRect(find.byType(AppBar));
+      final more = tester.getRect(find.byType(SourceMoreButton));
+      final filterBounds = tester.getRect(filter);
+      final toggleBounds = tester.getRect(toggle);
+      expect(filterBounds.center.dy, closeTo(toggleBounds.center.dy, .5));
       expect(
-        tester.getCenter(filter).dy,
-        closeTo(tester.getCenter(toggle).dy, .5),
+        toggleBounds.left - filterBounds.right,
+        closeTo(CollectionToolbarMetrics.searchControlGap, .5),
       );
       expect(
-        tester.getRect(filter).right,
-        closeTo(tester.getRect(toggle).left, .5),
+        toggleBounds.right,
+        closeTo(
+          appBar.right -
+              safePadding.right -
+              CollectionToolbarMetrics.sourceContentInset,
+          .5,
+        ),
       );
+      expect(toggleBounds.right, closeTo(more.right, .5));
+      expect(toggleBounds.center.dx, closeTo(more.center.dx, .5));
       await tester.tap(filter);
       await tester.pumpAndSettle();
       expect(find.text(t.videoLibrary.loadedResultScope), findsOneWidget);
@@ -1113,13 +1405,20 @@ void main() {
     );
     tester.widget<SourceChromeIconButton>(button).onPressed!();
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(SwitchListTile, '只看完结'));
+    final completed = find.widgetWithText(SwitchListTile, '只看完结');
+    expect(completed, findsOneWidget);
+    expect(tester.widget<SwitchListTile>(completed).value, isFalse);
+    await tester.tap(completed);
+    await tester.pump();
+    expect(tester.widget<SwitchListTile>(completed).value, isTrue);
     criteria.update(
       initial.copyWith(sortBy: 3, pluginExtern: {'q_type': '', 'sortBy': 3}),
     );
     await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, t.common.apply));
     await tester.pumpAndSettle();
+    expect(find.byType(PluginAdvancedSearchDialog), findsNothing);
+    expect(criteria.state.pluginExtern['completed'], isTrue);
     expect(criteria.state.sortBy, 3);
     expect(criteria.state.pluginExtern, {
       'q_type': '',

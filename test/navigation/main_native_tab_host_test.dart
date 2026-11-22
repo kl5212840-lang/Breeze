@@ -28,6 +28,7 @@ import 'package:zephyr/page/more/view/more.dart';
 import 'package:zephyr/page/navigation_bar.dart' as app;
 import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:zephyr/plugin/models/plugin_runtime_state.dart';
+import 'package:zephyr/widgets/tab_reselect_scope.dart';
 import '../test_helper.dart';
 
 void main() {
@@ -195,6 +196,10 @@ void main() {
         scroll.jumpTo(scroll.maxScrollExtent);
         await tester.pumpAndSettle();
         expect(tester.getRect(lastCard).bottom, lessThanOrEqualTo(nav.top));
+        tester.simulateStatusBarTap();
+        await tester.pumpAndSettle();
+        expect(scroll.pixels, scroll.minScrollExtent);
+        scroll.jumpTo(scroll.maxScrollExtent);
 
         controller.jumpToTab(1);
         for (var i = 0; i < 8; i++) {
@@ -220,6 +225,10 @@ void main() {
             .map((e) => tester.getRect(find.byWidget(e.widget)).bottom)
             .reduce((a, b) => a > b ? a : b);
         expect(lastFolderBottom, lessThanOrEqualTo(nav.top));
+        tester.simulateStatusBarTap();
+        await tester.pumpAndSettle();
+        expect(shelfPosition.pixels, shelfPosition.minScrollExtent);
+        expect(scroll.pixels, scroll.maxScrollExtent);
 
         controller.jumpToTab(2);
         await tester.pumpAndSettle();
@@ -245,6 +254,157 @@ void main() {
       variant: TargetPlatformVariant.only(TargetPlatform.iOS),
     );
   }
+
+  testWidgets(
+    'main reselect and iOS status-bar tap reach only the active eligible root',
+    (tester) async {
+      final tabs = PersistentTabController();
+      final controllers = [ScrollController(), ScrollController()];
+      final focus = FocusNode();
+      final homes = [GlobalKey(), GlobalKey()];
+      final history = LocalHistoryEntry();
+      final nativeMenu = Object();
+      addTearDown(() {
+        TabReselectScope.setBlockingOverlay(nativeMenu, visible: false);
+        focus.dispose();
+        for (final controller in controllers) {
+          controller.dispose();
+        }
+        tabs.dispose();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: child!,
+          ),
+          home: app.MainNativeTabHost(
+            controller: tabs,
+            floatingNavigation: false,
+            navBarHeight: 60,
+            navigation: Builder(
+              builder: (context) => Row(
+                children: [
+                  for (var i = 0; i < 2; i++)
+                    TextButton(
+                      onPressed: () {
+                        if (tabs.index == i) {
+                          app.MainNativeTabHost.requestCurrentTabReselection(
+                            context,
+                          );
+                        } else {
+                          tabs.jumpToTab(i);
+                        }
+                      },
+                      child: Text('Tab $i'),
+                    ),
+                ],
+              ),
+            ),
+            screens: [
+              for (var i = 0; i < 2; i++)
+                Builder(
+                  key: homes[i],
+                  builder: (context) => TabReselectListener(
+                    onReselect: () =>
+                        TabReselectScope.scrollToStart(context, controllers[i]),
+                    child: Column(
+                      children: [
+                        if (i == 0)
+                          Material(child: TextField(focusNode: focus)),
+                        Expanded(
+                          child: ListView.builder(
+                            controller: controllers[i],
+                            itemExtent: 60,
+                            itemCount: 100,
+                            itemBuilder: (_, j) => Text('$i - $j'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      Future<void> tapTab(int i) async {
+        await tester.tap(find.text('Tab $i'));
+        await tester.pumpAndSettle();
+      }
+
+      controllers[0].jumpTo(360);
+      await tapTab(1);
+      controllers[1].jumpTo(420);
+      await tapTab(0);
+      tabs.jumpToTab(0);
+      await tester.pumpAndSettle();
+      expect(controllers[0].offset, 360);
+      expect(controllers[1].offset, 420);
+
+      focus.requestFocus();
+      await tester.pumpAndSettle();
+      tester.simulateStatusBarTap();
+      await tester.pumpAndSettle();
+      expect(controllers[0].offset, 360);
+      expect(focus.hasFocus, isTrue);
+      focus.unfocus();
+      await tester.pumpAndSettle();
+
+      TabReselectScope.setBlockingOverlay(nativeMenu, visible: true);
+      await tapTab(0);
+      tester.simulateStatusBarTap();
+      await tester.pumpAndSettle();
+      expect(controllers[0].offset, 360);
+      TabReselectScope.setBlockingOverlay(nativeMenu, visible: false);
+
+      ModalRoute.of(homes[0].currentContext!)!.addLocalHistoryEntry(history);
+      await tapTab(0);
+      expect(controllers[0].offset, 360);
+      history.remove();
+
+      final tabNavigator = Navigator.of(homes[0].currentContext!);
+      tabNavigator.push<void>(
+        MaterialPageRoute(builder: (_) => const Text('Secondary')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Secondary'), findsOneWidget);
+      tester.simulateStatusBarTap();
+      await tester.pumpAndSettle();
+      expect(controllers[0].offset, 360);
+      tabNavigator.pop();
+      await tester.pumpAndSettle();
+
+      final rootNavigator = Navigator.of(
+        homes[0].currentContext!,
+        rootNavigator: true,
+      );
+      showDialog<void>(
+        context: homes[0].currentContext!,
+        builder: (_) => const AlertDialog(content: Text('Blocking dialog')),
+      );
+      await tester.pumpAndSettle();
+      tester.simulateStatusBarTap();
+      await tester.pumpAndSettle();
+      expect(controllers[0].offset, 360);
+      rootNavigator.pop();
+      await tester.pumpAndSettle();
+
+      await tapTab(0);
+      expect(controllers[0].offset, 0);
+      expect(controllers[1].offset, 420);
+      await tapTab(1);
+      tester.simulateStatusBarTap();
+      await tester.pump();
+      expect(controllers[1].offset, 0);
+      expect(controllers[0].offset, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
   testWidgets(
     'legacy main tabs keep their scroll endings and source switch above the island',
     (tester) async {

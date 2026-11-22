@@ -1,6 +1,8 @@
+import 'dart:async';
+
+import 'package:zephyr/widgets/tab_reselect_scope.dart';
 import 'package:zephyr/widgets/collection_cover_fit.dart';
 import 'package:zephyr/widgets/work_list_divider.dart';
-import 'dart:async';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -25,10 +27,12 @@ import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/text/public_search_text.dart';
 import 'package:zephyr/util/json/shelf_metadata_fields.dart';
+import 'package:zephyr/widgets/breeze_theme_colors.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/cover.dart';
 import 'package:zephyr/widgets/collection_cover_privacy.dart';
 import 'package:zephyr/widgets/collection_cover_settings.dart';
+import 'package:zephyr/widgets/collection_press_feedback.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/widgets/error_view.dart';
@@ -154,6 +158,7 @@ class _ComicFollowPageContent extends StatefulWidget {
 
 class _ComicFollowPageContentState extends State<_ComicFollowPageContent> {
   final _searchFocus = FocusNode();
+  final _scroll = ScrollController();
   final _normalizedSearch = <(String, String, String, String), String>{};
   KeywordSearchScope _keywordScope = KeywordSearchScope.all;
   bool _searching = false;
@@ -174,6 +179,7 @@ class _ComicFollowPageContentState extends State<_ComicFollowPageContent> {
       _searchFocus.unfocus();
       setState(() {
         _searching = false;
+        _query = '';
       });
       return;
     }
@@ -188,6 +194,7 @@ class _ComicFollowPageContentState extends State<_ComicFollowPageContent> {
   @override
   void dispose() {
     _searchFocus.dispose();
+    _scroll.dispose();
     super.dispose();
   }
 
@@ -215,8 +222,19 @@ class _ComicFollowPageContentState extends State<_ComicFollowPageContent> {
               automaticallyImplyLeading: !widget.embedded && !_searching,
               leading: widget.embedded || _searching
                   ? null
-                  : const SourceBackButton(),
-              titleSpacing: _followContentInset,
+                  : Padding(
+                      padding: EdgeInsetsDirectional.only(start: outerInset),
+                      child: CollectionToolbarMetrics.leading(
+                        context,
+                        const SourceBackButton(),
+                      ),
+                    ),
+              leadingWidth:
+                  CollectionToolbarMetrics.leadingExtentOf(context) +
+                  outerInset,
+              titleSpacing: widget.embedded || _searching
+                  ? _followContentInset + outerInset
+                  : 0,
               toolbarHeight: SearchToolbarScope.stableHeight(
                 context,
                 toolbarHeight,
@@ -254,10 +272,6 @@ class _ComicFollowPageContentState extends State<_ComicFollowPageContent> {
                 end: outerInset + _followContentInset,
               ),
               actions: [
-                if (_searching)
-                  const SizedBox(
-                    width: CollectionToolbarMetrics.searchControlGap,
-                  ),
                 if (!_searching)
                   BlocSelector<ComicFollowCubit, ComicFollowState, bool>(
                     selector: (state) => state.items.isNotEmpty,
@@ -273,18 +287,17 @@ class _ComicFollowPageContentState extends State<_ComicFollowPageContent> {
                             symbol: _searching ? 'xmark' : 'magnifyingglass',
                             onPressed: _toggleSearch,
                           )
-                        : const SizedBox(
-                            width: CollectionToolbarMetrics.actionExtent,
+                        : SizedBox(
+                            width: CollectionToolbarMetrics.actionExtentOf(
+                              context,
+                            ),
                           ),
                   ),
                 if (!_searching)
                   const CollectionCoverPrivacyButton(
                     key: ValueKey('follow-cover-privacy'),
                   ),
-                const SizedBox(
-                  width: CollectionToolbarMetrics.actionExtent,
-                  child: _FollowMoreButton(),
-                ),
+                if (!_searching) _FollowMoreButton(onMarkAllRead: _markAllRead),
               ],
             ),
             searching: _searching,
@@ -434,6 +447,7 @@ class _ComicFollowPageContentState extends State<_ComicFollowPageContent> {
     final Widget list;
     if (visibleItems.isNotEmpty) {
       list = _FollowList(
+        controller: widget.embedded ? _scroll : null,
         items: visibleItems,
         state: state,
         scrollKey: PageStorageKey(('follow-list', keyword.isNotEmpty)),
@@ -458,8 +472,15 @@ class _ComicFollowPageContentState extends State<_ComicFollowPageContent> {
         constraints: const BoxConstraints(maxWidth: _followContentWidth),
         child: Column(
           children: [
-            _FollowToolbar(state: state, onMarkRead: _markAllRead),
-            Expanded(child: _withRefresh(context, state, list)),
+            _FollowToolbar(state: state),
+            Expanded(
+              child: TabReselectListener(
+                enabled: widget.embedded,
+                onReselect: () =>
+                    TabReselectScope.scrollToStart(context, _scroll),
+                child: _withRefresh(context, state, list),
+              ),
+            ),
           ],
         ),
       ),
@@ -508,60 +529,82 @@ class _ComicFollowPageContentState extends State<_ComicFollowPageContent> {
 }
 
 class _FollowMoreButton extends StatelessWidget {
-  const _FollowMoreButton();
+  const _FollowMoreButton({required this.onMarkAllRead});
 
   static const _reminderSettings = 'reminder-settings';
+  static const _markAllRead = 'mark-all-read';
+  final VoidCallback onMarkAllRead;
 
   @override
-  Widget build(BuildContext context) => VideoControlAppearance(
-    systemControls: usesNativeSourceChrome(context),
-    child: NativeVideoMenu(
-      key: const ValueKey('follow-more'),
-      width: CollectionToolbarMetrics.actionExtent,
-      label: '',
-      tooltip: t.common.more,
-      selected: '',
-      icon: Icons.more_horiz,
-      symbol: 'ellipsis',
-      hostPresentation: true,
-      selectAfterDismissal: const {
-        collectionCoverSettingsAction,
-        _reminderSettings,
-      },
-      options: {
-        collectionCoverSettingsAction: collectionCoverSettingsLabel(context),
-        _reminderSettings: t.followReminders.title,
-      },
-      optionIcons: const {
-        collectionCoverSettingsAction: (
-          icon: Icons.visibility_off_outlined,
-          symbol: 'eye.slash',
+  Widget build(BuildContext context) =>
+      BlocSelector<ComicFollowCubit, ComicFollowState, bool>(
+        selector: (state) => state.updateCount > 0 && !state.isCheckingUpdates,
+        builder: (context, canMarkAllRead) => VideoControlAppearance(
+          systemControls: usesNativeSourceChrome(context),
+          child: NativeVideoMenu(
+            key: const ValueKey('follow-more'),
+            width: CollectionToolbarMetrics.actionExtentOf(context),
+            label: '',
+            tooltip: t.common.more,
+            selected: '',
+            icon: Icons.more_horiz,
+            symbol: 'ellipsis',
+            hostPresentation: true,
+            selectAfterDismissal: const {
+              collectionCoverSettingsAction,
+              _reminderSettings,
+              _markAllRead,
+            },
+            options: {
+              collectionCoverSettingsAction: collectionCoverSettingsLabel(
+                context,
+              ),
+              _reminderSettings: t.followReminders.title,
+              if (canMarkAllRead) _markAllRead: t.comicFollow.markAllReadHint,
+            },
+            optionIcons: const {
+              collectionCoverSettingsAction: (
+                icon: Icons.visibility_off_outlined,
+                symbol: 'eye.slash',
+              ),
+              _reminderSettings: (
+                icon: Icons.notifications_outlined,
+                symbol: 'bell',
+              ),
+              _markAllRead: (
+                icon: Icons.done_all_outlined,
+                symbol: 'checkmark.circle',
+              ),
+            },
+            onSelected: (value) {
+              if (!context.mounted) return;
+              switch (value) {
+                case collectionCoverSettingsAction:
+                  unawaited(openCollectionCoverSettings(context));
+                case _reminderSettings:
+                  unawaited(showComicFollowReminderSettings(context));
+                case _markAllRead:
+                  final state = context.read<ComicFollowCubit>().state;
+                  if (state.updateCount > 0 && !state.isCheckingUpdates) {
+                    onMarkAllRead();
+                  }
+              }
+            },
+          ),
         ),
-        _reminderSettings: (icon: Icons.notifications_outlined, symbol: 'bell'),
-      },
-      onSelected: (value) {
-        if (!context.mounted) return;
-        switch (value) {
-          case collectionCoverSettingsAction:
-            unawaited(openCollectionCoverSettings(context));
-          case _reminderSettings:
-            unawaited(showComicFollowReminderSettings(context));
-        }
-      },
-    ),
-  );
+      );
 }
 
 /// One filter and one sort. Status belongs to the row being checked; the
 /// toolbar never reports “no updates” while a previous result is still shown.
 class _FollowToolbar extends StatelessWidget {
-  const _FollowToolbar({required this.state, required this.onMarkRead});
+  const _FollowToolbar({required this.state});
   final ComicFollowState state;
-  final VoidCallback onMarkRead;
 
   @override
   Widget build(BuildContext context) {
     final cubit = context.read<ComicFollowCubit>();
+    final systemControls = usesNativeSourceChrome(context);
     final statuses = {
       ComicFollowFilter.all.name: t.common.all,
       ComicFollowFilter.unread.name: t.comicFollow.unread,
@@ -570,52 +613,65 @@ class _FollowToolbar extends StatelessWidget {
       ComicFollowSort.lastRead.name: t.comicFollow.lastRead,
       ComicFollowSort.update.name: t.comicFollow.lastUpdate,
     };
-    final sort = VideoControlAppearance(
-      systemControls: usesNativeSourceChrome(context),
-      child: NativeVideoMenu(
-        key: const ValueKey('follow-sort'),
-        label: '',
-        tooltip: '${t.comicFollow.sort} · ${sorts[state.sort.name]}',
-        selected: state.sort.name,
-        options: sorts,
-        width: CollectionToolbarMetrics.actionExtent,
-        hostPresentation: true,
-        icon: Icons.swap_vert_rounded,
-        symbol: 'arrow.up.arrow.down',
-        onSelected: (value) {
-          if (value != state.sort.name) {
-            cubit.setSort(ComicFollowSort.values.byName(value));
-          }
-        },
-      ),
+    final sortLabel = sorts[state.sort.name]!;
+    Widget sort({required bool showLabel, required double width}) =>
+        VideoControlAppearance(
+          systemControls: systemControls,
+          child: NativeVideoMenu(
+            key: const ValueKey('follow-sort'),
+            label: showLabel ? sortLabel : '',
+            tooltip: '${t.comicFollow.sort} · $sortLabel',
+            selected: state.sort.name,
+            options: sorts,
+            width: showLabel
+                ? width
+                : CollectionToolbarMetrics.actionExtentOf(context),
+            hostPresentation: true,
+            icon: showLabel ? null : Icons.swap_vert_rounded,
+            symbol: showLabel ? '' : 'arrow.up.arrow.down',
+            compactTextChoice: showLabel,
+            onSelected: (value) {
+              if (value != state.sort.name) {
+                cubit.setSort(ComicFollowSort.values.byName(value));
+              }
+            },
+          ),
+        );
+    final labelPainter = TextPainter(
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
     );
-    final markAllRead = state.updateCount > 0
-        ? SourceChromeIconButton(
-            tooltip: t.comicFollow.markAllReadHint,
-            onPressed: state.isCheckingUpdates ? null : onMarkRead,
-            icon: Icons.done_all_outlined,
-            symbol: 'checkmark.circle',
-          )
-        : null;
+    double sortLabelWidth = 0;
+    for (final label in sorts.values) {
+      labelPainter.text = TextSpan(
+        text: label,
+        style: Theme.of(context).textTheme.labelLarge,
+      );
+      labelPainter.layout();
+      if (labelPainter.width > sortLabelWidth) {
+        sortLabelWidth = labelPainter.width;
+      }
+    }
+    labelPainter.dispose();
+    final labeledSortWidth = sortLabelWidth.ceilToDouble() + 38;
     return Padding(
-      padding: const EdgeInsetsDirectional.fromSTEB(
-        _followContentInset,
-        0,
-        _followContentInset,
-        4,
+      padding: CollectionToolbarMetrics.contentPaddingOf(
+        context,
+        inset: _followContentInset,
+        bottom: 4,
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          const actionExtent = CollectionToolbarMetrics.actionExtent;
+          final actionExtent = CollectionToolbarMetrics.actionExtentOf(context);
           const gap = 8.0;
-          final actions = [?markAllRead, sort];
           final segmentWidth =
               NativeVideoSegmentedControl.minimumHorizontalWidth(
                 context,
                 statuses.values,
-              );
+              ).ceilToDouble();
           final filter = VideoControlAppearance(
-            systemControls: usesNativeSourceChrome(context),
+            systemControls: systemControls,
             child: NativeVideoSegmentedControl(
               key: const ValueKey('follow-filter'),
               options: statuses,
@@ -624,13 +680,18 @@ class _FollowToolbar extends StatelessWidget {
                   cubit.setFilter(ComicFollowFilter.values.byName(value)),
             ),
           );
-          if (constraints.maxWidth >=
-              segmentWidth + actions.length * actionExtent + gap) {
+          final hasLabeledSort =
+              constraints.maxWidth >= segmentWidth + labeledSortWidth + gap;
+          final sortControl = ConstrainedBox(
+            constraints: BoxConstraints(minHeight: actionExtent),
+            child: sort(showLabel: hasLabeledSort, width: labeledSortWidth),
+          );
+          if (constraints.maxWidth >= segmentWidth + actionExtent + gap) {
             return Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Expanded(child: filter),
-                const SizedBox(width: gap),
-                ...actions,
+                SizedBox(width: segmentWidth, child: filter),
+                sortControl,
               ],
             );
           }
@@ -638,7 +699,10 @@ class _FollowToolbar extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               filter,
-              Row(mainAxisAlignment: MainAxisAlignment.end, children: actions),
+              Align(
+                alignment: AlignmentDirectional.centerEnd,
+                child: sortControl,
+              ),
             ],
           );
         },
@@ -650,12 +714,14 @@ class _FollowToolbar extends StatelessWidget {
 /// 单列列表：最大宽度约束居中。
 class _FollowList extends StatelessWidget {
   const _FollowList({
+    required this.controller,
     required this.items,
     required this.state,
     required this.scrollKey,
     required this.bottomPadding,
   });
 
+  final ScrollController? controller;
   final List<ComicFollow> items;
   final ComicFollowState state;
   final PageStorageKey<(String, bool)> scrollKey;
@@ -667,6 +733,7 @@ class _FollowList extends StatelessWidget {
     // 外层已用 ConstrainedBox(768) 居中，这里只留固定边距。
     return ListView.separated(
       key: scrollKey,
+      controller: controller,
       physics: const AlwaysScrollableScrollPhysics(),
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: EdgeInsetsDirectional.fromSTEB(
@@ -750,6 +817,8 @@ class _FollowCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
+          splashFactory: NoSplash.splashFactory,
+          highlightColor: CollectionPressFeedback.surfaceHighlight(context),
           onTap: () => _openDetail(context),
           onLongPress: () => _onLongPress(context),
           child: Padding(
@@ -765,12 +834,8 @@ class _FollowCard extends StatelessWidget {
                     );
                     final coverHeight = coverWidth / (2 / 3);
                     final textWidth = constraints.maxWidth - coverWidth - 12;
-                    final chaptersBelow = _chaptersBelow(
-                      context,
-                      theme,
-                      textWidth,
-                      coverHeight,
-                    );
+                    final chaptersBelow =
+                        textWidth < MediaQuery.textScalerOf(context).scale(150);
                     final identity = Column(
                       key: ValueKey('follow-identity-${follow.uniqueKey}'),
                       mainAxisSize: MainAxisSize.min,
@@ -778,24 +843,7 @@ class _FollowCard extends StatelessWidget {
                       children: [
                         _buildTitleRow(theme),
                         const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            Expanded(child: _buildSourceLine(theme)),
-                            if (hasUnreadUpdate)
-                              Flexible(
-                                child: ComicFollowReminderBadge(
-                                  child: Padding(
-                                    padding: const EdgeInsetsDirectional.only(
-                                      start: 6,
-                                    ),
-                                    child: _UnreadPill(
-                                      count: unreadChapterCount,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
+                        _buildSourceLine(theme),
                       ],
                     );
                     final chapters = Column(
@@ -803,10 +851,12 @@ class _FollowCard extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _buildLatestLine(context, theme),
+                        _buildLatestLine(theme),
                         const SizedBox(height: 6),
                         _buildReadingLine(theme),
                         _buildProgress(theme),
+                        const SizedBox(height: 8),
+                        _buildActivity(context, theme),
                       ],
                     );
                     final body = Row(
@@ -850,8 +900,6 @@ class _FollowCard extends StatelessWidget {
                     );
                   },
                 ),
-                const SizedBox(height: 8),
-                _buildBottomRow(context, theme),
               ],
             ),
           ),
@@ -907,68 +955,6 @@ class _FollowCard extends StatelessWidget {
     return title.isEmpty
         ? t.comicFollow.latestCount(count: count)
         : t.comicFollow.latestChapter(count: count, chapter: title);
-  }
-
-  bool _chaptersBelow(
-    BuildContext context,
-    ThemeData theme,
-    double width,
-    double coverHeight,
-  ) {
-    final scale = MediaQuery.textScalerOf(context);
-    if (width < scale.scale(150)) return true;
-    double height(
-      String text,
-      TextStyle? style,
-      int lines, [
-      double? available,
-    ]) {
-      final painter = TextPainter(
-        text: TextSpan(text: text, style: style),
-        maxLines: lines,
-        textScaler: scale,
-        textDirection: Directionality.of(context),
-      )..layout(maxWidth: (available ?? width).clamp(1.0, double.infinity));
-      final value = painter.height;
-      painter.dispose();
-      return value;
-    }
-
-    final title = height(
-      follow.title,
-      theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
-      2,
-    );
-    final source = height(_pluginLabel(), theme.textTheme.bodySmall, 1);
-    final badge = hasUnreadUpdate
-        ? height(
-                t.comicFollow.newChaptersShort(diff: unreadChapterCount),
-                theme.textTheme.labelSmall,
-                1,
-              ) +
-              6
-        : 0.0;
-    final identity = title + 4 + (source > badge ? source : badge);
-    final chapter = history?.chapterTitle.trim() ?? '';
-    final chapters =
-        height(
-          _latestText,
-          theme.textTheme.bodyMedium?.copyWith(
-            fontWeight: hasUnreadUpdate ? FontWeight.w600 : FontWeight.normal,
-          ),
-          2,
-          width - 18,
-        ) +
-        6 +
-        height(
-          chapter.isEmpty
-              ? t.comicFollow.notRead
-              : t.comicFollow.lastReadChapter(chapter: chapter),
-          theme.textTheme.bodyMedium,
-          1,
-        ) +
-        (readChapterPosition != null ? 8 : 0);
-    return identity + 8 + chapters > coverHeight;
   }
 
   /// 来源插件名 + 作者，插件名走 getCachedPluginInfo（含 DB 兜底）。
@@ -1034,37 +1020,30 @@ class _FollowCard extends StatelessWidget {
     );
   }
 
-  Widget _buildLatestLine(BuildContext context, ThemeData theme) {
-    final scheme = theme.colorScheme;
-    final latest = _latestText;
-    return Row(
-      children: [
-        Icon(
-          hasUnreadUpdate
-              ? Icons.fiber_new_outlined
-              : follow.lastCheckFailed || checkDeferred
-              ? Icons.history
-              : Icons.check_circle_outline,
-          size: 14,
-          color: hasUnreadUpdate ? scheme.primary : scheme.outline,
-        ),
-        const SizedBox(width: 4),
-        Expanded(
-          child: Text(
-            latest,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: hasUnreadUpdate
-                  ? scheme.onSurface
-                  : scheme.onSurfaceVariant,
-              fontWeight: hasUnreadUpdate ? FontWeight.w600 : FontWeight.normal,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
+  TextStyle? _latestStyle(ThemeData theme) =>
+      theme.textTheme.bodyMedium?.copyWith(
+        color: hasUnreadUpdate
+            ? theme.colorScheme.onSurface
+            : theme.colorScheme.onSurfaceVariant,
+        fontWeight: hasUnreadUpdate ? FontWeight.w600 : FontWeight.normal,
+      );
+
+  Widget _buildLatestLine(ThemeData theme) => Wrap(
+    key: ValueKey('follow-latest-${follow.uniqueKey}'),
+    crossAxisAlignment: WrapCrossAlignment.center,
+    spacing: 8,
+    runSpacing: 4,
+    children: [
+      Text(
+        _latestText,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: _latestStyle(theme),
+      ),
+      if (hasUnreadUpdate)
+        ComicFollowReminderBadge(child: _UnreadPill(count: unreadChapterCount)),
+    ],
+  );
 
   Widget _buildReadingLine(ThemeData theme) {
     final chapter = history?.chapterTitle.trim() ?? '';
@@ -1087,8 +1066,7 @@ class _FollowCard extends StatelessWidget {
     );
   }
 
-  /// Keep reading and check times aligned below the entire card.
-  Widget _buildBottomRow(BuildContext context, ThemeData theme) {
+  Widget _buildActivity(BuildContext context, ThemeData theme) {
     final timeStyle = theme.textTheme.labelSmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );
@@ -1109,23 +1087,10 @@ class _FollowCard extends StatelessWidget {
       ),
     };
     final readAt = history?.lastReadAt;
-    final readTime = readAt == null
-        ? const SizedBox.shrink()
-        : Text(
-            t.comicFollow.lastReadAt(time: formatFollowCheckTime(readAt)),
-            style: timeStyle,
-          );
-    final checkLabel = checkTime == null
-        ? const SizedBox.shrink()
-        : Text(
-            checkTime,
-            textAlign: follow.lastCheckFailed ? TextAlign.start : TextAlign.end,
-            style: timeStyle,
-          );
-    final timesKey = ValueKey('follow-times-${follow.uniqueKey}');
     return Column(
       key: ValueKey('follow-check-${follow.uniqueKey}'),
       crossAxisAlignment: CrossAxisAlignment.start,
+      spacing: 4,
       children: [
         if (follow.lastCheckFailed) _buildCheckFailure(context, theme),
         if (checkDeferred && !follow.lastCheckFailed)
@@ -1134,31 +1099,22 @@ class _FollowCard extends StatelessWidget {
             theme,
             ComicFollowCheckFailure.sourceUnavailable,
           ),
-        SizedBox(
-          width: double.infinity,
-          child: follow.lastCheckFailed
-              ? OverflowBar(
-                  key: timesKey,
-                  alignment: MainAxisAlignment.spaceBetween,
-                  spacing: 12,
-                  children: [readTime, checkLabel],
-                )
-              : Row(
-                  key: timesKey,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: readTime),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: checking && !checkDeferred
-                          ? Align(
-                              alignment: AlignmentDirectional.centerEnd,
-                              child: _buildCheckingLabel(timeStyle),
-                            )
-                          : checkLabel,
-                    ),
-                  ],
-                ),
+        Wrap(
+          key: ValueKey('follow-times-${follow.uniqueKey}'),
+          spacing: 12,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            if (readAt != null)
+              Text(
+                t.comicFollow.lastReadAt(time: formatFollowCheckTime(readAt)),
+                style: timeStyle,
+              ),
+            if (checking && !checkDeferred && !follow.lastCheckFailed)
+              _buildCheckingLabel(timeStyle)
+            else if (checkTime != null)
+              Text(checkTime, style: timeStyle),
+          ],
         ),
         if (follow.lastCheckFailed)
           Text(
@@ -1234,17 +1190,17 @@ class _FollowCard extends StatelessWidget {
             child: Text(message, style: style),
           );
     if (needsPlugin) return status!;
-    return OverflowBar(
+    final actionExtent = CollectionToolbarMetrics.actionExtentOf(context);
+    return Wrap(
       spacing: 8,
-      alignment: status == null
-          ? MainAxisAlignment.end
-          : MainAxisAlignment.spaceBetween,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         ?status,
         TextButton.icon(
           key: ValueKey('follow-retry-${follow.uniqueKey}'),
           style: TextButton.styleFrom(
-            minimumSize: const Size(44, 44),
+            minimumSize: Size.square(actionExtent),
             padding: const EdgeInsets.symmetric(horizontal: 4),
           ),
           onPressed: checking ? null : () => _retry(context),
@@ -1314,27 +1270,31 @@ class _FollowCard extends StatelessWidget {
   }
 }
 
+TextStyle? _followUnreadStyle(ThemeData theme) => theme.textTheme.labelSmall
+    ?.copyWith(color: theme.colorScheme.primary, fontWeight: FontWeight.w600);
+
 class _UnreadPill extends StatelessWidget {
   const _UnreadPill({required this.count});
-
   final int count;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final background = Color.alphaBlend(
+      scheme.primary.withValues(alpha: .09),
+      scheme.surface,
+    );
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: scheme.primary,
-        borderRadius: BorderRadius.circular(999),
+        color: background,
+        borderRadius: BorderRadius.circular(5),
       ),
       child: Text(
         t.comicFollow.newChaptersShort(diff: count),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: scheme.onPrimary,
-          fontWeight: FontWeight.w700,
+        style: _followUnreadStyle(theme)?.copyWith(
+          color: BreezeThemeColors.readableOn(scheme.primary, background),
         ),
       ),
     );

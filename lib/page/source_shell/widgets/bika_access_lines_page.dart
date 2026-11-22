@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/source_shell/bika_access_lines.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 import 'package:zephyr/util/json/json_value.dart';
 
@@ -306,17 +307,21 @@ class _BikaAccessLinesPageState extends State<BikaAccessLinesPage> {
       return PopScope(
         canPop: !_saving,
         child: Scaffold(
-          appBar: AppBar(
-            leading: _saving
-                ? const SizedBox.shrink()
-                : const SourceBackButton(),
-            title: Text(t.sourceShell.bikaAccessLines),
+          appBar: sourceSecondaryAppBar(
+            context,
+            showBack: !_saving,
+            title: t.sourceShell.bikaAccessLines,
           ),
           body: SafeArea(
             top: false,
             child: ListView(
               key: const PageStorageKey('bika-access-lines'),
-              padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+              padding: const EdgeInsetsDirectional.fromSTEB(
+                CollectionToolbarMetrics.sourceContentInset,
+                4,
+                CollectionToolbarMetrics.sourceContentInset,
+                24,
+              ),
               children: [
                 if (widget.onSelected != null) ...[
                   Text(t.sourceShell.bikaFirstLineNotice),
@@ -609,9 +614,9 @@ class _BikaAccessLineGateState extends State<BikaAccessLineGate> {
       ? widget.child
       : _ready == null
       ? Scaffold(
-          appBar: AppBar(
-            leading: const SourceBackButton(),
-            title: Text(t.sourceShell.bikaAccessLines),
+          appBar: sourceSecondaryAppBar(
+            context,
+            title: t.sourceShell.bikaAccessLines,
           ),
           body: Center(
             child: _stateFailed

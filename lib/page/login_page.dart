@@ -521,9 +521,9 @@ class _LoginPageState extends State<_SourceLoginBody> {
   Widget build(BuildContext context) {
     if (_loadingScheme) {
       return Scaffold(
-        appBar: AppBar(
-          leading: const SourceBackButton(),
-          title: Text(t.login.title),
+        appBar: sourceSecondaryAppBar(
+          context,
+          title: t.login.title,
           actions: [if (from.isNotEmpty) SourceMoreButton(source: from)],
         ),
         body: Center(child: SourceLoadingIndicator(source: from)),
@@ -532,9 +532,9 @@ class _LoginPageState extends State<_SourceLoginBody> {
 
     if (_schemeError != null) {
       return Scaffold(
-        appBar: AppBar(
-          leading: const SourceBackButton(),
-          title: Text(t.login.title),
+        appBar: sourceSecondaryAppBar(
+          context,
+          title: t.login.title,
           actions: [if (from.isNotEmpty) SourceMoreButton(source: from)],
         ),
         body: Center(
@@ -560,9 +560,9 @@ class _LoginPageState extends State<_SourceLoginBody> {
         ? t.login.loginButton
         : _submitLabel;
     return Scaffold(
-      appBar: AppBar(
-        leading: const SourceBackButton(),
-        title: Text(title.isEmpty ? t.login.title : title),
+      appBar: sourceSecondaryAppBar(
+        context,
+        title: title.isEmpty ? t.login.title : title,
         actions: [
           if (from.isNotEmpty)
             SourceMoreButton(

@@ -1,6 +1,7 @@
 import 'package:zephyr/widgets/collection_cover_settings.dart';
 import 'dart:async';
 
+import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
 import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
@@ -71,49 +72,42 @@ class SourceVideoListHeader extends StatelessWidget {
     return VideoControlAppearance(
       systemControls: usesNativeSourceChrome(context),
       child: Padding(
-        padding: EdgeInsetsDirectional.only(
-          start: leading == null || searchExtent != null ? horizontalInset : 0,
-          end: horizontalInset,
+        padding: CollectionToolbarMetrics.contentPaddingOf(
+          context,
+          inset: horizontalInset,
         ),
         child: SearchToolbarScope(
           extent: searchExtent,
           onClose: searchExtent == null ? null : onSearch,
           closeKey: ValueKey('$keyPrefix.search-toggle'),
           leadingControl: searchScope,
+          leadingWidth: searchExtent == null || searchScope == null
+              ? 0
+              : KeywordScopeMenu.leadingWidth(context).clamp(
+                  CollectionToolbarMetrics.actionExtentOf(context),
+                  (MediaQuery.sizeOf(context).width - 270).clamp(48.0, 80.0),
+                ),
           child: ConstrainedBox(
             constraints: BoxConstraints(
               minHeight: SearchToolbarScope.stableHeight(
                 context,
-                CollectionToolbarMetrics.actionExtent,
+                CollectionToolbarMetrics.actionExtentOf(context),
               ),
             ),
             child: Row(
+              spacing: CollectionToolbarMetrics.searchControlGap,
               children: [
-                if (leading != null && searchExtent == null)
-                  SizedBox(
-                    width: CollectionToolbarMetrics.sourceLeadingExtent,
-                    child: leading,
-                  ),
+                if (leading != null && searchExtent == null) leading!,
                 Expanded(
                   child: searching && searchField != null
                       ? searchField!
-                      : Padding(
-                          padding: EdgeInsetsDirectional.only(
-                            start: leading == null ? 8 : 0,
-                            end: 8,
-                          ),
-                          child: Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
+                      : Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleMedium,
                         ),
                 ),
-                if (searchExtent != null)
-                  const SizedBox(
-                    width: CollectionToolbarMetrics.searchControlGap,
-                  ),
                 if (searchExtent == null)
                   SourceChromeIconButton(
                     key: ValueKey('$keyPrefix.search-toggle'),
@@ -128,9 +122,8 @@ class SourceVideoListHeader extends StatelessWidget {
                   CollectionCoverPrivacyButton(
                     key: ValueKey('$keyPrefix.cover-privacy'),
                   ),
-                SizedBox(
-                  width: CollectionToolbarMetrics.actionExtent,
-                  child: NativeVideoMenu(
+                if (searchExtent == null)
+                  NativeVideoMenu(
                     key: menuKey ?? ValueKey('$keyPrefix.more'),
                     hostPresentation: true,
                     label: '',
@@ -165,7 +158,6 @@ class SourceVideoListHeader extends StatelessWidget {
                       }
                     },
                   ),
-                ),
               ],
             ),
           ),
@@ -189,6 +181,7 @@ class SourceVideoResultsToolbar extends StatelessWidget {
     this.onToggleView,
     this.filter,
     this.layout,
+    this.leading,
     this.showSortValue = false,
     this.horizontalInset = sourceVideoCollectionInset,
   });
@@ -198,7 +191,7 @@ class SourceVideoResultsToolbar extends StatelessWidget {
   final ValueChanged<String>? onSort;
   final bool? gridView;
   final VoidCallback? onToggleView;
-  final Widget? filter, layout;
+  final Widget? filter, layout, leading;
   final bool showSortValue;
   final double horizontalInset;
 
@@ -206,66 +199,93 @@ class SourceVideoResultsToolbar extends StatelessWidget {
   Widget build(BuildContext context) => VideoControlAppearance(
     systemControls: usesNativeSourceChrome(context),
     child: Padding(
-      padding: EdgeInsetsDirectional.symmetric(horizontal: horizontalInset),
-      child: Row(
-        spacing: showSortValue ? 4 : 0,
-        children: [
-          Expanded(
-            child: Text(
-              count,
-              key: ValueKey('$keyPrefix.count'),
-              style: Theme.of(context).textTheme.bodySmall,
-              maxLines: showSortValue ? 1 : null,
-              overflow: showSortValue ? TextOverflow.ellipsis : null,
-            ),
-          ),
-          if (sortOptions.length > 1)
-            if (onSort case final choose?)
-              NativeVideoMenu(
-                key: ValueKey('$keyPrefix.sort'),
-                label: showSortValue
-                    ? (sortOptions[sort] ?? t.videoLibrary.sort)
-                    : '',
-                tooltip: sortOptions[sort] == null
-                    ? t.videoLibrary.sort
-                    : '${t.videoLibrary.sort} · ${sortOptions[sort]}',
-                selected: sort,
-                options: sortOptions,
-                width: showSortValue
-                    ? (94 * MediaQuery.textScalerOf(context).scale(1)).clamp(
-                        94.0,
-                        144.0,
-                      )
-                    : CollectionToolbarMetrics.actionExtent,
-                hostPresentation: true,
-                compactTextChoice: showSortValue,
-                icon: showSortValue ? null : CollectionCommandIcons.sort.icon,
-                symbol: showSortValue ? '' : CollectionCommandIcons.sort.symbol,
-                onSelected: (value) {
-                  if (value != sort && sortOptions.containsKey(value)) {
-                    choose(value);
-                  }
-                },
-              )
-            else
-              SourceChromeIconButton(
-                key: ValueKey('$keyPrefix.sort'),
-                tooltip: t.videoLibrary.sort,
-                onPressed: null,
-                icon: CollectionCommandIcons.sort.icon,
-                symbol: CollectionCommandIcons.sort.symbol,
+      padding: CollectionToolbarMetrics.contentPaddingOf(
+        context,
+        inset: horizontalInset,
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          const gap = CollectionToolbarMetrics.searchControlGap;
+          final actionExtent = CollectionToolbarMetrics.actionExtentOf(context);
+          final scale = MediaQuery.textScalerOf(context);
+          final sortWidth = (94 * scale.scale(1)).clamp(
+            94.0,
+            (MediaQuery.sizeOf(context).width * .42).clamp(94.0, 144.0),
+          );
+          final actions = [?filter, ?gridView, ?layout].length;
+          final sortHasLabel =
+              showSortValue &&
+              constraints.maxWidth >=
+                  sortWidth +
+                      gap +
+                      actions * (actionExtent + gap) +
+                      scale.scale(56);
+          final sortValue = sortOptions[sort];
+          final sortTooltip = sortValue == null
+              ? t.videoLibrary.sort
+              : '${t.videoLibrary.sort} · $sortValue';
+          return Row(
+            spacing: gap,
+            children: [
+              Expanded(
+                child:
+                    leading ??
+                    Text(
+                      count,
+                      key: ValueKey('$keyPrefix.count'),
+                      style: Theme.of(context).textTheme.bodySmall,
+                      maxLines: showSortValue ? 2 : null,
+                      overflow: showSortValue ? TextOverflow.ellipsis : null,
+                    ),
               ),
-          ?filter,
-          if (gridView case final grid?)
-            SourceChromeIconButton(
-              key: ValueKey('$keyPrefix.view'),
-              tooltip: grid ? t.videoLibrary.detailList : t.videoLibrary.grid,
-              onPressed: onToggleView,
-              icon: CollectionCommandIcons.toggleTarget(grid).icon,
-              symbol: CollectionCommandIcons.toggleTarget(grid).symbol,
-            ),
-          ?layout,
-        ],
+              if (sortOptions.length > 1)
+                if (onSort case final choose?)
+                  NativeVideoMenu(
+                    key: ValueKey('$keyPrefix.sort'),
+                    label: sortHasLabel ? sortValue ?? t.videoLibrary.sort : '',
+                    tooltip: sortTooltip,
+                    selected: sort,
+                    options: sortOptions,
+                    width: sortHasLabel
+                        ? sortWidth
+                        : CollectionToolbarMetrics.actionExtent,
+                    hostPresentation: true,
+                    compactTextChoice: sortHasLabel,
+                    icon: sortHasLabel
+                        ? null
+                        : CollectionCommandIcons.sort.icon,
+                    symbol: sortHasLabel
+                        ? ''
+                        : CollectionCommandIcons.sort.symbol,
+                    onSelected: (value) {
+                      if (value != sort && sortOptions.containsKey(value)) {
+                        choose(value);
+                      }
+                    },
+                  )
+                else
+                  SourceChromeIconButton(
+                    key: ValueKey('$keyPrefix.sort'),
+                    tooltip: sortTooltip,
+                    onPressed: null,
+                    icon: CollectionCommandIcons.sort.icon,
+                    symbol: CollectionCommandIcons.sort.symbol,
+                  ),
+              ?filter,
+              if (gridView case final grid?)
+                SourceChromeIconButton(
+                  key: ValueKey('$keyPrefix.view'),
+                  tooltip: grid
+                      ? t.videoLibrary.detailList
+                      : t.videoLibrary.grid,
+                  onPressed: onToggleView,
+                  icon: CollectionCommandIcons.toggleTarget(grid).icon,
+                  symbol: CollectionCommandIcons.toggleTarget(grid).symbol,
+                ),
+              ?layout,
+            ],
+          );
+        },
       ),
     ),
   );

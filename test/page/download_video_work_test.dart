@@ -259,7 +259,7 @@ void main() {
           .position
           .pixels;
       expect(savedOffset, greaterThan(0));
-      await tester.tap(find.text('Downloading'));
+      await tester.tap(find.text('Tasks'));
       await tester.pumpAndSettle();
       expect(find.widgetWithText(ChoiceChip, '1-25'), findsNothing);
       expect(saved, findsNothing);
@@ -295,7 +295,7 @@ void main() {
         tester.state<ScrollableState>(scrollable).position.pixels,
         savedOffset,
       );
-      await tester.tap(find.text('Downloading'));
+      await tester.tap(find.text('Tasks'));
       await tester.pumpAndSettle();
       items = [
         ...items.take(43),
@@ -599,7 +599,7 @@ void main() {
           of: summary,
           matching: find.byIcon(Icons.chevron_right_rounded),
         ),
-        findsOneWidget,
+        findsNothing,
       );
       expect(find.text(t.download.workEpisodeCount(count: 2)), findsNothing);
       expect(
@@ -707,25 +707,100 @@ void main() {
     final delete = find.byKey(ValueKey('download-swipe.${work.key}.delete'));
     expect(find.text('0 of 1 downloads complete'), findsOneWidget);
     expect(find.text('1 of 3 downloads match'), findsOneWidget);
-    await tester.drag(find.text(work.title), const Offset(-160, 0));
+    expect(delete, findsNothing);
+    await tester.tap(find.byKey(ValueKey('download-row-more.${work.key}')));
     await tester.pumpAndSettle();
     expect(delete.hitTestable(), findsOneWidget);
-    final caption = find.descendant(
-      of: delete,
-      matching: find.text(t.common.delete),
+    expect(
+      find.descendant(of: delete, matching: find.text('Delete this download')),
+      findsOneWidget,
     );
-    expect(caption, findsOneWidget);
-    expect(tester.widget<Text>(caption).semanticsLabel, 'Delete this download');
     expect(removals, 0);
 
-    await tester.tap(delete);
-    await tester.pump(const Duration(milliseconds: 24));
     progress.value = {'attempt': 3, 'status': 'preparing'};
+    await tester.pumpAndSettle();
+    await tester.tap(delete);
     await tester.pumpAndSettle();
     expect(delete, findsNothing);
     expect(openRow.value, isNull);
     expect(removals, 0);
   });
+
+  testWidgets(
+    'video work More stays separate from retry, navigation and selection',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 760);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      SharedPreferences.setMockInitialValues({});
+      final episode = _episode('1', status: 'failed');
+      final work = DownloadVideoWork(
+        identity: downloadVideoWorkIdentity(episode)!,
+        episodes: [episode],
+        totalEpisodes: 1,
+      );
+      final openRow = ValueNotifier<String?>(null);
+      addTearDown(openRow.dispose);
+      var opens = 0, retries = 0, removals = 0;
+      Future<void> mount({bool managing = false}) => tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(platform: TargetPlatform.iOS),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(1.6)),
+            child: child!,
+          ),
+          home: Scaffold(
+            body: ListView(
+              children: [
+                DownloadVideoWorkCard(
+                  work: work,
+                  sourceTitle: 'Video source',
+                  onOpen: () => opens++,
+                  onManage: () {},
+                  onRemove: (_) => removals++,
+                  onRetryFailed: (_) => retries++,
+                  openSwipe: openRow,
+                  managing: managing,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      await mount();
+      await tester.pumpAndSettle();
+      final more = find.byKey(ValueKey('download-row-more.${work.key}'));
+      final retry = find.byKey(ValueKey('download-work-retry.${work.key}'));
+      final card = find.byKey(ValueKey('download-work.${work.key}'));
+      expect(tester.getSize(more), const Size.square(44));
+      expect(tester.getRect(more).right, tester.getRect(card).right - 12);
+      expect(tester.getRect(more).overlaps(tester.getRect(retry)), isFalse);
+      await tester.tap(more);
+      await tester.pumpAndSettle();
+      final sheet = find.byKey(ValueKey('download-action-sheet.${work.key}'));
+      expect(sheet, findsOneWidget);
+      expect(
+        find.descendant(of: sheet, matching: find.text(work.title)),
+        findsOneWidget,
+      );
+      expect([opens, retries, removals], [0, 0, 0]);
+      await tester.tap(
+        find.byKey(ValueKey('download-action-sheet-close.${work.key}')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(retry);
+      await tester.tap(find.text(work.title));
+      expect([opens, retries, removals], [1, 1, 0]);
+      await mount(managing: true);
+      await tester.pumpAndSettle();
+      expect(more, findsNothing);
+      expect(retry.hitTestable(), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   for (final interface in ['breeze', 'system']) {
     testWidgets(
@@ -937,21 +1012,26 @@ void main() {
       final row = find.byKey(const ValueKey('source-download.1'));
       final manage = find.byKey(const ValueKey('download-episodes-manage'));
       final delete = find.byKey(const ValueKey('download-episodes-delete'));
-      final tray = find.byKey(const ValueKey('download-swipe.video:1.delete'));
+      final more = find.byKey(const ValueKey('download-row-more.video:1'));
+      final tray = find.byKey(const ValueKey('download-swipe-tray.video:1'));
       final normalHeight = tester.getSize(row).height;
       await tester.drag(row, const Offset(-180, 0));
       await tester.pumpAndSettle();
       expect(tray.hitTestable(), findsOneWidget);
+      expect(more.hitTestable(), findsOneWidget);
       await tester.tap(manage);
       await tester.pumpAndSettle();
       expect(tray, findsNothing);
-      expect(delete, findsNothing);
-      await tester.longPress(row);
+      expect(find.text(t.bookshelf.selectedCount(count: 0)), findsNothing);
+      await tester.tap(manage);
       await tester.pumpAndSettle();
-      expect(tray, findsNothing);
+      expect(more, findsNothing);
+      expect(find.text(t.bookshelf.selectedCount(count: 0)), findsOneWidget);
+      await tester.tap(row);
+      await tester.pumpAndSettle();
       expect(find.text(t.bookshelf.selectedCount(count: 1)), findsOneWidget);
       expect(tester.getSize(row).height, normalHeight);
-      await tester.tap(find.text('Downloading'));
+      await tester.tap(find.text('Tasks'));
       await tester.pumpAndSettle();
       expect(delete, findsNothing);
       expect(tester.widget<TextButton>(manage).onPressed, isNull);
@@ -981,52 +1061,88 @@ void main() {
   );
 
   testWidgets(
-    'closing a source episode tray at zero releases the first outside tap',
+    'an episode offers the same confirmed delete through swipe and the row menu',
     (tester) async {
       SharedPreferences.setMockInitialValues({});
       final items = [_episode('1'), _episode('2')];
       final work = groupVideoDownloadItems(items, universe: items).single.work!;
       await tester.pumpWidget(
-        MaterialApp(
-          home: DownloadVideoWorkPage(
-            initial: work,
-            readItems: () async => items,
-            matches: (_) => true,
-            onRemoveEpisodes: (_, _) async {},
-            rowBuilder: (_, item, showFormat, resume) =>
-                SourceDownloadedEpisodeRow(
-                  item: item,
-                  episodeContext: true,
-                  showFileFormat: showFormat,
-                  resumeAt: resume,
-                ),
-          ),
-        ),
+        const MaterialApp(home: Scaffold(body: Text('Download home'))),
       );
-      await tester.pumpAndSettle();
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      Future<void> showWork() async {
+        unawaited(
+          navigator.push<void>(
+            MaterialPageRoute(
+              builder: (_) => DownloadVideoWorkPage(
+                initial: work,
+                readItems: () async => items,
+                matches: (_) => true,
+                onRemoveEpisodes: (_, _) async {},
+                rowBuilder: (_, item, showFormat, resume) =>
+                    SourceDownloadedEpisodeRow(
+                      item: item,
+                      episodeContext: true,
+                      showFileFormat: showFormat,
+                      resumeAt: resume,
+                    ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+      }
+
+      await showWork();
       final row = find.byKey(const ValueKey('source-download.1'));
-      final tray = find.byKey(const ValueKey('download-swipe.video:1.delete'));
+      final tray = find.byKey(const ValueKey('download-swipe-tray.video:1'));
+      final more = find.byKey(const ValueKey('download-row-more.video:1'));
       final manage = find.byKey(const ValueKey('download-episodes-manage'));
       await tester.drag(row, const Offset(-180, 0));
       await tester.pumpAndSettle();
       expect(tray.hitTestable(), findsOneWidget);
-
-      final gesture = await tester.startGesture(tester.getCenter(row));
-      await gesture.moveBy(const Offset(30, 0));
-      await gesture.moveBy(const Offset(180, 0));
-      await tester.pump();
-      expect(tray, findsNothing);
-      await gesture.up();
+      expect(more.hitTestable(), findsOneWidget);
+      await tester.tap(more);
       await tester.pumpAndSettle();
-
+      expect(tray, findsNothing);
+      expect(
+        find.byKey(const ValueKey('download-action-sheet.video:1')),
+        findsOneWidget,
+      );
+      expect(
+        find
+            .byKey(const ValueKey('download-swipe.video:1.delete'))
+            .hitTestable(),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('download-action-sheet-close.video:1')),
+      );
+      await tester.pumpAndSettle();
       await tester.tap(manage);
       await tester.pumpAndSettle();
       expect(find.text(t.common.done), findsOneWidget);
+      await tester.tap(manage);
+      await tester.pumpAndSettle();
+      await tester.drag(row, const Offset(-180, 0));
+      await tester.pumpAndSettle();
+      expect(tray.hitTestable(), findsOneWidget);
+      await tester.tap(find.byType(SourceBackButton));
+      await tester.pumpAndSettle();
+      expect(find.text('Download home'), findsOneWidget);
+      await showWork();
+      expect(tray, findsNothing);
+      await tester.drag(row, const Offset(-180, 0));
+      await tester.pumpAndSettle();
+      expect(tray.hitTestable(), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('Download home'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'plugin episode bytes and resume stay clear of the actions menu',
+    'episode title, progress, size and More move with the card at large text',
     (tester) async {
       tester.view.physicalSize = const Size(320, 720);
       tester.view.devicePixelRatio = 1;
@@ -1062,11 +1178,43 @@ void main() {
       final play = find.byType(DownloadEpisodePlayRow);
       final size = find.text(downloadByteAmount(item.sizeBytes!));
       final menu = find.byTooltip(t.common.more);
+      final title = find.descendant(of: play, matching: find.text('Episode 1'));
       expect(find.textContaining('7:29'), findsOneWidget);
       expect(size, findsOneWidget);
       expect(menu, findsOneWidget);
       expect(tester.getRect(size).overlaps(tester.getRect(menu)), isFalse);
-      expect(tester.getRect(play).overlaps(tester.getRect(menu)), isFalse);
+      expect(tester.getRect(title).overlaps(tester.getRect(menu)), isFalse);
+      expect(tester.getRect(title).top, tester.getRect(menu).top);
+      final row = find.byKey(const ValueKey('source-download.1'));
+      final atRest = tester.getRect(row);
+      final parts = {
+        for (final target in [play, size, menu, find.textContaining('7:29')])
+          target: tester.getRect(target),
+      };
+      void checkTranslation() {
+        final moved = tester.getRect(row);
+        final offset = moved.topLeft - atRest.topLeft;
+        expect(offset.dx, lessThan(-10));
+        expect(offset.dy, 0);
+        expect(moved.size, atRest.size);
+        for (final entry in parts.entries) {
+          expect(
+            tester.getRect(entry.key),
+            rectMoreOrLessEquals(entry.value.shift(offset)),
+          );
+        }
+      }
+
+      final gesture = await tester.startGesture(atRest.center);
+      await gesture.moveBy(const Offset(-28, 0));
+      await gesture.moveBy(const Offset(-32, 0));
+      await tester.pump();
+      checkTranslation();
+      await gesture.moveBy(const Offset(-115, 0));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      checkTranslation();
+      expect(menu.hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

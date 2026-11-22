@@ -26,6 +26,7 @@ import 'package:zephyr/page/video/video_playback_preferences.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/page/video/video_playback_settings_page.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
+import 'package:zephyr/page/video/video_player_status_strip.dart';
 import 'package:zephyr/page/video/video_playback_quick_panel.dart';
 import 'package:zephyr/page/video/video_thumbnail.dart';
 import 'package:zephyr/page/video/video_card_metadata.dart';
@@ -3358,8 +3359,16 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     required Duration position,
     required Duration duration,
     required bool wide,
+    required bool controlsShown,
   }) {
+    final landscape =
+        _fullscreen &&
+        !_portraitFullscreen &&
+        MediaQuery.orientationOf(context) == Orientation.landscape;
     final rich = wide && MediaQuery.textScalerOf(context).scale(14) <= 22;
+    final landscapeActions = landscape
+        ? _fullscreenActions(subtle: true)
+        : const <Widget>[];
     final portrait =
         _fullscreen &&
         _portraitFullscreen &&
@@ -3511,10 +3520,11 @@ class _NativeVideoPageState extends State<NativeVideoPage>
           tooltip: _fullscreen ? t.videoPlayback.exitFullscreen : t.common.back,
           symbol: 'chevron.left',
           icon: Icons.arrow_back_ios_new_rounded,
+          bare: landscape,
           onPressed: _backFromPlayer,
         ),
         Expanded(
-          child: wide
+          child: landscape
               ? Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 8,
@@ -3522,6 +3532,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                   ),
                   child: Text(
                     _session.title,
+                    key: const ValueKey('video-landscape-title'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(
@@ -3531,8 +3542,8 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                 )
               : const SizedBox.shrink(),
         ),
-        if (rich) ..._fullscreenActions(),
-        if (_fullscreen)
+        if (rich) ...landscapeActions,
+        if (_fullscreen && !landscape)
           NativeVideoIconButton(
             tooltip: t.videoPlayback.lockControls,
             symbol: 'lock.open',
@@ -3543,6 +3554,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
           tooltip: t.videoPlayback.playbackSettings,
           symbol: 'ellipsis',
           icon: Icons.more_horiz_rounded,
+          bare: landscape,
           onPressed: _openQuickSettings,
         ),
       ],
@@ -3551,7 +3563,20 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       child: Column(
         children: [
+          if (landscape)
+            VideoPlayerStatusStrip(
+              visible: controlsShown,
+              offline: widget.offlineOnly,
+            ),
           top,
+          if (!rich && landscapeActions.isNotEmpty)
+            Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(children: landscapeActions),
+              ),
+            ),
           if (portrait)
             Expanded(
               child: Stack(
@@ -4555,6 +4580,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                               ? MediaQuery.paddingOf(context)
                               : EdgeInsets.zero,
                           child: _controlLayout(
+                            controlsShown: controlsShown,
                             ready: ready && !_loading,
                             ended: ended,
                             playing: value?.isPlaying == true,
@@ -4568,16 +4594,29 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                         ),
                       ),
                     ),
-                  if (_fullscreen && _locked)
+                  if (_fullscreen &&
+                      (_locked ||
+                          (!_portraitFullscreen &&
+                              controlsShown &&
+                              MediaQuery.orientationOf(context) ==
+                                  Orientation.landscape)))
                     Positioned(
-                      left: MediaQuery.paddingOf(context).left + 12,
+                      left: _portraitFullscreen
+                          ? MediaQuery.paddingOf(context).left + 12
+                          : null,
+                      right: _portraitFullscreen
+                          ? null
+                          : MediaQuery.paddingOf(context).right + 12,
                       top: 0,
                       bottom: 0,
                       child: Center(
-                        child: IconButton.filledTonal(
-                          tooltip: t.videoPlayback.unlockControls,
+                        child: NativeVideoIconButton(
+                          tooltip: _locked
+                              ? t.videoPlayback.unlockControls
+                              : t.videoPlayback.lockControls,
+                          symbol: _locked ? 'lock.fill' : 'lock.open',
                           onPressed: _toggleLock,
-                          icon: const Icon(Icons.lock_rounded),
+                          icon: _locked ? Icons.lock_rounded : Icons.lock_open,
                         ),
                       ),
                     ),

@@ -1,6 +1,7 @@
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/widgets/read_recovery_scope.dart';
+import 'package:zephyr/widgets/tab_reselect_scope.dart';
 import 'package:zephyr/page/source_shell/source_settings_destination.dart';
 import 'package:zephyr/page/source_shell/bika_access_lines.dart';
 import 'package:zephyr/page/source_shell/widgets/bika_access_lines_page.dart';
@@ -94,12 +95,14 @@ class _SourceShellBody extends StatefulWidget {
   State<_SourceShellBody> createState() => _SourceShellPageState();
 }
 
-class _SourceShellPageState extends State<_SourceShellBody> {
+class _SourceShellPageState extends State<_SourceShellBody>
+    with WidgetsBindingObserver {
   late List<SourceShellSection> _sections;
   String _bikaInfoKey = '';
   KeywordSearchScope _fallbackSearchScope = KeywordSearchScope.all;
   int _selectedIndex = 0;
   final List<int> _tabHistory = [];
+  final _tabReselect = <String, TabReselectController>{};
   final SourceProfileBackController _profileBackController =
       SourceProfileBackController();
   final _videoContentKeys = <String, ({int revision, GlobalKey key})>{};
@@ -121,6 +124,7 @@ class _SourceShellPageState extends State<_SourceShellBody> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     BikaAccessLines.changes.addListener(_onAccessLineChanged);
     _sections = List.of(widget.sections);
     _refreshBikaSections(notify: false);
@@ -321,6 +325,10 @@ class _SourceShellPageState extends State<_SourceShellBody> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    for (final controller in _tabReselect.values) {
+      controller.dispose();
+    }
     BikaAccessLines.changes.removeListener(_onAccessLineChanged);
     _loginProbeEpoch++;
     _sourceNameEpoch++;
@@ -480,8 +488,51 @@ class _SourceShellPageState extends State<_SourceShellBody> {
     );
   }
 
+  void _onDestinationSelected(int index) {
+    if (index != _selectedIndex) {
+      _select(index);
+      return;
+    }
+    _reselectCurrentTab();
+  }
+
+  @override
+  void handleStatusBarTap() {
+    if (defaultTargetPlatform == TargetPlatform.iOS) _reselectCurrentTab();
+  }
+
+  void _reselectCurrentTab() {
+    if (!mounted ||
+        _sections.isEmpty ||
+        _jmSearching ||
+        _profileCanGoBack ||
+        _loginRequiredIndexes.contains(_selectedIndex) ||
+        !TabReselectScope.canHandle(context)) {
+      return;
+    }
+    _tabReselect[_sections[_selectedIndex].id]?.request();
+  }
+
+  Widget _tabContent(int index, Widget child) {
+    final section = _sections[index];
+    if (section.scene == null &&
+        section.functionId == null &&
+        !section.cloudFavorite &&
+        !section.videoGroup) {
+      return child;
+    }
+    return TabReselectScope(
+      controller: _tabReselect.putIfAbsent(
+        section.id,
+        TabReselectController.new,
+      ),
+      child: child,
+    );
+  }
+
   void _select(int index) {
     if (index == _selectedIndex) return;
+    _closeActiveJmSearch();
     setState(() {
       final historyIndex = _tabHistory.indexOf(index);
       if (historyIndex >= 0) {
@@ -500,12 +551,21 @@ class _SourceShellPageState extends State<_SourceShellBody> {
       _profileBackController.canGoBack;
 
   void _goBack() {
+    if (_closeActiveJmSearch()) return;
     if (_profileCanGoBack) {
       _profileBackController.goBack();
     } else if (SourceReturnPreferences.includesTabHistory &&
         _tabHistory.isNotEmpty) {
       setState(() => _selectedIndex = _tabHistory.removeLast());
     }
+  }
+
+  bool _closeActiveJmSearch() {
+    if (!_jmSearching || !_profileCanGoBack) return false;
+    final close = _profileBackController.jmHeader.actions?.onSearch;
+    if (close == null) return false;
+    close();
+    return true;
   }
 
   void _exitSource() => exitSourceToDiscover(context);
@@ -535,7 +595,10 @@ class _SourceShellPageState extends State<_SourceShellBody> {
           for (var i = 0; i < children.length; i++)
             ReadRecoveryScope(
               active: i == index,
-              child: TickerMode(enabled: i == index, child: children[i]),
+              child: TickerMode(
+                enabled: i == index,
+                child: _tabContent(i, children[i]),
+              ),
             ),
         ],
       );
@@ -551,7 +614,10 @@ class _SourceShellPageState extends State<_SourceShellBody> {
             offstage: i != index,
             child: ReadRecoveryScope(
               active: i == index,
-              child: TickerMode(enabled: i == index, child: children[i]),
+              child: TickerMode(
+                enabled: i == index,
+                child: _tabContent(i, children[i]),
+              ),
             ),
           ),
       ],
@@ -561,13 +627,23 @@ class _SourceShellPageState extends State<_SourceShellBody> {
   @override
   Widget build(BuildContext context) {
     final sections = _sections;
-    final showingProfile =
-        sections.isNotEmpty && sections[_selectedIndex].profile;
+    final section = sections.isEmpty ? null : sections[_selectedIndex];
+    final showingProfile = section?.profile == true;
     final jmSearching = showingProfile && _jmSearching;
-    final showingSettings =
-        sections.isNotEmpty && sections[_selectedIndex].sourceSettings;
-    final showingVideo =
-        sections.isNotEmpty && sections[_selectedIndex].videoGroup;
+    final jmCollection =
+        showingProfile &&
+        _profileBackController.title != null &&
+        sections[_selectedIndex].profileKind == 'jm';
+    final showingSettings = section?.sourceSettings == true;
+    final showingVideo = section?.videoGroup == true;
+    final showingBrowseSearch =
+        section != null &&
+        !showingProfile &&
+        !showingSettings &&
+        !showingVideo &&
+        !section.bikaGames &&
+        !section.cloudFavorite &&
+        !_loginRequiredIndexes.contains(_selectedIndex);
     final canGoBack =
         _profileCanGoBack ||
         SourceReturnPreferences.includesTabHistory && _tabHistory.isNotEmpty;
@@ -615,15 +691,21 @@ class _SourceShellPageState extends State<_SourceShellBody> {
                       ? Theme.of(context).colorScheme.onSurface
                       : null,
                   automaticallyImplyLeading: false,
-                  leadingWidth: height ?? 56,
+                  leadingWidth: CollectionToolbarMetrics.leadingExtentOf(
+                    context,
+                  ),
+                  actionsPadding: CollectionToolbarMetrics.trailingPadding,
                   leading: jmSearching
                       ? null
-                      : SourceBackButton(
-                          tooltip: backLabel,
-                          onPressed: canGoBack ? _goBack : _exitSource,
+                      : CollectionToolbarMetrics.leading(
+                          context,
+                          SourceBackButton(
+                            tooltip: backLabel,
+                            onPressed: canGoBack ? _goBack : _exitSource,
+                          ),
                         ),
                   titleSpacing: jmSearching
-                      ? CollectionToolbarMetrics.horizontalInset
+                      ? CollectionToolbarMetrics.sourceContentInset
                       : 0,
                   toolbarHeight:
                       showingProfile &&
@@ -654,58 +736,55 @@ class _SourceShellPageState extends State<_SourceShellBody> {
                         )
                       : showingSettings
                       ? Text(t.discover.settings)
-                      : sections.isEmpty
-                      ? Text(_sourceName, overflow: TextOverflow.ellipsis)
-                      : SearchQueryField(
-                          query: '',
-                          hintText: t.sourceShell.search,
-                          semanticLabel:
-                              '${t.sourceShell.search} · $_sourceName',
-                          onTap: _openSearch,
+                      : Text(
+                          section == null || section.title.trim().isEmpty
+                              ? _sourceName
+                              : section.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                  actions: [
-                    if (showingProfile &&
-                        _profileBackController.title != null &&
-                        sections[_selectedIndex].profileKind == 'jm')
-                      JmCollectionHeaderActions(
-                        controller: _profileBackController.jmHeader,
-                      ),
-                    if (!(showingProfile &&
-                        _profileBackController.title != null &&
-                        sections[_selectedIndex].profileKind == 'jm'))
-                      const SizedBox(width: 8),
-                    if (showingProfile &&
-                        !jmSearching &&
-                        !_profileBackController.canGoBack)
-                      const CollectionCoverPrivacyButton(),
-                    if (!showingProfile &&
-                        !sections.any((section) => section.profile) &&
-                        _loginSupported)
-                      SourceChromeIconButton(
-                        tooltip: t.sourceShell.account,
-                        icon: Icons.person_outline,
-                        symbol: 'person.crop.circle',
-                        onPressed: _openAccount,
-                      ),
-                    if (!(showingProfile &&
-                        _profileBackController.canGoBack &&
-                        sections.any(
-                          (section) =>
-                              section.profile && section.profileKind == 'jm',
-                        )))
-                      SourceMoreButton(
-                        source: widget.source,
-                        showCoverSettings: showingProfile,
-                        showSettings: !sections.any(
-                          (section) => section.sourceSettings,
-                        ),
-                        onOpenSettings: () =>
-                            unawaited(_openPluginPreferences()),
-                      ),
-                  ],
+                  actions: jmSearching
+                      ? const []
+                      : [
+                          if (jmCollection)
+                            JmCollectionHeaderActions(
+                              controller: _profileBackController.jmHeader,
+                            ),
+                          if (showingProfile &&
+                              !jmSearching &&
+                              !_profileBackController.canGoBack)
+                            const CollectionCoverPrivacyButton(),
+                          if (showingBrowseSearch)
+                            SourceChromeIconButton(
+                              key: const ValueKey('source-shell.search'),
+                              tooltip: t.sourceShell.search,
+                              icon: Icons.search_rounded,
+                              symbol: 'magnifyingglass',
+                              bare: true,
+                              onPressed: _openSearch,
+                            ),
+                          if (!showingProfile &&
+                              !sections.any((section) => section.profile) &&
+                              _loginSupported)
+                            SourceChromeIconButton(
+                              tooltip: t.sourceShell.account,
+                              icon: Icons.person_outline,
+                              symbol: 'person.crop.circle',
+                              onPressed: _openAccount,
+                            ),
+                          if (!jmCollection)
+                            SourceMoreButton(
+                              source: widget.source,
+                              showCoverSettings: showingProfile,
+                              showSettings: !sections.any(
+                                (section) => section.sourceSettings,
+                              ),
+                              onOpenSettings: () =>
+                                  unawaited(_openPluginPreferences()),
+                            ),
+                        ],
                 ),
-                searching:
-                    !showingProfile && !showingSettings && sections.isNotEmpty,
+                searching: jmSearching,
               ),
         body: sections.isEmpty
             ? _loginRequiredIndexes.contains(0)
@@ -762,6 +841,7 @@ class _SourceShellPageState extends State<_SourceShellBody> {
                           title: sections[index].title,
                           scene: scene,
                           embedded: true,
+                          titleInParent: true,
                         )
                       else if (sections[index].functionId
                           case final functionId?)
@@ -771,6 +851,7 @@ class _SourceShellPageState extends State<_SourceShellBody> {
                           ),
                           from: widget.source,
                           functionId: functionId,
+                          tabReselectEnabled: true,
                           extern: {
                             if (sections.any((section) => section.videoGroup))
                               'nativeVideoTab': true,
@@ -788,6 +869,7 @@ class _SourceShellPageState extends State<_SourceShellBody> {
                           sceneBundleFnPathFallback:
                               'get_cloud_favorite_scene_bundle',
                           embedded: true,
+                          titleInParent: true,
                         )
                       else if (sections[index].profile)
                         SourceProfileContent(
@@ -862,12 +944,12 @@ class _SourceShellPageState extends State<_SourceShellBody> {
                 ],
                 symbols: [for (final section in sections) _symbol(section)],
                 currentIndex: _selectedIndex,
-                onTap: _select,
+                onTap: _onDestinationSelected,
               )
             : NavigationBar(
                 selectedIndex: _selectedIndex,
                 labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-                onDestinationSelected: _select,
+                onDestinationSelected: _onDestinationSelected,
                 destinations: [
                   for (final section in sections)
                     NavigationDestination(

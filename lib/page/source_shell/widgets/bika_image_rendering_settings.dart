@@ -31,9 +31,9 @@ class BikaImageRenderingSettingsPage extends StatelessWidget {
   Widget build(BuildContext context) => SourceExperienceBoundary(
     source: source,
     builder: (context) => Scaffold(
-      appBar: AppBar(
-        leading: const SourceBackButton(),
-        title: Text(t.sourceShell.bikaImageRendering),
+      appBar: sourceSecondaryAppBar(
+        context,
+        title: t.sourceShell.bikaImageRendering,
       ),
       body: SettingListView(
         children: [

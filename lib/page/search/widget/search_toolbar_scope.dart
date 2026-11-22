@@ -1,7 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 
-/// Gives the search surface and its neighbouring controls one row height.
+/// Carries the search field geometry without changing adjacent command sizes.
 class SearchToolbarScope extends InheritedWidget {
   const SearchToolbarScope({
     required this.extent,
@@ -31,7 +31,7 @@ class SearchToolbarScope extends InheritedWidget {
   static double? of(BuildContext context) => maybeOf(context)?.extent;
 
   static const actionExtent = CollectionToolbarMetrics.actionExtent;
-  static const fieldActionWidth = 48.0;
+  static const _minimumFieldHeight = 48.0;
 
   static double fieldExtent(BuildContext context) {
     final painter = TextPainter(
@@ -41,7 +41,7 @@ class SearchToolbarScope extends InheritedWidget {
       maxLines: 1,
     )..layout();
     final extent = (painter.height.ceilToDouble() + 18).clamp(
-      fieldActionWidth,
+      _minimumFieldHeight,
       double.infinity,
     );
     painter.dispose();
@@ -54,7 +54,11 @@ class SearchToolbarScope extends InheritedWidget {
     bool searching = true,
   }) {
     final extent = searching ? fieldExtent(context) : null;
-    return build(extent == null ? null : extent + 8).withSearchToolbar(extent);
+    return build(
+      extent == null
+          ? null
+          : extent + CollectionToolbarMetrics.searchControlGap,
+    ).withSearchToolbar(extent);
   }
 
   @override

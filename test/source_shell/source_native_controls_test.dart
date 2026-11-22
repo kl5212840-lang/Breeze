@@ -17,11 +17,15 @@ import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
 
-
 void _openDiagnosticSettings(BuildContext context, String source) {
-  Navigator.of(context).push<void>(MaterialPageRoute(builder: (_) => SettingPageShell(
-    title: 'Source diagnostic settings', child: SourceDiagnosticToolsTile(source: source),
-  )));
+  Navigator.of(context).push<void>(
+    MaterialPageRoute(
+      builder: (_) => SettingPageShell(
+        title: 'Source diagnostic settings',
+        child: SourceDiagnosticToolsTile(source: source),
+      ),
+    ),
+  );
 }
 
 void main() {
@@ -43,10 +47,17 @@ void main() {
         await tester.pumpWidget(
           MaterialApp(
             home: Scaffold(
-              appBar: AppBar(actions: [Builder(builder: (context) => SourceMoreButton(
-                source: source,
-                onOpenSettings: () => _openDiagnosticSettings(context, source),
-              ))]),
+              appBar: AppBar(
+                actions: [
+                  Builder(
+                    builder: (context) => SourceMoreButton(
+                      source: source,
+                      onOpenSettings: () =>
+                          _openDiagnosticSettings(context, source),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -124,7 +135,8 @@ void main() {
               actions: [
                 SourceMoreButton(
                   source: 'test-diagnostic',
-                  onOpenSettings: () => _openDiagnosticSettings(sourceContext, 'test-diagnostic'),
+                  onOpenSettings: () =>
+                      _openDiagnosticSettings(sourceContext, 'test-diagnostic'),
                   actions: [
                     if (active)
                       SourceMenuAction(
@@ -283,7 +295,9 @@ void main() {
     );
     expect(find.byType(UiKitView), findsNothing);
     for (final tooltip in [t.common.back, t.sourceShell.navigationActions]) {
-      expect(tester.getSize(find.byTooltip(tooltip)), const Size(44, 44));
+      final size = tester.getSize(find.byTooltip(tooltip));
+      expect(size.width, greaterThanOrEqualTo(44));
+      expect(size.height, greaterThanOrEqualTo(44));
     }
     for (var iteration = 0; iteration < 3; iteration++) {
       await tester.tap(find.byTooltip(t.sourceShell.navigationActions));
@@ -304,68 +318,69 @@ void main() {
     expect(contentTaps, 1);
   });
 
-  testWidgets('settings shortcut opens its formal target using source context', (
-    tester,
-  ) async {
-    var calls = 0;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Builder(
-          builder: (sourceContext) => Scaffold(
-            appBar: AppBar(
-              actions: [
-                SourceMoreButton(
-                  actions: [
-                    SourceMenuAction(
-                      id: 'display',
-                      label: 'Change view',
-                      icon: Icons.grid_view,
-                      symbol: 'square.grid.2x2',
-                      onSelected: () {},
-                    ),
-                    SourceMenuAction(
-                      id: 'play',
-                      label: 'Playback settings',
-                      icon: Icons.play_circle_outline,
-                      symbol: 'play.rectangle',
-                      onSelected: () {
-                        calls++;
-                        Navigator.of(sourceContext).push<void>(
-                          MaterialPageRoute<void>(
-                            builder: (_) => Scaffold(
-                              appBar: AppBar(
-                                title: const Text('Playback page'),
+  testWidgets(
+    'settings shortcut opens its formal target using source context',
+    (tester) async {
+      var calls = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (sourceContext) => Scaffold(
+              appBar: AppBar(
+                actions: [
+                  SourceMoreButton(
+                    actions: [
+                      SourceMenuAction(
+                        id: 'display',
+                        label: 'Change view',
+                        icon: Icons.grid_view,
+                        symbol: 'square.grid.2x2',
+                        onSelected: () {},
+                      ),
+                      SourceMenuAction(
+                        id: 'play',
+                        label: 'Playback settings',
+                        icon: Icons.play_circle_outline,
+                        symbol: 'play.rectangle',
+                        onSelected: () {
+                          calls++;
+                          Navigator.of(sourceContext).push<void>(
+                            MaterialPageRoute<void>(
+                              builder: (_) => Scaffold(
+                                appBar: AppBar(
+                                  title: const Text('Playback page'),
+                                ),
                               ),
                             ),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ],
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              body: const Text('Source page'),
             ),
-            body: const Text('Source page'),
           ),
         ),
-      ),
-    );
-    await tester.tap(find.byTooltip(t.sourceShell.navigationActions));
-    await tester.pumpAndSettle();
-    expect(find.text('Change view'), findsOneWidget);
-    expect(find.text('Playback settings'), findsNothing);
-    expect(find.byType(Divider), findsNWidgets(2));
-    await tester.tap(find.text(t.discover.settings));
-    await tester.pumpAndSettle();
-    expect(calls, 1);
-    expect(find.text('Playback page'), findsOneWidget);
-    expect(find.text(t.sourceShell.appSettings), findsNothing);
-    expect(find.text(t.sourceShell.settingsBackup), findsNothing);
-    await tester.pageBack();
-    await tester.pumpAndSettle();
-    expect(find.text('Source page'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
+      );
+      await tester.tap(find.byTooltip(t.sourceShell.navigationActions));
+      await tester.pumpAndSettle();
+      expect(find.text('Change view'), findsOneWidget);
+      expect(find.text('Playback settings'), findsNothing);
+      expect(find.byType(Divider), findsNWidgets(2));
+      await tester.tap(find.text(t.discover.settings));
+      await tester.pumpAndSettle();
+      expect(calls, 1);
+      expect(find.text('Playback page'), findsOneWidget);
+      expect(find.text(t.sourceShell.appSettings), findsNothing);
+      expect(find.text(t.sourceShell.settingsBackup), findsNothing);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('Source page'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'native More exit disposes nested source routes and keeps Discover',
@@ -450,6 +465,15 @@ void main() {
       expect(find.byType(UiKitView), findsNothing);
       expect(find.byType(NavigationBar), findsOneWidget);
       expect(find.byType(NativeVideoMenu), findsOneWidget);
+      final bar = tester.getRect(find.byType(AppBar));
+      final menu = tester.getRect(find.byType(NativeVideoMenu));
+      final back = tester.getRect(find.byType(SourceBackButton));
+      expect(menu.right, bar.right - 16);
+      expect(back.left, bar.left + 16);
+      expect(back.width, greaterThanOrEqualTo(44));
+      expect(back.height, greaterThanOrEqualTo(44));
+      expect(menu.width, greaterThanOrEqualTo(44));
+      expect(menu.height, greaterThanOrEqualTo(44));
       await tester.tap(find.byTooltip(t.sourceShell.navigationActions));
       await tester.pumpAndSettle();
       expect(find.text(t.discover.settings), findsOneWidget);
