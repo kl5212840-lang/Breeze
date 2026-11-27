@@ -24,10 +24,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check imports and IPA packaging
+      - name: Check imports, acceptance records and release tooling
         run: |
           python3 -B script/lint/check_relative_imports.py
-          python3 -B script/build/test_package_ipa.py
+          python3 -B script/lint/test_check_task_acceptance.py
+          python3 -B -m unittest discover -s script/build
 
       - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
@@ -49,12 +50,4 @@ jobs:
           pkg-config --exists gtk+-3.0 x11 xi
 
       - name: Run mobile regression tests
-        run: |
-          flutter test --no-pub --reporter expanded \
-            test/service/app_update_reminder_test.dart \
-            test/page/api_local_video_facets_test.dart \
-            test/page/api_video_history_facets_test.dart \
-            test/page/api_video_missing_covers_test.dart \
-            test/plugin/cloud_catalog_fallback_test.dart \
-            test/comic_read/reader_system_status_bar_test.dart \
-            test/comic_read/reader_system_ui_handoff_test.dart
+        run: bash script/test/mobile_regressions.sh

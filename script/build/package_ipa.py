@@ -47,10 +47,14 @@ def verify(ipa):
         bad = archive.testzip()
         if bad:
             raise ValueError('ZIP integrity failure: ' + bad)
+    platforms = info.get('CFBundleSupportedPlatforms')
+    if not isinstance(platforms, list) or any(not isinstance(p, str) for p in platforms):
+        platforms = []
     return {
         'bundle_id': info['CFBundleIdentifier'],
         'version': info['CFBundleShortVersionString'],
         'build': info['CFBundleVersion'],
+        'supported_platforms': platforms,
         'app_bundles': 1,
         'macos_metadata': 0,
         'zip_integrity': 'passed',
