@@ -4,11 +4,14 @@ import 'dart:convert';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
 import 'package:zephyr/page/video/omo_network.dart';
 import 'package:zephyr/page/video/omofun_site_client.dart';
 import 'package:zephyr/page/video/video_network_scope.dart';
 import 'package:zephyr/page/video/video_site_access.dart';
 import 'package:zephyr/page/video/video_site_browser.dart';
+import 'package:zephyr/page/video/video_site_forms.dart';
+import 'package:zephyr/page/video/video_site_verified_identity.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/service/local_plugin_installation_state.dart';
@@ -19,7 +22,7 @@ import 'package:zephyr/util/json/json_value.dart';
 typedef PluginSettingsIdentityReader =
     Future<PluginAccountAuthentication?> Function();
 
-/// Only the explicitly supported Omo account API gets a cold-settings reader.
+/// Read the maintained web accounts from their own source-scoped browser.
 /// Existing live source readers take precedence in the cubit. This reader never
 /// captures/uploads accounts, signs in, or handles challenges. Its own lease
 /// supports explicit switching and already-queued local account restores.
@@ -44,26 +47,33 @@ class _PluginSettingsWebAccountState extends State<PluginSettingsWebAccount> {
   Future<OmoNetworkContext?>? _network;
   bool _ownsNetwork = false;
   final _document = Completer<InAppWebViewController>();
+  InAppWebViewController? _web;
   Future<PluginAccountAuthentication?>? _pending;
   int _readEpoch = 0;
+  bool get _hanime => widget.source == hanimeSourceId;
   @override
   void initState() {
     super.initState();
     _installation = LocalPluginInstallationState.instance.installationEpoch(
       widget.source,
     );
-    if (widget.source != omoNetworkSource) return;
+    if (widget.source != omoNetworkSource && !_hanime) return;
     final info = PluginRegistryService.I.getCachedPluginInfo(widget.source);
     for (final item in asJsonList(info?['function'])) {
       final action = asJsonMap(asJsonMap(item)['action']);
-      if (action['type'] != 'openVideoLibrary') continue;
-      final home = Uri.tryParse(
-        asJsonMap(action['payload'])['url']?.toString() ?? '',
-      );
+      final payload = asJsonMap(action['payload']);
+      if (_hanime
+          ? action['type'] != 'openVideoCatalog' ||
+                payload['nativeAccount'] != true ||
+                payload['nativeAuth'] != true
+          : action['type'] != 'openVideoLibrary')
+        continue;
+      final home = Uri.tryParse(payload['url']?.toString() ?? '');
       if (home != null &&
           home.scheme == 'https' &&
           home.host.isNotEmpty &&
           home.userInfo.isEmpty &&
+          (!_hanime || home.origin == 'https://hanime1.me') &&
           !home.hasQuery &&
           !home.hasFragment) {
         _home = home;
@@ -109,6 +119,8 @@ class _PluginSettingsWebAccountState extends State<PluginSettingsWebAccount> {
           ? inherited!.network
           : OmoNetworkContext.open(null, source: source, siteOrigins: [home]);
       setState(() => _active = true);
+    } else if (!_document.isCompleted && _web != null) {
+      unawaited(_loadDocument(_web!));
     }
     final web = await _document.future;
     if (!current()) throw const PluginSessionChanged();
@@ -119,7 +131,7 @@ class _PluginSettingsWebAccountState extends State<PluginSettingsWebAccount> {
       return coordinator.refreshCurrentIdentity(source, requireFresh: true);
     }
     if (lease == null || !coordinator.isRegistered(source, lease)) {
-      final cookies = videoSiteAccountCookies(web);
+      final cookies = videoSiteAccountCookies(web, source: source);
       if (cookies != null) {
         final registration = await coordinator.registerStoredSession(
           source: source,
@@ -154,13 +166,17 @@ class _PluginSettingsWebAccountState extends State<PluginSettingsWebAccount> {
             LocalPluginInstallationState.instance.installationEpoch(source);
     final web = await _document.future;
     if (!current()) throw const PluginSessionChanged();
+    final script = _hanime
+        ? videoSiteFreshAccountScript(home)
+        : '(async (operation, parameters, origin) => {$omoSiteRequestScript})'
+              '("account",{"includeProfile":true},${jsonEncode(home.origin)})';
     final raw = await videoBrowserReadAsync(
       web,
-      '(async (operation, parameters, origin) => {$omoSiteRequestScript})'
-      '("account",{"includeProfile":true},${jsonEncode(home.origin)})',
+      script,
     ).timeout(const Duration(seconds: 15));
     if (!current()) throw const PluginSessionChanged();
     final value = asJsonMap(raw is String ? jsonDecode(raw) : raw);
+    if (_hanime) return videoSiteVerifiedIdentity(value, home);
     if (value['kind'] == 'signedOut')
       throw const PluginAccountAuthenticationRejected();
     if (value['kind'] != 'account') throw const OmoSiteException('unavailable');
@@ -190,6 +206,25 @@ class _PluginSettingsWebAccountState extends State<PluginSettingsWebAccount> {
     );
   }
 
+  Future<void> _loadDocument(InAppWebViewController web) async {
+    try {
+      await web.loadUrl(urlRequest: URLRequest(url: WebUri(_home.toString())));
+    } catch (_) {
+      // Request failures leave the document eligible for an explicit retry.
+    }
+  }
+
+  void _documentCommitted(InAppWebViewController web, WebUri? uri) {
+    if (mounted &&
+        identical(web.platform, _web?.platform) &&
+        uri?.origin == _home?.origin &&
+        !_document.isCompleted) {
+      // The identity reader issues its own first-party request. It can run
+      // before images, embeds, and other unrelated resources finish loading.
+      _document.complete(web);
+    }
+  }
+
   @override
   void dispose() {
     _readEpoch++;
@@ -212,52 +247,42 @@ class _PluginSettingsWebAccountState extends State<PluginSettingsWebAccount> {
     children: [
       widget.builder(_home == null ? null : _read),
       if (_active)
-        Offstage(
-          child: SizedBox(
-            width: 1,
-            height: 1,
-            child: FutureBuilder<OmoNetworkContext?>(
-              future: _network,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState != ConnectionState.done ||
-                    snapshot.hasError)
-                  return const SizedBox.shrink();
-                return VideoSiteBrowser(
-                  home: _home!,
-                  source: widget.source,
-                  networkContext: snapshot.data?.token,
-                  configuration: InAppWebView(
-                    initialSettings: InAppWebViewSettings(
-                      javaScriptEnabled: true,
-                      domStorageEnabled: true,
-                    ),
-                    onWebViewCreated: (web) async {
-                      try {
-                        await web.loadUrl(
-                          urlRequest: URLRequest(url: WebUri(_home.toString())),
-                        );
-                      } catch (_) {
-                        /* The bounded reader reports failure, not logout. */
-                      }
-                    },
-                    onLoadStop: (web, uri) {
-                      if (mounted &&
-                          uri?.origin == _home?.origin &&
-                          !_document.isCompleted)
-                        _document.complete(web);
-                    },
-                    shouldOverrideUrlLoading: (_, action) async =>
-                        allowVideoSiteNavigation(
-                          _home!,
-                          Uri.tryParse(action.request.url?.toString() ?? ''),
-                          isMainFrame: action.isForMainFrame,
-                        )
-                        ? NavigationActionPolicy.ALLOW
-                        : NavigationActionPolicy.CANCEL,
+        Positioned.fill(
+          child: FutureBuilder<OmoNetworkContext?>(
+            future: _network,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done ||
+                  snapshot.hasError)
+                return const SizedBox.shrink();
+              return VideoSiteBrowser(
+                visible: false,
+                home: _home!,
+                source: widget.source,
+                networkContext: snapshot.data?.token,
+                configuration: InAppWebView(
+                  initialSettings: InAppWebViewSettings(
+                    javaScriptEnabled: true,
+                    domStorageEnabled: true,
+                    useHybridComposition: false,
+                    useShouldOverrideUrlLoading: true,
                   ),
-                );
-              },
-            ),
+                  onWebViewCreated: (web) {
+                    _web = web;
+                    unawaited(_loadDocument(web));
+                  },
+                  onPageCommitVisible: _documentCommitted,
+                  onLoadStop: _documentCommitted,
+                  shouldOverrideUrlLoading: (_, action) async =>
+                      allowVideoSiteNavigation(
+                        _home!,
+                        Uri.tryParse(action.request.url?.toString() ?? ''),
+                        isMainFrame: action.isForMainFrame,
+                      )
+                      ? NavigationActionPolicy.ALLOW
+                      : NavigationActionPolicy.CANCEL,
+                ),
+              );
+            },
           ),
         ),
     ],

@@ -1,4 +1,3 @@
-import 'package:flutter/cupertino.dart' show CupertinoSwitch;
 import 'dart:async';
 
 import 'package:flutter/services.dart';
@@ -6,15 +5,21 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:video_player/video_player.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
 import 'package:zephyr/page/video/native_video_page.dart';
+import 'package:zephyr/page/video/video_picture_size.dart';
 import 'package:zephyr/page/video/video_playback_preferences.dart';
 import 'package:zephyr/page/video/video_playback_quick_panel.dart';
 import 'package:zephyr/widgets/native_material_surface.dart';
 
 class _VideoPlatform extends VideoPlayerPlatform {
+  _VideoPlatform({this.mediaSize = const Size(1920, 1080)});
+
+  final Size mediaSize;
   final events = StreamController<VideoEvent>.broadcast();
   var disposed = false;
 
@@ -29,7 +34,7 @@ class _VideoPlatform extends VideoPlayerPlatform {
         VideoEvent(
           eventType: VideoEventType.initialized,
           duration: const Duration(minutes: 2),
-          size: const Size(1920, 1080),
+          size: mediaSize,
         ),
       ),
     );
@@ -77,46 +82,108 @@ void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   for (final side in [false, true]) {
-    testWidgets('quick controls omit duplicate selectors, side=$side', (tester) async {
-      await tester.pumpWidget(MaterialApp(home: SizedBox(height: 600,
-        child: VideoPlaybackQuickPanel(section: VideoQuickSection.playback,
-          side: side, showSeekActions: !side,
-          preferences: VideoPlaybackPreferences(),
-          session: NativePlaybackSession(title: 'Video', watchUrl: Uri.parse('https://fixture.test/watch'),
-            sources: [NativePlaybackSource(url: Uri.parse('https://fixture.test/a.mp4'), label: 'Line A', headers: const {})], description: '', tags: const []),
-          sourceIndex: 0, speed: 1, muted: false, ready: true,
-          onSpeed: (_) {}, onSource: (_) {}, onPreference: (_, _) {},
-          onMute: () {}, onSeek: (_) {}, onClose: () {}, onFullSettings: () {},
-          onWebsite: () {}, onExitSource: () {}))));
+    testWidgets('quick controls omit duplicate selectors, side=$side', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            height: 600,
+            child: VideoPlaybackQuickPanel(
+              section: VideoQuickSection.playback,
+              side: side,
+              showSeekActions: !side,
+              preferences: VideoPlaybackPreferences(),
+              session: NativePlaybackSession(
+                title: 'Video',
+                watchUrl: Uri.parse('https://fixture.test/watch'),
+                sources: [
+                  NativePlaybackSource(
+                    url: Uri.parse('https://fixture.test/a.mp4'),
+                    label: 'Line A',
+                    headers: const {},
+                  ),
+                ],
+                description: '',
+                tags: const [],
+              ),
+              sourceIndex: 0,
+              speed: 1,
+              muted: false,
+              ready: true,
+              onSpeed: (_) {},
+              onSource: (_) {},
+              onPreference: (_, _) {},
+              onMute: () {},
+              onSeek: (_) {},
+              onClose: () {},
+              onFullSettings: () {},
+              onWebsite: () {},
+              onExitSource: () {},
+            ),
+          ),
+        ),
+      );
       await tester.pumpAndSettle();
       expect(find.text(t.videoPlayback.speed), findsNothing);
       expect(find.text(t.videoPlayback.source), findsNothing);
-      expect(find.byKey(const ValueKey('video-quick.rewind')), side ? findsNothing : findsOneWidget);
-      expect(find.widgetWithText(SwitchListTile, t.videoPlayback.mute), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('video-quick.rewind')),
+        side ? findsNothing : findsOneWidget,
+      );
+      expect(
+        find.widgetWithText(SwitchListTile, t.videoPlayback.mute),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     });
   }
-  testWidgets('landscape speed keeps a transparent list with immediate selection', (tester) async {
-    tester.view.physicalSize = const Size(240, 390);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    double? selected; var closed = false;
-    await tester.pumpWidget(MaterialApp(home: VideoPlaybackQuickPanel(
-      section: VideoQuickSection.speed, side: true,
-      preferences: VideoPlaybackPreferences(),
-      session: NativePlaybackSession(title: 'Video', watchUrl: Uri.parse('https://fixture.test/watch'),
-        sources: const [], description: '', tags: const []),
-      sourceIndex: 0, speed: 1, muted: false, ready: true,
-      onSpeed: (value) => selected = value, onSource: (_) {}, onPreference: (_, _) {},
-      onMute: () {}, onSeek: (_) {}, onClose: () => closed = true, onFullSettings: () {},
-      onWebsite: () {}, onExitSource: () {})));
-    await tester.pumpAndSettle();
-    expect(find.byType(NativeMaterialSurface), findsNothing);
-    await tester.tap(find.widgetWithText(ListTile, '1.5×'));
-    expect(selected, 1.5); expect(closed, isTrue);
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    'landscape speed keeps a transparent list with immediate selection',
+    (tester) async {
+      tester.view.physicalSize = const Size(240, 390);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      double? selected;
+      var closed = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: VideoPlaybackQuickPanel(
+            section: VideoQuickSection.speed,
+            side: true,
+            preferences: VideoPlaybackPreferences(),
+            session: NativePlaybackSession(
+              title: 'Video',
+              watchUrl: Uri.parse('https://fixture.test/watch'),
+              sources: const [],
+              description: '',
+              tags: const [],
+            ),
+            sourceIndex: 0,
+            speed: 1,
+            muted: false,
+            ready: true,
+            onSpeed: (value) => selected = value,
+            onSource: (_) {},
+            onPreference: (_, _) {},
+            onMute: () {},
+            onSeek: (_) {},
+            onClose: () => closed = true,
+            onFullSettings: () {},
+            onWebsite: () {},
+            onExitSource: () {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(NativeMaterialSurface), findsNothing);
+      await tester.tap(find.widgetWithText(ListTile, '1.5×'));
+      expect(selected, 1.5);
+      expect(closed, isTrue);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   for (final style in ['system', 'breeze']) {
     for (final brightness in Brightness.values) {
@@ -206,6 +273,7 @@ void main() {
               'video-quick.forward',
               'video-quick.controls-style',
               'video-quick.swipe-seek',
+              'video-quick.device-adjustments',
               'video-quick.hold-speed',
               'video-quick.double-tap',
             ]) {
@@ -226,24 +294,19 @@ void main() {
             }
             tester.state<ScrollableState>(scrollable).position.jumpTo(0);
             await tester.pumpAndSettle();
-            final fit = find.widgetWithText(
-              SwitchListTile,
-              t.videoPlayback.coverVideo,
-            );
-            await tester.scrollUntilVisible(fit, 100, scrollable: scrollable);
-            final fitSwitch = find.descendant(
-              of: fit,
-              matching: find.byWidgetPredicate(
-                (widget) => widget is Switch || widget is CupertinoSwitch,
-              ),
-            );
-            await tester.ensureVisible(fitSwitch);
+            final size = find.byKey(const ValueKey('video-quick.picture-size'));
+            await tester.scrollUntilVisible(size, 100, scrollable: scrollable);
             await tester.pumpAndSettle();
-            expect(fitSwitch.hitTestable(), findsOneWidget);
-            await tester.tap(fitSwitch);
-            await tester.pump();
-            expect(changes.last, ('cover', true));
-            expect(tester.getSize(fit).height, greaterThanOrEqualTo(44));
+            final tile = tester.widget<SettingChoiceTile<VideoPictureSize>>(
+              size,
+            );
+            expect(tile.items.keys, VideoPictureSize.values);
+            expect(tile.value, VideoPictureSize.fit);
+            tile.onChanged(VideoPictureSize.fit);
+            expect(changes, isEmpty);
+            tile.onChanged(VideoPictureSize.fill);
+            expect(changes.single, (VideoPictureSize.preferenceKey, 'fill'));
+            expect(tester.getSize(size).height, greaterThanOrEqualTo(44));
             final exit = find.widgetWithText(
               ListTile,
               t.sourceShell.exitSource,
@@ -268,6 +331,155 @@ void main() {
     }
   }
 
+  testWidgets(
+    'online player applies all five picture sizes without moving controls',
+    (tester) async {
+      tester.view.physicalSize = const Size(440, 956);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      SharedPreferences.setMockInitialValues({
+        '${VideoPlaybackPreferences.prefix}controlsStyle': 'breeze',
+        '${VideoPlaybackPreferences.prefix}recordHistory': false,
+      });
+      final messenger = tester.binding.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (_) async => null,
+      );
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+      );
+      final platform = _VideoPlatform(mediaSize: const Size(1440, 1080));
+      final previousPlatform = VideoPlayerPlatform.instance;
+      VideoPlayerPlatform.instance = platform;
+      addTearDown(() => VideoPlayerPlatform.instance = previousPlatform);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NativeVideoPage(
+            source: 'fixture',
+            session: NativePlaybackSession(
+              title: 'Fixture video',
+              watchUrl: Uri.parse('https://fixture.test/watch'),
+              sources: [
+                NativePlaybackSource(
+                  url: Uri.parse('https://fixture.test/media.mp4'),
+                  label: 'Fixture',
+                  headers: const {},
+                ),
+              ],
+              description: '',
+              tags: const [],
+            ),
+          ),
+        ),
+      );
+      await _pumpPlayback(tester);
+
+      final media = find.byType(VideoPlayer);
+      final frame = find.byType(VideoPictureFrame);
+      final fit = find.descendant(of: frame, matching: find.byType(FittedBox));
+      final settings = find.byTooltip(t.videoPlayback.playbackSettings);
+      final controller = tester.widget<VideoPlayer>(media).controller;
+      final viewport = tester.getRect(frame);
+      final controls = tester.getRect(settings);
+
+      expect(
+        tester.getRect(media).width / tester.getRect(media).height,
+        closeTo(4 / 3, .01),
+      );
+      expect(tester.getRect(media).width, lessThan(viewport.width));
+      await tester.tap(settings);
+      await _pumpPlayback(tester);
+      final panel = find.byType(VideoPlaybackQuickPanel);
+      final size = find.descendant(
+        of: panel,
+        matching: find.text(t.videoPlayback.pictureSize),
+      );
+      await tester.scrollUntilVisible(
+        size,
+        100,
+        scrollable: find
+            .descendant(of: panel, matching: find.byType(Scrollable))
+            .first,
+      );
+      await _pumpPlayback(tester);
+      for (final mode in [
+        VideoPictureSize.stretch,
+        VideoPictureSize.fill,
+        VideoPictureSize.wide,
+        VideoPictureSize.standard,
+        VideoPictureSize.fit,
+      ]) {
+        await tester.tap(size);
+        await _pumpPlayback(tester);
+        await tester.tap(find.text(videoPictureSizeLabels()[mode]!).last);
+        await _pumpPlayback(tester);
+        expect(tester.widget<VideoPictureFrame>(frame).size, mode);
+        final displayed = tester.getRect(media);
+        expect(displayed.center.dx, closeTo(viewport.center.dx, .01));
+        expect(displayed.center.dy, closeTo(viewport.center.dy, .01));
+        switch (mode) {
+          case VideoPictureSize.stretch:
+            expect(displayed.width, closeTo(viewport.width, .01));
+            expect(displayed.height, closeTo(viewport.height, .01));
+          case VideoPictureSize.fill:
+            expect(displayed.width, closeTo(viewport.width, .01));
+            expect(displayed.height, greaterThan(viewport.height));
+            expect(tester.widget<FittedBox>(fit).clipBehavior, Clip.hardEdge);
+          case VideoPictureSize.wide:
+            expect(displayed.width / displayed.height, closeTo(16 / 9, .01));
+          case VideoPictureSize.standard:
+            expect(displayed.width / displayed.height, closeTo(4 / 3, .01));
+          case VideoPictureSize.fit:
+            expect(displayed.width / displayed.height, closeTo(4 / 3, .01));
+            expect(displayed.width, lessThan(viewport.width));
+        }
+        expect(tester.getRect(frame), viewport);
+        expect(tester.getRect(settings), controls);
+        expect(tester.widget<VideoPlayer>(media).controller, same(controller));
+      }
+      expect(
+        (await VideoPlaybackPreferences.read()).pictureSize,
+        VideoPictureSize.fit,
+      );
+      await VideoPlaybackPreferences.save('cover', true);
+      await tester.tap(find.byTooltip(t.common.close).hitTestable());
+      await _pumpPlayback(tester);
+      await tester.tap(find.byTooltip(t.videoPlayback.portraitFullscreen));
+      await _pumpPlayback(tester);
+      expect(
+        tester.widget<VideoPictureFrame>(frame).size,
+        VideoPictureSize.fit,
+      );
+      await tester.tap(settings);
+      await _pumpPlayback(tester);
+      await tester.scrollUntilVisible(
+        size,
+        100,
+        scrollable: find
+            .descendant(of: panel, matching: find.byType(Scrollable))
+            .first,
+      );
+      final choice = find.byKey(const ValueKey('video-quick.picture-size'));
+      final legacy = tester.widget<SettingChoiceTile<VideoPictureSize>>(choice);
+      expect(legacy.value, VideoPictureSize.fit);
+      expect(legacy.valueIsFallback, isTrue);
+      await tester.tap(size);
+      await _pumpPlayback(tester);
+      await tester.tap(find.text(t.videoPlayback.pictureFill).last);
+      await _pumpPlayback(tester);
+      expect(
+        tester.widget<VideoPictureFrame>(frame).size,
+        VideoPictureSize.fill,
+      );
+      expect((await VideoPlaybackPreferences.read()).usesLegacyCover, isFalse);
+      expect(tester.widget<VideoPlayer>(media).controller, same(controller));
+      expect(platform.disposed, isFalse);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
   for (final mode in ['inline', 'portrait', 'landscape']) {
     testWidgets(
       'More exit closes $mode player and skips nested source routes',
@@ -367,8 +579,14 @@ void main() {
         final viewport =
             tester.view.physicalSize / tester.view.devicePixelRatio;
         if (mode == 'landscape') {
-          expect(panelRect.width, lessThanOrEqualTo(viewport.width * .45 + .01));
-          expect(panelRect.left, greaterThanOrEqualTo(viewport.width * .55 - .01));
+          expect(
+            panelRect.width,
+            lessThanOrEqualTo(viewport.width * .45 + .01),
+          );
+          expect(
+            panelRect.left,
+            greaterThanOrEqualTo(viewport.width * .55 - .01),
+          );
         } else {
           expect(panelRect.left, closeTo(0, .01));
         }
@@ -378,7 +596,10 @@ void main() {
           expect(panelRect.top, greaterThanOrEqualTo(viewport.width * 9 / 16));
         }
         expect(tester.widget<VideoPlaybackQuickPanel>(panel).floating, isFalse);
-        expect(tester.widget<VideoPlaybackQuickPanel>(panel).side, mode == 'landscape');
+        expect(
+          tester.widget<VideoPlaybackQuickPanel>(panel).side,
+          mode == 'landscape',
+        );
         expect(platform.disposed, isFalse);
 
         expect(panel, findsOneWidget);

@@ -111,6 +111,7 @@ Future<ShelfFacetSelection?> showDownloadFilterSheet(
 }) => showVideoTaskSheet<ShelfFacetSelection>(
   context: context,
   useRootNavigator: true,
+  filterDetents: true,
   builder: (_) => DownloadFilterSheet(
     entries: entries,
     initial: initial,
@@ -334,6 +335,7 @@ class _DownloadFilterSheetState extends State<DownloadFilterSheet>
         child: TextField(
           key: const ValueKey('download-filter-search'),
           controller: _query,
+          textInputAction: TextInputAction.done,
           decoration: searchFieldDecoration(
             context,
             hintText: t.bookshelf.facets.search(name: allLabels[group]!),

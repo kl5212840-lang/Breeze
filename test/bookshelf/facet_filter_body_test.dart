@@ -120,7 +120,14 @@ void main() {
               (tester.widget<Container>(thumb).decoration as BoxDecoration)
                   .color;
           expect(initialThumb.width, 3);
-          expect(initialThumb.right, tester.getRect(viewport).right - 12);
+          final rail = find.descendant(
+            of: viewport,
+            matching: find.byKey(const ValueKey('filter-scroll-rail')),
+          );
+          final railRect = tester.getRect(rail);
+          expect(railRect.width, 44);
+          expect(initialThumb.center.dx, railRect.center.dx);
+          expect(railRect.right, tester.getRect(viewport).right);
           expect(thumb, paints..rrect(color: thumbColor));
           final list = find
               .descendant(of: viewport, matching: find.byType(Scrollable))
@@ -134,6 +141,23 @@ void main() {
           await tester.pump(const Duration(seconds: 3));
           expect(tester.getRect(thumb).top, greaterThan(initialThumb.top));
           expect(thumb, paints..rrect(color: thumbColor));
+          final position = tester.state<ScrollableState>(list).position;
+          expect(tester.getRect(list).right, lessThanOrEqualTo(railRect.left));
+          await tester.tapAt(Offset(railRect.center.dx, railRect.top + 2));
+          await tester.pumpAndSettle();
+          expect(position.pixels, 0);
+          await tester.tapAt(railRect.center);
+          await tester.pumpAndSettle();
+          expect(position.pixels / position.maxScrollExtent, closeTo(.5, .04));
+          final press = await tester.startGesture(tester.getCenter(thumb));
+          await tester.pump(const Duration(milliseconds: 130));
+          expect(tester.getSize(thumb).width, greaterThan(3));
+          await press.moveBy(Offset(0, railRect.height * .2));
+          await tester.pump();
+          expect(position.pixels / position.maxScrollExtent, greaterThan(.6));
+          await press.cancel();
+          await tester.pumpAndSettle();
+          expect(tester.getSize(thumb).width, 3);
           final category = find.byKey(
             ValueKey(
               branch == 'download'
@@ -174,8 +198,16 @@ void main() {
       (tester) async {
         tester.view.physicalSize = const Size(390, 850);
         tester.view.devicePixelRatio = 1;
+        const safeTop = 62.0;
+        tester.view.padding = const FakeViewPadding(top: safeTop, bottom: 34);
+        tester.view.viewPadding = const FakeViewPadding(
+          top: safeTop,
+          bottom: 34,
+        );
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPadding);
+        addTearDown(tester.view.resetViewPadding);
         addTearDown(tester.view.resetViewInsets);
         final style = ValueNotifier('breeze');
         addTearDown(style.dispose);
@@ -279,6 +311,31 @@ void main() {
         );
         final focus = editable.focusNode;
         expect(focus.hasFocus, isTrue);
+        final handle = find.byKey(const ValueKey('filter-sheet-detent-handle'));
+        expect(tester.getSize(handle).height, 44);
+        final compactTop = tester.getTopLeft(handle).dy;
+        final drag = await tester.startGesture(tester.getCenter(handle));
+        await drag.moveBy(const Offset(0, -22));
+        await drag.moveBy(const Offset(0, -42));
+        await tester.pump();
+        final draggedTop = tester.getTopLeft(handle).dy;
+        expect(draggedTop, lessThan(compactTop - 25));
+        await drag.up();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+        final settlingTop = tester.getTopLeft(handle).dy;
+        expect(settlingTop, lessThan(draggedTop));
+        await tester.pumpAndSettle();
+        final expandedTop = tester.getTopLeft(handle).dy;
+        expect(expandedTop, lessThan(settlingTop));
+        expect(tester.getRect(body).height, greaterThan(rect.height));
+        expect(expandedTop, closeTo(850 * .10, 1));
+        expect(handle.hitTestable(), findsOneWidget);
+        expect(focus.hasFocus, isTrue);
+        expect(editable.controller.text, 'Tag 1');
+        await tester.drag(handle, const Offset(0, 65));
+        await tester.pumpAndSettle();
+        expect(tester.getRect(body), rect);
         // Enter the short-height fallback and back without creating a new field.
         tester.view.viewInsets = const FakeViewPadding(bottom: 480);
         await tester.pumpAndSettle();
@@ -314,8 +371,89 @@ void main() {
         await tester.tap(cancel);
         await tester.pumpAndSettle();
         expect(result, isNull);
+        expect(focus.hasFocus, isFalse);
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pumpAndSettle();
+      },
+    );
+  }
+  for (final exit in ['apply', 'close', 'barrier', 'back', 'swipe']) {
+    testWidgets(
+      'filter $exit releases the keyboard without refocusing search',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 850);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final underlying = FocusNode();
+        addTearDown(underlying.dispose);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: Column(
+                  children: [
+                    TextField(
+                      key: const ValueKey('underlying-search'),
+                      focusNode: underlying,
+                    ),
+                    TextButton(
+                      child: const Text('open'),
+                      onPressed: () => showDownloadFilterSheet(
+                        context,
+                        entries: _entries,
+                        initial: const ShelfFacetSelection(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.enterText(
+          find.byKey(const ValueKey('underlying-search')),
+          'original query',
+        );
+        expect(underlying.hasFocus, isTrue);
+        await tester.tap(find.text('open'));
+        await tester.pumpAndSettle();
+        expect(underlying.hasFocus, isFalse);
+        final search = find.byKey(const ValueKey('download-filter-search'));
+        await tester.enterText(search, 'Tag 1');
+        await tester.pumpAndSettle();
+        final panelFocus = tester
+            .widget<EditableText>(
+              find.descendant(of: search, matching: find.byType(EditableText)),
+            )
+            .focusNode;
+        expect(panelFocus.hasFocus, isTrue);
+        switch (exit) {
+          case 'apply':
+            await tester.tap(
+              find.byKey(const ValueKey('download-filter-apply')),
+            );
+          case 'close':
+            await tester.tap(
+              find.byKey(const ValueKey('download-filter-cancel')),
+            );
+          case 'barrier':
+            await tester.tapAt(const Offset(10, 100));
+          case 'back':
+            await tester.binding.handlePopRoute();
+          case 'swipe':
+            await tester.drag(
+              find.text(t.bookshelf.filter),
+              const Offset(0, 550),
+            );
+        }
+        await tester.pumpAndSettle();
+        expect(search, findsNothing);
+        expect(panelFocus.hasFocus, isFalse);
+        expect(underlying.hasFocus, isFalse);
+        expect(tester.testTextInput.isVisible, isFalse);
+        expect(find.text('original query'), findsOneWidget);
+        await tester.pumpWidget(const SizedBox.shrink());
       },
     );
   }

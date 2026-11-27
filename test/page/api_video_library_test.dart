@@ -18,6 +18,7 @@ import 'package:zephyr/page/video/video_library_folder_picker.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/page/video/video_search_page.dart';
 import 'package:zephyr/page/video/video_page_analysis.dart';
+import 'package:zephyr/widgets/source_page_divider.dart';
 
 final home = Uri.parse('https://www.ikunzy.com/');
 ApiVideoItem item(int id) => ApiVideoItem(
@@ -50,6 +51,90 @@ Map<String, dynamic> page(String title, {int count = 1}) => {
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  test(
+    'catalog only exposes explicit exact page numbers without cursors',
+    () async {
+      Object? rawPage;
+      Map<String, dynamic>? nextCursor;
+      final repo = ApiVideoRepository(
+        source: 'page-contract-test',
+        home: home,
+        catalogFn: 'list',
+        detailFn: 'item',
+        playbackFn: 'play',
+        pluginCall: (_, _) async => {
+          'data': {
+            'items': [],
+            'page': rawPage,
+            'pageCount': 5,
+            'nextCursor': nextCursor,
+          },
+        },
+      );
+
+      Future<int?> read(int requested, {Map<String, dynamic>? cursor}) async {
+        int? reported;
+        await repo.page(
+          page: requested,
+          cursor: cursor,
+          onNumberedPage: (page) => reported = page,
+        );
+        return reported;
+      }
+
+      expect(await read(1), isNull);
+      rawPage = 1;
+      expect(await read(1), 1);
+      rawPage = '2';
+      expect(await read(2), 2);
+      expect(await read(3), isNull);
+      expect(await read(2, cursor: {'offset': 20}), isNull);
+      nextCursor = {'offset': 40};
+      expect(await read(2), isNull);
+    },
+  );
+
+  testWidgets('video page dividers render once in list mode only', (
+    tester,
+  ) async {
+    final items = [for (var i = 1; i <= 3; i++) item(i)];
+    Future<void> show(ApiVideoView mode) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ApiVideoCollection(
+              items: items,
+              pageBreaks: const {0, 1},
+              mode: mode,
+              onOpen: (_) {},
+              storageKey: 'confirmed-pages',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await show(ApiVideoView.grid);
+    expect(find.byType(SourcePageDivider), findsNothing);
+    await show(ApiVideoView.list);
+    final divider = find.byType(SourcePageDivider);
+    expect(divider, findsOneWidget);
+    expect(
+      tester.getTopLeft(divider).dy,
+      greaterThanOrEqualTo(
+        tester.getBottomLeft(find.byKey(const ValueKey('api-video.1'))).dy,
+      ),
+    );
+    expect(
+      tester.getBottomLeft(divider).dy,
+      lessThanOrEqualTo(
+        tester.getTopLeft(find.byKey(const ValueKey('api-video.2'))).dy,
+      ),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'source capabilities remove unavailable controls and allow other root IDs',
     (tester) async {

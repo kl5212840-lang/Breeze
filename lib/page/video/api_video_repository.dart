@@ -88,6 +88,8 @@ class ApiVideoRepository implements TemporaryDataCache {
              pluginId: source,
              fnPath: path,
              core: args,
+             notifyUnauthorized:
+                 VideoDownloadResolutionOwner.current?.passive != true,
            )) {
     TemporaryDataCaches.register(this);
   }
@@ -213,6 +215,16 @@ class ApiVideoRepository implements TemporaryDataCache {
           session.loaded(web, Uri.tryParse(uri?.toString() ?? '')),
       onReceivedError: (_, request, error) =>
           session.receivedError(request, error),
+      onReceivedHttpError: (_, request, response) {
+        if (request.isForMainFrame != true) return;
+        final uri = Uri.tryParse(request.url.toString());
+        if (uri == null) return;
+        session.receivedDocumentResponse(
+          uri,
+          response.statusCode ?? 0,
+          response.headers ?? const {},
+        );
+      },
       shouldOverrideUrlLoading: (_, action) async =>
           allowVideoSiteNavigation(
             home,
@@ -256,11 +268,17 @@ class ApiVideoRepository implements TemporaryDataCache {
     String path,
     Map<String, dynamic> args,
   ) async {
-    VideoDownloadResolutionOwner.current?.check();
+    final owner = VideoDownloadResolutionOwner.current;
+    owner?.check();
+    final passive = owner?.passive == true;
     OmoNetworkContext? transport;
     // iKun's public catalog uses QuickJS fetch on the source's pinned route.
     // The native session is only needed for its separate media path.
-    if (source == _iKunSource && path == catalogFn) {
+    if (passive) {
+      // Playback already owns the prepared relay. A measurement must neither
+      // change that route nor wait on browser/detail transport.
+      transport = networkContext;
+    } else if (source == _iKunSource && path == catalogFn) {
       // Keep the original future for media callers to await and report.
       network?.ignore();
     } else {
@@ -281,11 +299,14 @@ class ApiVideoRepository implements TemporaryDataCache {
       );
       networkContext = transport;
     }
+    final bridgeToken = passive && source == omoNetworkSource
+        ? transport?.passiveBridgeToken(owner!)
+        : transport?.token;
     final request = {
       'clientProtocol': 2,
       ...args,
       if (capabilities.detailFromSnapshot) 'home': home.toString(),
-      if (transport != null) 'networkContext': transport.token,
+      if (bridgeToken != null) 'networkContext': bridgeToken,
     };
     late Map<String, dynamic> result;
     Map<String, dynamic> responseData(Map<String, dynamic> response) {
@@ -320,6 +341,7 @@ class ApiVideoRepository implements TemporaryDataCache {
       'returned; browserDetail=${result["browserDetailRequest"] is Map}; media=${result["sources"] is List}',
     );
     if (result['browserDetailRequest'] is Map) {
+      if (passive) throw const VideoResolutionCancelled();
       if (path != playbackFn ||
           !capabilities.browserDetail ||
           browserDetailRead == null) {
@@ -346,6 +368,7 @@ class ApiVideoRepository implements TemporaryDataCache {
       }
     }
     if (result['browserRequest'] is Map) {
+      if (passive) throw const VideoResolutionCancelled();
       if (!capabilities.browserCatalog ||
           browserRead == null ||
           path != catalogFn) {
@@ -382,7 +405,10 @@ class ApiVideoRepository implements TemporaryDataCache {
     int recentHours = 0,
     Uri? browseUrl,
     String sort = '',
+    ValueChanged<int?>? onNumberedPage,
+    ValueChanged<int?>? onDirectPageCount,
   }) async {
+    final epoch = _cacheEpoch;
     final data = await _request(catalogFn, {
       'query': query,
       'typeId': typeId,
@@ -398,10 +424,43 @@ class ApiVideoRepository implements TemporaryDataCache {
     if (items is! List || items.any((item) => item is! Map)) {
       throw const FormatException('Invalid video result items');
     }
-    return ApiVideoResult.fromJson(
-      await _publicCovers.supplement(data, refresh: refresh),
+    final result = ApiVideoResult.fromJson(
+      epoch == _cacheEpoch
+          ? await _publicCovers.supplement(data, refresh: refresh)
+          : data,
       home: home,
     );
+    // Cursor streams may have an ordinal and missing pages default to 1 in
+    // ApiVideoResult. Only the explicit numbered response identifies a break.
+    int? advertisedInt(Object? raw) => switch (raw) {
+      final num value when value.isFinite && value == value.toInt() =>
+        value.toInt(),
+      final String value => int.tryParse(value.trim(), radix: 10),
+      _ => null,
+    };
+    final numbered =
+        cursor == null &&
+        data['nextCursor'] == null &&
+        advertisedInt(data['page']) == page &&
+        page > 0;
+    onNumberedPage?.call(numbered ? page : null);
+    if (onDirectPageCount != null) {
+      final count = advertisedInt(data['pageCount']);
+      final total = advertisedInt(data['total']);
+      onDirectPageCount(
+        numbered &&
+                result.totalKnown &&
+                count != null &&
+                count >= page &&
+                result.pageCount == count &&
+                total != null &&
+                total >= result.items.length &&
+                result.total == total
+            ? count
+            : null,
+      );
+    }
+    return result;
   }
 
   /// Summary cards never populate or replace the full-detail cache.
@@ -446,6 +505,7 @@ class ApiVideoRepository implements TemporaryDataCache {
     final publicSnapshot = _publicSnapshot(id, snapshot);
     final key = (source: source, home: home, id: id);
     var pending = _detailLoads[key];
+    if (pending?.cacheEpoch != _cacheEpoch) pending = null;
     if (pending?.resolutionOwner?.cancelled == true ||
         pending?.resolutionOwner?.closed == true) {
       // A cancelled attempt must not lend its future/zone to the next reader.
@@ -567,9 +627,9 @@ class ApiVideoRepository implements TemporaryDataCache {
       throw const FormatException('Unsupported public detail identity');
     }
     final url = home.resolve('${capabilities.browserItemPrefix}$id.html');
-    final snapshot = await browserDetailRead!(
-      url,
-    ).timeout(const Duration(seconds: 15));
+    // The browser adapter bounds document startup and the detail fetch
+    // separately. Both can legitimately take longer than either stage alone.
+    final snapshot = await browserDetailRead!(url);
     if (snapshot['kind'] != 'public-detail' ||
         snapshot['url'] != url.toString() ||
         snapshot['verification'] == true ||
@@ -627,6 +687,7 @@ class ApiVideoRepository implements TemporaryDataCache {
       throw UnsupportedError('Source does not declare raw HLS recovery');
     }
     final observationEpoch = _cacheEpoch;
+    final passive = VideoDownloadResolutionOwner.current?.passive == true;
     final publicSnapshot = _publicSnapshot(id, snapshot);
     final raw = await _request(playbackFn, {
       'id': id,
@@ -640,7 +701,9 @@ class ApiVideoRepository implements TemporaryDataCache {
     });
     try {
       PlaybackTrace.note(source, 'media_relay', 'prepare');
-      await networkContext?.prepare().timeout(const Duration(seconds: 3));
+      if (!passive) {
+        await networkContext?.prepare().timeout(const Duration(seconds: 3));
+      }
     } catch (error, stack) {
       Error.throwWithStackTrace(
         ApiVideoStageFailure('media_relay', error),
@@ -708,7 +771,7 @@ class ApiVideoRepository implements TemporaryDataCache {
     }
     // Only a validated, exact episode contract can add routing candidates.
     // The store discards URL paths, queries and headers before persistence.
-    if (observationEpoch == _cacheEpoch) {
+    if (!passive && observationEpoch == _cacheEpoch) {
       unawaited(
         RoutingObservedMediaDomains.observeResolved(
           source: source,

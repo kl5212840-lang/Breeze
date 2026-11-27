@@ -4,7 +4,6 @@ import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:zephyr/cubit/plugin_registry_cubit.dart';
 import 'package:zephyr/main.dart' show eventBus;
 import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart'
     show normalizePluginId;
@@ -14,10 +13,8 @@ import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search/method/on_search.dart';
 import 'package:zephyr/page/search/widget/search_input_dialog.dart';
-import 'package:zephyr/page/search/widget/source_select_dialog.dart';
 import 'package:zephyr/page/search_result/view/source_search_capabilities.dart';
-import 'package:zephyr/page/search_result/view/source_search_scope_control.dart';
-import 'package:zephyr/plugin/plugin_registry_service.dart';
+import 'package:zephyr/page/source_shell/source_experience_preferences.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/util/event/event.dart' show NeedLogin;
@@ -26,51 +23,37 @@ import 'package:zephyr/page/search/widget/advanced_search_dialog.dart';
 import 'package:zephyr/widgets/toast.dart';
 
 class SearchBar extends StatefulWidget {
-  const SearchBar({super.key, this.aggregateMode = true});
+  const SearchBar({
+    super.key,
+    this.aggregateMode = true,
+    this.compactSourceToolbar = false,
+    this.optionsFollowingScope,
+  });
 
   final bool aggregateMode;
+  final bool compactSourceToolbar;
+  final Widget? optionsFollowingScope;
 
   @override
   State<SearchBar> createState() => _SearchBarState();
 }
 
 class _SearchBarState extends State<SearchBar> {
-  final _draft = ValueNotifier('');
-  SearchCubit? _searchCubit;
   String? _schemeKey;
   Future<PluginAdvancedSearchScheme?>? _schemeFuture;
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final cubit = context.read<SearchCubit>();
-    if (identical(cubit, _searchCubit)) return;
-    _searchCubit?.queryRevision.removeListener(_restoreDraft);
-    _searchCubit = cubit;
-    _restoreDraft();
-    cubit.queryRevision.addListener(_restoreDraft);
-  }
-
-  void _restoreDraft() {
-    _draft.value = _searchCubit?.state.searchKeyword ?? '';
-  }
-
-  @override
-  void dispose() {
-    _searchCubit?.queryRevision.removeListener(_restoreDraft);
-    _draft.dispose();
-    super.dispose();
-  }
-
   Future<PluginAdvancedSearchScheme?> _schemeFor(SearchStates state) {
+    final extern = widget.compactSourceToolbar
+        ? const <String, dynamic>{}
+        : state.pluginExtern;
     final key = jsonEncode([
       state.from,
-      state.pluginExtern,
+      extern,
       pluginSessionWriteFence.generation(normalizePluginId(state.from)),
     ]);
     if (_schemeKey != key) {
       _schemeKey = key;
-      _schemeFuture = _loadAdvancedSearchScheme(state.from, state.pluginExtern);
+      _schemeFuture = _loadAdvancedSearchScheme(state.from, extern);
     }
     return _schemeFuture!;
   }
@@ -80,39 +63,6 @@ class _SearchBarState extends State<SearchBar> {
   void _submit(String keyword) {
     if (ModalRoute.of(context)?.isCurrent == false) return;
     onSearch(context, keyword, aggregateMode: widget.aggregateMode);
-  }
-
-  bool _useCompactSubmit(BuildContext context, double width) {
-    final extent = CollectionToolbarMetrics.actionExtentOf(context);
-    final painter = TextPainter(
-      text: TextSpan(
-        text: t.common.search,
-        style: Theme.of(context).textTheme.labelLarge,
-      ),
-      textDirection: Directionality.of(context),
-      textScaler: MediaQuery.textScalerOf(context),
-    )..layout();
-    final labelWidth = (painter.width + 16).clamp(extent, double.infinity);
-    painter.dispose();
-    return width -
-            extent -
-            2 * CollectionToolbarMetrics.searchControlGap -
-            labelWidth <
-        160;
-  }
-
-  List<({String pluginId, String title})> _sourceOptions(BuildContext context) {
-    final pluginStates = context.read<PluginRegistryCubit>().state;
-    final states = PluginRegistryService.I.sortPlugins(
-      pluginStates.values.where((state) => state.isEnabled && !state.isDeleted),
-    );
-    return states.map((state) {
-      final info = PluginRegistryService.I.getCachedPluginInfo(state.uuid);
-      final title = info?['name']?.toString().trim().isNotEmpty == true
-          ? info!['name'].toString().trim()
-          : state.uuid;
-      return (pluginId: state.uuid, title: title);
-    }).toList();
   }
 
   @override
@@ -133,142 +83,102 @@ class _SearchBarState extends State<SearchBar> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  LayoutBuilder(
-                    builder: (context, constraints) => Row(
-                      key: const ValueKey('comic-search.input-row'),
-                      spacing: CollectionToolbarMetrics.searchControlGap,
-                      children: [
-                        SourceChromeIconButton(
-                          key: const ValueKey('comic-search.back'),
-                          tooltip: t.common.back,
-                          icon: Icons.arrow_back_ios_new_rounded,
-                          symbol: 'chevron.left',
-                          bare: true,
-                          onPressed: () => context.maybePop(),
-                        ),
-                        Expanded(
-                          child: ValueListenableBuilder<int>(
-                            valueListenable: searchCubit.queryRevision,
-                            builder: (context, revision, _) => SearchQueryField(
-                              query: searchCubit.state.searchKeyword,
-                              queryRevision: revision,
-                              autoExpand: true,
-                              inline: true,
-                              hintText: t.search.searchHint,
-                              semanticLabel: t.search.title,
-                              onChanged: (value) => _draft.value = value,
-                              onSubmitted: _submit,
-                            ),
-                          ),
-                        ),
-                        ValueListenableBuilder<String>(
-                          valueListenable: _draft,
-                          builder: (context, value, _) {
-                            final onPressed = value.trim().isEmpty
-                                ? null
-                                : () => _submit(value);
-                            const key = ValueKey('comic-search.submit');
-                            if (_useCompactSubmit(
-                              context,
-                              constraints.maxWidth,
-                            )) {
-                              return SourceChromeIconButton(
-                                key: key,
-                                tooltip: t.common.search,
-                                icon: Icons.search_rounded,
-                                symbol: 'magnifyingglass',
-                                bare: true,
-                                onPressed: onPressed,
-                              );
-                            }
-                            final extent =
-                                CollectionToolbarMetrics.actionExtentOf(
-                                  context,
-                                );
-                            return TextButton(
-                              key: key,
-                              style: TextButton.styleFrom(
-                                minimumSize: Size.square(extent),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                ),
-                              ),
-                              onPressed: onPressed,
-                              child: Text(t.common.search),
-                            );
-                          },
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 4),
                   Row(
-                    key: const ValueKey('comic-search.options-row'),
+                    key: const ValueKey('comic-search.input-row'),
                     spacing: CollectionToolbarMetrics.searchControlGap,
                     children: [
+                      SourceChromeIconButton(
+                        key: const ValueKey('comic-search.back'),
+                        tooltip: t.common.back,
+                        icon: Icons.arrow_back_ios_new_rounded,
+                        symbol: 'chevron.left',
+                        onPressed: () => context.maybePop(),
+                      ),
                       Expanded(
-                        child: Align(
-                          alignment: AlignmentDirectional.centerStart,
-                          child: SourceSearchScopeControl(
-                            aggregate: widget.aggregateMode,
+                        child: ValueListenableBuilder<int>(
+                          valueListenable: searchCubit.queryRevision,
+                          builder: (context, revision, _) => SearchQueryField(
+                            query: searchCubit.state.searchKeyword,
+                            queryRevision: revision,
+                            autoExpand: true,
+                            inline: true,
+                            showSubmit: true,
+                            dismissKeyboardOnTapOutside: true,
+                            hintText: t.search.searchHint,
+                            semanticLabel: t.search.title,
+                            onSubmitted: _submit,
                           ),
                         ),
                       ),
-                      if (widget.aggregateMode)
-                        SourceChromeIconButton(
-                          tooltip: t.search.sourceFilter,
-                          icon: Icons.layers_outlined,
-                          symbol: 'square.stack.3d.up',
-                          bare: true,
-                          onPressed: () async {
-                            final selected = await showSourceSelectDialog(
-                              context,
-                              initial: searchCubit.state.aggregateSources,
-                              sourceOptions: _sourceOptions(context),
-                            );
-                            if (selected != null && mounted) {
-                              searchCubit.update(
-                                searchCubit.state.copyWith(
-                                  aggregateSources: Map<String, bool>.from(
-                                    selected,
-                                  ),
-                                ),
-                              );
-                            }
-                          },
-                        )
-                      else if (state.from.trim().isNotEmpty)
-                        FutureBuilder<PluginAdvancedSearchScheme?>(
-                          key: ValueKey(
-                            jsonEncode([state.from, state.pluginExtern]),
-                          ),
-                          future: _schemeFor(state),
-                          builder: (context, snapshot) =>
-                              snapshot.connectionState ==
-                                      ConnectionState.done &&
-                                  snapshot.data != null
-                              ? SourceChromeIconButton(
-                                  tooltip: t.search.advancedSearchOptions,
-                                  icon: Icons.tune_rounded,
-                                  symbol: 'slider.horizontal.3',
-                                  bare: true,
-                                  onPressed: () =>
-                                      _showSingleSourceAdvancedSearch(context),
-                                )
-                              : snapshot.connectionState ==
-                                    ConnectionState.waiting
-                              ? SizedBox(
-                                  width:
-                                      CollectionToolbarMetrics.actionExtentOf(
-                                        context,
-                                      ),
-                                )
-                              : const SizedBox.shrink(),
-                        ),
-                      if (!widget.aggregateMode && state.from.trim().isNotEmpty)
-                        SourceMoreButton(source: state.from),
                     ],
                   ),
+                  if (!widget.aggregateMode &&
+                      (widget.compactSourceToolbar ||
+                          widget.optionsFollowingScope != null ||
+                          (state.from.trim().isNotEmpty &&
+                              !isBikaExperienceSource(state.from)))) ...[
+                    const SizedBox(height: 4),
+                    Row(
+                      key: const ValueKey('comic-search.options-row'),
+                      spacing: CollectionToolbarMetrics.searchControlGap,
+                      children: [
+                        Expanded(
+                          child:
+                              widget.optionsFollowingScope ??
+                              const SizedBox.shrink(),
+                        ),
+                        if (widget.compactSourceToolbar)
+                          TextButton.icon(
+                            key: const ValueKey('comic-search.date-filter'),
+                            icon: const Icon(Icons.tune_rounded, size: 18),
+                            label: Text(t.comicList.filter),
+                            style: TextButton.styleFrom(
+                              minimumSize: Size.square(
+                                CollectionToolbarMetrics.actionExtentOf(
+                                  context,
+                                ),
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
+                            ),
+                            onPressed: () =>
+                                _showSingleSourceAdvancedSearch(context),
+                          )
+                        else if (state.from.trim().isNotEmpty &&
+                            !isBikaExperienceSource(state.from))
+                          FutureBuilder<PluginAdvancedSearchScheme?>(
+                            key: ValueKey(
+                              jsonEncode([state.from, state.pluginExtern]),
+                            ),
+                            future: _schemeFor(state),
+                            builder: (context, snapshot) =>
+                                snapshot.connectionState ==
+                                        ConnectionState.done &&
+                                    snapshot.data != null
+                                ? SourceChromeIconButton(
+                                    tooltip: t.search.advancedSearchOptions,
+                                    icon: Icons.tune_rounded,
+                                    symbol: 'slider.horizontal.3',
+                                    bare: true,
+                                    onPressed: () =>
+                                        _showSingleSourceAdvancedSearch(
+                                          context,
+                                        ),
+                                  )
+                                : snapshot.connectionState ==
+                                      ConnectionState.waiting
+                                ? SizedBox(
+                                    width:
+                                        CollectionToolbarMetrics.actionExtentOf(
+                                          context,
+                                        ),
+                                  )
+                                : const SizedBox.shrink(),
+                          ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -301,19 +211,26 @@ class _SearchBarState extends State<SearchBar> {
     if (!ownsQuery()) return;
     _openingAdvancedSearch = true;
     try {
+      FocusManager.instance.primaryFocus?.unfocus();
       final scheme = await _schemeFor(state);
       if (!context.mounted || !ownsQuery() || route?.isCurrent == false) return;
       if (scheme == null) {
+        _schemeKey = null;
         showWarningToast(t.search.advancedSearchNotSupported);
         return;
       }
       final current = searchCubit.state;
-      _mergeExternValues(scheme.fields, current.pluginExtern, scheme.values);
+      final values = Map<String, dynamic>.of(scheme.values);
+      _mergeExternValues(scheme.fields, current.pluginExtern, values);
       final changes = await showDialog<Map<String, dynamic>>(
         context: context,
         builder: (_) => PluginAdvancedSearchDialog(
           initialSort: current.sortBy,
-          scheme: scheme,
+          scheme: PluginAdvancedSearchScheme(
+            source: source,
+            fields: scheme.fields,
+            values: values,
+          ),
         ),
       );
       if (changes == null || !ownsQuery() || route?.isCurrent == false) return;

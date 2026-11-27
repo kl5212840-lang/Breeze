@@ -126,35 +126,15 @@ void main() {
               ),
             );
             await tester.pumpAndSettle();
-            final profile = host == 'profile';
             final time = find.byKey(
-              ValueKey(
-                profile
-                    ? 'shelf-detail.time'
-                    : 'comic-last-read:test:last-read-fixture',
-              ),
+              const ValueKey('comic-last-read:test:last-read-fixture'),
             );
             expect(time, findsOneWidget, reason: host);
             final text = tester.widget<Text>(time);
             final label = t.comicEntry.lastReadAt(time: '2026-11-01 09:05');
-            if (profile) {
-              expect(text.data, contains('2026-11-01 09:05'));
-              expect(
-                tester
-                    .widget<Semantics>(
-                      find
-                          .ancestor(of: time, matching: find.byType(Semantics))
-                          .first,
-                    )
-                    .properties
-                    .label,
-                label,
-              );
-            } else {
-              expect(text.data, label);
-              expect(text.maxLines, isNull);
-              expect(text.overflow, isNot(TextOverflow.ellipsis));
-            }
+            expect(text.data, label);
+            expect(text.maxLines, isNull);
+            expect(text.overflow, isNot(TextOverflow.ellipsis));
             final paragraph = tester.renderObject<RenderParagraph>(
               find.descendant(of: time, matching: find.byType(RichText)),
             );

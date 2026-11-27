@@ -1,3 +1,4 @@
+import 'package:zephyr/service/http_retry_after.dart';
 import 'package:zephyr/service/read_recovery.dart';
 import 'package:zephyr/service/local_plugin_installation_state.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
@@ -7,6 +8,7 @@ import 'package:zephyr/service/plugin_account_sync_coordinator.dart';
 import 'package:zephyr/page/video/omo_network.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -166,6 +168,7 @@ class ApiVideoBrowserSession extends ChangeNotifier {
   int _generation = 0;
   Timer? _watchdog;
   Timer? _documentProbe;
+  ({DateTime until, HttpException error})? _detailBootstrapCooldown;
   final _trace = PlaybackTrace();
   String? _previousDocument;
 
@@ -195,13 +198,9 @@ class ApiVideoBrowserSession extends ChangeNotifier {
     _expected = url;
     final removeResolutionCancel = resolutionOwner?.onCancel(() async {
       if (!identical(_pending, pending) || generation != _generation) return;
-      cancel();
-      if (_ready.isCompleted) {
-        final web = await _ready.future;
-        await web.stopLoading().timeout(const Duration(seconds: 5));
-      }
+      await _cancel();
     });
-    try {
+    Future<Map<String, dynamic>> navigate() async {
       final web = await _ready.future.timeout(const Duration(seconds: 20));
       resolutionOwner?.check();
       if (generation != _generation) return await pending.future;
@@ -209,6 +208,7 @@ class ApiVideoBrowserSession extends ChangeNotifier {
       // A new WKWebView has no document yet. Evaluating JS before its first
       // navigation can wait indefinitely for WebKit's content process.
       final current = await web.getUrl().timeout(const Duration(seconds: 3));
+      if (generation != _generation) return await pending.future;
       final previous = current?.scheme == 'https'
           ? await web
                 .evaluateJavascript(source: 'String(performance.timeOrigin)')
@@ -217,6 +217,7 @@ class ApiVideoBrowserSession extends ChangeNotifier {
       if (generation != _generation) return await pending.future;
       _previousDocument = previous?.toString();
       _watchdog = Timer(const Duration(seconds: 30), () {
+        if (generation != _generation) return;
         _trace.add('catalog', 'document readiness timeout');
         cancel(error: TimeoutException('Catalog document readiness timed out'));
       });
@@ -224,12 +225,66 @@ class ApiVideoBrowserSession extends ChangeNotifier {
       if (kDebugMode) debugPrint('ApiCatalog stage=load');
       await web.loadUrl(urlRequest: URLRequest(url: WebUri(url.toString())));
       return await pending.future;
+    }
+
+    try {
+      // Cancellation and the watchdog also release the read while a platform
+      // readiness, navigation or message acknowledgement is still pending.
+      return await Future.any([pending.future, navigate()]);
     } catch (error, stack) {
       _trace.failure('catalog', error, stack);
       if (identical(_pending, pending)) cancel(error: error);
       rethrow;
     } finally {
       removeResolutionCancel?.call();
+    }
+  }
+
+  void receivedDocumentResponse(
+    Uri url,
+    int status,
+    Map<String, String> headers,
+  ) {
+    if (_disposed ||
+        _pending == null ||
+        _watchdog == null ||
+        visible ||
+        url.origin != home.origin ||
+        !videoSiteDocumentMatches(_expected, url) ||
+        !isTransientHttpStatus(status)) {
+      return;
+    }
+    final normalized = {
+      for (final header in headers.entries)
+        header.key.toLowerCase(): header.value.trim(),
+    };
+    if (normalized['cf-mitigated']?.toLowerCase() == 'challenge') return;
+    final retry = sanitizedRetryAfter(normalized['retry-after']);
+    final error = HttpException(
+      'HTTP $status${retry == null ? '' : ' Retry-After: $retry'}',
+    );
+    if (!_firstDocumentReady.isCompleted && (status == 429 || retry != null)) {
+      final now = DateTime.now();
+      _detailBootstrapCooldown = (
+        until: now.add(readRetryAfterDelay(error, now: now)),
+        error: error,
+      );
+    }
+    cancel(error: error);
+  }
+
+  void receivedHttpError(
+    InAppWebViewController _,
+    WebResourceRequest request,
+    WebResourceResponse response,
+  ) {
+    final uri = Uri.tryParse(request.url.toString());
+    if (request.isForMainFrame == true && uri != null) {
+      receivedDocumentResponse(
+        uri,
+        response.statusCode ?? 0,
+        response.headers ?? const {},
+      );
     }
   }
 
@@ -245,26 +300,10 @@ class ApiVideoBrowserSession extends ChangeNotifier {
     }
     final resolutionOwner = VideoDownloadResolutionOwner.current;
     resolutionOwner?.check();
+    final startup = _waitForDetailDocument();
     final generation = _generation;
-    if (!_firstDocumentReady.isCompleted) {
-      final ready = Completer<void>();
-      void check() {
-        if (ready.isCompleted) return;
-        if (_disposed || generation != _generation || visible) {
-          ready.completeError(const FormatException('Detail read cancelled'));
-        } else if (_firstDocumentReady.isCompleted) {
-          ready.complete();
-        }
-      }
-
-      addListener(check);
-      try {
-        check();
-        await ready.future.timeout(const Duration(seconds: 15));
-      } finally {
-        if (!_disposed) removeListener(check);
-      }
-    }
+    await startup;
+    resolutionOwner?.check();
     if (_disposed || generation != _generation || visible) {
       throw const FormatException('Public detail session is unavailable');
     }
@@ -298,6 +337,49 @@ class ApiVideoBrowserSession extends ChangeNotifier {
       throw const FormatException('Public detail requires verification');
     }
     return value;
+  }
+
+  Future<void> _waitForDetailDocument() async {
+    if (_firstDocumentReady.isCompleted) return;
+    if (visible) {
+      throw const FormatException('Public detail requires verification');
+    }
+    final pending = _pending;
+    final cooldown = _detailBootstrapCooldown;
+    if (pending == null &&
+        cooldown != null &&
+        cooldown.until.isAfter(DateTime.now())) {
+      throw cooldown.error;
+    }
+    if (pending == null) _detailBootstrapCooldown = null;
+    final request = pending?.future ?? read(home);
+    final generation = _generation;
+    final verification = Completer<void>();
+    void checkVerification() {
+      if (visible && !verification.isCompleted) {
+        verification.completeError(
+          const FormatException('Public detail requires verification'),
+        );
+      }
+    }
+
+    addListener(checkVerification);
+    try {
+      await Future.any([
+        request.then<void>((_) {}),
+        verification.future,
+      ]).timeout(const Duration(seconds: 14));
+    } on TimeoutException catch (error) {
+      if (pending == null &&
+          !_disposed &&
+          !visible &&
+          generation == _generation) {
+        cancel(error: error);
+      }
+      rethrow;
+    } finally {
+      if (!_disposed) removeListener(checkVerification);
+    }
   }
 
   void receivedError(WebResourceRequest request, WebResourceError error) {
@@ -659,6 +741,7 @@ class ApiVideoBrowserSession extends ChangeNotifier {
       }
       final pending = _pending!;
       _watchdog?.cancel();
+      _watchdog = null;
       _documentProbe?.cancel();
       _trace.add(
         'catalog',
@@ -676,7 +759,13 @@ class ApiVideoBrowserSession extends ChangeNotifier {
   }
 
   void cancel({Object? error}) {
+    unawaited(_cancel(error: error).catchError((Object _) {}));
+  }
+
+  Future<void> _cancel({Object? error}) async {
+    final web = _watchdog != null ? _accountWeb : null;
     _watchdog?.cancel();
+    _watchdog = null;
     _documentProbe?.cancel();
     _generation++;
     final previous = _pending;
@@ -692,6 +781,8 @@ class ApiVideoBrowserSession extends ChangeNotifier {
       );
     }
     if (!_disposed) notifyListeners();
+    if (web != null)
+      await web.stopLoading().timeout(const Duration(seconds: 5));
   }
 
   @override
@@ -794,6 +885,8 @@ class ApiVideoBrowserHost extends StatelessWidget {
                               home: session.home,
                               source: session.accountSource ?? network?.source,
                               networkContext: network?.token,
+                              onDocumentResponse:
+                                  session.receivedDocumentResponse,
                               configuration: InAppWebView(
                                 initialSettings: InAppWebViewSettings(
                                   javaScriptEnabled: true,
@@ -829,6 +922,7 @@ class ApiVideoBrowserHost extends StatelessWidget {
                                 },
                                 onReceivedError: (_, request, error) =>
                                     session.receivedError(request, error),
+                                onReceivedHttpError: session.receivedHttpError,
                               ),
                             ),
                           ),

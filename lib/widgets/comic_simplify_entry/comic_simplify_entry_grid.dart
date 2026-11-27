@@ -36,6 +36,7 @@ class BaseComicGridSliver extends StatelessWidget {
   final EdgeInsetsGeometry padding;
   final String? collectionTargetId;
   final String? collectionTargetName;
+  final Key? itemsSliverKey;
 
   const BaseComicGridSliver({
     super.key,
@@ -52,6 +53,7 @@ class BaseComicGridSliver extends StatelessWidget {
     this.padding = const EdgeInsets.all(10),
     this.collectionTargetId,
     this.collectionTargetName,
+    this.itemsSliverKey,
   });
 
   @override
@@ -59,6 +61,7 @@ class BaseComicGridSliver extends StatelessWidget {
     return SliverPadding(
       padding: padding,
       sliver: SliverGrid(
+        key: itemsSliverKey,
         gridDelegate: buildComicSimplifyEntryGridDelegate(),
         delegate: SliverChildBuilderDelegate((context, index) {
           return ComicSimplifyEntry(

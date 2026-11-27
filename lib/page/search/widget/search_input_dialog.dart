@@ -29,8 +29,11 @@ class SearchQueryField extends StatefulWidget {
     this.semanticLabel,
     this.focusNode,
     this.closeOnSubmit = true,
+    this.textInputAction = TextInputAction.search,
     this.inline = false,
+    this.animateExpansion = false,
     this.showSubmit = false,
+    this.dismissKeyboardOnTapOutside = false,
     this.leadingControl,
     this.leadingControlWidth = 44,
   });
@@ -49,6 +52,10 @@ class SearchQueryField extends StatefulWidget {
 
   /// Dedicated search pages edit in place; compact entries may open an overlay.
   final bool inline, showSubmit;
+
+  /// The host mounts this inline field in place of its search action.
+  final bool animateExpansion;
+  final bool dismissKeyboardOnTapOutside;
   final Widget? leadingControl;
   final double leadingControlWidth;
 
@@ -59,6 +66,7 @@ class SearchQueryField extends StatefulWidget {
   /// 提交（回车）后是否收起浮层。搜索页保持默认 true；
   /// 书架这种希望回车后继续改词的场景传 false。
   final bool closeOnSubmit;
+  final TextInputAction textInputAction;
 
   @override
   State<SearchQueryField> createState() => _SearchQueryFieldState();
@@ -523,7 +531,7 @@ class _SearchQueryFieldState extends State<SearchQueryField>
             onTap: _requestKeyboard,
             autofocus: true,
             keyboardType: TextInputType.text,
-            textInputAction: TextInputAction.search,
+            textInputAction: widget.textInputAction,
             minLines: 1,
             maxLines: usesSystemSearchSurface(context) ? 1 : 6,
             inputFormatters: [FilteringTextInputFormatter.singleLineFormatter],
@@ -566,6 +574,21 @@ class _SearchQueryFieldState extends State<SearchQueryField>
           : widget.leadingControlWidth;
       final onClose = widget.onClose ?? toolbar?.onClose;
       final closeKey = widget.closeKey ?? toolbar?.closeKey;
+      final submit = widget.showSubmit
+          ? SearchFieldSubmitButton(
+              query: _controller,
+              onSubmitted: widget.enabled ? widget.onSubmitted : null,
+            )
+          : null;
+      final prefix = leading == null
+          ? submit
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(width: leadingWidth + 6, height: 48),
+                ?submit,
+              ],
+            );
       final field = SearchFieldSurface(
         child: TextField(
           key: _targetKey,
@@ -573,31 +596,21 @@ class _SearchQueryFieldState extends State<SearchQueryField>
           controller: _controller,
           focusNode: _focusNode,
           onTapAlwaysCalled: true,
+          onTapOutside: widget.dismissKeyboardOnTapOutside
+              ? (_) => _focusNode.unfocus()
+              : null,
           onTap: () {
             widget.onTap?.call();
             _requestKeyboard();
           },
           keyboardType: TextInputType.text,
-          textInputAction: TextInputAction.search,
+          textInputAction: widget.textInputAction,
           textAlignVertical: TextAlignVertical.center,
           inputFormatters: [FilteringTextInputFormatter.singleLineFormatter],
           decoration: searchFieldDecoration(
             context,
             hintText: widget.hintText ?? t.search.searchHint,
-            prefixIcon: leading != null
-                ? SizedBox(width: leadingWidth + 6, height: 48)
-                : widget.showSubmit
-                ? ValueListenableBuilder(
-                    valueListenable: _controller,
-                    builder: (_, value, _) => IconButton(
-                      tooltip: t.videoSearch.submit,
-                      icon: const SearchToolGlyph(SearchTool.search, size: 20),
-                      onPressed: value.text.trim().isEmpty
-                          ? null
-                          : () => widget.onSubmitted?.call(_controller.text),
-                    ),
-                  )
-                : null,
+            prefixIcon: prefix,
             variableSuffixWidth: onClose != null,
             suffixIcon: ValueListenableBuilder(
               valueListenable: _controller,
@@ -623,20 +636,24 @@ class _SearchQueryFieldState extends State<SearchQueryField>
           onSubmitted: (value) => widget.onSubmitted?.call(value),
         ),
       );
-      if (leading == null) return field;
-      return Stack(
-        children: [
-          field,
-          // An interactive native control belongs outside the editor's clip.
-          PositionedDirectional(
-            start: 0,
-            top: 0,
-            bottom: 0,
-            width: leadingWidth,
-            child: Center(child: leading),
-          ),
-        ],
-      );
+      final editor = leading == null
+          ? field
+          : Stack(
+              children: [
+                field,
+                // A native control belongs outside the editor's clip.
+                PositionedDirectional(
+                  start: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: leadingWidth,
+                  child: Center(child: leading),
+                ),
+              ],
+            );
+      return widget.animateExpansion
+          ? AndroidSearchExpansion(child: editor)
+          : editor;
     }
     return SizedBox(key: _targetKey, child: _buildCollapsedField(context));
   }

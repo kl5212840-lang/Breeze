@@ -6,6 +6,7 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/hanime_catalog_scope.dart';
 import 'package:zephyr/page/video/video_playback_identity.dart';
 import 'package:zephyr/page/video/video_public_metadata.dart';
+import 'package:zephyr/page/video/video_vote_tally_updates.dart';
 import 'package:zephyr/util/json/json_value.dart';
 
 class HanimeWorkFacts {
@@ -60,6 +61,8 @@ abstract final class HanimeWorkFactsStore {
   static const capacity = 384;
   static const freshFor = Duration(days: 7);
   static Future<void>? _writes;
+  static final changes = ValueNotifier<int>(0);
+  static int get generation => changes.value;
   static DateTime? blockedUntil;
 
   static Map<Uri, ({DateTime at, HanimeWorkFacts facts})> _decode(
@@ -84,15 +87,18 @@ abstract final class HanimeWorkFactsStore {
   }
 
   static Future<Map<Uri, HanimeWorkFacts>> read() async {
+    final epoch = generation;
     await _writes;
-    return _decode(
-      await SharedPreferences.getInstance(),
-    ).map((page, row) => MapEntry(page, row.facts));
+    final prefs = await SharedPreferences.getInstance();
+    if (epoch != generation) return {};
+    return _decode(prefs).map((page, row) => MapEntry(page, row.facts));
   }
 
   static Future<void> write(Uri page, HanimeWorkFacts facts) {
     if (hanimeWorkPage(page) != page) return Future.value();
+    final epoch = generation;
     return _serialize((prefs) {
+      if (epoch != generation) return Future.value(true);
       final rows = _decode(prefs)..remove(page);
       return prefs.setString(
         _key,
@@ -113,7 +119,11 @@ abstract final class HanimeWorkFactsStore {
     });
   }
 
-  static Future<void> clear() => _serialize((prefs) => prefs.remove(_key));
+  static Future<void> clear() {
+    blockedUntil = null;
+    changes.value++;
+    return _serialize((prefs) => prefs.remove(_key));
+  }
 
   static Future<void> _serialize(
     Future<bool> Function(SharedPreferences) update,
@@ -132,24 +142,48 @@ abstract final class HanimeWorkFactsStore {
   }
 }
 
-Widget? hanimeWorkStatistics(
+Widget hanimeWorkStatistics(
   BuildContext context,
   VideoPublicMetadata metadata,
   HanimeCatalogLayout layout, {
   VideoPublicMetadata? known,
-}) {
-  final rating = metadata.ratingLabel ?? known?.ratingLabel;
+  Uri? workUrl,
+}) => ListenableBuilder(
+  listenable: VideoVoteTallyUpdates.changes,
+  builder: (context, _) =>
+      _statistics(context, metadata, layout, known, workUrl),
+);
+
+Widget _statistics(
+  BuildContext context,
+  VideoPublicMetadata metadata,
+  HanimeCatalogLayout layout,
+  VideoPublicMetadata? known,
+  Uri? workUrl,
+) {
+  final tally = VideoVoteTallyUpdates.read(workUrl);
+  final rating = videoVoteRating(
+    tally,
+    metadata.ratingLabel != null ? metadata : known ?? metadata,
+  );
   final views = metadata.viewsLabel ?? known?.viewsLabel;
-  final likes = metadata.positiveVotes ?? known?.positiveVotes;
+  final likes =
+      tally?.positive ?? metadata.positiveVotes ?? known?.positiveVotes;
+  final dislikes =
+      tally?.negative ?? metadata.negativeVotes ?? known?.negativeVotes;
+  final total = tally?.total ?? metadata.totalVotes ?? known?.totalVotes;
   final values = [
     if (rating != null) t.videoMetadata.rating(value: rating),
     if (views != null &&
         (layout != HanimeCatalogLayout.compact || rating == null))
       t.videoMetadata.views(value: views),
-    if (layout == HanimeCatalogLayout.detail && likes != null)
-      t.videoMetadata.positiveVotes(count: likes),
+    if (layout == HanimeCatalogLayout.detail) ...[
+      if (likes != null) t.videoMetadata.positiveVotes(count: likes),
+      if (dislikes != null) t.videoMetadata.negativeVotes(count: dislikes),
+      if (total != null) t.videoMetadata.totalVotes(count: total),
+    ],
   ];
-  if (values.isEmpty) return null;
+  if (values.isEmpty) return const SizedBox.shrink();
   final theme = Theme.of(context);
   final style = theme.textTheme.labelSmall?.copyWith(
     color: theme.colorScheme.onSurfaceVariant,
@@ -190,15 +224,12 @@ class HanimeCachedWorkStatistics extends StatelessWidget {
     return FutureBuilder(
       future: facts,
       builder: (context, snapshot) {
-        final metadata = snapshot.data?[page]?.metadata;
-        return metadata == null
-            ? const SizedBox.shrink()
-            : hanimeWorkStatistics(
-                    context,
-                    metadata,
-                    HanimeCatalogLayout.detail,
-                  ) ??
-                  const SizedBox.shrink();
+        return hanimeWorkStatistics(
+          context,
+          snapshot.data?[page]?.metadata ?? const VideoPublicMetadata(),
+          HanimeCatalogLayout.detail,
+          workUrl: page,
+        );
       },
     );
   }

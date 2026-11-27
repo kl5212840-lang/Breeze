@@ -12,6 +12,8 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <!-- 读取媒体视频权限，Android 13及以上 -->
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <!-- 视频播放时调节系统媒体音量 -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- 安装APK权限 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- 管理外部存储权限，Android 11及以上 -->

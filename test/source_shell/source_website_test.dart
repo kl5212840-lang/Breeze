@@ -286,7 +286,7 @@ void main() {
       final menu = tester.widget<NativeVideoMenu>(find.byType(NativeVideoMenu));
       expect(menu.options.values, [
         t.sourceShell.openOfficialWebsite,
-        t.discover.settings,
+        t.plugin.pluginSettings,
         t.sourceShell.exitPlugin,
       ]);
       expect(menu.optionIcons.keys, containsAll(menu.options.keys));

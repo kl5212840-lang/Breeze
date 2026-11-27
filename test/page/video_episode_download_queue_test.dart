@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState;
+import 'package:zephyr/network/sync/sync_service.dart'
+    show runExclusiveStorageOperation;
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
@@ -153,6 +155,34 @@ void main() {
       );
 
   test(
+    'an account change while awaiting admission cannot start the old batch',
+    () async {
+      final locked = Completer<void>();
+      final release = Completer<void>();
+      final storage = runExclusiveStorageOperation(() async {
+        locked.complete();
+        await release.future;
+      });
+      await locked.future;
+      final pending = VideoEpisodeDownloadQueue.enqueue(
+        source: _source,
+        episodes: [_episode(1)],
+        resolve: resolve,
+      );
+      final failed = expectLater(
+        pending,
+        throwsA(isA<PluginLifecycleChanged>()),
+      );
+      pluginSessionWriteFence.advance(_source);
+      release.complete();
+      await storage;
+      await failed;
+      expect(native.started, isEmpty);
+      expect(VideoExportRecords.sessionTaskSnapshot(), isEmpty);
+    },
+  );
+
+  test(
     'iOS queued episode waits in background and continues the same attempt',
     () async {
       final binding = TestWidgetsFlutterBinding.instance;
@@ -193,6 +223,55 @@ void main() {
       }
     },
   );
+
+  test('a cold resolver owns the exact task through native transfer', () async {
+    Map<String, dynamic>? readTask;
+    var released = 0;
+    final keys = await VideoEpisodeDownloadQueue.enqueue(
+      source: _source,
+      episodes: [_episode(1)],
+      preferredQuality: '720p',
+      preferredFormat: 'hls',
+      resolveTask: (row) async {
+        readTask = row;
+        expect(
+          VideoExportRecords.isAttemptCurrent(
+            row['key'] as String,
+            row['attempt'] as int,
+          ),
+          isTrue,
+        );
+        return (
+          choices: [
+            (
+              label: '720p',
+              url: Uri.parse(
+                'https://cdn-fixture.test/video.m3u8?signature=ephemeral',
+              ),
+              format: 'hls',
+            ),
+          ],
+          networkContext: null,
+          headersForChoice: null,
+          release: () async {
+            released++;
+          },
+        );
+      },
+    );
+    await native.firstStarted.future.timeout(const Duration(seconds: 2));
+    expect(readTask?['key'], keys.single);
+    expect(readTask?['url'], _watch(1).toString());
+    expect(released, 0);
+    native.firstResult.complete(null);
+    await VideoEpisodeDownloadQueue.flush();
+    expect(released, 1);
+    final terminal = (await VideoExportRecords.readTaskSnapshot()).firstWhere(
+      (row) => row['key'] == keys.single,
+    );
+    expect(terminal['status'], 'saved');
+    expect(terminal['attempt'], readTask?['attempt']);
+  });
 
   test(
     'recovery preserves an explicit quality and never silently substitutes the first resolved option',

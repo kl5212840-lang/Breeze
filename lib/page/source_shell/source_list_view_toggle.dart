@@ -8,8 +8,9 @@ class SourceListViewToggle extends StatelessWidget {
     super.key,
     required this.detailed,
     required this.onChanged,
+    this.bare = true,
   });
-  final bool detailed;
+  final bool detailed, bare;
   final ValueChanged<bool> onChanged;
 
   @override
@@ -18,5 +19,6 @@ class SourceListViewToggle extends StatelessWidget {
     icon: CollectionCommandIcons.toggleTarget(!detailed).icon,
     symbol: CollectionCommandIcons.toggleTarget(!detailed).symbol,
     onPressed: () => onChanged(!detailed),
+    bare: bare,
   );
 }

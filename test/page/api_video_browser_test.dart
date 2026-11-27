@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zephyr/page/video/api_video_browser.dart';
@@ -13,6 +14,8 @@ class _Browser extends Fake implements InAppWebViewController {
   String documentState = 'loading';
   Map<String, dynamic> snapshot = {};
   final loads = <Uri>[];
+  Future<void>? loadAcknowledgement;
+  int stops = 0;
   @override
   Future<dynamic> evaluateJavascript({
     required String source,
@@ -36,6 +39,12 @@ class _Browser extends Fake implements InAppWebViewController {
     WebUri? allowingReadAccessTo,
   }) async {
     loads.add(Uri.parse(urlRequest.url.toString()));
+    await loadAcknowledgement;
+  }
+
+  @override
+  Future<void> stopLoading() async {
+    stops++;
   }
 }
 
@@ -43,6 +52,58 @@ void main() {
   final home = Uri.parse('https://www.omofuna.com/');
   final query = home.resolve('search/-------------.html?wd=demo');
   const capabilities = ApiVideoCapabilities(browserCatalog: true);
+  testWidgets('catalog watchdog also bounds a stalled navigation call', (
+    tester,
+  ) async {
+    final session = ApiVideoBrowserSession(
+      home: home,
+      paths: ['/search/'],
+      itemPrefix: '/anime/',
+    );
+    final acknowledgement = Completer<void>();
+    final web = _Browser()..loadAcknowledgement = acknowledgement.future;
+    session.created(web);
+    addTearDown(session.dispose);
+    final failure = expectLater(
+      session.read(query),
+      throwsA(isA<TimeoutException>()),
+    );
+    await tester.pump(Duration.zero);
+    expect(web.loads, [query]);
+    await tester.pump(const Duration(seconds: 30));
+    await failure;
+    expect(web.stops, 1);
+    acknowledgement.complete();
+  });
+
+  testWidgets('catalog preserves only the current main response retry hint', (
+    tester,
+  ) async {
+    final session = ApiVideoBrowserSession(
+      home: home,
+      paths: ['/search/'],
+      itemPrefix: '/anime/',
+    );
+    final web = _Browser();
+    session.created(web);
+    addTearDown(session.dispose);
+    final failure = expectLater(
+      session.read(query),
+      throwsA(
+        isA<HttpException>().having(
+          (error) => error.message,
+          'safe message',
+          'HTTP 503 Retry-After: 120',
+        ),
+      ),
+    );
+    await tester.pump(Duration.zero);
+    session.receivedDocumentResponse(home, 429, {'Retry-After': '500'});
+    session.receivedDocumentResponse(query, 503, {'cf-mitigated': 'challenge'});
+    session.receivedDocumentResponse(query, 503, {'Retry-After': '120'});
+    await failure;
+  });
+
   test(
     'catalog reads parsed HTML without waiting for slow subresources',
     () async {

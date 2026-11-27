@@ -16,6 +16,7 @@ final _pluginEndpointChanges = StreamController<String>.broadcast();
 final _settingsEndpointChanges =
     StreamController<({String source, bool refresh})>.broadcast();
 final _pluginEndpointRevisions = <String, int>{};
+final _effectivePluginEndpointRevisions = <String, int>{};
 final _pendingEndpointUpdates = <String, int>{};
 final _deferredEndpointChanges = <String>{};
 Stream<String> get pluginEndpointChanges => _pluginEndpointChanges.stream;
@@ -23,6 +24,11 @@ Stream<({String source, bool refresh})> get settingsPluginEndpointChanges =>
     _settingsEndpointChanges.stream;
 int pluginEndpointRevision(String source) =>
     _pluginEndpointRevisions[canonicalQjsSource(source)] ?? 0;
+
+// Account reads use the pending revision as a fence. Profile receipts only
+// need replacement when a committed change actually selected a new endpoint.
+int effectivePluginEndpointRevision(String source) =>
+    _effectivePluginEndpointRevisions[canonicalQjsSource(source)] ?? 0;
 
 bool isPluginEndpointUpdating(String source) =>
     _pendingEndpointUpdates.containsKey(canonicalQjsSource(source));
@@ -48,7 +54,7 @@ void finishPluginEndpointUpdate(
   if (_pendingEndpointUpdates[source] != revision) return;
   _pendingEndpointUpdates.remove(source);
   final changed = _deferredEndpointChanges.remove(source) || refreshProfile;
-  if (changed) _pluginEndpointChanges.add(source);
+  if (changed) _notifyEffectiveEndpointChange(source);
   _settingsEndpointChanges.add((
     source: source,
     refresh: refreshSettings || changed,
@@ -57,7 +63,9 @@ void finishPluginEndpointUpdate(
 
 Object? _copyEffectiveRoute(Map<String, dynamic> configuration) {
   final choice = configuration['api.domain'];
-  return choice == 'auto' ? configuration['network.autoRoute.v1'] : choice;
+  return choice == 'auto' || choice == 'auto-speed'
+      ? configuration['network.autoRoute.v1']
+      : choice;
 }
 
 bool _copyEndpointChanged(
@@ -73,9 +81,14 @@ void _publishEndpointChange(String source) {
     _deferredEndpointChanges.add(source);
   } else {
     _pluginEndpointRevisions[source] = pluginEndpointRevision(source) + 1;
-    _pluginEndpointChanges.add(source);
+    _notifyEffectiveEndpointChange(source);
     _settingsEndpointChanges.add((source: source, refresh: true));
   }
+}
+
+void _notifyEffectiveEndpointChange(String source) {
+  _effectivePluginEndpointRevisions[source] = pluginEndpointRevision(source);
+  _pluginEndpointChanges.add(source);
 }
 
 /// External restore writes ObjectBox directly. Compare against committed
@@ -97,6 +110,9 @@ String onSavePluginConfig(
 }) {
   final runtime = name;
   name = canonicalQjsSource(name);
+  if (fromRuntime && key == hostRememberedPluginLoginKey) {
+    throw const PluginSessionChanged();
+  }
   if (fromRuntime && !pluginSessionWriteFence.permits(name, runtime)) {
     throw const PluginSessionChanged();
   }
@@ -149,7 +165,9 @@ String onLoadPluginConfig(String name, String key, String fallback) {
     final data = _decodeObjectMap(entity?.config ?? '');
     final value = key.isEmpty
         ? visiblePluginConfig(data)
-        : key == pluginConfigSyncFields || key == pluginAccountProfilesKey
+        : key == pluginConfigSyncFields ||
+              key == pluginAccountProfilesKey ||
+              key == hostRememberedPluginLoginKey
         ? _decodeMaybeJson(fallback)
         : data.containsKey(key)
         ? data[key]

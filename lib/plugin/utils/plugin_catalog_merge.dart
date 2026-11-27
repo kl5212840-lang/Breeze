@@ -15,6 +15,14 @@ const managedPluginUuids = <String>{
   '1e600cff-8ebe-4517-8aa4-6678aec46424',
 };
 
+// Native plugins can migrate their exact first-party builds without changing
+// the catalogue precedence for UUIDs that overlap the official source.
+const _firstPartyMigrationUuids = <String>{
+  ...managedPluginUuids,
+  'b27083a4-a643-462a-8204-e6f42c19a5b9', // Modu
+  'ccc2fe17-c0a8-4fd8-a596-835772686404', // OmoFun
+};
+
 List<dynamic>? decodeCloudPluginCatalog(
   String? payload, {
   bool allowEmpty = false,
@@ -156,7 +164,7 @@ class FormalPluginRelease {
     required String installedVersion,
     required String Function() scriptFingerprint,
   }) {
-    if (installedUuid != uuid || !managedPluginUuids.contains(uuid)) {
+    if (installedUuid != uuid || !_firstPartyMigrationUuids.contains(uuid)) {
       return null;
     }
     final version = normalizePublishedPluginVersion(installedVersion);

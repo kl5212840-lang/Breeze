@@ -1,9 +1,12 @@
 import 'package:zephyr/widgets/native_view_occlusion.dart';
 import 'package:zephyr/page/download/download_center_navigation.dart';
+import 'package:zephyr/page/donwload_task/service/download_center_resources.dart';
 import 'package:zephyr/page/donwload_task/view/download_task.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/widgets/android_toolbar_icon_button.dart';
 import 'package:zephyr/widgets/breeze_control_colors.dart';
 import 'package:zephyr/widgets/breeze_navigation_bar.dart';
+import 'package:zephyr/widgets/breeze_scroll_navigation.dart';
 import 'package:zephyr/widgets/tab_reselect_scope.dart';
 import 'dart:async';
 import 'dart:io';
@@ -49,6 +52,7 @@ import 'package:zephyr/util/event/event.dart';
 import 'package:zephyr/page/bookshelf/bookshelf.dart';
 import 'package:zephyr/page/discover/view/discover_page.dart';
 import 'package:zephyr/page/more/view/more.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 VoidCallback automaticSyncStartNotification({
   required bool Function() canNotify,
@@ -75,6 +79,8 @@ class _NavigationBarState extends State<NavigationBar> {
   ComicFollowForegroundScheduler? _followForegroundScheduler;
   bool _autoSyncFailureNotified = false;
   late final PersistentTabController _controller;
+  final _downloadOpenSwipe = ValueNotifier<String?>(null);
+  final _followOpenSwipe = ValueNotifier<String?>(null);
   late MainNavigationLayout _layout;
   late MainNavigationDestination _selectedDestination;
   StreamSubscription<GlobalSettingState>? _layoutSubscription;
@@ -84,7 +90,6 @@ class _NavigationBarState extends State<NavigationBar> {
   final debouncer = Debouncer(milliseconds: 100);
   DateTime? _lastLoginNavigateAt;
   String? _lastLoginPluginId;
-  late HideOnScrollSettings hideOnScrollSettings;
 
   static bool _notificationsInitialized = false; // ← 使用静态变量，跨实例共享
   bool _isInitializingNotifications = false;
@@ -93,6 +98,11 @@ class _NavigationBarState extends State<NavigationBar> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (mounted &&
+          Platform.isIOS &&
+          _selectedDestination != MainNavigationDestination.downloads) {
+        DownloadCenterResources.preloadVideoInventory();
+      }
       unawaited(checkUpdateReminder(context));
       _autoSync();
       manageCacheSize(context);
@@ -182,6 +192,8 @@ class _NavigationBarState extends State<NavigationBar> {
     DownloadCenterNavigation.detach(this);
     ComicFollowNavigation.detach(this);
     _controller.dispose();
+    _downloadOpenSwipe.dispose();
+    _followOpenSwipe.dispose();
     super.dispose();
   }
 
@@ -195,9 +207,27 @@ class _NavigationBarState extends State<NavigationBar> {
     _select(selected);
   }
 
+  bool _dismissOpenSwipe() {
+    final swipe = _navigationSwipeGroup;
+    if (swipe == null || swipe.value == null) return false;
+    swipe.value = null;
+    return true;
+  }
+
+  ValueNotifier<String?>? get _navigationSwipeGroup =>
+      switch (_selectedDestination) {
+        MainNavigationDestination.downloads => _downloadOpenSwipe,
+        MainNavigationDestination.follow => _followOpenSwipe,
+        _ => null,
+      };
+
   void _select(MainNavigationDestination destination) {
-    if (!mounted || !_layout.contains(destination)) return;
-    if (destination == _selectedDestination) return;
+    if (!mounted ||
+        !_layout.contains(destination) ||
+        destination == _selectedDestination) {
+      return;
+    }
+    _dismissOpenSwipe();
     _controller.jumpToTab(destination.index);
     setState(() => _selectedDestination = destination);
   }
@@ -272,6 +302,8 @@ class _NavigationBarState extends State<NavigationBar> {
       child: _MainNavigationState(
         layout: _layout,
         selected: _selectedDestination,
+        downloadOpenSwipe: _downloadOpenSwipe,
+        followOpenSwipe: _followOpenSwipe,
         child: ValueListenableBuilder<ComicFollowReminderMode?>(
           valueListenable: _followReminders.mode,
           builder: (context, mode, _) {
@@ -287,7 +319,12 @@ class _NavigationBarState extends State<NavigationBar> {
             ];
             void onSelected(int index) {
               if (index >= 0 && index < destinations.length) {
-                _select(destinations[index]);
+                final destination = destinations[index];
+                if (destination == _selectedDestination) {
+                  _dismissOpenSwipe();
+                } else {
+                  _select(destination);
+                }
               }
             }
 
@@ -307,6 +344,7 @@ class _NavigationBarState extends State<NavigationBar> {
                 ],
                 selectedIndex: selected,
                 screenIndex: _selectedDestination.index,
+                navigationTapRegionGroup: _navigationSwipeGroup,
                 onSelected: onSelected,
                 onSearch: () => context.pushRoute(
                   SearchRoute(
@@ -338,21 +376,22 @@ class _NavigationBarState extends State<NavigationBar> {
   }) {
     final media = MediaQuery.of(context);
     final system = AppInterfaceStyleScope.usesSystem(context);
-    final floating = system && Platform.isIOS;
+    final iosSystem = system && Platform.isIOS;
+    final androidSystem = AppInterfaceStyleScope.usesAndroidSystem(context);
     final selectedDestination = _selectedDestination;
-    final height = switch ((system, floating)) {
+    final height = switch ((system, iosSystem)) {
       (true, true) => _nativeNavHeight ?? 49 + media.viewPadding.bottom,
-      (true, false) when AppInterfaceStyleScope.usesAndroidSystem(context) =>
-        VideoNativeNavigation.androidContentHeightOf(context) +
-            media.padding.bottom,
+      (true, false) when androidSystem =>
+        VideoNativeNavigation.androidFloatingHeightOf(context),
       (true, false) => kBottomNavigationBarHeight + media.padding.bottom,
       _ => BreezeNavigationBar.contentHeightOf(context) + media.padding.bottom,
     };
     return MainNativeTabHost(
       controller: _controller,
       screens: _pages,
-      floatingNavigation: floating,
+      floatingNavigation: iosSystem || androidSystem,
       navBarHeight: height,
+      navigationTapRegionGroup: _navigationSwipeGroup,
       onAndroidRootBack: () =>
           _handleAndroidRootBack(exitEnabled: backPressExitEnabled),
       navigation: Builder(
@@ -360,6 +399,7 @@ class _NavigationBarState extends State<NavigationBar> {
           void onTap(int index) {
             if (index == selected &&
                 _selectedDestination == selectedDestination) {
+              if (_dismissOpenSwipe()) return;
               MainNativeTabHost.requestCurrentTabReselection(tabContext);
             } else {
               onSelected(index);
@@ -372,7 +412,7 @@ class _NavigationBarState extends State<NavigationBar> {
                 ? VideoNativeNavigation(
                     currentIndex: selected,
                     onTap: onTap,
-                    onHeightChanged: floating
+                    onHeightChanged: iosSystem
                         ? (height) {
                             if (mounted && height != _nativeNavHeight) {
                               setState(() => _nativeNavHeight = height);
@@ -551,7 +591,7 @@ class _NavigationBarState extends State<NavigationBar> {
     }
     final goLogin = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => ShortAlert(
         title: Text(t.navigation.needLoginTitle),
         actions: [
           TextButton(
@@ -648,11 +688,15 @@ class _MainNavigationState extends InheritedWidget {
   const _MainNavigationState({
     required this.layout,
     required this.selected,
+    required this.downloadOpenSwipe,
+    required this.followOpenSwipe,
     required super.child,
   });
 
   final MainNavigationLayout layout;
   final MainNavigationDestination selected;
+  final ValueNotifier<String?> downloadOpenSwipe;
+  final ValueNotifier<String?> followOpenSwipe;
 
   @override
   bool updateShouldNotify(_MainNavigationState oldWidget) =>
@@ -689,9 +733,11 @@ class _MainNavigationOptionalPageState
       MainNavigationDestination.follow => ComicFollowPage(
         embedded: true,
         active: active,
+        openSwipe: navigation.followOpenSwipe,
       ),
-      MainNavigationDestination.downloads => const DownloadTaskPage(
+      MainNavigationDestination.downloads => DownloadTaskPage(
         embedded: true,
+        openSwipe: navigation.downloadOpenSwipe,
       ),
       _ => const SizedBox.shrink(),
     };
@@ -776,6 +822,7 @@ class MainWideTabHost extends StatelessWidget {
     required this.destinations,
     required this.selectedIndex,
     this.screenIndex,
+    this.navigationTapRegionGroup,
     required this.onSelected,
     required this.onSearch,
   });
@@ -784,6 +831,7 @@ class MainWideTabHost extends StatelessWidget {
   final List<NavigationRailDestination> destinations;
   final int selectedIndex;
   final int? screenIndex;
+  final Object? navigationTapRegionGroup;
   final ValueChanged<int> onSelected;
   final VoidCallback onSearch;
 
@@ -793,17 +841,37 @@ class MainWideTabHost extends StatelessWidget {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final surface = theme.scaffoldBackgroundColor;
-    final railSurface = breeze
-        ? BreezeControlColors.navigationSurface(theme)
-        : surface;
+    final android = AppInterfaceStyleScope.usesAndroidSystem(context)
+        ? BreezeControlColors.androidNavigationSelection(
+            colors,
+            highContrast: MediaQuery.highContrastOf(context),
+          )
+        : null;
+    final railSurface =
+        android?.track ??
+        (breeze ? BreezeControlColors.navigationSurface(theme) : surface);
     final navigationAccent = BreezeControlColors.navigation(
       colors,
       backdrop: railSurface,
       highContrast: breeze && MediaQuery.highContrastOf(context),
     );
-    final label = breeze
+    final foreground = android?.foreground ?? navigationAccent.foreground;
+    final styledRail = breeze || android != null;
+    final label = styledRail
         ? theme.textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w500)
         : null;
+    final rail = NavigationRail(
+      selectedIndex: selectedIndex,
+      onDestinationSelected: onSelected,
+      labelType: NavigationRailLabelType.all,
+      backgroundColor: railSurface,
+      indicatorColor:
+          android?.fill ?? (breeze ? navigationAccent.indicator : null),
+      selectedIconTheme: styledRail ? IconThemeData(color: foreground) : null,
+      selectedLabelTextStyle: label?.copyWith(color: foreground),
+      unselectedLabelTextStyle: label?.copyWith(color: colors.onSurfaceVariant),
+      destinations: destinations,
+    );
     return Scaffold(
       backgroundColor: surface,
       body: Row(
@@ -813,31 +881,33 @@ class MainWideTabHost extends StatelessWidget {
             child: Column(
               children: [
                 Expanded(
-                  child: NavigationRail(
-                    selectedIndex: selectedIndex,
-                    onDestinationSelected: onSelected,
-                    labelType: NavigationRailLabelType.all,
-                    backgroundColor: railSurface,
-                    indicatorColor: breeze ? navigationAccent.indicator : null,
-                    selectedIconTheme: breeze
-                        ? IconThemeData(color: navigationAccent.foreground)
-                        : null,
-                    selectedLabelTextStyle: label?.copyWith(
-                      color: navigationAccent.foreground,
-                    ),
-                    unselectedLabelTextStyle: label?.copyWith(
-                      color: colors.onSurfaceVariant,
-                    ),
-                    destinations: destinations,
+                  child: TapRegion(
+                    enabled: navigationTapRegionGroup != null,
+                    groupId: navigationTapRegionGroup,
+                    child: android == null
+                        ? rail
+                        : Theme(
+                            data: theme.copyWith(
+                              splashFactory: NoSplash.splashFactory,
+                              highlightColor: Colors.transparent,
+                            ),
+                            child: rail,
+                          ),
                   ),
                 ),
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
-                  child: IconButton(
-                    icon: const Icon(Icons.search),
-                    tooltip: t.common.search,
-                    onPressed: onSearch,
-                  ),
+                  child: android == null
+                      ? IconButton(
+                          icon: const Icon(Icons.search),
+                          tooltip: t.common.search,
+                          onPressed: onSearch,
+                        )
+                      : AndroidToolbarIconButton(
+                          icon: const Icon(Icons.search),
+                          tooltip: t.common.search,
+                          onPressed: onSearch,
+                        ),
                 ),
               ],
             ),
@@ -864,6 +934,7 @@ class MainNativeTabHost extends StatefulWidget {
     required this.screens,
     required this.navBarHeight,
     required this.navigation,
+    this.navigationTapRegionGroup,
     this.floatingNavigation = true,
     this.handleAndroidBackButtonPress = true,
     this.onAndroidRootBack,
@@ -872,6 +943,7 @@ class MainNativeTabHost extends StatefulWidget {
   final List<Widget> screens;
   final double navBarHeight;
   final Widget navigation;
+  final Object? navigationTapRegionGroup;
   final bool floatingNavigation;
   final bool handleAndroidBackButtonPress;
   final Future<void> Function()? onAndroidRootBack;
@@ -890,16 +962,30 @@ class _MainNativeTabHostState extends State<MainNativeTabHost>
   final _routes = <RouteAndNavigatorSettings>[];
   final _reselection = <TabReselectController>[];
   bool _handlingAndroidBack = false;
+  BreezeScrollNavigationState? _scrollNavigation;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.controller.addListener(_onTabChanged);
+  }
+
+  void _onTabChanged() => setState(() {});
+
+  @override
+  void didUpdateWidget(MainNativeTabHost oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.controller != oldWidget.controller) {
+      oldWidget.controller.removeListener(_onTabChanged);
+      widget.controller.addListener(_onTabChanged);
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.controller.removeListener(_onTabChanged);
     for (final controller in _reselection) {
       controller.dispose();
     }
@@ -921,18 +1007,28 @@ class _MainNativeTabHostState extends State<MainNativeTabHost>
     }
     final navigator = _routes[index].navigatorKey?.currentState;
     if (navigator != null && !navigator.canPop()) {
+      _scrollNavigation?.restore();
       _reselection[index].request();
     }
   }
 
   void _ensureRoutes() {
     while (_routes.length < widget.screens.length) {
+      final index = _routes.length;
       _reselection.add(TabReselectController());
       _routes.add(
         RouteAndNavigatorSettings(
           navigatorKey: GlobalKey<NavigatorState>(),
           navigatorObservers: [
             NativeCompositionObserver(geometryBasedOcclusion: true),
+            _MainTabRouteObserver(() {
+              if (!mounted || widget.controller.index != index) return;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted && widget.controller.index == index) {
+                  _scrollNavigation?.restore();
+                }
+              });
+            }),
           ],
         ),
       );
@@ -959,10 +1055,23 @@ class _MainNativeTabHostState extends State<MainNativeTabHost>
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => BreezeScrollNavigation(
+    content: (widget.controller.index, widget.floatingNavigation),
+    rootTabOnly: true,
+    builder: _buildTabs,
+  );
+
+  Widget _buildTabs(
+    BuildContext context,
+    BreezeScrollNavigationState scrollNavigation,
+  ) {
     _ensureRoutes();
+    _scrollNavigation = scrollNavigation;
     final android = defaultTargetPlatform == TargetPlatform.android;
-    final tabs = PersistentTabView.custom(
+    final keyboardHidesIsland =
+        android && MediaQuery.viewInsetsOf(context).bottom > 0;
+    final overlay = widget.floatingNavigation || scrollNavigation.automatic;
+    final persistentTabs = PersistentTabView.custom(
       context,
       controller: widget.controller,
       screens: [
@@ -972,23 +1081,47 @@ class _MainNativeTabHostState extends State<MainNativeTabHost>
             screen: TabReselectScope(
               controller: _reselection[index],
               child: NativeNavigationInset(
-                bottom: widget.floatingNavigation ? widget.navBarHeight : 0,
+                bottom: overlay && !keyboardHidesIsland
+                    ? widget.navBarHeight
+                    : 0,
                 child: widget.screens[index],
               ),
             ),
           ),
       ],
       itemCount: widget.screens.length,
-      navBarHeight: widget.navBarHeight,
+      // The persistent tab package retains the tab Navigators and fixed-mode
+      // margin. The bar itself lives in our overlay so the package's decorated
+      // slot cannot intercept touches after the bar slides away.
+      navBarHeight: 0,
       confineToSafeArea: false,
-      bottomScreenMargin: widget.floatingNavigation ? 0 : widget.navBarHeight,
-      // The dependency paints this color across the entire custom-bar bounds.
+      bottomScreenMargin: overlay ? 0 : widget.navBarHeight,
       backgroundColor: Colors.transparent,
       handleAndroidBackButtonPress:
           !android && widget.handleAndroidBackButtonPress,
       resizeToAvoidBottomInset: false,
       hideNavigationBarWhenKeyboardAppears: true,
-      customWidget: widget.navigation,
+      customWidget: const SizedBox.shrink(),
+    );
+    final tabs = Stack(
+      fit: StackFit.expand,
+      children: [
+        persistentTabs,
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: widget.navBarHeight,
+          child: scrollNavigation.bar(
+            TapRegion(
+              enabled: widget.navigationTapRegionGroup != null,
+              groupId: widget.navigationTapRegionGroup,
+              child: widget.navigation,
+            ),
+            hideForKeyboard: true,
+          ),
+        ),
+      ],
     );
     if (!android ||
         !widget.handleAndroidBackButtonPress &&
@@ -1005,4 +1138,16 @@ class _MainNativeTabHostState extends State<MainNativeTabHost>
       child: tabs,
     );
   }
+}
+
+class _MainTabRouteObserver extends NavigatorObserver {
+  _MainTabRouteObserver(this.onChange);
+
+  final VoidCallback onChange;
+
+  @override
+  void didChangeTop(
+    Route<dynamic> topRoute,
+    Route<dynamic>? previousTopRoute,
+  ) => onChange();
 }

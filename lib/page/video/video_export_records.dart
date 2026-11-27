@@ -18,6 +18,8 @@ class VideoDownloadRemovalRecords {
   );
   final Map<String, String> _persistedTasks, _sessions, _exports;
   Set<String> get _taskKeys => {..._persistedTasks.keys, ..._sessions.keys};
+  bool get hasTransferRecords =>
+      _persistedTasks.isNotEmpty || _sessions.isNotEmpty;
   final bool hasManagedTransfer;
 }
 
@@ -253,6 +255,7 @@ abstract final class VideoExportRecords {
     String format = 'mp4',
     bool queued = false,
     bool reuseTerminal = false,
+    bool siteQuality = false,
     String? retryItemId,
   }) async {
     final page = VideoLocalResources.resourcePage(video);
@@ -287,7 +290,10 @@ abstract final class VideoExportRecords {
                 row['quality'] == quality &&
                 (row['format'] ?? 'mp4') == format &&
                 (quality.isNotEmpty ||
-                    retryItemId != null && row['retryItemId'] == retryItemId),
+                    siteQuality && row['siteQuality'] == true ||
+                    !siteQuality &&
+                        retryItemId != null &&
+                        row['retryItemId'] == retryItemId),
           )
           .firstOrNull;
       if (previous != null) {
@@ -304,6 +310,7 @@ abstract final class VideoExportRecords {
       'url': page.toString(),
       'title': title.substring(0, title.length.clamp(0, 300)),
       'quality': quality.substring(0, quality.length.clamp(0, 80)),
+      if (siteQuality && quality.isEmpty) 'siteQuality': true,
       'at': now,
       'status': 'preparing',
       'attempt': 1,
@@ -571,7 +578,7 @@ abstract final class VideoExportRecords {
             _recoveredMp4Tasks.containsKey(key))
           return;
         final old = rows[index];
-        for (final field in ['source', 'url', 'quality']) {
+        for (final field in ['source', 'url', 'quality', 'siteQuality']) {
           if (old[field] != expected[field]) return;
         }
         if ((old['format'] ?? 'mp4') != (expected['format'] ?? 'mp4') ||
@@ -814,7 +821,7 @@ abstract final class VideoExportRecords {
       'quality': quality,
       'format': format,
       'resourceId': resourceId,
-    };
+    }..remove('siteQuality');
     _sessionTasks[key] = row;
     await _persistTransfer(row);
   }

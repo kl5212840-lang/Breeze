@@ -1,6 +1,8 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/widgets/task_bottom_sheet.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/network/sync/appearance_image_sync.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 /// Shown only after all conflict previews have been authenticated. Dismissal
 /// returns null; no image decision or mutation is made by opening this sheet.
@@ -23,7 +25,7 @@ Future<Set<String>?> showAppearanceGalleryConflictSheet(
     if (failure != null) throw AppearanceGalleryPreviewUnavailable(failure!);
   }
   if (!context.mounted) return null;
-  return showModalBottomSheet<Set<String>>(
+  return showReadableTaskBottomSheet<Set<String>>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
@@ -50,17 +52,18 @@ class _GalleryConflictSheetState extends State<_GalleryConflictSheet> {
       final removed = widget.conflict.candidates.length - selection.length;
       final confirmed = await showDialog<bool>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
+        builder: (dialogContext) => ShortAlert(
           title: Text(t.settings.appearanceGalleryConfirmTitle),
           content: Text(
             t.settings.appearanceGalleryConfirmHint(count: removed),
           ),
           actions: [
-            TextButton(
+            ShortAlertAction(
               onPressed: () => Navigator.pop(dialogContext, false),
               child: Text(t.common.cancel),
             ),
-            TextButton(
+            ShortAlertAction(
+              destructive: true,
               onPressed: () => Navigator.pop(dialogContext, true),
               child: Text(t.common.remove),
             ),

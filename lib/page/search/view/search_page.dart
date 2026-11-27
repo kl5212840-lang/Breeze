@@ -3,6 +3,8 @@ import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart' hide SearchBar;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
+import 'package:zephyr/page/search/view/jm_search_landing.dart';
 
 import 'package:zephyr/page/search/view/search_scheme_renderer.dart';
 import 'package:zephyr/page/search/view/source_search_landing.dart';
@@ -72,11 +74,19 @@ class _SearchPageState extends State<_SearchPageContent> {
     );
     final experience = asJsonMap(info?['breezeExperience']);
     final hotSearchFunction = experience['searchHotFunction']?.toString() ?? '';
+    final jmDiscovery = widget.aggregateMode
+        ? null
+        : jmSearchDiscoveryFunction(widget.searchState.from, info);
 
     return Scaffold(
       backgroundColor: colorScheme.surface,
       body: SafeArea(
-        child: hotSearchFunction.isNotEmpty && !widget.aggregateMode
+        child: jmDiscovery != null
+            ? JmSearchLanding(
+                source: widget.searchState.from,
+                function: jmDiscovery,
+              )
+            : hotSearchFunction.isNotEmpty && !widget.aggregateMode
             ? SourceSearchLanding(
                 source: widget.searchState.from,
                 hotSearchFunction: hotSearchFunction,

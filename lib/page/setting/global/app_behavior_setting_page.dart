@@ -18,6 +18,7 @@ import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/page/source_shell/source_return_preferences.dart';
 import 'package:zephyr/page/source_shell/source_return_mode_tile.dart';
 import 'package:zephyr/widgets/breeze_switch.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 @RoutePage()
 class AppBehaviorSettingPage extends StatefulWidget {
@@ -520,22 +521,12 @@ class _AppBehaviorSettingPageState extends State<AppBehaviorSettingPage> {
                 fallback: Icons.chevron_right,
               ),
               onTap: () async {
-                final shouldDelete = await showDialog<bool>(
+                final shouldDelete = await confirmShortAlert(
                   context: context,
-                  builder: (context) => AlertDialog(
-                    title: Text(t.common.delete),
-                    content: Text(t.settings.appLockSubtitle),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        child: Text(t.common.cancel),
-                      ),
-                      TextButton(
-                        onPressed: () => Navigator.pop(context, true),
-                        child: Text(t.common.delete),
-                      ),
-                    ],
-                  ),
+                  title: Text(t.common.delete),
+                  content: Text(t.settings.appLockSubtitle),
+                  confirmLabel: t.common.delete,
+                  destructive: true,
                 );
                 if (shouldDelete != true) {
                   return;

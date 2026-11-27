@@ -126,6 +126,9 @@ void setHostCacheGcEnabled({required bool enabled}) =>
 bool isHostCacheGcEnabled() =>
     RustLib.instance.api.crateApiQjsIsHostCacheGcEnabled();
 
+void clearHostResponseCache({String? source}) =>
+    RustLib.instance.api.crateApiQjsClearHostResponseCache(source: source);
+
 void setLogHttpForward({required String url}) =>
     RustLib.instance.api.crateApiQjsSetLogHttpForward(url: url);
 

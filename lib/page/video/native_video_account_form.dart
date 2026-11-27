@@ -7,8 +7,10 @@ import 'package:zephyr/widgets/local_appearance_image_picker.dart';
 import 'package:zephyr/widgets/user_image_editor.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/account/plugin_account_avatar_frame.dart';
 import 'package:zephyr/page/login/login_error_message.dart';
 import 'package:zephyr/page/video/video_thumbnail.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 typedef VideoAccountFormSubmit =
     Future<String> Function(String operation, Map<String, String> values);
@@ -234,23 +236,18 @@ class NativeVideoAccountFormState extends State<NativeVideoAccountForm>
     }
   }
 
-  Future<bool> _confirm(String title, String message) async =>
-      await showAdaptiveDialog<bool>(
+  Future<bool> _confirm(
+    String title,
+    String message, {
+    bool destructive = false,
+  }) async =>
+      await confirmShortAlert(
         context: context,
-        builder: (context) => AlertDialog.adaptive(
-          title: Text(title),
-          content: Text(message),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text(t.common.cancel),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text(t.common.confirm),
-            ),
-          ],
-        ),
+        title: Text(title),
+        content: Text(message),
+        confirmLabel: t.common.confirm,
+        destructive: destructive,
+        adaptiveRoute: true,
       ) ==
       true;
 
@@ -277,6 +274,7 @@ class NativeVideoAccountFormState extends State<NativeVideoAccountForm>
     return _confirm(
       t.videoSiteAccount.discardTitle,
       t.videoSiteAccount.discardBody,
+      destructive: true,
     );
   }
 
@@ -294,6 +292,7 @@ class NativeVideoAccountFormState extends State<NativeVideoAccountForm>
         !await _confirm(
           t.videoSiteAccount.logout,
           t.videoSiteAccount.logoutPrompt,
+          destructive: true,
         )) {
       return;
     }
@@ -566,27 +565,28 @@ class NativeVideoAccountFormState extends State<NativeVideoAccountForm>
                 _heading(t.videoSiteAccount.photo, first: true),
                 Row(
                   children: [
-                    ClipOval(
-                      child: SizedBox(
-                        width: 56,
-                        height: 56,
-                        child: _photo != null
-                            ? Image.memory(
-                                _photo!,
-                                fit: BoxFit.cover,
-                                cacheWidth: 192,
-                              )
-                            : (_metadata['avatarUrl']?.toString().isNotEmpty ??
-                                  false)
-                            ? CollectionCoverPrivacyScope(
-                                enabled: false,
-                                child: VideoThumbnail(
-                                  url: _metadata['avatarUrl'].toString(),
-                                  referrer: widget.page,
-                                ),
-                              )
-                            : const Icon(Icons.person_outline, size: 32),
-                      ),
+                    PluginAccountAvatarFrame(
+                      size: 56,
+                      hasAccount:
+                          _photo != null ||
+                          (_metadata['avatarUrl']?.toString().isNotEmpty ??
+                              false),
+                      child: _photo != null
+                          ? Image.memory(
+                              _photo!,
+                              fit: BoxFit.cover,
+                              cacheWidth: 192,
+                            )
+                          : (_metadata['avatarUrl']?.toString().isNotEmpty ??
+                                false)
+                          ? CollectionCoverPrivacyScope(
+                              enabled: false,
+                              child: VideoThumbnail(
+                                url: _metadata['avatarUrl'].toString(),
+                                referrer: widget.page,
+                              ),
+                            )
+                          : const Icon(Icons.person_outline, size: 32),
                     ),
                     const SizedBox(width: 16),
                     Expanded(

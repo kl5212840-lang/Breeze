@@ -124,6 +124,7 @@ void main() {
         expect(find.text('MAIN NAV').hitTestable(), findsNothing);
         final comics = find.byKey(const ValueKey('comic-download-concurrency'));
         final comicChoice = tester.widget<SettingChoiceTile<int>>(comics);
+        expect(comicChoice.description, isNull);
         expect(comicChoice.items.keys, List.generate(10, (i) => i + 1));
         expect(comicChoice.value, 2);
         comicChoice.onChanged(10);

@@ -3,8 +3,11 @@ import 'dart:convert';
 import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart'
     show normalizePluginId;
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart'
+    show isPluginEndpointUpdating, pluginEndpointRevision;
 
 import 'package:bloc/bloc.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart'
@@ -37,26 +40,43 @@ typedef _BatchWork = ({
   bool Function() isCurrent,
 });
 typedef _ItemWork = ({Future<_CheckResult> result, bool Function() isCurrent});
-typedef _ChapterEvidence = ({
-  int total,
-  Set<String> latestIds,
-  bool hasOrderedChapters,
-  String readId,
-  int? readPosition,
-});
+typedef _ChapterEvidence = ({int total, Set<String> latestIds});
 
 class ComicFollowCubit extends Cubit<ComicFollowState> {
   ComicFollowCubit({
     ComicFollowRepository? repository,
     DateTime Function()? now,
+    SharedPreferences? sortPreferences,
   }) : _repository = repository ?? ComicFollowService.instance,
        _now = now ?? DateTime.now,
-       super(const ComicFollowState()) {
+       _sortPreferences = sortPreferences,
+       super(
+         ComicFollowState(
+           sort:
+               ComicFollowSort.values.asNameMap()[sortPreferences?.get(
+                 _sortPreferenceKey,
+               )] ??
+               ComicFollowSort.lastRead,
+         ),
+       ) {
     loadFromDatabase();
+  }
+
+  static Future<ComicFollowCubit> open() async {
+    SharedPreferences? preferences;
+    try {
+      preferences = await SharedPreferences.getInstance();
+    } catch (error, stack) {
+      logger.w('读取追更排序失败', error: error, stackTrace: stack);
+    }
+    return ComicFollowCubit(sortPreferences: preferences);
   }
 
   final ComicFollowRepository _repository;
   final DateTime Function() _now;
+  static const _sortPreferenceKey = 'breeze.local.comic-follow.sort.v1';
+  final SharedPreferences? _sortPreferences;
+  Future<void>? _sortWrite;
   static const successCheckInterval = Duration(minutes: 15);
   static const automaticBatchLimit = 4;
   static const automaticBatchInterval = Duration(minutes: 1);
@@ -82,22 +102,6 @@ class ComicFollowCubit extends Cubit<ComicFollowState> {
             !item.deleted && (item.lastCheckFailed || isCheckDeferred(item)),
       )
       .length;
-
-  int? readChapterPositionFor(
-    ComicFollow follow,
-    UnifiedComicHistory? history,
-  ) {
-    final evidence = _chapterEvidence[follow.uniqueKey];
-    if (history == null ||
-        evidence == null ||
-        !evidence.hasOrderedChapters ||
-        evidence.total != follow.detectedChapterCount) {
-      return null;
-    }
-    final id = history.chapterId.trim();
-    if (evidence.latestIds.contains(id)) return evidence.total;
-    return id == evidence.readId ? evidence.readPosition : null;
-  }
 
   bool get _checkingActive => _applicationManaged
       ? _applicationForeground
@@ -261,7 +265,19 @@ class ComicFollowCubit extends Cubit<ComicFollowState> {
   }
 
   void setSort(ComicFollowSort sort) {
+    if (state.sort == sort) return;
     emit(state.copyWith(sort: sort));
+    final preferences = _sortPreferences;
+    if (preferences == null) return;
+    _sortWrite = (_sortWrite ?? Future<void>.value()).then((_) async {
+      try {
+        if (!await preferences.setString(_sortPreferenceKey, sort.name)) {
+          throw StateError('Follow sort was not saved');
+        }
+      } catch (error, stack) {
+        logger.w('保存追更排序失败', error: error, stackTrace: stack);
+      }
+    });
   }
 
   Future<void> refreshHistories() async {
@@ -343,6 +359,7 @@ class ComicFollowCubit extends Cubit<ComicFollowState> {
         createdAt: restartedAt ?? existing.createdAt,
         updatedAt: restartedAt ?? now,
       );
+      if (restartedAt != null) follow.lastChapterUpdateAt = null;
     } else {
       follow = ComicFollow(
         uniqueKey: key,
@@ -441,10 +458,16 @@ class ComicFollowCubit extends Cubit<ComicFollowState> {
     return updated;
   }
 
-  Future<void> removeFollow(String source, String comicId) async {
+  Future<bool> removeFollow(
+    String source,
+    String comicId, {
+    ComicFollow? confirmedFollow,
+  }) async {
     final existing = _persistedFollow(source, comicId);
-    if (existing == null) {
-      return;
+    // A confirmation refers to the subscription shown when the dialog opened.
+    if (existing == null ||
+        (confirmedFollow != null && !_sameFollow(confirmedFollow, existing))) {
+      return false;
     }
     final now = _nextFollowEditTime(_now().toUtc(), existing.updatedAt);
     final removed = existing.copyWith(deleted: true, updatedAt: now);
@@ -465,6 +488,7 @@ class ComicFollowCubit extends Cubit<ComicFollowState> {
         lastAttempts: {...state.lastAttempts}..remove(removed.uniqueKey),
       ),
     );
+    return true;
   }
 
   // ObjectBox stores these timestamps at millisecond precision. An explicit
@@ -478,6 +502,54 @@ class ComicFollowCubit extends Cubit<ComicFollowState> {
       previous.millisecondsSinceEpoch + 1,
       isUtc: true,
     );
+  }
+
+  /// Acknowledge only the update represented by the tapped row.
+  Future<bool> markAsRead(ComicFollow shown) async {
+    final index = state.items.indexWhere(
+      (item) => item.uniqueKey == shown.uniqueKey,
+    );
+    final stored = _repository.getFollowByUniqueKey(shown.uniqueKey);
+    if (index < 0 ||
+        stored == null ||
+        !_sameFollow(shown, stored) ||
+        !state.hasUnreadUpdate(shown) ||
+        !state.hasUnreadUpdate(stored) ||
+        stored.detectedChapterCount < shown.detectedChapterCount ||
+        stored.lastChapterCount >= shown.detectedChapterCount) {
+      return false;
+    }
+
+    final items = [...state.items];
+    final displayed = items[index];
+    final marked = _persistReadAcknowledgement(
+      stored,
+      chapterCount: shown.detectedChapterCount,
+      failed: displayed.lastCheckFailed && _sameObservation(displayed, stored),
+      now: _now().toUtc(),
+    );
+    items[index] = marked;
+    emit(state.copyWith(items: items, revision: state.revision + 1));
+    return true;
+  }
+
+  ComicFollow _persistReadAcknowledgement(
+    ComicFollow item, {
+    required int chapterCount,
+    required bool failed,
+    required DateTime now,
+  }) {
+    final marked = item.copyWith(
+      lastChapterCount: chapterCount,
+      hasUpdate: item.detectedChapterCount > chapterCount,
+      lastCheckFailed: failed,
+      updatedAt: _nextFollowEditTime(now, item.updatedAt),
+    );
+    _repository.putFollow(marked);
+    if ((_pendingUpdates[item.uniqueKey] ?? 0) <= chapterCount) {
+      _pendingUpdates.remove(item.uniqueKey);
+    }
+    return marked;
   }
 
   /// 全部标为已读：把每条的 lastChapterCount 对齐到 detectedChapterCount，
@@ -494,15 +566,12 @@ class ComicFollowCubit extends Cubit<ComicFollowState> {
       if (!state.hasUnreadUpdate(item)) {
         return failed ? item.copyWith(lastCheckFailed: true) : item;
       }
-      final marked = item.copyWith(
-        lastChapterCount: item.detectedChapterCount,
-        hasUpdate: false,
-        lastCheckFailed: failed,
-        updatedAt: _nextFollowEditTime(now, item.updatedAt),
+      return _persistReadAcknowledgement(
+        item,
+        chapterCount: item.detectedChapterCount,
+        failed: failed,
+        now: now,
       );
-      _repository.putFollow(marked);
-      _pendingUpdates.remove(marked.uniqueKey);
-      return marked;
     }).toList();
     emit(state.copyWith(items: newItems, revision: state.revision + 1));
   }
@@ -578,16 +647,17 @@ class ComicFollowCubit extends Cubit<ComicFollowState> {
       var updateCount = 0;
       var changed = false, failed = false, skipped = false;
       var next = 0;
-      final consecutiveSourceFailures = <String, int>{};
+      final consecutiveSourceFailures = <(String, int), int>{};
       try {
         do {
           while (active() && next < selected.length) {
             final row = selected[next++];
             final source = normalizePluginId(row.source);
+            final endpoint = (source, pluginEndpointRevision(source));
             // Two transport/service failures are enough for one bulk pass.
             // Leave remaining rows untouched and let other plugins continue.
             // Explicit row retry always bypasses this batch guard.
-            if ((consecutiveSourceFailures[source] ?? 0) >= 2 &&
+            if ((consecutiveSourceFailures[endpoint] ?? 0) >= 2 &&
                 _inflight[row.uniqueKey]?.isCurrent() != true) {
               if (state.lastAttempts[row.uniqueKey] ==
                   attemptsAtStart[row.uniqueKey]) {
@@ -602,12 +672,12 @@ class ComicFollowCubit extends Cubit<ComicFollowState> {
                 (failure == ComicFollowCheckFailure.network ||
                     failure == ComicFollowCheckFailure.sourceUnavailable)) {
               consecutiveSourceFailures.update(
-                source,
+                endpoint,
                 (n) => n + 1,
                 ifAbsent: () => 1,
               );
             } else if (result != _CheckResult.skipped) {
-              consecutiveSourceFailures.remove(source);
+              consecutiveSourceFailures.remove(endpoint);
             }
             switch (result) {
               case _CheckResult.freshUpdate:
@@ -742,10 +812,13 @@ class ComicFollowCubit extends Cubit<ComicFollowState> {
     }
     final source = normalizePluginId(follow.source);
     final session = pluginSessionWriteFence.generation(source);
+    final endpoint = pluginEndpointRevision(source);
     final dataGeneration = _dataGeneration;
     bool ownsRequest() =>
         canContinue() &&
         dataGeneration == _dataGeneration &&
+        !isPluginEndpointUpdating(source) &&
+        endpoint == pluginEndpointRevision(source) &&
         !pluginSessionWriteFence.isChanging(source) &&
         session == pluginSessionWriteFence.generation(source);
     if (!ownsRequest()) {
@@ -784,10 +857,10 @@ class ComicFollowCubit extends Cubit<ComicFollowState> {
       );
     }
     if (!canContinue() || detection == null) return _CheckResult.skipped;
-    // Re-read before committing: removal, re-follow, cloud reload and online
-    // detail/read changes all supersede a snapshot captured before the request.
+    // Re-read before committing. A different subscription or source
+    // observation supersedes the request's snapshot.
     final current = _repository.getFollowByUniqueKey(follow.uniqueKey);
-    if (current == null || !_sameObservation(follow, current)) {
+    if (current == null || !_canCommitCheck(follow, current)) {
       return _CheckResult.skipped;
     }
     final items = [...state.items];
@@ -812,7 +885,6 @@ class ComicFollowCubit extends Cubit<ComicFollowState> {
         current.uniqueKey,
       );
       final readId = history?.chapterId.trim() ?? '';
-      final readPosition = detection.positionOf(readId);
       final latestIds = detection.latestChapterIds;
       final readThroughLatest = latestIds.contains(readId);
       final acknowledged =
@@ -826,6 +898,11 @@ class ComicFollowCubit extends Cubit<ComicFollowState> {
         hasUpdate: detected > acknowledged,
         lastCheckFailed: false,
         updateTime: now,
+        lastChapterUpdateAt:
+            detected > current.detectedChapterCount &&
+                detected > current.lastChapterCount
+            ? now
+            : null,
       );
       _repository.putFollow(updated);
       _failures.remove(follow.uniqueKey);
@@ -833,9 +910,6 @@ class ComicFollowCubit extends Cubit<ComicFollowState> {
       _chapterEvidence[follow.uniqueKey] = (
         total: detected,
         latestIds: latestIds,
-        hasOrderedChapters: detection.hasOrderedChapters,
-        readId: readId,
-        readPosition: readPosition,
       );
       histories = {...histories, follow.uniqueKey: ?history};
       if (history == null) histories.remove(follow.uniqueKey);
@@ -864,24 +938,47 @@ class ComicFollowCubit extends Cubit<ComicFollowState> {
         : _CheckResult.unchanged;
   }
 
-  static bool _sameObservation(ComicFollow expected, ComicFollow current) =>
+  static bool _sameFollow(ComicFollow expected, ComicFollow current) =>
       !current.deleted &&
       current.id == expected.id &&
-      current.createdAt == expected.createdAt &&
-      current.updatedAt == expected.updatedAt &&
+      current.uniqueKey == expected.uniqueKey &&
+      current.createdAt.millisecondsSinceEpoch ==
+          expected.createdAt.millisecondsSinceEpoch;
+
+  static bool _sameSourceObservation(
+    ComicFollow expected,
+    ComicFollow current,
+  ) =>
+      _sameFollow(expected, current) &&
       current.updateTime == expected.updateTime &&
-      current.lastChapterCount == expected.lastChapterCount &&
       current.detectedChapterCount == expected.detectedChapterCount &&
       current.detectedChapterTitle == expected.detectedChapterTitle;
 
+  static bool _sameObservation(ComicFollow expected, ComicFollow current) =>
+      _sameSourceObservation(expected, current) &&
+      current.updatedAt == expected.updatedAt &&
+      current.lastChapterCount == expected.lastChapterCount;
+
+  static bool _canCommitCheck(ComicFollow expected, ComicFollow current) {
+    if (_sameObservation(expected, current)) return true;
+    // An explicit acknowledgement preserves the source observation and can
+    // coexist with a running check. Commit against the new read baseline.
+    return _sameSourceObservation(expected, current) &&
+        expected.hasUpdate &&
+        current.lastChapterCount > expected.lastChapterCount &&
+        current.lastChapterCount <= current.detectedChapterCount &&
+        current.updatedAt.isAfter(expected.updatedAt);
+  }
+
   @override
-  Future<void> close() {
+  Future<void> close() async {
     _pendingUpdates.clear();
     _applicationManaged = true;
     _applicationForeground = false;
     _applicationCheckingOwner = null;
     _pageCheckingOwners.clear();
     _activityGeneration++;
-    return super.close();
+    await super.close();
+    await _sortWrite;
   }
 }

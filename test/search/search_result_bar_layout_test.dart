@@ -10,6 +10,8 @@ import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/page/search_result/view/search_bar.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 
+import '../test_helper.dart';
+
 void main() {
   testWidgets('no advanced capability leaves no blank toolbar slot', (
     tester,
@@ -27,18 +29,42 @@ void main() {
     );
 
     final query = find.byType(SearchResultQueryTitle);
-    final more = find.byType(SourceMoreButton);
     final initialQuery = tester.getRect(query);
-    final initialMore = tester.getRect(more);
-    expect(initialMore.left - initialQuery.right, greaterThanOrEqualTo(0));
+    expect(find.byType(SourceMoreButton), findsNothing);
     expect(find.byType(TextField), findsNothing);
     expect(find.byTooltip(t.search.advancedSearchOptions), findsNothing);
 
     await tester.pumpAndSettle();
     expect(tester.getRect(query), initialQuery);
-    expect(tester.getRect(more), initialMore);
     expect(find.byTooltip(t.search.advancedSearchOptions), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+  testWidgets('category browsing keeps the source menu', (tester) async {
+    await tester.runAsync(TestObjectBoxHelper.setUpTestObjectBox);
+    addTearDown(TestObjectBoxHelper.tearDownTestObjectBox);
+    SharedPreferences.setMockInitialValues({});
+    final cubit = SearchCubit(
+      const SearchStates(
+        from: 'fixture',
+        pluginExtern: {
+          'categories': ['冒险'],
+        },
+      ),
+    );
+    addTearDown(cubit.close);
+    await tester.pumpWidget(
+      BlocProvider.value(
+        value: cubit,
+        child: const MaterialApp(
+          home: Scaffold(appBar: SearchResultBar(searchEvent: SearchEvent())),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('冒险'), findsOneWidget);
+    expect(find.byType(SourceMoreButton), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
   testWidgets('the result title and controls share a center in both styles', (
     tester,
@@ -82,22 +108,18 @@ void main() {
       await tester.pumpAndSettle();
       final title = tester.getRect(find.byType(SearchResultQueryTitle));
       expect(find.byType(TextField), findsNothing);
-      for (final icon in [Icons.arrow_back_ios_new_rounded, Icons.more_horiz]) {
-        final target = tester.getRect(find.widgetWithIcon(IconButton, icon));
-        expect(target.center.dy, closeTo(title.center.dy, .01));
-        expect(target.width, greaterThanOrEqualTo(44));
-        expect(target.height, greaterThanOrEqualTo(44));
-        expect(
-          target.left,
-          greaterThanOrEqualTo(9 + CollectionToolbarMetrics.sourceContentInset),
-        );
-        expect(
-          target.right,
-          lessThanOrEqualTo(
-            320 - 14 - CollectionToolbarMetrics.sourceContentInset,
-          ),
-        );
-      }
+      expect(find.byType(SourceMoreButton), findsNothing);
+      final back = tester.getRect(
+        find.widgetWithIcon(IconButton, Icons.arrow_back_ios_new_rounded),
+      );
+      expect(back.center.dy, closeTo(title.center.dy, .01));
+      expect(back.width, greaterThanOrEqualTo(44));
+      expect(back.height, greaterThanOrEqualTo(44));
+      expect(
+        back.left,
+        greaterThanOrEqualTo(9 + CollectionToolbarMetrics.sourceContentInset),
+      );
+      expect(back.right, lessThanOrEqualTo(title.left));
       expect(tester.takeException(), isNull);
     }
   });

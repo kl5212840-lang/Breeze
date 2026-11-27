@@ -1,4 +1,5 @@
-import 'package:auto_route/auto_route.dart' show AutoRoutePage;
+import 'package:auto_route/auto_route.dart' show AutoRoutePage, AutoRouterX;
+import 'package:zephyr/widgets/task_bottom_sheet.dart';
 import 'package:zephyr/page/video/video_page_route.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
@@ -7,14 +8,18 @@ import 'package:zephyr/service/read_recovery.dart';
 import 'package:zephyr/widgets/read_recovery_scope.dart';
 import 'package:zephyr/widgets/pull_refresh_feedback.dart';
 import 'dart:async';
+import 'package:zephyr/config/router/router.gr.dart';
+import 'package:zephyr/page/comic_list/models/comic_list_scene.dart';
 import 'package:zephyr/page/comic_list/cubit/jm_collection_snapshots.dart';
 import 'package:zephyr/page/source_shell/view/jm_collection_toolbar.dart';
 import 'package:zephyr/service/plugin_account_authentication.dart';
 import 'package:zephyr/service/plugin_account_profiles.dart';
+import 'package:zephyr/service/plugin_account_response.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/page/account/plugin_saved_accounts_page.dart';
 import 'package:zephyr/page/account/plugin_account_avatar_button.dart';
+import 'package:zephyr/page/account/plugin_account_avatar_frame.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/page/source_shell/models/source_video_module.dart';
 import 'package:zephyr/page/source_shell/view/source_profile_video_records.dart';
@@ -41,6 +46,8 @@ import 'package:zephyr/page/source_shell/models/source_profile_avatar.dart';
 import 'package:zephyr/page/source_shell/models/source_profile_records.dart';
 import 'package:zephyr/page/source_shell/view/source_profile_records_view.dart';
 import 'package:zephyr/page/source_shell/view/source_notifications_view.dart';
+import 'package:zephyr/page/source_shell/view/source_jm_account_collections.dart';
+import 'package:zephyr/util/text/chinese_convert.dart';
 import 'package:zephyr/page/video/video_interaction.dart';
 import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:zephyr/service/download/download_asset_store.dart';
@@ -53,6 +60,7 @@ import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/service/local_appearance_images.dart';
 import 'package:zephyr/widgets/local_appearance_image_picker.dart';
 import 'package:zephyr/widgets/user_image_editor.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 enum _ProfileAccountAction { avatar, bio, website, switchAccount }
 
@@ -99,6 +107,8 @@ class SourceProfileContent extends StatelessWidget {
     this.avatarUploadFunction = '',
     this.bioUpdateFunction = '',
     this.profileKind = '',
+    this.jmAccountCollections = false,
+    this.jmSiteWatchHistory = false,
     this.checkinFunction = '',
     this.notificationsFunction = '',
     this.checkinStatusFunction = '',
@@ -121,6 +131,8 @@ class SourceProfileContent extends StatelessWidget {
   final String avatarUploadFunction;
   final String bioUpdateFunction;
   final String profileKind;
+  final bool jmAccountCollections;
+  final bool jmSiteWatchHistory;
   final String checkinFunction;
   final String notificationsFunction;
   final String checkinStatusFunction;
@@ -155,6 +167,8 @@ class SourceProfileContent extends StatelessWidget {
         avatarUploadFunction: avatarUploadFunction,
         bioUpdateFunction: bioUpdateFunction,
         profileKind: profileKind,
+        jmAccountCollections: jmAccountCollections,
+        jmSiteWatchHistory: jmSiteWatchHistory,
         checkinFunction: checkinFunction,
         notificationsFunction: notificationsFunction,
         checkinStatusFunction: checkinStatusFunction,
@@ -239,6 +253,8 @@ class _ProfileBody extends StatefulWidget {
     required this.avatarUploadFunction,
     required this.bioUpdateFunction,
     required this.profileKind,
+    required this.jmAccountCollections,
+    required this.jmSiteWatchHistory,
     required this.checkinFunction,
     required this.notificationsFunction,
     required this.checkinStatusFunction,
@@ -260,6 +276,8 @@ class _ProfileBody extends StatefulWidget {
   final String avatarUploadFunction;
   final String bioUpdateFunction;
   final String profileKind;
+  final bool jmAccountCollections;
+  final bool jmSiteWatchHistory;
   final String checkinFunction;
   final String notificationsFunction;
   final String checkinStatusFunction;
@@ -538,6 +556,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
   }
 
   bool _needsLogin(Object error) {
+    if (error is PluginAccountNeedsLogin) return true;
     try {
       return parseUnauthorizedPayload(error, fallbackPluginId: widget.source) !=
           null;
@@ -783,10 +802,14 @@ class _ProfileBodyState extends State<_ProfileBody> {
         notifyUnauthorized: false,
       );
       if (!current()) return;
+      response = {
+        ...response,
+        'data': readPluginAccountData(widget.source, response),
+      };
       final authentication = PluginAccountAuthenticationService(widget.source);
       if (authentication.hasApiVerification) {
         final proof = widget.source == PluginAccountAuthenticationService.jm
-            ? PluginAccountIdentities.current(widget.source) ??
+            ? PluginAccountAuthenticationService.currentJmProfileIdentity() ??
                   await authentication.verify()
             : authentication.fromServerResponse(response);
         if (!current()) return;
@@ -906,6 +929,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
         await openPluginSavedAccounts(
           context,
           source: widget.source,
+          nativeLoginSupported: true,
           onAddAccount: widget.onAddAccount,
         );
       } else {
@@ -1355,6 +1379,9 @@ class _ProfileBodyState extends State<_ProfileBody> {
             ),
           if (widget.notificationsFunction.isNotEmpty)
             _notificationsEntry(colors),
+          if (widget.profileKind == 'jm' &&
+              (widget.jmAccountCollections || widget.jmSiteWatchHistory))
+            _jmAccountCollections(colors),
           SizedBox(height: _brandHero ? 18 : 8),
           if (!_accountSignedOut) _cloudPreview(),
           _sectionLabel(t.videoSource.localHistory),
@@ -1405,6 +1432,108 @@ class _ProfileBodyState extends State<_ProfileBody> {
           ),
           SizedBox(height: NativeNavigationInset.scrollBottom(context) + 12),
         ],
+      ),
+    );
+  }
+
+  Widget _jmAccountCollections(ColorScheme colors) {
+    final display = watchChineseDisplayConverter(context);
+    final inset = SettingSection.horizontalInsetOf(context);
+    Widget shortcut({
+      required Key key,
+      required IconData icon,
+      required String label,
+      required VoidCallback onPressed,
+    }) => Expanded(
+      child: TextButton(
+        key: key,
+        onPressed: onPressed,
+        style: TextButton.styleFrom(
+          foregroundColor: colors.onSurface,
+          minimumSize: const Size(44, 56),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(12)),
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          spacing: 4,
+          children: [
+            Icon(icon, size: 20, color: colors.primary),
+            Text(
+              label,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+    return Padding(
+      padding: EdgeInsets.fromLTRB(inset, 8, inset, 0),
+      child: Row(
+        spacing: 4,
+        children: [
+          if (widget.jmAccountCollections)
+            for (final collection in [
+              JmAccountCollection.tags,
+              JmAccountCollection.follows,
+            ])
+              shortcut(
+                key: ValueKey('jm-account-${collection.name}'),
+                icon: collection.icon,
+                label: display(collection.title),
+                onPressed: () async {
+                  if (_account == null) await _loginAndReload();
+                  final account = _account;
+                  if (!mounted || account == null || account.id.isEmpty) return;
+                  await openJmAccountCollection(
+                    context,
+                    source: widget.source,
+                    collection: collection,
+                    accountId: account.id,
+                  );
+                },
+              ),
+          if (widget.jmSiteWatchHistory)
+            shortcut(
+              key: const ValueKey('jm-site-watch-history'),
+              icon: Icons.history,
+              label: t.sourceProfile.jmSiteWatchHistory,
+              onPressed: _openJmSiteWatchHistory,
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openJmSiteWatchHistory() async {
+    if (_account == null) await _loginAndReload();
+    final account = _account;
+    final source = widget.source;
+    if (!mounted ||
+        account == null ||
+        account.id.isEmpty ||
+        pluginSessionWriteFence.isChanging(source)) {
+      return;
+    }
+    final title = t.sourceProfile.jmSiteWatchHistory;
+    await context.pushRoute<void>(
+      ComicListRoute(
+        title: title,
+        scene: ComicListScene(
+          title: title,
+          from: source,
+          profileRecords: true,
+          body: ComicListBodyConfig(
+            request: ComicListRequestConfig(
+              fnPath: 'getSiteWatchHistory',
+              core: {'accountId': account.id},
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1520,7 +1649,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
       );
 
   Future<void> _showNoticeDetail(SourceNotice notice) =>
-      showModalBottomSheet<void>(
+      showReadableTaskBottomSheet<void>(
         context: context,
         isScrollControlled: true,
         useRootNavigator: true,
@@ -2092,17 +2221,11 @@ class _ProfileBodyState extends State<_ProfileBody> {
   }) => PluginAccountAvatarButton(
     key: const ValueKey('profile-own-avatar'),
     size: size,
+    hasAccount: account != null,
+    flatRingColor: ring ? foreground.withValues(alpha: .25) : null,
     label: account == null ? t.plugin.accountLogin : t.videoSiteAccount.title,
     onPressed: _canOpenAccount ? _openAccountDetails : null,
-    child: ring
-        ? ColoredBox(
-            color: foreground.withValues(alpha: .25),
-            child: Padding(
-              padding: const EdgeInsets.all(4),
-              child: ClipOval(child: _avatar(account, foreground)),
-            ),
-          )
-        : _avatar(account, foreground),
+    child: _avatar(account, foreground),
   );
 
   Widget _avatar(_Account? account, Color foreground) {
@@ -2142,8 +2265,12 @@ class _ProfileBodyState extends State<_ProfileBody> {
   Future<void> _openRecords(ShelfPageMode mode) async {
     if (_openingRecords) return;
     _openingRecords = true;
-    _refreshRecords();
     final origin = context;
+    final source = widget.source;
+    final sourceName = widget.sourceName;
+    final sources = List<String>.of(widget.sources);
+    final initialEntries = _records.of(mode);
+    final jmCollection = _jmCollections;
     try {
       await Navigator.of(context, rootNavigator: true).push<void>(
         MaterialPageRoute<void>(
@@ -2151,10 +2278,10 @@ class _ProfileBodyState extends State<_ProfileBody> {
           builder: (routeContext) => InheritedTheme.captureAll(
             origin,
             SourceExperienceBoundary(
-              source: widget.source,
+              source: source,
               builder: (_) => BlocProvider(
                 create: (_) {
-                  final scope = SearchStatusState(sources: widget.sources);
+                  final scope = SearchStatusState(sources: sources);
                   return BookshelfSearchCubit(
                     favorite: scope,
                     history: scope,
@@ -2162,11 +2289,12 @@ class _ProfileBodyState extends State<_ProfileBody> {
                   );
                 },
                 child: _SourceComicRecordsDestination(
-                  source: widget.source,
-                  sourceName: widget.sourceName,
+                  source: source,
+                  sourceName: sourceName,
                   mode: mode,
-                  jmCollection: _jmCollections,
-                  read: () => loadSourceProfileRecords(widget.sources).of(mode),
+                  jmCollection: jmCollection,
+                  initialEntries: initialEntries,
+                  read: () => loadSourceProfileRecords(sources).of(mode),
                 ),
               ),
             ),
@@ -2250,14 +2378,9 @@ class _ProfileBodyState extends State<_ProfileBody> {
       title: t.videoSiteAccount.title,
       rows: (sheetContext) => [
         ListTile(
-          leading: SizedBox.square(
-            dimension: 44,
-            child: ClipOval(
-              child: _avatar(
-                account,
-                Theme.of(sheetContext).colorScheme.primary,
-              ),
-            ),
+          leading: PluginAccountAvatarFrame(
+            size: 44,
+            child: _avatar(account, Theme.of(sheetContext).colorScheme.primary),
           ),
           title: Text(
             account.name.isEmpty ? t.videoSource.signedIn : account.name,
@@ -2608,7 +2731,7 @@ class _ProfileBodyState extends State<_ProfileBody> {
   Future<bool> _askAvatarRetry(String reason) async {
     final result = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => ShortAlert(
         title: Text(t.sourceProfile.avatarUploadFailed),
         content: Text(reason),
         actions: [
@@ -2768,11 +2891,13 @@ class _SourceComicRecordsDestination extends StatefulWidget {
     required this.sourceName,
     required this.mode,
     required this.jmCollection,
+    required this.initialEntries,
     required this.read,
   });
   final String source, sourceName;
   final ShelfPageMode mode;
   final bool jmCollection;
+  final List<UnifiedComicListItem> initialEntries;
   final List<UnifiedComicListItem> Function() read;
   @override
   State<_SourceComicRecordsDestination> createState() =>
@@ -2781,11 +2906,12 @@ class _SourceComicRecordsDestination extends StatefulWidget {
 
 class _SourceComicRecordsDestinationState
     extends State<_SourceComicRecordsDestination> {
-  List<UnifiedComicListItem> _entries = const [];
+  late List<UnifiedComicListItem> _entries;
   String? _error;
   @override
   void initState() {
     super.initState();
+    _entries = widget.initialEntries;
     _read();
   }
 

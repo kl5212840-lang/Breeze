@@ -151,6 +151,33 @@ void main() {
   );
 
   test(
+    'an explicit sort keeps order within the pinned and unpinned groups',
+    () {
+      final largest = _video('largest');
+      final olderPin = _video('older-pin');
+      final middle = _video('middle');
+      final newerPin = _video('newer-pin');
+      final rows = [
+        for (final item in [largest, olderPin, middle, newerPin])
+          DownloadCenterDisplayItem(item),
+      ];
+      final pins = {olderPin.key: 1, newerPin.key: 2};
+      expect(DownloadWorkPins.arrange(rows, pins, keepPinnedInputOrder: true), [
+        rows[1],
+        rows[3],
+        rows[0],
+        rows[2],
+      ]);
+      expect(DownloadWorkPins.arrange(rows, pins), [
+        rows[3],
+        rows[1],
+        rows[0],
+        rows[2],
+      ]);
+    },
+  );
+
+  test(
     'rejected and thrown preference writes restore the cached state',
     () async {
       final store = _ControlledPreferences();

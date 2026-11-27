@@ -3,7 +3,7 @@ import 'package:image/image.dart' as img;
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/services.dart' show MethodChannel;
+import 'package:flutter/services.dart' show MethodChannel, MissingPluginException;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -12,6 +12,7 @@ import 'package:zephyr/page/donwload_task/view/download_task.dart';
 import 'package:zephyr/page/donwload_task/view/download_task_cover.dart';
 import 'package:zephyr/page/video/api_video_models.dart';
 import 'package:zephyr/page/video/video_cover_overlay.dart';
+import 'package:zephyr/page/video/video_hls_assets.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/page/video/video_local_resources.dart';
 import 'package:zephyr/page/video/video_downloaded_details.dart';
@@ -40,6 +41,16 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     await useIsolatedDownloadFixture();
     VideoLocalResources.invalidate();
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(VideoHlsAssets.channel, (call) async {
+      if (call.method == 'list') return const [];
+      if (call.method == 'hideTasks') return null;
+      throw MissingPluginException(call.method);
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(VideoHlsAssets.channel, null),
+    );
   });
 
   Future<File> seed({
@@ -226,7 +237,10 @@ void main() {
     expect(localImage(), findsOneWidget);
     expect(find.byType(VideoThumbnail), findsNothing,
       reason: 'a retained local cover does not create a source network thumbnail');
-    expect(tester.getSize(find.byType(DownloadVideoTaskCover)), const Size(88, 132));
+    expect(
+      tester.getSize(find.byType(DownloadVideoTaskCover)),
+      const Size(94, 141),
+    );
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();

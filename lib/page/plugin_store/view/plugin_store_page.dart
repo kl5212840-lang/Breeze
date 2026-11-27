@@ -11,6 +11,10 @@ import 'package:zephyr/page/plugin_store/widgets/cloud_plugin_card.dart';
 import 'package:zephyr/page/plugin_store/widgets/plugin_store_status_banner.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/page/video/native_video_controls.dart';
+import 'package:zephyr/plugin/plugin_install_service.dart';
+import 'package:zephyr/plugin/plugin_registry_service.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/widgets/toast.dart';
 
 @RoutePage()
@@ -59,23 +63,30 @@ class _PluginStorePageContentState extends State<_PluginStorePageContent> {
     return BlocBuilder<PluginStoreCubit, PluginStoreState>(
       builder: (context, state) {
         return Scaffold(
-          appBar: AppBar(
-            leading: const SourceBackButton(),
-            title: Text(t.plugin.store),
+          appBar: sourceSecondaryAppBar(
+            context,
+            title: t.plugin.store,
+            actions: [_buildImportMenu(state.installing)],
           ),
-          body: Align(
-            alignment: Alignment.topCenter,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 800),
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  _buildSearchCard(context, state.installing),
-                  const SizedBox(height: 14),
-                  _buildInstallButtons(state.installing),
-                  const SizedBox(height: 16),
-                  _buildCloudPluginsSection(state),
-                ],
+          body: SafeArea(
+            top: false,
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 800),
+                child: ListView(
+                  padding: const EdgeInsets.all(
+                    CollectionToolbarMetrics.sourceContentInset,
+                  ),
+                  children: [
+                    _buildSearchCard(context, state.installing),
+                    const SizedBox(height: 16),
+                    StreamBuilder(
+                      stream: PluginRegistryService.I.stream,
+                      builder: (context, _) => _buildCloudPluginsSection(state),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -97,30 +108,36 @@ class _PluginStorePageContentState extends State<_PluginStorePageContent> {
     );
   }
 
-  Widget _buildInstallButtons(bool installing) {
-    return Wrap(
-      spacing: 12,
-      runSpacing: 12,
-      children: [
-        OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(
-            minimumSize: const Size(44, 44),
-            alignment: Alignment.center,
-          ),
-          onPressed: installing ? null : _installFromLocal,
-          icon: const Icon(Icons.folder_open_outlined, size: 18),
-          label: Text(t.plugin.localInstall),
-        ),
-        OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(
-            minimumSize: const Size(44, 44),
-            alignment: Alignment.center,
-          ),
-          onPressed: installing ? null : _installFromNetwork,
-          icon: const Icon(Icons.language_outlined, size: 18),
-          label: Text(t.plugin.networkInstall),
-        ),
-      ],
+  Widget _buildImportMenu(bool installing) {
+    final label = t.common.import;
+    return NativeVideoMenu(
+      label: label,
+      tooltip: label,
+      selected: '',
+      options: {
+        if (!installing) ...{
+          'local': t.plugin.localInstall,
+          'network': t.plugin.networkInstall,
+        },
+      },
+      optionIcons: const {
+        'local': (icon: Icons.folder_open_outlined, symbol: 'folder'),
+        'network': (icon: Icons.language_outlined, symbol: 'globe'),
+      },
+      noPageDimming: true,
+      selectAfterDismissal: const {'local', 'network'},
+      onSelected: (action) {
+        if (context.read<PluginStoreCubit>().state.installing) return;
+        if (action == 'local') _installFromLocal();
+        if (action == 'network') _installFromNetwork();
+      },
+      hostTriggerBuilder: (context, onPressed) => SourceChromeIconButton(
+        tooltip: label,
+        bare: !usesSystemSourceChrome(context),
+        icon: Icons.file_download_outlined,
+        symbol: 'square.and.arrow.down',
+        onPressed: onPressed,
+      ),
     );
   }
 
@@ -138,28 +155,28 @@ class _PluginStorePageContentState extends State<_PluginStorePageContent> {
     }).toList();
 
     final hasData = state.cloudPlugins.isNotEmpty;
+    final candidates = context.read<PluginStoreCubit>().cloudBatchCandidates;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (state.installing) ...[
-          PluginStoreStatusBanner(message: state.installMessage),
-          const SizedBox(height: 12),
-        ],
         Row(
           children: [
-            const Icon(Icons.cloud_outlined, size: 18),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                t.plugin.cloudComponents,
-                style: Theme.of(context).textTheme.titleMedium,
+            Flexible(
+              child: Semantics(
+                header: true,
+                child: Text(
+                  t.plugin.cloudComponents,
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
               ),
             ),
+            const SizedBox(width: CollectionToolbarMetrics.searchControlGap),
             SourceChromeIconButton(
               tooltip: t.common.refresh,
+              bare: true,
               busy: state.cloudLoading,
-              onPressed: state.cloudLoading
+              onPressed: state.cloudLoading || state.installing
                   ? null
                   : context.read<PluginStoreCubit>().loadCloudPlugins,
               icon: Icons.refresh_rounded,
@@ -167,7 +184,19 @@ class _PluginStorePageContentState extends State<_PluginStorePageContent> {
             ),
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: CollectionToolbarMetrics.searchControlGap),
+        _buildCloudBatchButtons(
+          candidates,
+          showCounts:
+              !state.cloudLoading &&
+              !state.installing &&
+              (hasData || state.cloudError.trim().isEmpty),
+        ),
+        const SizedBox(height: 12),
+        if (state.installing && state.installMessage.isNotEmpty) ...[
+          PluginStoreStatusBanner(message: state.installMessage),
+          const SizedBox(height: 12),
+        ],
         if (state.cloudLoading && !hasData)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 16),
@@ -187,7 +216,7 @@ class _PluginStorePageContentState extends State<_PluginStorePageContent> {
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
-                  onPressed: state.cloudLoading
+                  onPressed: state.cloudLoading || state.installing
                       ? null
                       : context.read<PluginStoreCubit>().loadCloudPlugins,
                   icon: const Icon(Icons.refresh),
@@ -246,12 +275,180 @@ class _PluginStorePageContentState extends State<_PluginStorePageContent> {
     );
   }
 
+  Widget _buildCloudBatchButtons(
+    Map<CloudPluginBatchAction, List<CloudPluginItem>> candidates, {
+    required bool showCounts,
+  }) {
+    final updates = candidates[CloudPluginBatchAction.update]!;
+    final installs = candidates[CloudPluginBatchAction.install]!;
+    const shape = StadiumBorder();
+    const padding = EdgeInsets.symmetric(horizontal: 12, vertical: 4);
+    final minimumSize = Size.square(
+      CollectionToolbarMetrics.actionExtentOf(context),
+    );
+    const gap = CollectionToolbarMetrics.searchControlGap;
+    const labelKey = ValueKey('plugin-store-batch-actions');
+    final detailStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+    );
+
+    Widget label(String title, String detail) => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(title, textAlign: TextAlign.center),
+        if (showCounts)
+          Text(
+            detail,
+            textAlign: TextAlign.center,
+            style: detailStyle,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+      ],
+    );
+
+    final update = FilledButton.tonal(
+      style: FilledButton.styleFrom(
+        shape: shape,
+        padding: padding,
+        minimumSize: minimumSize,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.standard,
+      ),
+      onPressed: updates.isEmpty
+          ? null
+          : () => _confirmCloudBatch(CloudPluginBatchAction.update, updates),
+      child: label(
+        t.plugin.cloudUpdateAll,
+        updates.isEmpty
+            ? t.plugin.cloudNoUpdates
+            : t.plugin.cloudUpdateCount(count: updates.length),
+      ),
+    );
+    final install = OutlinedButton(
+      style: OutlinedButton.styleFrom(
+        shape: shape,
+        padding: padding,
+        minimumSize: minimumSize,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        visualDensity: VisualDensity.standard,
+      ),
+      onPressed: installs.isEmpty
+          ? null
+          : () => _confirmCloudBatch(CloudPluginBatchAction.install, installs),
+      child: label(
+        t.plugin.cloudInstallAll,
+        installs.isEmpty
+            ? t.plugin.cloudNoInstalls
+            : t.plugin.cloudInstallCount(count: installs.length),
+      ),
+    );
+    return Align(
+      key: labelKey,
+      alignment: AlignmentDirectional.centerStart,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 320),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth < 288 ||
+                MediaQuery.textScalerOf(context).scale(14) > 18) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                spacing: gap,
+                children: [update, install],
+              );
+            }
+            return IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                spacing: gap,
+                children: [
+                  Expanded(child: update),
+                  Expanded(child: install),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  String _cloudBatchLabel(CloudPluginBatchAction action) =>
+      action == CloudPluginBatchAction.update
+      ? t.plugin.cloudUpdateAll
+      : t.plugin.cloudInstallAll;
+
+  Future<void> _confirmCloudBatch(
+    CloudPluginBatchAction action,
+    List<CloudPluginItem> items,
+  ) async {
+    final store = context.read<PluginStoreCubit>();
+    final label = _cloudBatchLabel(action);
+    final updating = action == CloudPluginBatchAction.update;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      useRootNavigator: false,
+      builder: (dialog) => AlertDialog(
+        scrollable: true,
+        title: Text(label),
+        content: Text(
+          updating
+              ? t.plugin.confirmCloudUpdateAll(count: items.length)
+              : t.plugin.confirmCloudInstallAll(count: items.length),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: Text(t.common.cancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialog, true),
+            child: Text(updating ? t.plugin.update : t.plugin.install),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) return;
+
+    final result = await store.installCloudBatch(action, items);
+    if (!mounted || result == null || result.failures.isEmpty) return;
+    if (ModalRoute.of(context)?.isCurrent == false) {
+      showWarningToast(result.message);
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      useRootNavigator: false,
+      builder: (dialog) => AlertDialog(
+        scrollable: true,
+        title: Text(t.plugin.cloudBatchFailureTitle),
+        content: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(result.message),
+            for (final failure in result.failures)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Text('${failure.plugin}\n${failure.reason}'),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog),
+            child: Text(t.common.done),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _confirmCloudReinstall(
     CloudPluginItem item,
     String localVersion,
   ) async {
     final store = context.read<PluginStoreCubit>();
-    final name = item.manifest.name.trim();
     final confirmed = await showDialog<bool>(
       context: context,
       useRootNavigator: false,
@@ -260,7 +457,7 @@ class _PluginStorePageContentState extends State<_PluginStorePageContent> {
         title: Text(t.pluginLifecycle.reinstall),
         content: Text(
           t.plugin.confirmCloudReinstall(
-            name: name.isEmpty ? item.repo.split('/').last : name,
+            name: item.displayName,
             local: localVersion,
             cloud: item.manifest.version,
           ),

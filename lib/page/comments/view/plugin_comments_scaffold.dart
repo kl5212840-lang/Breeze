@@ -3,10 +3,12 @@ import 'package:zephyr/widgets/picture_bloc/picture_recovery_region.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:visibility_detector/visibility_detector.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/page/comments/cubit/cubit.dart';
 import 'package:zephyr/page/comments/model/model.dart';
@@ -41,6 +43,8 @@ class _PluginCommentsScaffoldState extends State<PluginCommentsScaffold> {
   final ScrollController _scrollController = ScrollController();
   CommentsCubit? _commentsCubit;
   bool _composerOpen = false;
+  int _activeReplyPreviews = 0;
+  final _visibleReplyPreviews = <Key, (BuildContext, CommentItem, int)>{};
 
   @override
   void initState() {
@@ -169,19 +173,66 @@ class _PluginCommentsScaffoldState extends State<PluginCommentsScaffold> {
               'comment_${item.id}_${index}_${item.avatarUrl}_${item.avatarPath}',
             ),
             child: Builder(
-              builder: (itemContext) => _buildCommentCell(
-                item,
-                anchorContext: itemContext,
-                cubit: cubit,
-                state: state,
-                isReply: false,
-                keySeed: '$index',
-              ),
+              builder: (itemContext) {
+                final cell = _buildCommentCell(
+                  item,
+                  cubit: cubit,
+                  state: state,
+                  isReply: false,
+                );
+                if (state.replyMode == 'embedded' ||
+                    item.replyCount <= 0 ||
+                    item.replies.isNotEmpty) {
+                  return cell;
+                }
+                final generation = cubit.feedGeneration;
+                return VisibilityDetector(
+                  key: ValueKey(
+                    'comment-preview.$generation.${item.id}.$index',
+                  ),
+                  onVisibilityChanged: (info) {
+                    if (!mounted || !itemContext.mounted) return;
+                    if (info.visibleFraction > 0) {
+                      _visibleReplyPreviews[info.key] = (
+                        itemContext,
+                        item,
+                        generation,
+                      );
+                    } else {
+                      _visibleReplyPreviews.remove(info.key);
+                    }
+                    _drainReplyPreviews(cubit);
+                  },
+                  child: cell,
+                );
+              },
             ),
           );
         },
       ),
     );
+  }
+
+  void _drainReplyPreviews(CommentsCubit cubit) {
+    if (!mounted || cubit.isClosed) return;
+    while (_activeReplyPreviews < 2 && _visibleReplyPreviews.isNotEmpty) {
+      final key = _visibleReplyPreviews.keys.first;
+      final (itemContext, item, generation) = _visibleReplyPreviews.remove(
+        key,
+      )!;
+      if (!itemContext.mounted ||
+          generation != cubit.feedGeneration ||
+          !cubit.needsReplyPreview(item)) {
+        continue;
+      }
+      _activeReplyPreviews++;
+      unawaited(
+        cubit.loadReplyPreview(item).whenComplete(() {
+          _activeReplyPreviews--;
+          _drainReplyPreviews(cubit);
+        }),
+      );
+    }
   }
 
   Widget _wrapBodyContent(Widget child) {
@@ -207,190 +258,169 @@ class _PluginCommentsScaffoldState extends State<PluginCommentsScaffold> {
     required CommentsCubit cubit,
     required CommentsViewState state,
     required bool isReply,
-    required String keySeed,
-    BuildContext? anchorContext,
   }) {
-    final replies = state.replyItems[item.id] ?? const <CommentItem>[];
-    final isExpanded = state.expandedIds.contains(item.id);
-    final canExpand = item.replyCount > 0 || item.replies.isNotEmpty;
-    final loadingReplies = state.replyLoading[item.id] == true;
-    final replyError = cubit.replyError(item.id);
-    final hasReachedMaxReplies = state.replyHasReachedMax[item.id] == true;
+    final theme = Theme.of(context);
+    final secondaryColor = theme.colorScheme.onSurfaceVariant;
+    return Padding(
+      padding: isReply
+          ? const EdgeInsetsDirectional.only(start: 8, top: 4, bottom: 4)
+          : const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildAvatar(item, isReply: isReply),
+          SizedBox(width: isReply ? 8 : 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.authorName.let(convertChineseForDisplay),
+                  style:
+                      (isReply
+                              ? theme.textTheme.labelSmall
+                              : theme.textTheme.labelLarge)
+                          ?.copyWith(color: secondaryColor),
+                ),
+                SizedBox(height: isReply ? 2 : 4),
+                SelectableText(
+                  item.content.let(convertChineseForDisplay),
+                  style: isReply
+                      ? theme.textTheme.bodySmall?.copyWith(
+                          color: secondaryColor,
+                          height: 1.4,
+                        )
+                      : theme.textTheme.bodyMedium?.copyWith(
+                          height: 1.5,
+                          fontSize: 14,
+                        ),
+                ),
+                if (item.createdAt.isNotEmpty ||
+                    state.canCommentReply && !isReply)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          item.createdAt,
+                          style:
+                              (isReply
+                                      ? theme.textTheme.labelSmall
+                                      : theme.textTheme.bodySmall)
+                                  ?.copyWith(color: secondaryColor),
+                        ),
+                      ),
+                      if (state.canCommentReply && !isReply)
+                        IconButton(
+                          tooltip: t.comments.postReply,
+                          onPressed: state.posting
+                              ? null
+                              : () => _postReply(cubit, item),
+                          icon: const Icon(Icons.reply_rounded, size: 18),
+                        ),
+                    ],
+                  ),
+                if (!isReply) _buildReplyThread(item, state, cubit),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-    final colorScheme = Theme.of(context).colorScheme;
-    final textTheme = Theme.of(context).textTheme;
+  Widget _buildReplyThread(
+    CommentItem item,
+    CommentsViewState state,
+    CommentsCubit cubit,
+  ) {
+    final replies = state.replyItems[item.id] ?? item.replies;
+    final isExpanded = state.expandedIds.contains(item.id);
+    final loading = state.replyLoading[item.id] == true;
+    final error = cubit.replyError(item.id);
+    final isComplete =
+        state.replyMode == 'embedded' ||
+        state.replyHasReachedMax[item.id] == true;
+    final count = math.max(item.replyCount, replies.length);
+    final canToggle =
+        isExpanded || count > 0 && (!isComplete || replies.length > 1);
+    if (replies.isEmpty && !canToggle) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+    final actionStyle = TextButton.styleFrom(
+      minimumSize: const Size(44, 44),
+      padding: const EdgeInsetsDirectional.only(end: 8),
+      alignment: AlignmentDirectional.centerStart,
+      textStyle: theme.textTheme.labelMedium,
+    );
+    Widget replyRow(CommentItem reply, int index) => KeyedSubtree(
+      key: ValueKey((reply.id, index, reply.avatarUrl, reply.avatarPath)),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: BorderDirectional(
+            start: BorderSide(color: theme.colorScheme.outlineVariant),
+          ),
+        ),
+        child: _buildCommentCell(
+          reply,
+          cubit: cubit,
+          state: state,
+          isReply: true,
+        ),
+      ),
+    );
 
     return Padding(
-      padding: EdgeInsets.only(
-        left: isReply ? 56 : 16,
-        right: 16,
-        top: 8,
-        bottom: 8,
-      ),
+      padding: const EdgeInsets.only(top: 6),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildAvatar(item, keySeed: keySeed, isReply: isReply),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item.authorName.let(convertChineseForDisplay),
-                      style: textTheme.labelLarge?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    SelectableText(
-                      item.content.let(convertChineseForDisplay),
-                      style: textTheme.bodyMedium?.copyWith(
-                        height: 1.5,
-                        fontSize: 14,
-                      ),
-                    ),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Wrap(
-                            spacing: 8,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              if (item.createdAt.isNotEmpty)
-                                Text(
-                                  item.createdAt,
-                                  style: textTheme.bodySmall?.copyWith(
-                                    color: colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              if (!isReply && canExpand && !isExpanded)
-                                TextButton(
-                                  style: TextButton.styleFrom(
-                                    minimumSize: const Size(44, 44),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 6,
-                                    ),
-                                  ),
-                                  onPressed: () => cubit.toggleReplies(item),
-                                  child: Text(
-                                    t.comments.replyCount(
-                                      count: item.replyCount,
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        if (state.canCommentReply && !isReply)
-                          IconButton(
-                            tooltip: t.comments.postReply,
-                            onPressed: state.posting
-                                ? null
-                                : () => _postReply(cubit, item),
-                            icon: const Icon(Icons.reply_rounded, size: 18),
-                          ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          if (!isReply && isExpanded) ...[
-            if (loadingReplies)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 8),
-                child: SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              ),
-            for (var i = 0; i < replies.length; i++)
-              KeyedSubtree(
-                key: ValueKey(
-                  'reply_${item.id}_${replies[i].id}_${i}_${replies[i].avatarUrl}_${replies[i].avatarPath}',
-                ),
-                child: _buildCommentCell(
-                  replies[i],
-                  cubit: cubit,
-                  state: state,
-                  isReply: true,
-                  keySeed: '$keySeed-$i',
-                ),
-              ),
-            if (replyError != null && !loadingReplies)
-              Padding(
-                padding: const EdgeInsets.only(left: 48, right: 16, bottom: 8),
-                child: TextButton.icon(
-                  key: ValueKey('comment-replies-retry.${item.id}'),
-                  onPressed: () => cubit.retryReplies(item),
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: Text('$replyError · ${t.common.retry}'),
-                ),
-              ),
-            if (replies.isEmpty && !loadingReplies && replyError == null)
-              Padding(
-                padding: const EdgeInsets.only(left: 48, right: 16, bottom: 8),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    t.comments.noReplies,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-              ),
-            if (!hasReachedMaxReplies && !loadingReplies && replyError == null)
-              Padding(
-                padding: const EdgeInsets.only(left: 48, right: 16, bottom: 8),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton(
-                    onPressed: () => cubit.loadMoreReplies(item),
-                    child: Text(t.comments.loadMoreReplies),
-                  ),
-                ),
-              ),
-            Align(
-              alignment: AlignmentDirectional.centerEnd,
-              child: TextButton(
-                key: ValueKey('comment-replies-collapse.${item.id}'),
-                style: TextButton.styleFrom(
-                  minimumSize: const Size(44, 44),
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                ),
-                onPressed: () {
-                  // Keep the parent in view before removing a long reply block.
-                  if (anchorContext != null) {
-                    unawaited(
-                      Scrollable.ensureVisible(
-                        anchorContext,
-                        alignmentPolicy:
-                            ScrollPositionAlignmentPolicy.keepVisibleAtStart,
-                      ),
-                    );
-                  }
-                  cubit.toggleReplies(item);
-                },
-                child: Text(t.comments.collapseReplies),
+          if (replies.isNotEmpty) replyRow(replies.first, 0),
+          if (canToggle)
+            TextButton(
+              key: ValueKey('comment-replies-toggle.${item.id}'),
+              style: actionStyle,
+              onPressed: () => cubit.toggleReplies(item),
+              child: Text(
+                isExpanded
+                    ? t.comments.collapseReplies
+                    : t.comments.replyCount(count: count),
               ),
             ),
+          if (isExpanded) ...[
+            for (var i = 1; i < replies.length; i++) replyRow(replies[i], i),
+            if (loading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            else if (error != null)
+              TextButton(
+                key: ValueKey('comment-replies-retry.${item.id}'),
+                style: actionStyle,
+                onPressed: () => cubit.retryReplies(item),
+                child: Text('$error · ${t.common.retry}'),
+              )
+            else ...[
+              if (replies.isEmpty)
+                Text(t.comments.noReplies, style: theme.textTheme.bodySmall),
+              if (!isComplete)
+                TextButton(
+                  style: actionStyle,
+                  onPressed: () => cubit.loadMoreReplies(item),
+                  child: Text(t.comments.loadMoreReplies),
+                ),
+            ],
           ],
         ],
       ),
     );
   }
 
-  Widget _buildAvatar(
-    CommentItem item, {
-    required String keySeed,
-    bool isReply = false,
-  }) {
-    final size = isReply ? 28.0 : 40.0;
+  Widget _buildAvatar(CommentItem item, {bool isReply = false}) {
+    final size = isReply ? 24.0 : 40.0;
     if (item.avatarUrl.trim().isEmpty && item.avatarPath.trim().isEmpty) {
       return CircleAvatar(
         radius: size / 2,

@@ -173,21 +173,18 @@ class _CoverWidgetState extends State<CoverWidget> {
                 ),
               );
 
+              final fallback = widget.pictureType == PictureType.category
+                  ? _CategoryCoverFallback(icon: widget.categoryFallbackIcon)
+                  : Center(
+                      child: Icon(
+                        Icons.image,
+                        color: colors.onSurfaceVariant,
+                        size: 30,
+                      ),
+                    );
               switch (state.status) {
                 case PictureLoadStatus.initial:
-                  return surface(
-                    widget.pictureType == PictureType.category
-                        ? _CategoryCoverFallback(
-                            icon: widget.categoryFallbackIcon,
-                          )
-                        : Center(
-                            child: Icon(
-                              Icons.image,
-                              color: colors.onSurfaceVariant,
-                              size: 30,
-                            ),
-                          ),
-                  );
+                  return surface(fallback);
                 case PictureLoadStatus.success:
                   final key = (
                     path: state.imagePath!,
@@ -242,10 +239,13 @@ class _CoverWidgetState extends State<CoverWidget> {
                     image: image,
                   );
                 case PictureLoadStatus.failure:
-                  if (widget.pictureType == PictureType.category) {
-                    return surface(
-                      _CategoryCoverFallback(icon: widget.categoryFallbackIcon),
-                    );
+                  if (const {
+                    PictureType.cover,
+                    PictureType.comic,
+                    PictureType.favourite,
+                    PictureType.category,
+                  }.contains(widget.pictureType)) {
+                    return surface(fallback);
                   }
                   if (_bloc.pictureNotFound) {
                     return surface(

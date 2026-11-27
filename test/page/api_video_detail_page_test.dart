@@ -12,22 +12,29 @@ import 'package:zephyr/page/video/api_video_detail_page.dart';
 import 'package:zephyr/page/video/api_video_models.dart';
 import 'package:zephyr/page/video/api_video_repository.dart';
 import 'package:zephyr/page/video/omofun_site_client.dart';
+import 'package:zephyr/page/video/omo_network.dart';
 import 'package:zephyr/page/video/video_interaction.dart';
 import 'package:zephyr/page/video/video_downloaded_details.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/page/video/video_selection_panel.dart';
 import 'package:zephyr/page/video/video_watch_history.dart';
+import 'package:zephyr/page/video/video_download_resolution.dart';
 import 'package:zephyr/page/video/omofun_discussion_panel.dart';
 
 class _PreparationPlayer extends VideoPlayerPlatform {
-  final events = StreamController<VideoEvent>.broadcast();
+  final _events = <int, StreamController<VideoEvent>>{};
+  int _nextPlayer = 0;
+  final played = <int>[];
   final seeks = <Duration>[];
+  Duration position = Duration.zero;
   @override
   Future<void> init() async {}
   @override
   Future<void> setMixWithOthers(bool value) async {}
   @override
   Future<int?> create(DataSource source) async {
+    final id = ++_nextPlayer;
+    final events = _events[id] = StreamController<VideoEvent>.broadcast();
     Timer.run(() {
       if (!events.isClosed)
         events.add(
@@ -38,16 +45,17 @@ class _PreparationPlayer extends VideoPlayerPlatform {
           ),
         );
     });
-    return 1;
+    return id;
   }
 
   @override
-  Stream<VideoEvent> videoEventsFor(int id) => events.stream;
+  Stream<VideoEvent> videoEventsFor(int id) => _events[id]!.stream;
   @override
   Widget buildView(int id) => const ColoredBox(color: Colors.black);
   @override
   Future<void> dispose(int id) async {
-    await events.close();
+    final events = _events.remove(id);
+    if (events != null) unawaited(events.close());
   }
 
   @override
@@ -57,13 +65,13 @@ class _PreparationPlayer extends VideoPlayerPlatform {
   @override
   Future<void> setPlaybackSpeed(int id, double value) async {}
   @override
-  Future<void> play(int id) async {}
+  Future<void> play(int id) async => played.add(id);
   @override
   Future<void> pause(int id) async {}
   @override
   Future<void> seekTo(int id, Duration value) async => seeks.add(value);
   @override
-  Future<Duration> getPosition(int id) async => Duration.zero;
+  Future<Duration> getPosition(int id) async => position;
 }
 
 class _PendingLibrary extends VideoLibraryStore {
@@ -101,6 +109,350 @@ void main() {
     ],
   };
   setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  final probeInterruptions = ValueVariant<bool>({false, true});
+  testWidgets(
+    'passive probes retire on playback interruption or line selection',
+    (tester) async {
+      final selectLine = probeInterruptions.currentValue!;
+      final previous = VideoPlayerPlatform.instance;
+      final player = _PreparationPlayer();
+      VideoPlayerPlatform.instance = player;
+      addTearDown(() => VideoPlayerPlatform.instance = previous);
+      tester.view.physicalSize = const Size(440, 940);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final data = item();
+      (data['lines'] as List).add({
+        'id': '3',
+        'label': 'Third line',
+        'episodes': [
+          {
+            'id': 'third-episode',
+            'title': '第01集',
+            'resolveOnPlayback': true,
+            'watchUrl': '$detail?line=3&episode=third-episode',
+          },
+        ],
+      });
+      final pending = Completer<Map<String, dynamic>>();
+      final foreground = Completer<Map<String, dynamic>>();
+      final replacement = Completer<Map<String, dynamic>>();
+      final cancelAcknowledged = Completer<void>();
+      final calls = <(String, String, bool)>[];
+      Map<String, dynamic> playable(String line, String episode) => {
+        'data': {
+          'item': data,
+          'lineId': line,
+          'episodeId': episode,
+          'watchUrl': '$detail?line=$line&episode=$episode',
+          'sources': [
+            {'url': 'https://fixture.test/video-$line.mp4'},
+          ],
+        },
+      };
+      final repository = ApiVideoRepository(
+        source: 'resolver-interrupted-fixture-$selectLine',
+        home: home,
+        catalogFn: 'list',
+        detailFn: 'item',
+        playbackFn: 'play',
+        cancellableDownloadTransport: true,
+        pluginCall: (fn, args) async {
+          if (fn != 'play') return {'data': data};
+          final line = args['lineId'] as String;
+          final episode = args['episodeId'] as String;
+          final owner = VideoDownloadResolutionOwner.current;
+          final passive = owner?.passive == true;
+          calls.add((line, episode, passive));
+          if (line != '2') return playable(line, episode);
+          if (!passive) return foreground.future;
+          if (calls.length == 2) {
+            if (!selectLine) owner!.onCancel(() => cancelAcknowledged.future);
+            return pending.future;
+          }
+          return replacement.future;
+        },
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ApiVideoDetailPage(
+            repository: repository,
+            initialItem: ApiVideoItem.fromJson(data, home: home),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      player.position = const Duration(seconds: 1);
+      await tester.pump(const Duration(milliseconds: 200));
+      player.position = const Duration(milliseconds: 1500);
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump(const Duration(seconds: 1));
+      expect(calls, [('1', '1', false), ('2', '1', true)]);
+
+      final native = tester.widget<NativeVideoPage>(
+        find.byType(NativeVideoPage),
+      );
+      if (selectLine) {
+        final sourceButton = find.byKey(const ValueKey('api-initial.lines'));
+        await tester.ensureVisible(sourceButton);
+        await tester.tap(sourceButton);
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('video-resource-line.2')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(calls, [('1', '1', false), ('2', '1', true), ('2', '1', false)]);
+        expect(player.played, [1]);
+        pending.complete(playable('3', 'third-episode'));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(calls, hasLength(3));
+        expect(player.played, [1]);
+        final lines = native.resourceLines!(native.session);
+        expect(lines.where((line) => line.current).single.id, '1');
+        expect(lines.singleWhere((line) => line.id == '2').resolving, isTrue);
+        expect(lines.singleWhere((line) => line.id == '2').detail, isEmpty);
+        await tester.pumpWidget(const SizedBox.shrink());
+        foreground.complete(playable('2', '1'));
+        await tester.pump();
+      } else {
+        native.onResolverProbeActivity!(native.session, false);
+        native.onResolverProbeActivity!(native.session, true);
+        await tester.pump(const Duration(seconds: 1));
+        expect(calls, [('1', '1', false), ('2', '1', true)]);
+        cancelAcknowledged.complete();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 800));
+        expect(calls, hasLength(2));
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(calls, [('1', '1', false), ('2', '1', true), ('2', '1', true)]);
+
+        native.onResolverProbeActivity!(native.session, false);
+        native.onResolverProbeActivity!(native.session, true);
+        pending.complete(playable('2', '1'));
+        replacement.complete(playable('2', '1'));
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        expect(calls, hasLength(3));
+        expect(player.played, [1]);
+        final lines = native.resourceLines!(native.session);
+        expect(lines.where((line) => line.current).single.id, '1');
+        expect(lines.singleWhere((line) => line.id == '2').detail, isEmpty);
+      }
+      expect(tester.takeException(), isNull);
+    },
+    variant: probeInterruptions,
+  );
+
+  final probeDisposal = ValueVariant<bool>({false, true});
+  testWidgets('line probes wait for playback and stay serial and disposable', (
+    tester,
+  ) async {
+    final disposeDuringProbe = probeDisposal.currentValue!;
+    final previous = VideoPlayerPlatform.instance;
+    final player = _PreparationPlayer();
+    VideoPlayerPlatform.instance = player;
+    addTearDown(() => VideoPlayerPlatform.instance = previous);
+    tester.view.physicalSize = const Size(440, 940);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final data = item();
+    data['lines'] = [
+      ...data['lines'] as List,
+      for (final line in ['3', '4', '5'])
+        {
+          'id': line,
+          'label': '候选 $line',
+          'episodes': [
+            {
+              'id': '1',
+              'title': '第01集',
+              'resolveOnPlayback': true,
+              'watchUrl': '$detail?line=$line&episode=1',
+            },
+          ],
+        },
+    ];
+    final calls = <(String, bool)>[];
+    final second = Completer<Map<String, dynamic>>();
+    final third = Completer<Map<String, dynamic>>();
+    final slow = Completer<Map<String, dynamic>>();
+    var cancelled = false;
+    Map<String, dynamic> playable(String line) => {
+      'data': {
+        'item': data,
+        'lineId': line,
+        'episodeId': '1',
+        'watchUrl': '$detail?line=$line&episode=1',
+        'sources': [
+          {'url': 'https://fixture.test/video-$line.mp4', 'quality': 'A'},
+        ],
+      },
+    };
+    final repository = ApiVideoRepository(
+      source: 'resolver-measurement-fixture-$disposeDuringProbe',
+      home: home,
+      catalogFn: 'list',
+      detailFn: 'item',
+      playbackFn: 'play',
+      cancellableDownloadTransport: true,
+      pluginCall: (fn, args) async {
+        if (fn != 'play') return {'data': data};
+        final line = args['lineId'] as String;
+        final owner = VideoDownloadResolutionOwner.current;
+        calls.add((line, owner?.passive == true));
+        if (line == '2') return second.future;
+        if (line == '3') {
+          owner!.onCancel(() async {
+            cancelled = true;
+            third.completeError(const VideoResolutionCancelled());
+          });
+          return third.future;
+        }
+        if (line == '4' && owner?.passive == true) {
+          owner!.onCancel(() async {
+            slow.completeError(const VideoResolutionCancelled());
+          });
+          return slow.future;
+        }
+        return playable(line);
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ApiVideoDetailPage(
+          repository: repository,
+          initialItem: ApiVideoItem.fromJson(data, home: home),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 2));
+    expect(calls, [('1', false)]);
+    expect(player.played, [1]);
+    player.position = const Duration(seconds: 1);
+    await tester.pump(const Duration(milliseconds: 200));
+    player.position = const Duration(milliseconds: 1500);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump(const Duration(seconds: 1));
+    expect(calls, [('1', false), ('2', true)]);
+    await tester.pump(const Duration(seconds: 1));
+    expect(calls, [('1', false), ('2', true)]);
+    second.complete(playable('2'));
+    await tester.pump();
+    await tester.pump();
+    expect(calls, [('1', false), ('2', true), ('3', true)]);
+    if (!disposeDuringProbe) {
+      third.completeError(const FormatException('Unavailable fixture line'));
+      await tester.pump();
+      await tester.pump();
+      expect(calls, [('1', false), ('2', true), ('3', true), ('4', true)]);
+      await tester.pump(const Duration(seconds: 8));
+      await tester.pump();
+    }
+    expect(player.played, [1]);
+    for (var n = 0; n < 6; n++) {
+      final native = tester.widget<NativeVideoPage>(
+        find.byType(NativeVideoPage),
+      );
+      final resolved = native.resourceLines!(native.session)
+          .where((line) => line.id == '2')
+          .single;
+      if (resolved.detail.isNotEmpty) break;
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    final sourceButton = find.byKey(const ValueKey('api-initial.lines'));
+    await tester.ensureVisible(sourceButton);
+    await tester.tap(sourceButton);
+    await tester.pumpAndSettle();
+    final measured = find.byKey(const ValueKey('video-resource-line.2'));
+    final measuredRow = tester.widget<ListTile>(measured);
+    expect(measuredRow.selected, isFalse);
+    expect(
+      (measuredRow.subtitle as Text).data,
+      contains(t.videoSource.lineResolved(seconds: '').split(' ').first),
+    );
+    expect(
+      tester
+          .widget<ListTile>(find.byKey(const ValueKey('video-resource-line.1')))
+          .selected,
+      isTrue,
+    );
+    if (!disposeDuringProbe) {
+      final failed = tester.widget<ListTile>(
+        find.byKey(const ValueKey('video-resource-line.3')),
+      );
+      expect(
+        (failed.subtitle as Text).data,
+        contains(
+          t.videoSource
+              .lineResolveFailed(seconds: '')
+              .split(' · ')
+              .first
+              .trim(),
+        ),
+      );
+      final timedOut = tester.widget<ListTile>(
+        find.byKey(const ValueKey('video-resource-line.4')),
+      );
+      expect(
+        (timedOut.subtitle as Text).data,
+        startsWith(
+          t.videoSource.lineResolveTimedOut(seconds: '').split(' · ').first,
+        ),
+      );
+      expect(timedOut.onTap, isNotNull);
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(cancelled, disposeDuringProbe);
+    expect(calls, hasLength(disposeDuringProbe ? 3 : 4));
+    expect(tester.takeException(), isNull);
+  }, variant: probeDisposal);
+
+  testWidgets('short wrapped synopsis can be expanded in video detail', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final synopsis = List.filled(16, 'Short.').join(' ');
+    final data = item(episodes: false)..['description'] = synopsis;
+    final repository = ApiVideoRepository(
+      source: 'detail-multiline',
+      home: home,
+      catalogFn: 'list',
+      detailFn: 'item',
+      playbackFn: 'play',
+      pluginCall: (_, _) async => {'data': data},
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: ApiVideoDetailPage(
+          repository: repository,
+          initialItem: ApiVideoItem.fromJson(data, home: home),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final preview = find.text(synopsis);
+    final expand = find.text(t.videoPlayback.expandDescription);
+    expect(tester.widget<Text>(preview).maxLines, 5);
+    await tester.ensureVisible(expand);
+    await tester.tap(expand);
+    await tester.pumpAndSettle();
+    expect(tester.widget<Text>(preview).maxLines, isNull);
+    expect(find.text(t.videoPlayback.collapseDescription), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   for (final exact in [true, false]) {
     testWidgets('download recovery waits for a choice (exact=$exact)', (
@@ -872,6 +1224,189 @@ void main() {
     );
   }
 
+  testWidgets('manual initial line claims playback before the picker closes', (
+    tester,
+  ) async {
+    final data = item();
+    final original = Completer<Map<String, dynamic>>();
+    final replacement = Completer<Map<String, dynamic>>();
+    final cancelled = Completer<void>();
+    var cancelRequested = false;
+    final requests = <String>[];
+    final previous = VideoPlayerPlatform.instance;
+    final player = _PreparationPlayer();
+    VideoPlayerPlatform.instance = player;
+    addTearDown(() => VideoPlayerPlatform.instance = previous);
+    Map<String, dynamic> playable(String line) => {
+      'data': {
+        'item': data,
+        'lineId': line,
+        'episodeId': '1',
+        'watchUrl': '$detail?line=$line&episode=1',
+        'sources': [
+          {'url': 'https://fixture.test/video-$line.mp4', 'quality': 'A'},
+        ],
+      },
+    };
+    final repo = ApiVideoRepository(
+      source: 'manual-initial-line-fixture',
+      home: home,
+      catalogFn: 'list',
+      detailFn: 'item',
+      playbackFn: 'play',
+      cancellableDownloadTransport: true,
+      pluginCall: (path, args) async {
+        if (path != 'play') return {'data': data};
+        final line = args['lineId'] as String;
+        requests.add(line);
+        if (line == '1') {
+          VideoDownloadResolutionOwner.current!.onCancel(() {
+            cancelRequested = true;
+            return cancelled.future;
+          });
+          return original.future;
+        }
+        return replacement.future;
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ApiVideoDetailPage(
+          repository: repo,
+          initialItem: ApiVideoItem.fromJson(data, home: home),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.byKey(const ValueKey('api-initial.lines')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    final pending = tester.widget<ListTile>(
+      find.byKey(const ValueKey('api-initial.line.1')),
+    );
+    final alternate = tester.widget<ListTile>(
+      find.byKey(const ValueKey('api-initial.line.2')),
+    );
+    expect(pending.selected, isFalse);
+    expect(pending.onTap, isNull);
+    expect((pending.subtitle as Text).data, t.videoSource.lineResolving);
+    expect(alternate.onTap, isNotNull);
+    alternate.onTap!();
+    expect(cancelRequested, isTrue);
+    original.complete(playable('1'));
+    await tester.pump();
+    expect(requests, ['1', '2']);
+    expect(find.byType(NativeVideoPage), findsNothing);
+    expect(player.played, isEmpty);
+    replacement.complete(playable('2'));
+    await tester.pumpAndSettle();
+    final native = tester.widget<NativeVideoPage>(find.byType(NativeVideoPage));
+    expect(native.session.watchUrl.queryParameters['line'], '2');
+    expect(player.played, [1]);
+    expect(requests, ['1', '2']);
+    cancelled.complete();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('media starts while the initial line sheet is still open', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final previous = VideoPlayerPlatform.instance;
+    final media = _PreparationPlayer();
+    VideoPlayerPlatform.instance = media;
+    addTearDown(() => VideoPlayerPlatform.instance = previous);
+
+    final data = item();
+    Map<String, dynamic> playable(String line) => {
+      'data': {
+        'item': data,
+        'lineId': line,
+        'episodeId': '1',
+        'watchUrl': '$detail?line=$line&episode=1',
+        'sources': [
+          {'url': 'https://fixture.test/video-$line.mp4', 'quality': 'A'},
+        ],
+      },
+    };
+    final first = Completer<Map<String, dynamic>>();
+    final requests = <(String, bool)>[];
+    final repo = ApiVideoRepository(
+      source: 'modal-playback',
+      home: home,
+      catalogFn: 'list',
+      detailFn: 'item',
+      playbackFn: 'play',
+      cancellableDownloadTransport: true,
+      pluginCall: (path, args) async {
+        if (path == 'item') return {'data': data};
+        final line = args['lineId'] as String;
+        requests.add((
+          line,
+          VideoDownloadResolutionOwner.current?.passive == true,
+        ));
+        return line == '1' ? first.future : playable(line);
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ApiVideoDetailPage(
+          repository: repo,
+          initialItem: ApiVideoItem.fromJson(data, home: home),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(requests, [('1', false)]);
+    await tester.tap(find.byKey(const ValueKey('api-initial.lines')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    first.complete(playable('1'));
+    for (var index = 0; index < 5; index++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.byType(VideoSelectionPanel), findsOneWidget);
+    expect(media.played, [1]);
+    expect(requests, [('1', false)]);
+
+    media.position = const Duration(seconds: 1);
+    await tester.pump(const Duration(milliseconds: 200));
+    media.position = const Duration(milliseconds: 1500);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(find.byType(VideoSelectionPanel), findsOneWidget);
+    expect(requests, [('1', false), ('2', true)]);
+    expect(media.played, [1]);
+    final alternate = find.byKey(const ValueKey('api-initial.line.2'));
+    expect(
+      (tester.widget<ListTile>(alternate).subtitle as Text).data,
+      contains(t.videoSource.lineResolved(seconds: '').split(' ').first),
+    );
+    await tester.tap(alternate);
+    for (var index = 0; index < 20 && media.played.length < 2; index++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 5)),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(find.byType(VideoSelectionPanel), findsNothing);
+    expect(requests, [('1', false), ('2', true), ('2', false)]);
+    expect(media.played, [1, 2]);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
   testWidgets(
     'pre-player long episode picker stays bounded and scrolls to the last episode',
     (tester) async {
@@ -1002,6 +1537,70 @@ void main() {
       },
     );
   }
+
+  testWidgets('sole OmoFun line accepts a valid 29.5 second resolution', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final previous = VideoPlayerPlatform.instance;
+    VideoPlayerPlatform.instance = _PreparationPlayer();
+    addTearDown(() => VideoPlayerPlatform.instance = previous);
+
+    final data = item();
+    data['lines'] = (data['lines'] as List).take(1).toList();
+    var requests = 0;
+    final repo = ApiVideoRepository(
+      source: omoNetworkSource,
+      home: home,
+      network: Future.value(null),
+      catalogFn: 'list',
+      detailFn: 'item',
+      playbackFn: 'play',
+      pluginCall: (path, args) async {
+        if (path == 'item') return {'data': data};
+        requests++;
+        await Future<void>.delayed(const Duration(milliseconds: 29500));
+        return {
+          'data': {
+            'item': data,
+            'lineId': '1',
+            'episodeId': '1',
+            'watchUrl': '$detail?line=1&episode=1',
+            'sources': [
+              {'url': 'https://fixture.test/video.mp4', 'quality': 'A'},
+            ],
+          },
+        };
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ApiVideoDetailPage(
+          repository: repo,
+          initialItem: ApiVideoItem.fromJson(data, home: home),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(requests, 1);
+
+    await tester.pump(const Duration(milliseconds: 25100));
+    expect(find.byKey(const ValueKey('api-initial.cancel')), findsOneWidget);
+    expect(find.byType(NativeVideoPage), findsNothing);
+
+    await tester.pump(const Duration(milliseconds: 4400));
+    await tester.pump();
+    expect(requests, 1);
+    final player = tester.widget<NativeVideoPage>(find.byType(NativeVideoPage));
+    expect(player.session.watchUrl.toString(), '$detail?line=1&episode=1');
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
 
   testWidgets('a work with no playable episodes still shows its details', (
     tester,

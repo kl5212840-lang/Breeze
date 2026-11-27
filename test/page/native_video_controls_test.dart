@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
+import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_control_colors.dart';
 import 'package:zephyr/widgets/breeze_theme_colors.dart';
 
@@ -98,6 +99,7 @@ void main() {
         }
       }
     },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
 
   testWidgets(
@@ -219,6 +221,58 @@ void main() {
     await tester.tap(find.text('Manage'));
     await tester.pumpAndSettle();
     expect(selected, 'manage');
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  testWidgets('labeled sort aligns its plate and keeps the inset tappable', (
+    tester,
+  ) async {
+    final style = ValueNotifier('breeze');
+    addTearDown(style.dispose);
+    for (final (platform, extent) in [
+      (TargetPlatform.iOS, 44.0),
+      (TargetPlatform.android, 48.0),
+    ]) {
+      String? selected;
+      await tester.pumpWidget(
+        AppInterfaceStyleScope(
+          style: style,
+          child: MaterialApp(
+            theme: ThemeData(platform: platform),
+            home: Scaffold(
+              body: Center(
+                child: NativeVideoMenu(
+                  label: 'Latest',
+                  tooltip: 'Sort',
+                  width: 94,
+                  selected: 'latest',
+                  options: const {'latest': 'Latest', 'earliest': 'Earliest'},
+                  onSelected: (value) => selected = value,
+                  compactTextChoice: true,
+                  hostPresentation: true,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final trigger = find.byTooltip('Sort');
+      final plate = find.descendant(of: trigger, matching: find.byType(Ink));
+      final hitRect = tester.getRect(trigger);
+      expect(hitRect.size, Size(94, extent));
+      expect(tester.getRect(plate), hitRect.deflate(4));
+      final decoration = tester.widget<Ink>(plate).decoration! as BoxDecoration;
+      expect(
+        decoration.color,
+        BreezeControlColors.tool(Theme.of(tester.element(trigger)).colorScheme),
+      );
+      await tester.tapAt(hitRect.topCenter + const Offset(0, 2));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Earliest'));
+      await tester.pumpAndSettle();
+      expect(selected, 'earliest');
+      expect(tester.takeException(), isNull);
+    }
   });
 
   testWidgets(

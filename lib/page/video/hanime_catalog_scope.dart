@@ -64,7 +64,16 @@ enum HanimeRanking {
       .firstOrNull;
 }
 
-enum HanimeCatalogLayout { detail, large, compact }
+enum HanimeCatalogLayout {
+  detail(1),
+  large(2),
+  compact(3);
+
+  const HanimeCatalogLayout(this.columns);
+
+  final int columns;
+  static const minimumGridItemWidth = 108.0;
+}
 
 bool hanimeResultSort(String value) =>
     !HanimeRanking.values.any((rank) => rank.wireValue == value);

@@ -58,9 +58,40 @@ void main() {
       await tester.tap(includeFiles);
       await tester.pumpAndSettle();
       expect(tester.widget<SwitchListTile>(includeFiles).value, isTrue);
+      final confirm = find.byKey(const ValueKey('backup.confirm-export'));
+      final dialog = find.byKey(const ValueKey('backup.export-confirm'));
+      final requestExport = tester.widget<ListTile>(export).onTap!;
       await tester.tap(export);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
+      requestExport();
+      await tester.pumpAndSettle();
+      expect(dialog, findsOneWidget);
+      expect(
+        tester
+            .getSize(
+              find
+                  .descendant(of: dialog, matching: find.byType(Material))
+                  .first,
+            )
+            .width,
+        greaterThanOrEqualTo(280),
+      );
+      expect(
+        find.descendant(
+          of: dialog,
+          matching: find.text(t.backupFlow.downloadsIncluded),
+        ),
+        findsOneWidget,
+      );
+      expect(attempts, isEmpty);
+      await tester.tap(find.widgetWithText(TextButton, t.common.cancel));
+      await tester.pumpAndSettle();
+      expect(dialog, findsNothing);
+      expect(attempts, isEmpty);
+
+      await tester.tap(export);
+      await tester.pumpAndSettle();
+      await tester.tap(confirm);
+      await tester.pumpAndSettle();
       expect(attempts, [true]);
       expect(find.text(t.dataBackup.hlsNotPortable), findsOneWidget);
       expect(find.text(t.dataBackup.exportFailed), findsNothing);
@@ -70,6 +101,10 @@ void main() {
       await tester.tap(includeFiles);
       await tester.pumpAndSettle();
       await tester.tap(export);
+      await tester.pumpAndSettle();
+      expect(find.text(t.backupFlow.exportWithoutDownloads), findsOneWidget);
+      expect(attempts, [true]);
+      await tester.tap(confirm);
       await tester.pumpAndSettle();
       expect(attempts, [true, false]);
     },
@@ -163,6 +198,9 @@ void main() {
           );
           await tester.tap(find.byKey(const ValueKey('backup.export')));
           await tester.pumpAndSettle();
+          expect(exports, isEmpty);
+          await tester.tap(find.byKey(const ValueKey('backup.confirm-export')));
+          await tester.pumpAndSettle();
           expect(exports, [false]);
           await writeUiPreview(
             tester,
@@ -173,6 +211,14 @@ void main() {
           tester.view.physicalSize = const Size(320, 760);
           await tester.pumpWidget(host(2));
           await tester.pumpAndSettle();
+          final export = find.byKey(const ValueKey('backup.export'));
+          await tester.ensureVisible(export);
+          await tester.tap(export);
+          await tester.pumpAndSettle();
+          expect(find.text(t.backupFlow.exportConfirmTitle), findsOneWidget);
+          await tester.tap(find.widgetWithText(TextButton, t.common.cancel));
+          await tester.pumpAndSettle();
+          expect(exports, [false]);
           final merge = find.byKey(const ValueKey('backup.import'));
           expect(find.byKey(const ValueKey('backup.merge')), findsNothing);
           expect(find.byKey(const ValueKey('backup.restore')), findsNothing);
@@ -186,7 +232,7 @@ void main() {
           await tester.tap(merge);
           await tester.pumpAndSettle();
           expect(
-            find.widgetWithText(AlertDialog, t.backupFlow.previewTitle),
+            find.byKey(const ValueKey('backup.import-preview')),
             findsOneWidget,
           );
           expect(

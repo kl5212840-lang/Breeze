@@ -2,11 +2,11 @@
 // not evidence that an account write succeeded on the real site or on iOS.
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
-const {parseHTML} = require(process.argv[2]);
+const {parseHTML, DOMParser} = require(process.argv[2]);
 let source='';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', x => source+=x);
-process.stdin.on('end', () => {
+process.stdin.on('end', async () => {
   const scripts=JSON.parse(source);
   const root='https://hanime1.me';
   const page=root+'/user/7/edit';
@@ -93,5 +93,20 @@ process.stdin.on('end', () => {
   for(const altered of [recovery+'<div class="h-captcha"></div>',recovery.replace('/password/email','https://other.test/password/email'),recovery.replace('</form>','<input name="new-field"></form>')])check(()=>{
     const e=browser(altered,root+'/password/reset');assert.equal(e.run(scripts.recoveryRead).supported,false);assert.equal(e.submitted.length,0);
   });
+  const readIdentity = (status, html, challenge = false) => vm.runInNewContext(scripts.freshIdentity, {
+    location: new URL(root), URL, DOMParser,
+    fetch: async () => ({
+      status, ok: status === 200, url: root + '/',
+      headers: {get: () => challenge ? 'challenge' : null},
+      text: async () => '<html><body>' + html + '</body></html>',
+    }),
+  });
+  const login = '<a href="/login">Login</a>';
+  assert.equal(await readIdentity(401, login), null);
+  checks++;
+  assert.equal(await readIdentity(200, login, true), null);
+  checks++;
+  assert.equal((await readIdentity(200, login)).status, 'signedOut');
+  checks++;
   process.stdout.write(JSON.stringify({structuralChecks:checks,networkRequests:0,realWritesVerified:false}));
 });

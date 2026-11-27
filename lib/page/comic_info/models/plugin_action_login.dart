@@ -9,6 +9,7 @@ import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
 import 'package:zephyr/page/login_page.dart';
 import 'package:zephyr/page/setting/common/setting_page_route.dart';
 import 'package:zephyr/util/event/event.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 /// Recognize an explicit protocol envelope, never a 401 or a message heuristic.
 /// Drop the original message/source: nested errors may include private content.
@@ -80,7 +81,7 @@ Future<bool> requestPluginActionLogin(
 }) async {
   final accepted = await showDialog<bool>(
     context: context,
-    builder: (dialogContext) => AlertDialog(
+    builder: (dialogContext) => ShortAlert(
       title: Text(t.navigation.needLoginTitle),
       content: Text(t.videoCommunity.loginRequired),
       actions: [

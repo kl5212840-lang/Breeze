@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/network/http/plugin/qjs_network_route.dart';
 import 'package:zephyr/util/json/json_value.dart';
 
 const _copySource = 'b28da416-f2d4-4208-a85e-8b4c7c648e48';
@@ -19,6 +20,9 @@ class UnauthorizedPayload {
 
   final String pluginId;
   final String message;
+
+  bool appliesTo(String source) =>
+      canonicalQjsSource(pluginId) == canonicalQjsSource(source);
 }
 
 /// Retains the sign-in requirement after dispatching the navigation event.
@@ -37,7 +41,9 @@ UnauthorizedPayload? parseUnauthorizedPayload(
   required String fallbackPluginId,
   String? function,
 }) {
-  if (error is PluginLoginRequiredException) return error.payload;
+  if (error is PluginLoginRequiredException) {
+    return error.payload.appliesTo(fallbackPluginId) ? error.payload : null;
+  }
   if (error is! AnyhowException) return null;
   final text = error.message.trim().split('\n').first.trimRight();
   // Older Copy bundles throw Ky's raw HTTPError from member/info. Only the
@@ -66,12 +72,13 @@ UnauthorizedPayload? parseUnauthorizedPayload(
       return null;
     }
     final pluginId = parsed['source']?.toString().trim();
-    return UnauthorizedPayload(
+    final payload = UnauthorizedPayload(
       pluginId: pluginId?.isNotEmpty == true ? pluginId! : fallbackPluginId,
       message: parsed['message']?.toString().trim().isNotEmpty == true
           ? parsed['message'].toString().trim()
           : '登录过期，请重新登录',
     );
+    return payload.appliesTo(fallbackPluginId) ? payload : null;
   } catch (_) {
     return null;
   }

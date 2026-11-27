@@ -15,7 +15,7 @@ import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/page/search_result/view/source_search_capabilities.dart';
-import 'package:zephyr/page/search_result/view/source_search_scope_control.dart';
+import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/util/event/event.dart';
@@ -26,13 +26,14 @@ import 'package:zephyr/page/search_result/view/source_list_categories.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
 
 String sourceBrowseTitle(SearchStates state) {
+  if (isBikaRandomResult(state)) return t.searchResult.randomWorks;
   final categories = blockedCategoryNames(state.pluginExtern['categories']);
   if (categories.isNotEmpty) {
     return categories.map(convertChineseForDisplay).join(' · ');
   }
   if (state.pluginExtern['mode'] == 'creator') return '作者作品';
   final url = Uri.tryParse('${state.pluginExtern['url'] ?? ''}');
-  if (url?.path.endsWith('/random') == true) return '随机作品';
+  if (url?.path.endsWith('/random') == true) return t.searchResult.randomWorks;
   final category = url?.queryParameters['c'];
   if (category != null && category.isNotEmpty) {
     return convertChineseForDisplay(category);
@@ -127,13 +128,18 @@ class SearchResultBar extends StatelessWidget implements PreferredSizeWidget {
         context,
         const SourceBackButton(bare: true),
       ),
-      title: SearchResultQueryTitle(
-        key: const ValueKey('search-result.query-title'),
-        title: query.isEmpty ? sourceBrowseTitle(state) : query,
-        onEdit: query.isEmpty ? null : () => _openSearchPage(context),
+      title: Padding(
+        padding: EdgeInsetsDirectional.only(
+          end: query.isEmpty ? 0 : CollectionToolbarMetrics.sourceContentInset,
+        ),
+        child: SearchResultQueryTitle(
+          key: const ValueKey('search-result.query-title'),
+          title: query.isEmpty ? sourceBrowseTitle(state) : query,
+          onEdit: query.isEmpty ? null : () => _openSearchPage(context),
+        ),
       ),
       actionsPadding: CollectionToolbarMetrics.trailingPadding,
-      actions: [SourceMoreButton(source: state.from)],
+      actions: [if (query.isEmpty) SourceMoreButton(source: state.from)],
     );
   }
 
@@ -154,9 +160,18 @@ class SearchResultBar extends StatelessWidget implements PreferredSizeWidget {
   }
 }
 
-/// Search scope and plugin filters belong alongside the result controls.
+/// Plugin filters belong alongside the result controls.
 class SearchResultOptions extends StatefulWidget {
-  const SearchResultOptions({super.key});
+  const SearchResultOptions({
+    super.key,
+    this.onOpenBlockedCategories,
+    this.activeFilters = false,
+    this.labelWidth,
+  });
+
+  final VoidCallback? onOpenBlockedCategories;
+  final bool activeFilters;
+  final double? labelWidth;
 
   @override
   State<SearchResultOptions> createState() => _SearchResultOptionsState();
@@ -183,33 +198,67 @@ class _SearchResultOptionsState extends State<SearchResultOptions> {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<SearchCubit>().state;
-    if (state.from.trim().isEmpty) return const SizedBox.shrink();
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (state.searchKeyword.trim().isNotEmpty &&
-            !state.pluginExtern.containsKey('url') &&
-            state.pluginExtern['mode'] != 'creator')
-          SourceSearchScopeControl(
-            compact: true,
-            onChanged: (_) => context.read<SearchBloc>().add(
-              SearchEvent(searchStates: context.read<SearchCubit>().state),
+    final hasSource = state.from.trim().isNotEmpty;
+    final bloc = context.read<SearchCubit>();
+    const advanced = 'advanced';
+    const blocked = 'blocked';
+    return FutureBuilder<PluginAdvancedSearchScheme?>(
+      future: hasSource ? _schemeFor(state) : null,
+      builder: (context, snapshot) {
+        final options = <String, String>{
+          if (snapshot.connectionState == ConnectionState.done &&
+              snapshot.data != null)
+            advanced: t.search.advancedSearchOptions,
+          if (widget.onOpenBlockedCategories != null)
+            blocked: t.searchResult.blockCategories,
+        };
+        if (options.isEmpty) return const SizedBox.shrink();
+        final width = widget.labelWidth;
+        return ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight: CollectionToolbarMetrics.actionExtentOf(context),
+          ),
+          child: Badge(
+            isLabelVisible: widget.activeFilters,
+            alignment: AlignmentDirectional.topEnd,
+            offset: const Offset(-4, 8),
+            smallSize: 5,
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            child: NativeVideoMenu(
+              key: const ValueKey('search-result.filter'),
+              hostPresentation: true,
+              bare: true,
+              noPageDimming: true,
+              label: width == null ? '' : t.comicList.filter,
+              tooltip: widget.activeFilters
+                  ? '${t.comicList.filter} · ${t.videoFilters.active}'
+                  : t.comicList.filter,
+              icon: width == null ? Icons.tune : null,
+              symbol: width == null ? 'slider.horizontal.3' : '',
+              width: width ?? VideoControlMetrics.touchExtent,
+              compactTextChoice: width != null,
+              selected: '',
+              options: options,
+              optionIcons: const {
+                advanced: (icon: Icons.tune, symbol: 'slider.horizontal.3'),
+                blocked: (icon: Icons.block_outlined, symbol: 'nosign'),
+              },
+              selectAfterDismissal: options.keys.toSet(),
+              onSelected: (value) {
+                if (!mounted || bloc.state.from != state.from) return;
+                if (value == blocked) {
+                  widget.onOpenBlockedCategories?.call();
+                  return;
+                }
+                if (value == advanced) {
+                  _search(context);
+                  return;
+                }
+              },
             ),
           ),
-        FutureBuilder<PluginAdvancedSearchScheme?>(
-          future: _schemeFor(state),
-          builder: (context, snapshot) =>
-              snapshot.connectionState != ConnectionState.done ||
-                  snapshot.data == null
-              ? const SizedBox.shrink()
-              : SourceChromeIconButton(
-                  tooltip: t.search.advancedSearchOptions,
-                  icon: Icons.tune,
-                  symbol: 'slider.horizontal.3',
-                  onPressed: () => _search(context),
-                ),
-        ),
-      ],
+        );
+      },
     );
   }
 
@@ -258,7 +307,7 @@ class _SearchResultOptionsState extends State<SearchResultOptions> {
       }
       return;
     }
-    if (!ownsQuery() || route?.isCurrent == false) {
+    if (!context.mounted || !ownsQuery() || route?.isCurrent == false) {
       return;
     }
     final scheme = loaded;
@@ -320,7 +369,11 @@ class _SearchResultOptionsState extends State<SearchResultOptions> {
       final values = Map<String, dynamic>.from(
         (data['values'] as Map?) ?? const <String, dynamic>{},
       );
-      return PluginAdvancedSearchScheme(fields: fields, values: values);
+      return PluginAdvancedSearchScheme(
+        source: normalizePluginId(from),
+        fields: fields,
+        values: values,
+      );
     } on PluginLoginRequiredException {
       rethrow;
     } catch (_) {

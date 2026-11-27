@@ -7,25 +7,30 @@ void main() {
   final omo = routingSources.first;
   RoutingPlan direct() => RoutingPlan(choices: {omo.id: PluginRoute.direct});
 
-  test(
-    'default adds no rules; all seven public sources use public hosts',
-    () {
-      expect(RoutingPlan().shadowrocketRules, isEmpty);
-      expect(routingSources.length, 7);
-      expect(routingSources.map((s) => s.id).toSet().length, 7);
-      for (final source in routingSources) {
-        for (final host in source.domains) {
-          expect(normalizeRoutingDomain(host), host);
-        }
+  test('default adds no rules; all seven public sources use public hosts', () {
+    expect(RoutingPlan().shadowrocketRules, isEmpty);
+    expect(routingSources.length, 7);
+    expect(routingSources.map((s) => s.id).toSet().length, 7);
+    for (final source in routingSources) {
+      for (final host in source.domains) {
+        expect(normalizeRoutingDomain(host), host);
       }
-      expect(
-        direct().shadowrocketRules,
-        contains('DOMAIN,www.omofuna.com,DIRECT'),
-      );
-      expect(direct().shadowrocketRules, isNot(contains('DOMAIN-SUFFIX')));
-      expect(direct().shadowrocketRules, isNot(contains('github')));
-    },
-  );
+    }
+    expect(
+      direct().shadowrocketRules,
+      contains('DOMAIN,www.omofuna.com,DIRECT'),
+    );
+    expect(direct().shadowrocketRules, isNot(contains('DOMAIN-SUFFIX')));
+    expect(direct().shadowrocketRules, isNot(contains('github')));
+  });
+
+  test('Copy routing export includes the official App API hosts', () {
+    const copy = 'b28da416-f2d4-4208-a85e-8b4c7c648e48';
+    final plan = RoutingPlan(choices: {copy: PluginRoute.proxy});
+    expect(plan.rules, containsPair('api.copy202602.com', PluginRoute.proxy));
+    expect(plan.rules, containsPair('mapi.mangacopy.com', PluginRoute.proxy));
+    expect(plan.rules, containsPair('api.copy4000.com', PluginRoute.proxy));
+  });
 
   test('manual blocks share merge markers and contain only current rules', () {
     expect(

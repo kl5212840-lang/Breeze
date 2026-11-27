@@ -118,11 +118,16 @@ void main() {
         if (object is RenderUiKitView) nativeViews.add(object);
         object.visitChildren(visit);
       }
+
       final subtree = tester.element(views).findRenderObject();
       expect(subtree, isNotNull);
       visit(subtree!);
-      expect(nativeViews, hasLength(1),
-        reason: 'only the real platform view inside the active back button is addressed');
+      expect(
+        nativeViews,
+        hasLength(1),
+        reason:
+            'only the real platform view inside the active back button is addressed',
+      );
       final control = nativeControls[nativeViews.single.viewController.id];
       expect(
         control,
@@ -213,7 +218,9 @@ void main() {
               path: '/',
               initial: true,
               builder: (_, _) => Scaffold(
-                appBar: AppBar(actions: const [SourceMoreButton(source: _source)]),
+                appBar: AppBar(
+                  actions: const [SourceMoreButton(source: _source)],
+                ),
                 body: const Text('Source content'),
               ),
             ),
@@ -240,7 +247,10 @@ void main() {
         if (style == 'system') {
           final nativeMenu = tester.widget<UiKitView>(find.byType(UiKitView));
           final arguments = nativeMenu.creationParams! as Map;
-          expect(arguments['selectAfterDismissal'], contains('__source_settings'));
+          expect(
+            arguments['selectAfterDismissal'],
+            contains('__source_settings'),
+          );
           final control = nativeControls.values.single;
           Future<void> send(String method, Object? value) =>
               messenger.handlePlatformMessage(
@@ -260,7 +270,7 @@ void main() {
           await tester.tap(find.byTooltip(t.sourceShell.navigationActions));
           await tester.pumpAndSettle();
           final menu = routes.pushed.last as PopupRoute<dynamic>;
-          await tester.tap(find.text(t.discover.settings));
+          await tester.tap(find.text(t.plugin.pluginSettings));
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 32));
           expect(menu.animation!.status, AnimationStatus.reverse);
@@ -278,7 +288,10 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.byType(PluginSettingsPage), findsOneWidget);
         await pressBack(tester);
-        expect(tester.element(find.text('Source content')), same(sourceContent));
+        expect(
+          tester.element(find.text('Source content')),
+          same(sourceContent),
+        );
         expect(find.byType(PluginSettingsPage), findsNothing);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
@@ -352,9 +365,14 @@ void main() {
         final playback = find.text(t.videoPlayback.playbackSettings);
         await tester.ensureVisible(playback);
         final rootScroll = find.descendant(
-          of: find.byType(PluginSettingsPage), matching: find.byType(Scrollable));
+          of: find.byType(PluginSettingsPage),
+          matching: find.byType(Scrollable),
+        );
         expect(rootScroll, findsOneWidget);
-        final sourceOffsetBeforeChild = tester.state<ScrollableState>(rootScroll).position.pixels;
+        final sourceOffsetBeforeChild = tester
+            .state<ScrollableState>(rootScroll)
+            .position
+            .pixels;
         await tester.tap(playback);
         await tester.pumpAndSettle();
         expect(find.byType(VideoPlaybackSettingsPage), findsOneWidget);
@@ -379,24 +397,47 @@ void main() {
         await pressBack(tester);
         expect(find.byType(PluginSettingsPage), findsOneWidget);
         final returnedScroll = find.descendant(
-          of: find.byType(PluginSettingsPage), matching: find.byType(Scrollable));
+          of: find.byType(PluginSettingsPage),
+          matching: find.byType(Scrollable),
+        );
         expect(returnedScroll, findsOneWidget);
         final returnedState = tester.state<ScrollableState>(returnedScroll);
         expect(returnedState.widget.axisDirection, AxisDirection.down);
-        expect(returnedState.position.pixels, closeTo(sourceOffsetBeforeChild, .5),
-          reason: 'returning from playback preferences preserves the source settings scroll position');
+        expect(
+          returnedState.position.pixels,
+          closeTo(sourceOffsetBeforeChild, .5),
+          reason:
+              'returning from playback preferences preserves the source settings scroll position',
+        );
         // The source field precedes Access & tools. ensureVisible(playback)
         // left it above the retained viewport, so search toward the head.
-        await tester.scrollUntilVisible(sourceSwitch, -250,
-          scrollable: returnedScroll);
+        await tester.scrollUntilVisible(
+          sourceSwitch,
+          -250,
+          scrollable: returnedScroll,
+        );
         await tester.pumpAndSettle();
-        expect(returnedState.position.pixels, lessThanOrEqualTo(sourceOffsetBeforeChild));
-        final returnedSwitch = find.descendant(of: sourceSwitch,
-          matching: find.byType(Switch));
+        expect(
+          returnedState.position.pixels,
+          lessThanOrEqualTo(sourceOffsetBeforeChild),
+        );
+        final returnedSwitch = find.descendant(
+          of: sourceSwitch,
+          matching: find.byType(Switch),
+        );
         expect(returnedSwitch, findsOneWidget);
         expect(tester.widget<Switch>(returnedSwitch).value, isFalse);
-        expect((jsonDecode(onLoadPluginConfig(_source,
-          'video.refreshExpiredSources', 'true')) as Map)['value'], false);
+        expect(
+          (jsonDecode(
+                onLoadPluginConfig(
+                  _source,
+                  'video.refreshExpiredSources',
+                  'true',
+                ),
+              )
+              as Map)['value'],
+          false,
+        );
         expect(find.text('Retry expired media'), findsOneWidget);
         await pressBack(tester);
         expect(sourceQuery.text, 'retained local query');

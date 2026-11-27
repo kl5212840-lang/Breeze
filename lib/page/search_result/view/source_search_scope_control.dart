@@ -10,11 +10,13 @@ class SourceSearchScopeControl extends StatelessWidget {
     this.onChanged,
     this.compact = false,
     this.aggregate = false,
+    this.fitCurrentLabel = false,
   });
 
   final ValueChanged<KeywordSearchScope>? onChanged;
   final bool compact;
   final bool aggregate;
+  final bool fitCurrentLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -28,6 +30,7 @@ class SourceSearchScopeControl extends StatelessWidget {
           : sourceKeywordSearchScopes(state.from),
       copyTopics: !aggregate && state.from == copyComicSourceId,
       compact: compact,
+      fitCurrentLabel: fitCurrentLabel,
       onChanged: (value) {
         final cubit = context.read<SearchCubit>();
         final current = cubit.state;
@@ -43,7 +46,15 @@ class SourceSearchScopeControl extends StatelessWidget {
         }
         cubit.update(
           current.copyWith(
-            pluginExtern: changeKeywordSearchScope(current.pluginExtern, value),
+            pluginExtern: changeKeywordSearchScope(
+              aggregate
+                  ? current.pluginExtern
+                  : migrateBikaKeywordSearchDraft(
+                      current.from,
+                      current.pluginExtern,
+                    ),
+              value,
+            ),
           ),
         );
         onChanged?.call(value);

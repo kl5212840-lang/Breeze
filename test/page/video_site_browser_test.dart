@@ -313,6 +313,43 @@ void main() {
     );
 
     test(
+      'a transient cookie binding error leaves the same lease retryable',
+      () async {
+        final retry = Completer<Object?>();
+        var binds = 0, reads = 0;
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'accountCookieContext') {
+            binds++;
+            if (binds == 1) throw PlatformException(code: 'COOKIE_BUSY');
+            return retry.future;
+          }
+          if (call.method == 'accountCookiesRead') {
+            reads++;
+            expect((call.arguments as Map)['token'], token);
+            return [cookie];
+          }
+          return true;
+        });
+        final browser = controller();
+        final lease = browser.newAccountCookieLease();
+        await expectLater(
+          lease.read(origin),
+          throwsA(isA<PlatformException>()),
+        );
+
+        final first = lease.read(origin);
+        final second = lease.read(origin);
+        retry.complete(context());
+        expect(await first, [cookie]);
+        expect(await second, [cookie]);
+        expect(binds, 2);
+        expect(reads, 2);
+        await browser.closeAccountCookieAccess();
+        await expectLater(lease.read(origin), throwsStateError);
+      },
+    );
+
+    test(
       'normal native reload does not recreate the source store or clear cookies',
       () async {
         final calls = <MethodCall>[];

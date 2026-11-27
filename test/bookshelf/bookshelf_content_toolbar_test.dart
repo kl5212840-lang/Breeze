@@ -317,6 +317,7 @@ void main() {
             final parent = tester.widget<SourceChromeIconButton>(
               action('back'),
             );
+            expect(parent.bare, isTrue);
             expect(parent.tooltip, t.bookshelf.returnToParent);
             if (style == 'system') {
               parent.onPressed!();

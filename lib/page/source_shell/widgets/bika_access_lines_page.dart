@@ -341,23 +341,6 @@ class _BikaAccessLinesPageState extends State<BikaAccessLinesPage> {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  _checking
-                      ? _text(
-                          '正在检查连接，请稍候。',
-                          'Checking connections. Please wait.',
-                        )
-                      : _lines.isEmpty
-                      ? _text('重新检测后即可选择节点。', 'Check again to choose a node.')
-                      : _text(
-                          '选择后会记住此节点，可在设置中更换。',
-                          'Your choice is remembered. You can change it in settings.',
-                        ),
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
                 const SizedBox(height: 20),
                 if (_checking)
                   Padding(

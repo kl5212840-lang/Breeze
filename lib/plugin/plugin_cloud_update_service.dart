@@ -193,6 +193,7 @@ class PluginCloudUpdateService {
       npmName: npmName,
       sourceLabel: '静默更新: ${cloud.repo}',
       migration: migration,
+      formalRelease: cloud.formalRelease,
     );
     return _applyPluginUpdate(
       target: target,
@@ -299,6 +300,7 @@ class PluginCloudUpdateService {
     required String npmName,
     required String sourceLabel,
     required PluginReleaseMigration? migration,
+    required FormalPluginRelease? formalRelease,
   }) async {
     return _downloadWithRetry(
       expectedUuid: expectedUuid,
@@ -311,6 +313,7 @@ class PluginCloudUpdateService {
         publishedVersion: cloudVersion,
         publishedSha256: scriptSha256,
         migration: migration,
+        formalRelease: formalRelease,
       ),
     );
   }
@@ -381,14 +384,17 @@ class PluginCloudUpdateService {
     String publishedVersion = '',
     String publishedSha256 = '',
     PluginReleaseMigration? migration,
+    FormalPluginRelease? formalRelease,
   }) async {
-    final script = migration == null
-        ? await downloadPluginFromSelfChannel(
+    final script = migration != null
+        ? await downloadFormalPluginMigration(migration)
+        : formalRelease != null
+        ? await downloadFormalPluginRelease(formalRelease)
+        : await downloadPluginFromSelfChannel(
             npmName: npmName,
             updateUrl: updateUrl,
             remoteVersion: remoteVersion,
-          )
-        : await downloadFormalPluginMigration(migration);
+          );
     verifyPublishedPluginScript(script, publishedSha256);
 
     final info = await callGetInfoByGlobalQjs(script);
@@ -399,6 +405,7 @@ class PluginCloudUpdateService {
     final resolvedVersion = readVersionFromInfo(info);
     verifyPublishedPluginVersion(resolvedVersion, publishedVersion);
     migration?.verifyTargetInfo(info);
+    formalRelease?.verifyTargetInfo(info);
     // Catalog declarations are only an early check; downloaded metadata is
     // always checked again before replacing an installed script.
     PluginHostCompatibility.requireCompatibleInfo(

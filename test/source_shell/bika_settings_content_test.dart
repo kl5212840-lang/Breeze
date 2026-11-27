@@ -184,9 +184,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byType(BikaSettingsContent), findsOneWidget);
-      final settingsContext = tester.element(find.byType(BikaSettingsContent));
       final retained = tester.state(find.byType(BikaSettingsContent));
-      final more = tester.widget<NativeVideoMenu>(
+      NativeVideoMenu menu() => tester.widget<NativeVideoMenu>(
         find
             .descendant(
               of: find.byType(SourceMoreButton),
@@ -194,14 +193,15 @@ void main() {
             )
             .first,
       );
-      expect(more.options.containsKey('__source_settings'), isFalse);
+      expect(menu().options.containsKey('__source_settings'), isFalse);
       expect(
-        more.options.values,
+        menu().options.values,
         isNot(contains(t.sourceShell.settingsCenter)),
       );
       await _tapDestination(tester, '首页');
       await tester.pumpAndSettle();
-      await openSourceSettings(settingsContext, source: bikaPlusSourceId);
+      expect(menu().options['__source_settings'], t.plugin.pluginSettings);
+      menu().onSelected('__source_settings');
       await tester.pumpAndSettle();
       expect(tester.state(find.byType(BikaSettingsContent)), same(retained));
       expect(find.byType(SourceShellPage), findsOneWidget);
@@ -354,9 +354,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.widgetWithText(NavigationDestination, t.discover.settings),
-      );
+      await _tapDestination(tester, t.discover.settings);
       await tester.pumpAndSettle();
       final retained = tester.state(find.byType(BikaSettingsContent));
       expect(find.byKey(const ValueKey('bika-image-quality')), findsNothing);
@@ -864,6 +862,10 @@ void main() {
             .byKey(const ValueKey('bika-settings-breeze'))
             .hitTestable();
         expect(appSettings, findsOneWidget);
+        expect(
+          tester.getRect(appSettings).bottom,
+          lessThanOrEqualTo(tester.getRect(_navigation()).top),
+        );
         await tester.tap(appSettings);
         await tester.pumpAndSettle();
         expect(find.byType(GlobalSettingPage), findsOneWidget);

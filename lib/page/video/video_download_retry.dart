@@ -64,7 +64,7 @@ class _Resolver {
 abstract final class VideoDownloadRetry {
   static final _resolvers = <String, List<_Resolver>>{};
   static final _work = <String, _RetryWork>{};
-  static final _refreshingAfterBackground = <String>{};
+  static final _refreshingExpiredAddress = <String>{};
   static bool isPending(String key) =>
       _work.containsKey(key) || VideoExportRecords.isLive(key);
   static bool _terminal(Map<String, dynamic> row) => const {
@@ -77,9 +77,8 @@ abstract final class VideoDownloadRetry {
     'busy',
   }.contains(row['status']);
 
-  /// Recovery needs an exact public episode and a real selected quality.
-  /// Unresolved batch intents and incomplete legacy rows remain viewable, but
-  /// must return to their work rather than exposing a nonfunctional retry.
+  /// Recovery needs an exact public episode and a quality or an explicit
+  /// request to use the site's quality. An empty legacy field is ambiguous.
   static bool canRecover(Map<String, dynamic> row) {
     final source = row['source'], url = row['url'], quality = row['quality'];
     if (source is! String ||
@@ -88,7 +87,10 @@ abstract final class VideoDownloadRetry {
         row['key'] is! String ||
         url is! String ||
         quality is! String ||
-        quality.trim().isEmpty ||
+        (quality.trim().isEmpty &&
+            !(quality.isEmpty &&
+                row['siteQuality'] == true &&
+                row['resourceId'] == null)) ||
         quality.length > 80)
       return false;
     final page = Uri.tryParse(url);
@@ -146,21 +148,28 @@ abstract final class VideoDownloadRetry {
     unawaited(_resumeAfterNetwork(key, attempt, source, accountGeneration));
   }
 
-  static void refreshAfterBackground(
+  static void refreshExpiredAddress(
     String key, {
     required int attempt,
     required String source,
     required int accountGeneration,
   }) {
-    if (!_refreshingAfterBackground.add(key)) return;
+    final hasVisit =
+        _resolvers[source]?.any((entry) => entry.current()) ?? false;
+    if (!hasVisit &&
+        (!SourceNetworkPolicies.supports(source) ||
+            navigatorKey.currentState?.overlay == null)) {
+      return;
+    }
+    if (!_refreshingExpiredAddress.add(key)) return;
     unawaited(
       _resumeAfterNetwork(
         key,
         attempt,
         source,
         accountGeneration,
-        refreshAfterBackground: true,
-      ).whenComplete(() => _refreshingAfterBackground.remove(key)),
+        refreshExpiredAddress: true,
+      ).whenComplete(() => _refreshingExpiredAddress.remove(key)),
     );
   }
 
@@ -169,7 +178,7 @@ abstract final class VideoDownloadRetry {
     int attempt,
     String source,
     int accountGeneration, {
-    bool refreshAfterBackground = false,
+    bool refreshExpiredAddress = false,
   }) async {
     final cancelled = Completer<void>();
     final installation = SourceNetworkPolicies.supports(source)
@@ -204,8 +213,8 @@ abstract final class VideoDownloadRetry {
             (row) =>
                 row['key'] == key &&
                 row['attempt'] == attempt &&
-                (refreshAfterBackground
-                    ? const {401, 403}.contains(row['httpStatus'])
+                (refreshExpiredAddress
+                    ? const {401, 403, 404, 410}.contains(row['httpStatus'])
                     : DownloadNetworkWait.fromCode(row['failureReason']) !=
                           null),
           )
@@ -235,7 +244,7 @@ abstract final class VideoDownloadRetry {
         cancelResolution: () => VideoDownloadRetryHosts.cancel(source, owner),
         expectedAccountGeneration: accountGeneration,
       );
-      if (refreshAfterBackground && queued) {
+      if (refreshExpiredAddress && queued) {
         final retriedAttempt = VideoExportRecords.currentAttempt(key);
         if (retriedAttempt != null) {
           await VideoSystemDownload.waitForQueuedTaskToSettle(
@@ -249,7 +258,7 @@ abstract final class VideoDownloadRetry {
     } finally {
       installation?.changes.removeListener(installationChanged);
       await boundaries.cancel();
-      if (!refreshAfterBackground)
+      if (!refreshExpiredAddress)
         VideoExportRecords.releaseNetworkWait(key, attempt);
     }
   }
@@ -266,14 +275,6 @@ abstract final class VideoDownloadRetry {
     if (!canRetry(row)) return false;
     final key = row['key'] as String;
     if (_work.containsKey(key) || VideoExportRecords.isLive(key)) return false;
-    final source = row['source'], raw = row['url'], quality = row['quality'];
-    if (source is! String ||
-        source.isEmpty ||
-        raw is! String ||
-        videoPlaybackIdentity(Uri.tryParse(raw) ?? Uri()) == null ||
-        quality is! String ||
-        quality.isEmpty)
-      return false;
     final work = _RetryWork(
       Map<String, dynamic>.from(row),
       fallback,
@@ -348,13 +349,9 @@ class _RetryWork {
       attachment = candidate;
 
     final reset = await runExclusiveStorageOperation(() {
-      final expectedGeneration =
-          expectedAccountGeneration ??
-          (attachment != null ? accountGeneration : null);
-      if (expectedGeneration != null &&
-          (pluginSessionWriteFence.isChanging(source) ||
-              pluginSessionWriteFence.generation(source) !=
-                  expectedGeneration)) {
+      final expectedGeneration = expectedAccountGeneration ?? accountGeneration;
+      if (pluginSessionWriteFence.isChanging(source) ||
+          pluginSessionWriteFence.generation(source) != expectedGeneration) {
         return Future<Map<String, dynamic>?>.value();
       }
       return VideoExportRecords.restartTransfer(
@@ -488,7 +485,10 @@ class _RetryWork {
             return await resolve(request);
           } on VideoDownloadResolutionFailure catch (error) {
             final recovery = fallback;
-            if (error.reason != 'verificationRequired' ||
+            if (!const {
+                  'verificationRequired',
+                  'sourceVisitRequired',
+                }.contains(error.reason) ||
                 usingFallback ||
                 recovery == null ||
                 cancelResolution == null ||
@@ -532,16 +532,19 @@ class _RetryWork {
                   )
           ? 'hls'
           : 'mp4';
-      final choice = resolution!.choices
-          .where(
-            (choice) =>
-                choice.label == original['quality'] &&
-                (choice.url.path.toLowerCase().endsWith('.m3u8')
-                        ? 'hls'
-                        : 'mp4') ==
-                    expectedFormat,
-          )
-          .firstOrNull;
+      final choice =
+          original['quality'] == '' && original['siteQuality'] == true
+          ? resolution!.choices.firstOrNull
+          : resolution!.choices
+                .where(
+                  (choice) =>
+                      choice.label == original['quality'] &&
+                      (choice.url.path.toLowerCase().endsWith('.m3u8')
+                              ? 'hls'
+                              : 'mp4') ==
+                          expectedFormat,
+                )
+                .firstOrNull;
       if (choice == null) {
         if (resolution!.choices.any(
           (value) => value.label == original['quality'],

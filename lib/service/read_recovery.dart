@@ -2,6 +2,7 @@ import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
 import 'dart:async';
 import 'dart:io';
 
+import 'package:zephyr/service/http_retry_after.dart';
 import 'package:zephyr/service/image_recovery.dart';
 import 'package:zephyr/network/source_network_policy.dart';
 import 'package:zephyr/util/error_filter.dart';
@@ -13,23 +14,12 @@ Duration readRetryAfterDelay(
   Object error, {
   Duration fallback = const Duration(seconds: 45),
   DateTime? now,
-}) {
-  final value = RegExp(
-    r'retry-after[ :=]+([^\r\n]+)',
-    caseSensitive: false,
-  ).firstMatch(error.toString())?.group(1)?.trim();
-  if (value == null) return fallback;
-  final seconds = int.tryParse(value);
-  if (seconds != null && seconds >= 0) return Duration(seconds: seconds);
-  try {
-    final delay = HttpDate.parse(value).difference(now ?? DateTime.now());
-    return delay.isNegative ? Duration.zero : delay;
-  } on FormatException {
-    return fallback;
-  } on HttpException {
-    return fallback;
-  }
-}
+}) =>
+    httpRetryAfterDelay(
+      quickJsErrorMessage(error) ?? error.toString(),
+      now: now ?? DateTime.now(),
+    ) ??
+    fallback;
 
 /// Page reads need positive transient evidence. Login, verification and malformed
 /// plugin responses require user/source changes, never a periodic retry.
@@ -41,20 +31,21 @@ bool readFailureIsTransient(Object error) {
   if (error is PluginLoginRequiredException) return false;
   if (error is ReadFailureEvidence) return error.retryable;
   if (error is FormatException || error is ArgumentError) return false;
-  final text = normalizeSearchErrorMessage(error).toLowerCase();
+  if (error is TimeoutException ||
+      error is SocketException ||
+      error is HandshakeException) {
+    return true;
+  }
+  final text =
+      (quickJsErrorMessage(error) ?? normalizeSearchErrorMessage(error))
+          .toLowerCase();
   if (RegExp(
     r'需要登录|请.{0,3}登录|登录.{0,3}(过期|失效)|未登录|验证码|验证后|人机验证|权限|unauthorized|forbidden|captcha|login required|not logged in|please (?:log|sign) in|sessionchanged|账号状态已变化|cancel|superseded|invalid response|malformed|解析失败|格式错误|不兼容',
   ).hasMatch(text))
     return false;
-  final status = RegExp(
-    r'(?:http(?:\s+error)?|status(?:code)?[ :=]*)\s*([1-5]\d\d)|\b(401|403|404|408|425|429|5\d\d)\b',
-  ).firstMatch(text);
-  final code = status == null ? null : int.tryParse(status[1] ?? status[2]!);
-  if (code != null)
-    return code == 408 || code == 425 || code == 429 || code >= 500;
-  return error is SocketException ||
-      error is TimeoutException ||
-      isTransientNetworkError(error) ||
+  final code = reportedHttpStatus(error);
+  if (code != null) return isTransientHttpStatus(code);
+  return isTransientNetworkError(error) ||
       RegExp(
         r'网络|连接.{0,4}(中断|失败|超时)|服务.{0,3}(暂时|繁忙)|temporarily unavailable',
       ).hasMatch(text);
@@ -119,15 +110,18 @@ class ReadRecoveryController {
 
   void failed(Object error) {
     _error = error;
-    final text = error.toString().toLowerCase();
-    if (RegExp(r'\b429\b').hasMatch(text)) {
+    final message = quickJsErrorMessage(error) ?? error.toString();
+    final code = reportedHttpStatus(error);
+    if (code != null && isTransientHttpStatus(code)) {
       final now = DateTime.now();
-      final retryAt = now.add(
-        readRetryAfterDelay(error, fallback: slowDelay, now: now),
-      );
-      _sourceRetryAfter.removeWhere((_, deadline) => !deadline.isAfter(now));
-      final previous = _sourceRetryAfter[source];
-      if (retryAt.isAfter(previous ?? now)) _sourceRetryAfter[source] = retryAt;
+      final serverDelay = httpRetryAfterDelay(message, now: now);
+      if (serverDelay != null || code == 429) {
+        final retryAt = now.add(serverDelay ?? slowDelay);
+        _sourceRetryAfter.removeWhere((_, deadline) => !deadline.isAfter(now));
+        final previous = _sourceRetryAfter[source];
+        if (retryAt.isAfter(previous ?? now))
+          _sourceRetryAfter[source] = retryAt;
+      }
     }
     _invalidated = false;
     if (!_eligible) {

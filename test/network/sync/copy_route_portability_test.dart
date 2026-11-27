@@ -104,36 +104,38 @@ void main() {
     objectbox.userSettingBox.put(user);
   });
 
-  test(
-    'cloud restore preserves Copy local route results and refreshes a changed request platform',
-    () async {
-      final local = _config('大陆专线1', '1', 'local');
-      objectbox.pluginConfigBox.put(
-        PluginConfig(name: copyPluginConfigSource, config: jsonEncode(local)),
-      );
-      final remote = _config('auto', '3', 'remote');
-      final restore = await _restore(remote);
-      final rows = restore.compatibilityPayload['pluginConfigs'] as List;
-      expect(jsonDecode(rows.single['config'] as String), {
-        'api.domain': 'auto',
-        'api.platform': '3',
-      });
+  for (final mode in ['auto', 'auto-speed']) {
+    test(
+      'cloud restore to $mode preserves Copy local results and refreshes a changed request platform',
+      () async {
+        final local = _config('大陆专线1', '1', 'local');
+        objectbox.pluginConfigBox.put(
+          PluginConfig(name: copyPluginConfigSource, config: jsonEncode(local)),
+        );
+        final remote = _config(mode, '3', 'remote');
+        final restore = await _restore(remote);
+        final rows = restore.compatibilityPayload['pluginConfigs'] as List;
+        expect(jsonDecode(rows.single['config'] as String), {
+          'api.domain': mode,
+          'api.platform': '3',
+        });
 
-      final before = pluginEndpointRevision(copyPluginConfigSource);
-      final changed = pluginEndpointChanges.firstWhere(
-        (source) => source == copyPluginConfigSource,
-      );
-      objectbox.store.runInTransaction(TxMode.write, restore.persistDatabase);
-      await changed.timeout(const Duration(seconds: 2));
-      final active = readHostPluginConfiguration(copyPluginConfigSource);
-      expect(pluginEndpointRevision(copyPluginConfigSource), before + 1);
-      expect(active['api.domain'], 'auto');
-      expect(active['api.platform'], '3');
-      expect(active[_winner], '大陆专线1');
-      expect(active[_speed], {'device': 'local'});
-      expect(pluginConfigFieldRevision(active, _speed), 101);
-    },
-  );
+        final before = pluginEndpointRevision(copyPluginConfigSource);
+        final changed = pluginEndpointChanges.firstWhere(
+          (source) => source == copyPluginConfigSource,
+        );
+        objectbox.store.runInTransaction(TxMode.write, restore.persistDatabase);
+        await changed.timeout(const Duration(seconds: 2));
+        final active = readHostPluginConfiguration(copyPluginConfigSource);
+        expect(pluginEndpointRevision(copyPluginConfigSource), before + 1);
+        expect(active['api.domain'], mode);
+        expect(active['api.platform'], '3');
+        expect(active[_winner], '大陆专线1');
+        expect(active[_speed], {'device': 'local'});
+        expect(pluginConfigFieldRevision(active, _speed), 101);
+      },
+    );
+  }
 
   test(
     'remote route measurements alone neither replace this Copy winner nor refresh the account',
@@ -156,4 +158,38 @@ void main() {
       expect(pluginEndpointRevision(copyPluginConfigSource), before);
     },
   );
+
+  for (final (previous, selected) in [
+    ('auto', 'auto-speed'),
+    ('auto-speed', 'auto'),
+  ]) {
+    test(
+      'restoring Copy $selected over $previous keeps the winner until the effective route changes',
+      () async {
+        const source = copyPluginConfigSource;
+        final local = _config(previous, '1', 'local');
+        objectbox.pluginConfigBox.put(
+          PluginConfig(name: source, config: jsonEncode(local)),
+        );
+        final restore = await _restore(_config(selected, '1', 'remote'));
+        final before = pluginEndpointRevision(source);
+        final effectiveBefore = effectivePluginEndpointRevision(source);
+        objectbox.store.runInTransaction(TxMode.write, restore.persistDatabase);
+        await Future<void>.delayed(Duration.zero);
+
+        final active = readHostPluginConfiguration(source);
+        expect(active['api.domain'], selected);
+        expect(active[_winner], local[_winner]);
+        expect(active[_speed], local[_speed]);
+        expect(pluginEndpointRevision(source), before);
+        expect(effectivePluginEndpointRevision(source), effectiveBefore);
+
+        final changed = pluginEndpointChanges.firstWhere((id) => id == source);
+        await savePluginConfigValue(source, _winner, '国际服2');
+        await changed.timeout(const Duration(seconds: 2));
+        expect(pluginEndpointRevision(source), before + 1);
+        expect(effectivePluginEndpointRevision(source), before + 1);
+      },
+    );
+  }
 }

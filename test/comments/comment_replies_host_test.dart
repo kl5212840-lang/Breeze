@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:visibility_detector/visibility_detector.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/comments/cubit/comments_cubit.dart';
@@ -26,7 +29,13 @@ Map<String, dynamic> _feed() => {
 void main() {
   setUpAll(TestObjectBoxHelper.setUpTestObjectBox);
   tearDownAll(TestObjectBoxHelper.tearDownTestObjectBox);
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    final controller = VisibilityDetectorController.instance;
+    final savedInterval = controller.updateInterval;
+    controller.updateInterval = Duration.zero;
+    addTearDown(() => controller.updateInterval = savedInterval);
+  });
   testWidgets(
     'a failed reply read is inline retry, never no-replies; retry keeps the original parent ID',
     (tester) async {
@@ -50,8 +59,13 @@ void main() {
         return {
           'data': {
             'commentId': 'parent-31',
-            'items': [_row('reply-7', 'Reply body')],
-            'paging': {'hasReachedMax': true},
+            'items': core['page'] == 2
+                ? [_row('reply-9', 'Paginated reply')]
+                : [
+                    _row('reply-7', 'Reply body'),
+                    _row('reply-8', 'Second reply'),
+                  ],
+            'paging': {'hasReachedMax': core['page'] == 2},
           },
         };
       }
@@ -70,6 +84,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      expect(calls, ['getCommentFeed', 'loadCommentReplies']);
       await tester.tap(find.text(t.comments.replyCount(count: 2)));
       await tester.pumpAndSettle();
       expect(find.text(t.comments.noReplies), findsNothing);
@@ -87,26 +102,212 @@ void main() {
         'loadCommentReplies',
         'loadCommentReplies',
       ]);
-      final collapse = find.text(t.comments.collapseReplies);
-      expect(collapse, findsOneWidget);
+      final toggle = find.byKey(
+        const ValueKey('comment-replies-toggle.parent-31'),
+      );
+      final collapsePosition = tester.getTopLeft(toggle);
+      expect(find.text(t.comments.collapseReplies), findsOneWidget);
       expect(
-        tester.getTopLeft(collapse).dy,
+        collapsePosition.dy,
         greaterThan(tester.getBottomLeft(find.text('Reply body')).dy),
       );
       expect(
-        tester.getCenter(collapse).dx,
-        greaterThan(tester.getCenter(find.text('Reply body')).dx),
+        collapsePosition.dy,
+        lessThan(tester.getTopLeft(find.text('Second reply')).dy),
       );
-      await tester.tap(collapse);
-      await tester.pumpAndSettle();
-      expect(find.text('Reply body'), findsNothing);
-      await tester.tap(find.text(t.comments.replyCount(count: 2)));
+      await tester.tap(toggle);
       await tester.pumpAndSettle();
       expect(find.text('Reply body'), findsOneWidget);
+      expect(find.text('Second reply'), findsNothing);
+      expect(tester.getTopLeft(toggle), collapsePosition);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(find.text('Reply body'), findsOneWidget);
+      expect(find.text('Second reply'), findsOneWidget);
+      expect(tester.getTopLeft(toggle), collapsePosition);
       expect(calls.length, 3);
+      await tester.tap(find.text(t.comments.loadMoreReplies));
+      await tester.pumpAndSettle();
+      expect(calls.length, 4);
+      expect(find.text('Paginated reply'), findsOneWidget);
+      expect(find.text(t.comments.loadMoreReplies), findsNothing);
+      expect(tester.getTopLeft(toggle), collapsePosition);
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('lazy previews load for visible parents with bounded reads', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(360, 440));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final settings = GlobalSettingCubit();
+    addTearDown(settings.close);
+    final reads = <String, Completer<Map<String, dynamic>>>{};
+    await tester.pumpWidget(
+      BlocProvider.value(
+        value: settings,
+        child: MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(1.4)),
+            child: child!,
+          ),
+          home: PluginCommentsScaffold(
+            from: 'preview-fixture',
+            comicId: 'work',
+            comicTitle: 'Work',
+            pluginCall:
+                ({
+                  required from,
+                  required fnPath,
+                  required core,
+                  required extern,
+                }) async {
+                  if (fnPath == 'getCommentFeed') {
+                    return {
+                      'data': {
+                        ..._feed()['data'] as Map,
+                        'items': [
+                          for (var i = 0; i < 3; i++)
+                            _row('parent-$i', 'Parent $i', count: 2),
+                          for (var i = 0; i < 14; i++)
+                            _row('spacer-$i', 'Other comment $i'),
+                          _row('far-parent', 'Far parent', count: 2),
+                        ],
+                      },
+                    };
+                  }
+                  expect(fnPath, 'loadCommentReplies');
+                  expect(core['page'], 1);
+                  final id = core['commentId'] as String;
+                  expect(reads, isNot(contains(id)));
+                  return (reads[id] = Completer()).future;
+                },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(reads.keys, ['parent-0', 'parent-1']);
+
+    void finish(String id) {
+      reads[id]!.complete({
+        'data': {
+          'commentId': id,
+          'items': [
+            _row('$id-preview', 'Preview $id'),
+            _row('$id-extra', 'Extra $id'),
+          ],
+          'paging': {'hasReachedMax': true},
+        },
+      });
+    }
+
+    finish('parent-0');
+    await tester.pumpAndSettle();
+    expect(reads.keys, ['parent-0', 'parent-1', 'parent-2']);
+    expect(find.text('Preview parent-0'), findsOneWidget);
+    expect(find.text('Extra parent-0'), findsNothing);
+    finish('parent-1');
+    finish('parent-2');
+    await tester.pumpAndSettle();
+
+    for (var i = 0; i < 8 && !reads.containsKey('far-parent'); i++) {
+      await tester.drag(find.byType(ListView), const Offset(0, -300));
+      await tester.pumpAndSettle();
+    }
+    expect(reads.keys, ['parent-0', 'parent-1', 'parent-2', 'far-parent']);
+    finish('far-parent');
+    await tester.pumpAndSettle();
+    expect(find.text('Preview far-parent').hitTestable(), findsOneWidget);
+    expect(find.text('Extra far-parent'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('embedded replies start with one compact preview', (
+    tester,
+  ) async {
+    final settings = GlobalSettingCubit();
+    addTearDown(settings.close);
+    final calls = <String>[];
+    await tester.pumpWidget(
+      BlocProvider.value(
+        value: settings,
+        child: MaterialApp(
+          theme: ThemeData.dark(),
+          home: PluginCommentsScaffold(
+            from: 'embedded-fixture',
+            comicId: 'work',
+            comicTitle: 'Work',
+            pluginCall:
+                ({
+                  required from,
+                  required fnPath,
+                  required core,
+                  required extern,
+                }) async {
+                  calls.add(fnPath);
+                  return {
+                    'data': {
+                      ..._feed()['data'] as Map,
+                      'replyMode': 'embedded',
+                      'items': [
+                        {
+                          ..._row('parent-31', 'Parent', count: 2),
+                          'createdAt': '10:05',
+                          'replies': [
+                            _row('reply-7', 'Preview'),
+                            _row('reply-8', 'Second embedded reply'),
+                          ],
+                        },
+                      ],
+                    },
+                  };
+                },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final parent = find.widgetWithText(SelectableText, 'Parent');
+    final preview = find.widgetWithText(SelectableText, 'Preview');
+    final second = find.text('Second embedded reply');
+    final toggle = find.byKey(
+      const ValueKey('comment-replies-toggle.parent-31'),
+    );
+    expect(preview, findsOneWidget);
+    expect(second, findsNothing);
+    final parentStyle = tester.widget<SelectableText>(parent).style!;
+    final previewStyle = tester.widget<SelectableText>(preview).style!;
+    expect(previewStyle.fontSize, lessThan(parentStyle.fontSize!));
+    expect(
+      previewStyle.color,
+      Theme.of(tester.element(preview)).colorScheme.onSurfaceVariant,
+    );
+    expect(
+      tester.getTopLeft(preview).dx,
+      greaterThan(tester.getTopLeft(parent).dx),
+    );
+    expect(
+      tester.getTopLeft(preview).dy,
+      greaterThan(tester.getBottomLeft(find.text('10:05')).dy),
+    );
+    final position = tester.getTopLeft(toggle);
+    expect(position.dx, tester.getTopLeft(parent).dx);
+    expect(tester.getSize(toggle).height, greaterThanOrEqualTo(44));
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(second, findsOneWidget);
+    expect(tester.getTopLeft(toggle), position);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(preview, findsOneWidget);
+    expect(second, findsNothing);
+    expect(tester.getTopLeft(toggle), position);
+    expect(calls, ['getCommentFeed']);
+  });
 
   testWidgets('a failed submission keeps the composer and typed draft', (
     tester,

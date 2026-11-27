@@ -41,19 +41,18 @@ bool isDownloadCancelSignaled(String taskKey) {
   return completer?.isCompleted ?? false;
 }
 
+Future<void> waitForDownloadCancelSignal(String taskKey) =>
+    _downloadCancelSignals.putIfAbsent(taskKey, Completer<void>.new).future;
+
 Future<T> raceWithDownloadCancel<T>(String taskKey, Future<T> future) async {
   if (isDownloadCancelSignaled(taskKey)) {
     throw const DownloadTaskCancelledException();
   }
 
-  final completer = _downloadCancelSignals.putIfAbsent(
-    taskKey,
-    () => Completer<void>(),
-  );
   return Future.any([
     future,
-    completer.future.then<T>(
-      (_) => throw const DownloadTaskCancelledException(),
-    ),
+    waitForDownloadCancelSignal(
+      taskKey,
+    ).then<T>((_) => throw const DownloadTaskCancelledException()),
   ]);
 }

@@ -276,7 +276,8 @@ void main() {
         await tester.pumpAndSettle();
         await tester.tap(find.text('return to history'));
         await tester.pumpAndSettle();
-        await _openSearch(tester);
+        expect(_search, findsOneWidget);
+        expect(tester.widget<TextField>(_search).focusNode?.hasFocus, isFalse);
         expect(
           tester.widget<SearchQueryField>(find.byType(SearchQueryField)).query,
           'ALP',

@@ -21,6 +21,7 @@ import 'package:zephyr/widgets/action_feedback.dart';
 import 'package:zephyr/widgets/touch_hover_intent.dart';
 import 'package:zephyr/page/source_shell/widgets/bika_image_quality_setting.dart';
 import 'package:zephyr/page/source_shell/widgets/bika_category_grid_settings.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 /// Embedded source destination: the source shell owns the only app bar/back
 /// control. Existing destinations retain their own execution and safety rules.
@@ -129,15 +130,16 @@ class _BikaSettingsContentState extends State<BikaSettingsContent> {
     try {
       final confirmed = await showDialog<bool>(
         context: context,
-        builder: (context) => AlertDialog(
+        builder: (context) => ShortAlert(
           title: Text(t.sourceShell.bikaLogoutTitle),
           content: Text(t.sourceShell.bikaLogoutMessage),
           actions: [
-            TextButton(
+            ShortAlertAction(
               onPressed: () => Navigator.of(context).pop(false),
               child: Text(t.common.cancel),
             ),
-            TextButton(
+            ShortAlertAction(
+              destructive: true,
               onPressed: () => Navigator.of(context).pop(true),
               child: Text(t.sourceShell.bikaLogout),
             ),

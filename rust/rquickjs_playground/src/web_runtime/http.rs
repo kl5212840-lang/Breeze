@@ -241,6 +241,81 @@ fn http_promise_cancel_senders() -> &'static Mutex<HashMap<u64, oneshot::Sender<
     HTTP_PROMISE_CANCEL_SENDERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+struct HttpReadScopeEntry {
+    runtime: String,
+    group: String,
+    canceled: tokio::sync::watch::Sender<bool>,
+}
+
+fn http_read_scopes() -> &'static Mutex<HashMap<String, HttpReadScopeEntry>> {
+    static SCOPES: OnceLock<Mutex<HashMap<String, HttpReadScopeEntry>>> = OnceLock::new();
+    SCOPES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Host-owned authorization for an idempotent page read. The opaque token is
+/// forwarded by cooperating plugin calls across their JavaScript awaits.
+pub struct HttpReadScope {
+    token: String,
+}
+
+impl HttpReadScope {
+    pub fn new(runtime: &str, group: &str) -> Self {
+        let token = Uuid::new_v4().to_string();
+        let (canceled, _) = tokio::sync::watch::channel(false);
+        http_read_scopes().lock().unwrap().insert(
+            token.clone(),
+            HttpReadScopeEntry {
+                runtime: runtime.to_owned(),
+                group: group.to_owned(),
+                canceled,
+            },
+        );
+        Self { token }
+    }
+
+    pub fn token(&self) -> &str {
+        &self.token
+    }
+}
+
+impl Drop for HttpReadScope {
+    fn drop(&mut self) {
+        http_read_scopes().lock().unwrap().remove(&self.token);
+    }
+}
+
+pub fn cancel_http_read_group(runtime: &str, group: &str) {
+    for entry in http_read_scopes().lock().unwrap().values() {
+        if entry.runtime == runtime && entry.group == group {
+            entry.canceled.send_replace(true);
+        }
+    }
+}
+
+pub(crate) fn http_read_scope_active(token: String) -> bool {
+    http_read_scopes()
+        .lock()
+        .unwrap()
+        .get(&token)
+        .is_some_and(|entry| !*entry.canceled.borrow())
+}
+
+async fn scoped_read_canceled(token: Option<String>, idempotent: bool) {
+    let Some(token) = token.filter(|_| idempotent) else {
+        return std::future::pending().await;
+    };
+    let receiver = http_read_scopes()
+        .lock()
+        .unwrap()
+        .get(&token)
+        .map(|entry| entry.canceled.subscribe());
+    if let Some(mut receiver) = receiver {
+        // Closing the owner invalidates the token even while a plugin is
+        // suspended in JavaScript before a later retry.
+        let _ = receiver.wait_for(|canceled| *canceled).await;
+    }
+}
+
 /// 当前挂起的 HTTP 取消 sender 数量（用于诊断/测试确认正常完成后被清理）。
 pub fn http_promise_cancel_senders_len() -> usize {
     http_promise_cancel_senders()
@@ -536,6 +611,8 @@ pub(crate) fn http_request_promise<'js>(
     body: Option<String>,
     body_native_buffer_id: Option<u64>,
     redirect: Option<String>,
+    timeout_ms: Option<f64>,
+    read_scope: Option<String>,
     http: Arc<RuntimeHttpClient>,
 ) -> rquickjs::Result<QjsValue<'js>> {
     let id = HTTP_REQ_ID.fetch_add(1, Ordering::Relaxed);
@@ -547,73 +624,135 @@ pub(crate) fn http_request_promise<'js>(
         senders.insert(id, cancel_tx);
     }
 
-    // 实际 HTTP 请求放进独立 tokio 任务，由 tokio 的 I/O 驱动直接轮询，
-    // 不经过 rquickjs 的 Spawner（那会被 JS 事件泵以固定节奏轮询，导致
-    // 分块到达的大响应体逐块慢读）。JS 面只等一个 oneshot 结果。
-    // Carry the runtime's client/config as owned data, never thread-local state:
-    // this future can resume on a different global-runtime worker after await.
-    let cleanup_id = id;
-    let work = async move {
-        let sem = Arc::clone(http_io_sem());
-        let permit = match timeout(Duration::from_secs(15), sem.acquire_owned()).await {
+    let budget = timeout_ms
+        .filter(|ms| ms.is_finite() && *ms > 0.0)
+        .map(|ms| Duration::from_millis(ms.clamp(1.0, 86_400_000.0) as u64))
+        .unwrap_or(Duration::from_secs(30));
+    let deadline = tokio::time::Instant::now() + budget;
+    let (result_tx, result_rx) = oneshot::channel::<HttpPromiseReply>();
+    let future = async move {
+        result_rx
+            .await
+            .map(HttpPromiseReply::into_payload)
+            .unwrap_or_else(|_| {
+                json!({ "ok": false, "error": crate::tr!("request-execution-cancelled") })
+                    .to_string()
+            })
+    };
+    let cleanup = HttpPromiseCleanup(id, body_native_buffer_id);
+    let obj = Promise::wrap_future(&ctx, future)?.into_inner();
+    obj.set("__hostRequestId", id)?;
+
+    // Native I/O must run on the multi-threaded runtime; QuickJS only awaits
+    // a oneshot. Cancellation and the deadline cover admission, DNS and body.
+    let sem = Arc::clone(http_io_sem());
+    let idempotent = matches!(method.as_str(), "GET" | "HEAD");
+    crate::global_runtime().spawn(async move {
+        let reply = run_http_promise(
+            sem,
+            Duration::from_secs(15),
+            deadline,
+            cancel_rx,
+            scoped_read_canceled(read_scope, idempotent),
+            http_request_inner_async(
+                method,
+                url,
+                headers_json,
+                body,
+                body_native_buffer_id,
+                redirect,
+                http,
+                budget,
+            ),
+        )
+        .await;
+        drop(cleanup);
+        let _ = result_tx.send(reply);
+    });
+    Ok(obj.into_value())
+}
+
+struct HttpPromiseCleanup(u64, Option<u64>);
+
+impl Drop for HttpPromiseCleanup {
+    fn drop(&mut self) {
+        if let Ok(mut senders) = http_promise_cancel_senders().lock() {
+            senders.remove(&self.0);
+        }
+        if let Some(id) = self.1 {
+            drop(native_buffer_take_raw(id));
+        }
+    }
+}
+
+struct HttpPromiseReply {
+    payload: String,
+    body_id: Option<u64>,
+}
+
+impl HttpPromiseReply {
+    fn error(payload: Value) -> Self {
+        Self {
+            payload: payload.to_string(),
+            body_id: None,
+        }
+    }
+
+    fn into_payload(mut self) -> String {
+        self.body_id = None;
+        std::mem::take(&mut self.payload)
+    }
+}
+
+impl Drop for HttpPromiseReply {
+    fn drop(&mut self) {
+        if let Some(id) = self.body_id {
+            drop(native_buffer_take_raw(id));
+        }
+    }
+}
+
+async fn run_http_promise(
+    sem: Arc<Semaphore>,
+    admission_budget: Duration,
+    deadline: tokio::time::Instant,
+    cancel: oneshot::Receiver<()>,
+    owner_cancel: impl Future<Output = ()>,
+    request: impl Future<Output = AnyResult<HttpPromiseReply>>,
+) -> HttpPromiseReply {
+    let work = async {
+        let _permit = match timeout(admission_budget, sem.acquire_owned()).await {
             Ok(Ok(permit)) => permit,
             Ok(Err(_)) => {
-                return json!({ "ok": false, "error": crate::tr!("http-concurrency-controller-unavailable") })
-                    .to_string();
+                return HttpPromiseReply::error(
+                    json!({ "ok": false, "error": crate::tr!("http-concurrency-controller-unavailable") }),
+                );
             }
             Err(_) => {
-                return json!({ "ok": false, "error": crate::tr!("timed-out-waiting-for-http-concurrency-permit") })
-                    .to_string();
+                return HttpPromiseReply::error(
+                    json!({ "ok": false, "error": crate::tr!("timed-out-waiting-for-http-concurrency-permit") }),
+                );
             }
         };
-
-        let result = tokio::select! {
-            biased;
-            _ = cancel_rx => {
-                Ok(json!({
-                    "ok": false,
-                    "error": crate::tr!("request-was-canceled"),
-                    "canceled": true
-                })
-                .to_string())
-            }
-            r = http_request_inner_async(method, url, headers_json, body, body_native_buffer_id, redirect, http) => r,
-        };
-
-        drop(permit);
-
-        // 请求已结束（成功、失败或被取消），从 map 移除取消 sender，
-        // 否则每个完成的请求都会在 http_promise_cancel_senders 里留下
-        // 一个永远不会被删除的悬空 sender，长会话内存持续增长。
-        http_promise_cancel_senders()
-            .lock()
-            .expect(&crate::tr!("failed-to-lock-http-promise-cancel-senders"))
-            .remove(&cleanup_id);
-
-        match result {
-            Ok(payload) => payload,
-            Err(error) => json!({ "ok": false, "error": format!("{error:#}") }).to_string(),
-        }
-    };
-    let (result_tx, result_rx) = oneshot::channel::<String>();
-    crate::global_runtime().spawn(async move {
-        let _ = result_tx.send(work.await);
-    });
-
-    // JS 面只等一个 oneshot 结果，不再逐块轮询。
-    let future = async move {
-        result_rx.await.unwrap_or_else(|_| {
-            json!({ "ok": false, "error": crate::tr!("request-execution-cancelled") }).to_string()
+        request.await.unwrap_or_else(|error| {
+            HttpPromiseReply::error(json!({ "ok": false, "error": format!("{error:#}") }))
         })
     };
-
-    let promise = Promise::wrap_future(&ctx, future)?;
-    let obj = promise.into_inner();
-    if let Err(e) = obj.set("__hostRequestId", id) {
-        http_promise_cancel_senders().lock().unwrap().remove(&id);
-        return Err(e);
+    let canceled = || {
+        HttpPromiseReply::error(json!({
+            "ok": false,
+            "error": crate::tr!("request-was-canceled"),
+            "canceled": true,
+        }))
+    };
+    tokio::select! {
+        biased;
+        _ = cancel => canceled(),
+        _ = owner_cancel => canceled(),
+        reply = tokio::time::timeout_at(deadline, work) => reply.unwrap_or_else(|_| {
+            HttpPromiseReply::error(json!({ "ok": false, "timedOut": true }))
+        }),
     }
-    Ok(obj.into_value())
 }
 
 pub fn http_request_cancel(id: u64) -> String {
@@ -645,7 +784,8 @@ async fn http_request_inner_async(
     body_native_buffer_id: Option<u64>,
     redirect: Option<String>,
     http: Arc<RuntimeHttpClient>,
-) -> AnyResult<String> {
+    budget: Duration,
+) -> AnyResult<HttpPromiseReply> {
     let method =
         Method::from_bytes(method.as_bytes()).context(crate::tr!("failed-to-parse-http-method"))?;
     ensure_http_target_allowed(&url, &http.config).await?;
@@ -656,7 +796,7 @@ async fn http_request_inner_async(
     let mut plain_headers: Vec<(String, String)> = Vec::new();
 
     let client = http.client_for_redirect(redirect.as_deref())?;
-    let mut builder = client.request(method, &url);
+    let mut builder = client.request(method, &url).timeout(budget);
 
     if let Value::Object(obj) = headers_value {
         for (key, value) in obj {
@@ -742,7 +882,7 @@ async fn http_request_inner_async(
         );
     }
 
-    Ok(json!({
+    let payload = json!({
         "ok": true,
         "status": status.as_u16(),
         "statusText": status.canonical_reason().unwrap_or(""),
@@ -753,7 +893,11 @@ async fn http_request_inner_async(
         "nativeBufferId": native_buffer_id,
         "offloadedBytes": body_len
     })
-    .to_string())
+    .to_string();
+    Ok(HttpPromiseReply {
+        payload,
+        body_id: Some(native_buffer_id),
+    })
 }
 
 async fn ensure_http_target_allowed(url: &str, config: &HttpClientConfig) -> AnyResult<()> {
@@ -815,6 +959,132 @@ fn is_private_or_local_ipv6(ip: Ipv6Addr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn http_cancellation_interrupts_saturated_admission() {
+        let semaphore = Arc::new(Semaphore::new(0));
+        let (cancel, canceled) = oneshot::channel();
+        let request = run_http_promise(
+            semaphore,
+            Duration::from_secs(15),
+            tokio::time::Instant::now() + Duration::from_secs(30),
+            canceled,
+            std::future::pending(),
+            std::future::pending(),
+        );
+        tokio::pin!(request);
+        tokio::select! {
+            _ = &mut request => panic!("admission unexpectedly finished"),
+            _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+        }
+        cancel.send(()).unwrap();
+        let reply = timeout(Duration::from_secs(1), request).await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&reply.payload).unwrap()["canceled"],
+            true
+        );
+    }
+
+    #[tokio::test]
+    async fn http_deadline_can_expire_during_admission_or_body_read() {
+        for slots in [0, 1] {
+            let semaphore = Arc::new(Semaphore::new(slots));
+            let (_cancel, canceled) = oneshot::channel();
+            let reply = run_http_promise(
+                Arc::clone(&semaphore),
+                Duration::from_secs(15),
+                tokio::time::Instant::now() + Duration::from_millis(10),
+                canceled,
+                std::future::pending(),
+                std::future::pending(),
+            )
+            .await;
+            assert_eq!(
+                serde_json::from_str::<Value>(&reply.payload).unwrap()["timedOut"],
+                true
+            );
+            assert_eq!(semaphore.available_permits(), slots);
+        }
+    }
+
+    #[tokio::test]
+    async fn superseded_read_releases_running_and_queued_slots_only_in_its_group() {
+        let semaphore = Arc::new(Semaphore::new(2));
+        let stale = HttpReadScope::new("runtime", "stale");
+        let sibling = HttpReadScope::new("runtime", "sibling");
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+
+        let mut stale_requests = Vec::new();
+        for _ in 0..8 {
+            let sem = semaphore.clone();
+            let old_token = stale.token().to_owned();
+            stale_requests.push(tokio::spawn(async move {
+                let (_owner, cancellation) = oneshot::channel();
+                run_http_promise(
+                    sem,
+                    Duration::from_secs(5),
+                    deadline,
+                    cancellation,
+                    scoped_read_canceled(Some(old_token), true),
+                    std::future::pending(),
+                )
+                .await
+            }));
+        }
+        timeout(Duration::from_secs(1), async {
+            while semaphore.available_permits() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        cancel_http_read_group("runtime", "stale");
+        timeout(Duration::from_secs(1), async {
+            for request in stale_requests {
+                let reply = request.await.unwrap();
+                assert_eq!(
+                    serde_json::from_str::<Value>(&reply.payload).unwrap()["canceled"],
+                    true
+                );
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(semaphore.available_permits(), 2);
+        assert!(http_read_scope_active(sibling.token().to_owned()));
+
+        let token = stale.token().to_owned();
+        drop(stale);
+        let (_owner, cancellation) = oneshot::channel();
+        let late = run_http_promise(
+            semaphore.clone(),
+            Duration::from_secs(5),
+            deadline,
+            cancellation,
+            scoped_read_canceled(Some(token.clone()), true),
+            std::future::poll_fn(|_| panic!("closed read reached network")),
+        )
+        .await;
+        assert_eq!(
+            serde_json::from_str::<Value>(&late.payload).unwrap()["canceled"],
+            true
+        );
+
+        let (_owner, cancellation) = oneshot::channel();
+        let mutation = run_http_promise(
+            semaphore,
+            Duration::from_secs(5),
+            deadline,
+            cancellation,
+            scoped_read_canceled(Some(token), false),
+            std::future::ready(Ok(HttpPromiseReply::error(json!({ "ok": true })))),
+        )
+        .await;
+        assert_eq!(
+            serde_json::from_str::<Value>(&mutation.payload).unwrap()["ok"],
+            true
+        );
+    }
 
     #[test]
     fn observed_domains_accept_only_public_https_hostnames() {

@@ -110,6 +110,7 @@ class ApiVideoCapabilities {
   bool supportsYearType(String id) =>
       year && (yearTypePrefixes.isEmpty || yearTypePrefixes.any(id.startsWith));
   bool get canSearch => search != 'none';
+  bool get usesRemoteKeywordScope => canSearch && search != 'website';
 
   factory ApiVideoCapabilities.fromJson(Map<String, dynamic> json) =>
       ApiVideoCapabilities(

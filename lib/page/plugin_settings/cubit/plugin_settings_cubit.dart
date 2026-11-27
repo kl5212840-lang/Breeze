@@ -3,8 +3,11 @@ import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/service/local_plugin_installation_state.dart';
 import 'package:zephyr/service/plugin_account_authentication.dart';
 import 'package:zephyr/service/plugin_account_profiles.dart';
+import 'package:zephyr/service/plugin_account_response.dart';
 import 'package:zephyr/service/plugin_account_sync_coordinator.dart';
 import 'package:zephyr/page/video/video_account_backup.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart'
+    show hanimeSourceId;
 import 'package:zephyr/page/video/omo_network.dart' show omoNetworkSource;
 import 'dart:async';
 
@@ -17,6 +20,7 @@ import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/page/plugin_settings/plugin_settings_action_policy.dart';
+import 'package:zephyr/page/source_shell/source_category_settings_scope.dart';
 
 class PluginSettingsState {
   const PluginSettingsState({
@@ -216,6 +220,8 @@ class PluginSettingsCubit extends Cubit<PluginSettingsState> {
     );
 
     try {
+      await migrateBikaSearchBlocks(from);
+      if (isClosed || epoch != _loadEpoch) return;
       final settingsResponse = await callUnifiedComicPlugin(
         from: from,
         fnPath: 'getSettingsBundle',
@@ -226,7 +232,21 @@ class PluginSettingsCubit extends Cubit<PluginSettingsState> {
       final settingsEnvelope = UnifiedPluginEnvelope.fromMap(settingsResponse);
       final settingsSections = asJsonList(
         settingsEnvelope.scheme['sections'],
-      ).map((item) => asJsonMap(item)).toList();
+      ).map((item) => {...asJsonMap(item)}).toList();
+      if (from == hanimeSourceId) {
+        // Older installed bundles still declare the timing control. Keep its
+        // stored value available to the parser while hiding the setting.
+        for (final section in settingsSections) {
+          if (section['fields'] is List) {
+            section['fields'] = asJsonList(section['fields'])
+                .where(
+                  (field) =>
+                      asJsonMap(field)['key'] != 'video.parseTimeoutSeconds',
+                )
+                .toList();
+          }
+        }
+      }
       final values = asJsonMap(settingsEnvelope.data['values']);
       final canShowUserInfo =
           includeAccount &&
@@ -403,11 +423,11 @@ class PluginSettingsCubit extends Cubit<PluginSettingsState> {
         core: const <String, dynamic>{},
         extern: const <String, dynamic>{},
       );
-      final envelope = UnifiedPluginEnvelope.fromMap(response);
       if (!current()) return;
+      final account = readPluginAccountData(from, response);
       emit(
         state.copyWith(
-          userInfo: asJsonMap(envelope.data),
+          userInfo: account,
           loadingUserInfo: false,
           userInfoError: '',
           userInfoLoginRequired: false,
@@ -416,8 +436,10 @@ class PluginSettingsCubit extends Cubit<PluginSettingsState> {
     } catch (error) {
       if (!current()) return;
       final rejected =
-          error is PluginLoginRequiredException ||
-          error is PluginAccountAuthenticationRejected;
+          error is PluginLoginRequiredException &&
+              error.payload.appliesTo(from) ||
+          error is PluginAccountAuthenticationRejected ||
+          error is PluginAccountNeedsLogin;
       if (rejected)
         PluginAccountIdentities.reject(from, generation: generation);
       emit(
@@ -429,8 +451,7 @@ class PluginSettingsCubit extends Cubit<PluginSettingsState> {
           userInfoLoginRequired: rejected,
           userInfoError: rejected
               ? t.navigation.needLoginTitle
-              : from == PluginAccountAuthenticationService.copy &&
-                    isTransientNetworkError(error)
+              : isTransientNetworkError(error)
               ? t.login.networkUnavailable
               : t.plugin.userInfoLoadFailed,
         ),

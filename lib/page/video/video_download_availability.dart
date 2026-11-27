@@ -62,10 +62,15 @@ class VideoDownloadAvailability {
     required Uri watch,
     String workId = '',
     String namespace = '',
+    Set<Uri> additionalWatches = const {},
   }) async {
     final page = videoPublicPage(watch);
     if (source.isEmpty || page == null)
       return const VideoDownloadAvailability();
+    final additionalIdentities = {
+      for (final uri in additionalWatches)
+        if (uri.origin == page.origin && videoPlaybackIdentity(uri) == uri) uri,
+    };
     final snapshots = await Future.wait([
       VideoExportRecords.readTaskSnapshot(),
       VideoLocalResources.read(),
@@ -75,7 +80,8 @@ class VideoDownloadAvailability {
       return row['source'] == source &&
           uri != null &&
           videoPlaybackIdentity(uri) != null &&
-          videoPublicPage(uri) == page &&
+          (videoPublicPage(uri) == page ||
+              additionalIdentities.contains(uri)) &&
           (workId.isEmpty ||
               row['retryItemId'] == null ||
               row['retryItemId'] == workId);

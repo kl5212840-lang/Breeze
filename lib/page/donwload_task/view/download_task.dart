@@ -98,6 +98,7 @@ import 'package:zephyr/widgets/scroll_return_to_top.dart';
 import 'package:zephyr/widgets/touch_hover_intent.dart';
 import 'package:zephyr/widgets/list_position_scrollbar.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 String _label(BuildContext context, String zh, String en) =>
     Localizations.localeOf(context).languageCode == 'zh' ? zh : en;
@@ -123,8 +124,11 @@ bool _hasVerifiedVideoProgressTarget(Map<String, dynamic> row) =>
     VideoLocalResources.validId(row['resourceId'] as String);
 
 class DownloadTaskPage extends StatelessWidget {
-  const DownloadTaskPage({super.key, this.embedded = false});
+  const DownloadTaskPage({super.key, this.embedded = false, this.openSwipe});
   final bool embedded;
+
+  /// The main tab host shares this tray state with its navigation controls.
+  final ValueNotifier<String?>? openSwipe;
 
   static Future<void> openComicDownloads(
     BuildContext context, {
@@ -175,7 +179,7 @@ class DownloadTaskPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => BlocProvider(
     create: (_) => DowloadTaskBloc()..add(const DowloadTaskEvent.started()),
-    child: _DownloadCenter(embedded: embedded),
+    child: _DownloadCenter(embedded: embedded, openSwipe: openSwipe),
   );
 }
 
@@ -243,6 +247,7 @@ const _downloadContentInset = 16.0;
 class _DownloadHeader extends StatelessWidget {
   const _DownloadHeader({
     required this.embedded,
+    required this.openSwipe,
     required this.searching,
     required this.managing,
     required this.working,
@@ -262,6 +267,7 @@ class _DownloadHeader extends StatelessWidget {
     required this.onSelectAll,
   });
   final bool embedded, searching, managing, working, inventoryReady;
+  final ValueNotifier<String?> openSwipe;
   final bool canSelectAll, allSelected;
   final int rowCount, totalCount, selectedCount;
   final String query;
@@ -321,6 +327,7 @@ class _DownloadHeader extends StatelessWidget {
             height: headerHeight,
             child: BookshelfSelectionToolbar(
               keyPrefix: 'download-selection',
+              inTitleBar: true,
               padding: EdgeInsets.zero,
               selectedCount: selectedCount,
               allSelected: allSelected,
@@ -334,7 +341,8 @@ class _DownloadHeader extends StatelessWidget {
           height: headerHeight,
           child: Row(
             children: [
-              if (!searching && !embedded) const SourceBackButton(),
+              if (!searching && !embedded)
+                TapRegion(groupId: openSwipe, child: const SourceBackButton()),
               Expanded(
                 child: searching
                     ? SearchQueryField(
@@ -352,6 +360,7 @@ class _DownloadHeader extends StatelessWidget {
                         query: query,
                         focusNode: focusNode,
                         inline: true,
+                        animateExpansion: true,
                         closeOnSubmit: false,
                         hintText: _label(context, '查找下载', 'Search downloads'),
                         onChanged: onQuery,
@@ -458,8 +467,9 @@ class _DownloadHeader extends StatelessWidget {
 }
 
 class _DownloadCenter extends StatefulWidget {
-  const _DownloadCenter({required this.embedded});
+  const _DownloadCenter({required this.embedded, required this.openSwipe});
   final bool embedded;
+  final ValueNotifier<String?>? openSwipe;
   @override
   State<_DownloadCenter> createState() => _DownloadCenterState();
 }
@@ -656,13 +666,16 @@ class _DownloadCenterState extends State<_DownloadCenter> {
 
   Set<String> _categories = {}, _tags = {};
   Map<String, Set<String>> _facetValues = {};
-  final _openSwipe = ValueNotifier<String?>(null);
+  ValueNotifier<String?>? _localOpenSwipe;
+  ValueNotifier<String?> get _openSwipe =>
+      widget.openSwipe ?? (_localOpenSwipe ??= ValueNotifier<String?>(null));
   void _closeSwipe() => _openSwipe.value = null;
   bool _orderBySize = false;
   final _scroll = ScrollController();
   double? _searchReturnOffset;
   final _scrollEdges = ValueNotifier((up: false, footer: false));
   int _sizeOrderEpoch = 0;
+  bool _sizeOrderVisible = false, _readingSizes = false;
   Map<String, SavedComicSize> _orderedComicSizes = {};
   final _navigationOrigins = <ModalRoute<dynamic>>{};
   final _selected = <String>{};
@@ -774,8 +787,17 @@ class _DownloadCenterState extends State<_DownloadCenter> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final visible =
-        ModalRoute.isCurrentOf(context) != false && TickerMode.of(context);
+    final tabVisible = TickerMode.of(context);
+    if (tabVisible != _sizeOrderVisible) {
+      _sizeOrderVisible = tabVisible;
+      if (tabVisible) {
+        unawaited(_refreshSizeOrder(_comics));
+      } else {
+        _sizeOrderEpoch++;
+        _readingSizes = false;
+      }
+    }
+    final visible = ModalRoute.isCurrentOf(context) != false && tabVisible;
     if (visible == _historyVisible) return;
     _historyVisible = visible;
     if (visible) {
@@ -1030,6 +1052,7 @@ class _DownloadCenterState extends State<_DownloadCenter> {
       final read = DownloadCenterResources.readVideoPhases(
         afterRevision: _verifiedVideoRevision,
         fresh: verifyFiles,
+        useStartupRead: _verifiedVideoRevision == null,
       );
       if (_verifiedVideoRevision == null) {
         unawaited(
@@ -1109,7 +1132,7 @@ class _DownloadCenterState extends State<_DownloadCenter> {
     _searchFocus.dispose();
     _scroll.dispose();
     _scrollEdges.dispose();
-    _openSwipe.dispose();
+    _localOpenSwipe?.dispose();
     unawaited(_readerSelection.close());
     unawaited(_watch?.cancel());
     unawaited(_comicHistoryChanges?.cancel());
@@ -1180,13 +1203,11 @@ class _DownloadCenterState extends State<_DownloadCenter> {
   void _setSizeOrder(bool bySize) {
     if (_working || _managing || bySize == _orderBySize) return;
     _closeSwipe();
-    _sizeOrderEpoch++;
     if (_scroll.hasClients) _scroll.jumpTo(0);
     setState(() {
       _orderBySize = bySize;
-      if (!bySize) _orderedComicSizes = {};
+      if (bySize) _orderedComicSizes = _knownComicSizes(_comics);
     });
-    unawaited(_refreshSizeOrder(_comics));
   }
 
   void _updateScrollEdges([ScrollMetrics? metrics]) {
@@ -1312,31 +1333,54 @@ class _DownloadCenterState extends State<_DownloadCenter> {
         ),
       );
 
+  Map<String, SavedComicSize> _knownComicSizes(
+    List<DownloadComicResource> rows, {
+    bool useSnapshot = true,
+  }) {
+    final known = <String, SavedComicSize>{};
+    final metrics = DownloadResourceMetrics.instance;
+    for (final row in rows) {
+      final snapshot = useSnapshot ? _orderedComicSizes[row.key] : null;
+      if (snapshot != null && snapshot.version == row.metricsVersion) {
+        known[row.key] = snapshot;
+      } else if (metrics.cachedComic(row) case final size?) {
+        known[row.key] = (
+          version: size.version,
+          knownBytes: size.knownBytes,
+          complete: size.sizeBytes != null,
+        );
+      }
+    }
+    return known;
+  }
+
   Future<void> _refreshSizeOrder(
     List<DownloadComicResource> rows, {
     bool force = false,
   }) async {
-    if (!_orderBySize) return;
+    if (!_sizeOrderVisible) return;
     final epoch = ++_sizeOrderEpoch;
-    bool current() => mounted && _orderBySize && epoch == _sizeOrderEpoch;
+    bool current() => mounted && _sizeOrderVisible && epoch == _sizeOrderEpoch;
+    _orderedComicSizes = _knownComicSizes(rows, useSnapshot: !force);
     final pending = rows
-        .where(
-          (row) =>
-              force ||
-              _orderedComicSizes[row.key]?.version != row.metricsVersion,
-        )
+        .where((row) => !_orderedComicSizes.containsKey(row.key))
         .toList();
-    if (pending.isEmpty && _orderedComicSizes.length == rows.length) return;
-    final measured = await measureSavedComicSizes(pending, current: current);
-    if (!current()) return;
-    setState(() {
-      _orderedComicSizes = {
-        for (final row in rows)
-          if ((measured[row.key] ?? _orderedComicSizes[row.key])
-              case final size?)
-            row.key: size,
-      };
-    });
+    _readingSizes = pending.isNotEmpty;
+    if (!_readingSizes) return;
+    try {
+      // Prime the versioned byte counts while the list is visible. Taking the
+      // sort branch then uses known sizes immediately, with one final reorder.
+      final measured = await measureSavedComicSizes(pending, current: current);
+      if (current()) _orderedComicSizes.addAll(measured);
+    } catch (error) {
+      if (current())
+        logger.w('Cannot finish download size order', error: error);
+    } finally {
+      if (current()) {
+        _readingSizes = false;
+        if (_orderBySize) setState(() {});
+      }
+    }
   }
 
   List<DownloadTask> _tasks(DowloadTaskState state) => state.maybeWhen(
@@ -1851,19 +1895,16 @@ class _DownloadCenterState extends State<_DownloadCenter> {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             trace?.mark('dialog-frame');
           });
-          return AlertDialog(
-            scrollable: true,
+          return ShortAlert(
             title: Text(title),
             content: Text(message),
             actions: [
-              TextButton(
+              ShortAlertAction(
                 onPressed: () => Navigator.pop(dialog, false),
                 child: Text(t.common.cancel),
               ),
-              TextButton(
-                style: TextButton.styleFrom(
-                  foregroundColor: Theme.of(dialog).colorScheme.error,
-                ),
+              ShortAlertAction(
+                destructive: true,
                 onPressed: () => Navigator.pop(dialog, true),
                 child: Text(t.common.delete),
               ),
@@ -2189,12 +2230,18 @@ class _DownloadCenterState extends State<_DownloadCenter> {
                     pages: selected.pages,
                   ),
                 ),
-                if (selected.missingPages > 0 ||
-                    selected.unavailableChapters > 0) ...[
+                if (selected.missingPages > 0) ...[
                   const SizedBox(height: 8),
                   Text(
-                    t.download.exportComicMissing(
+                    t.download.exportComicMissingPages(
                       pages: selected.missingPages,
+                    ),
+                  ),
+                ],
+                if (selected.unavailableChapters > 0) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    t.download.exportComicUnavailableChapters(
                       chapters: selected.unavailableChapters,
                     ),
                   ),
@@ -2370,7 +2417,11 @@ class _DownloadCenterState extends State<_DownloadCenter> {
                 videoSizes: savedVideoSizes(_videos),
               )
             : groupedRows;
-        final displayRows = DownloadWorkPins.arrange(orderedRows, _pins);
+        final displayRows = DownloadWorkPins.arrange(
+          orderedRows,
+          _pins,
+          keepPinnedInputOrder: _orderBySize,
+        );
         final displayIndexes = {
           for (final (index, row) in displayRows.indexed) row.key: index,
         };
@@ -2425,6 +2476,7 @@ class _DownloadCenterState extends State<_DownloadCenter> {
           children: [
             _DownloadHeader(
               embedded: widget.embedded,
+              openSwipe: _openSwipe,
               searching: _searching,
               managing: _managing,
               working: _working,
@@ -2480,7 +2532,6 @@ class _DownloadCenterState extends State<_DownloadCenter> {
                   const SizedBox(width: 8),
                   SourceFilterIconButton(
                     key: const ValueKey('download-filter'),
-                    bare: false,
                     active: filtered || _orderBySize,
                     tooltip: [
                       _label(context, '筛选与排序', 'Filter and sort'),
@@ -2495,36 +2546,44 @@ class _DownloadCenterState extends State<_DownloadCenter> {
                 ],
               ),
             ),
-            VideoControlAppearance(
-              systemControls: usesNativeSourceChrome(context),
-              child: BookshelfSourceNavigation(
-                sources: sources,
-                hidden: _sourcePreferences.hidden,
-                selected: [if (_source != null) _source!],
-                showManage: true,
-                classicChips: true,
-                scrollSafeChips: true,
-                allLabel: _label(context, '全部来源', 'All sources'),
-                horizontalInset: _downloadContentInset,
-                onManage: !inventoryReady || _working || _sourceManagerOpen
-                    ? null
-                    : () => _manageSourceLabels({
-                        for (final item in all)
-                          item.source: _sourceTitle(item.source),
-                      }),
-                onChanged:
-                    _working ||
-                        !_sourcePreferencesReady ||
-                        (!inventoryReady && sources.isEmpty && _source == null)
-                    ? null
-                    : (sources) => setState(() {
-                        final source = sources.isEmpty ? null : sources.single;
-                        if (_source != source) {
-                          _closeSwipe();
-                          _selected.clear();
-                        }
-                        _source = source;
-                      }),
+            SafeArea(
+              top: false,
+              bottom: false,
+              child: VideoControlAppearance(
+                systemControls: usesNativeSourceChrome(context),
+                child: BookshelfSourceNavigation(
+                  sources: sources,
+                  hidden: _sourcePreferences.hidden,
+                  selected: [if (_source != null) _source!],
+                  showManage: true,
+                  classicChips: true,
+                  scrollSafeChips: true,
+                  allLabel: _label(context, '全部来源', 'All sources'),
+                  horizontalInset: _downloadContentInset,
+                  onManage: !inventoryReady || _working || _sourceManagerOpen
+                      ? null
+                      : () => _manageSourceLabels({
+                          for (final item in all)
+                            item.source: _sourceTitle(item.source),
+                        }),
+                  onChanged:
+                      _working ||
+                          !_sourcePreferencesReady ||
+                          (!inventoryReady &&
+                              sources.isEmpty &&
+                              _source == null)
+                      ? null
+                      : (sources) => setState(() {
+                          final source = sources.isEmpty
+                              ? null
+                              : sources.single;
+                          if (_source != source) {
+                            _closeSwipe();
+                            _selected.clear();
+                          }
+                          _source = source;
+                        }),
+                ),
               ),
             ),
             if (waitingForQueue && !_managing)
@@ -2723,6 +2782,24 @@ class _DownloadCenterState extends State<_DownloadCenter> {
                       ),
                     ),
                   ),
+                  if (_orderBySize &&
+                      _readingSizes &&
+                      rows.any(
+                        (item) =>
+                            item.resource != null &&
+                            !_orderedComicSizes.containsKey(item.resource!.key),
+                      ))
+                    PositionedDirectional(
+                      top: 0,
+                      start: 0,
+                      end: 0,
+                      child: IgnorePointer(
+                        child: LinearProgressIndicator(
+                          minHeight: 2,
+                          semanticsLabel: t.cache.calculating,
+                        ),
+                      ),
+                    ),
                   ValueListenableBuilder(
                     valueListenable: _scrollEdges,
                     builder: (context, edges, _) => ValueListenableBuilder(
@@ -2800,7 +2877,11 @@ class _DownloadCenterState extends State<_DownloadCenter> {
     return PopScope(
       canPop: !_searching && !_managing,
       onPopInvokedWithResult: (didPop, _) {
-        if (didPop || _working) return;
+        if (didPop) {
+          _closeSwipe();
+          return;
+        }
+        if (_working) return;
         if (_managing) {
           setState(() => _setManaging(false));
         } else if (_searching) {
@@ -4294,19 +4375,16 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             trace.mark('dialog-frame');
           });
-          return AlertDialog(
-            scrollable: true,
+          return ShortAlert(
             title: Text(t.common.delete),
             content: Text(description),
             actions: [
-              TextButton(
+              ShortAlertAction(
                 onPressed: () => Navigator.pop(dialog, false),
                 child: Text(t.common.cancel),
               ),
-              TextButton(
-                style: TextButton.styleFrom(
-                  foregroundColor: Theme.of(dialog).colorScheme.error,
-                ),
+              ShortAlertAction(
+                destructive: true,
                 onPressed: () => Navigator.pop(dialog, true),
                 child: Text(t.common.delete),
               ),
@@ -4916,7 +4994,9 @@ class _DownloadChaptersPageState extends State<_DownloadChaptersPage> {
         appBar: AppBar(
           leading: TapRegion(
             groupId: _openChapterSwipe,
-            child: const BackButton(),
+            child: usesSystemSourceChrome(context)
+                ? const SourceBackButton()
+                : const BackButton(),
           ),
           title: Text(widget.initial.title),
           actions: [

@@ -833,7 +833,10 @@ class SettingListView extends StatelessWidget {
       controller: controller,
       physics: physics,
       keyboardDismissBehavior: keyboardDismissBehavior,
-      padding: const EdgeInsets.only(bottom: 24),
+      // The scaffold includes the overlaid tab bar in the body's bottom inset.
+      padding: EdgeInsets.only(
+        bottom: 24 + MediaQuery.paddingOf(context).bottom,
+      ),
       children: sections,
     );
   }

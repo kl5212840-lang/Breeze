@@ -127,5 +127,7 @@ dependencies {
     // 添加核心库脱糖依赖
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     implementation("rustls:rustls-platform-verifier:0.1.1")
+    implementation("androidx.media3:media3-inspector-frame:1.10.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.10.1")
     testImplementation("junit:junit:4.13.2")
 }

@@ -1,15 +1,23 @@
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
 
 class ComicNumber {
-  ComicNumber({required this.buildNumber, required this.comic});
+  ComicNumber({
+    required this.buildNumber,
+    required this.comic,
+    this.sourcePage,
+  });
 
   final int buildNumber;
+  final int? sourcePage;
   final UnifiedComicListItem comic;
 
   factory ComicNumber.fromJson(Map<String, dynamic> json) {
     final comicRaw = json['comic'];
     return ComicNumber(
       buildNumber: _toInt(json['buildNumber'], 0),
+      sourcePage: json['sourcePage'] == null
+          ? null
+          : _toInt(json['sourcePage'], 0),
       comic: UnifiedComicListItem.fromJson(
         comicRaw is Map
             ? Map<String, dynamic>.from(
@@ -22,6 +30,7 @@ class ComicNumber {
 
   Map<String, dynamic> toJson() => {
     'buildNumber': buildNumber,
+    if (sourcePage != null) 'sourcePage': sourcePage,
     'comic': comic.toJson(),
   };
 }

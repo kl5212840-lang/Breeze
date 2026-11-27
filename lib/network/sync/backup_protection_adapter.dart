@@ -1,16 +1,21 @@
 import 'dart:typed_data';
+import 'dart:math' show min;
 import 'package:crypto/crypto.dart';
 
 import 'package:zephyr/network/sync/backup_protection_manager.dart';
 import 'package:zephyr/network/sync/comic_sync_core.dart';
 import 'package:zephyr/network/sync/appearance_resource_paths.dart';
 import 'package:zephyr/network/sync/sync_archive_context.dart';
+import 'package:zephyr/network/sync/sync_archive_adapter.dart';
 import 'package:zephyr/service/backup_security/backup_security.dart';
 
 /// Translates only managed payload bytes. Domain codecs and semantic MD5s keep
 /// their standard representation; protected mode is an outer authenticated layer.
 class BackupProtectionSyncAdapter
-    implements ComicSyncRemoteAdapter, BackupProtectionTransportAccess {
+    implements
+        ComicSyncRemoteAdapter,
+        BackupProtectionTransportAccess,
+        BoundedSyncFileReader {
   BackupProtectionSyncAdapter(
     this.protectionTransport, {
     BackupProtectionManager? manager,
@@ -101,28 +106,39 @@ class BackupProtectionSyncAdapter
   }
 
   @override
-  Future<List<int>> downloadRemoteFile(String path) async {
+  Future<List<int>> downloadRemoteFile(String path) =>
+      downloadBoundedFile(path, BackupProtectionSession.maxBytesPayload);
+
+  @override
+  Future<List<int>> downloadBoundedFile(String path, int maxBytes) async {
     await _prepare();
-    if (!_isPayload(path)) return protectionTransport.downloadRemoteFile(path);
-    final cached = _decoded[_path(path)];
-    if (cached != null) return cached;
-    final raw = await protectionTransport.downloadRemoteFile(path);
-    if (raw.length > BackupProtectionSession.maxBytesPayload + 65536 + 4096) {
-      throw const BackupProtectionException(
-        'cloud_protection_payload_too_large',
-      );
+    if (!_isPayload(path)) {
+      return downloadSyncFile(protectionTransport, path, maxBytes);
     }
+    final cached = _decoded[_path(path)];
+    if (cached != null) {
+      if (cached.length > maxBytes) throw const SyncRemoteFileTooLarge();
+      return cached;
+    }
+    final encrypted = _status!.mode == BackupProtectionMode.passwordProtected;
+    final wireLimit = min(
+      BackupProtectionSession.maxBytesPayload + 65536 + 4096,
+      maxBytes + (encrypted ? 65536 + 4096 : 0),
+    );
+    final raw = await downloadSyncFile(protectionTransport, path, wireLimit);
     final protected = BackupProtectionService.isProtectedBytes(raw);
-    if (_status!.mode == BackupProtectionMode.passwordProtected) {
+    if (encrypted) {
       if (!protected) {
         throw const BackupProtectionException(
           'cloud_protection_payload_unprotected',
         );
       }
       final session = manager.sessionForProfile(_status!.profile)!;
-      return session.decryptBytes(
+      final decoded = await session.decryptBytes(
         raw is Uint8List ? raw : Uint8List.fromList(raw),
       );
+      if (decoded.length > maxBytes) throw const SyncRemoteFileTooLarge();
+      return decoded;
     }
     if (protected) {
       // Includes unknown protected-family versions; never send them to legacy.
@@ -132,11 +148,14 @@ class BackupProtectionSyncAdapter
     return raw;
   }
 
-  Future<List<int>> readFreshSnapshot(String path) async {
+  Future<List<int>> readFreshSnapshot(
+    String path, {
+    int maxBytes = BackupProtectionSession.maxBytesPayload,
+  }) async {
     await _prepare();
     final removed = _decoded.remove(_path(path));
     if (removed != null) _cacheBytes -= removed.length;
-    return downloadRemoteFile(path);
+    return downloadBoundedFile(path, maxBytes);
   }
 
   /// The explicit full replacement must observe current remote bytes, rather
@@ -147,10 +166,10 @@ class BackupProtectionSyncAdapter
     if (reset) invalidateProtection();
   }
 
-  Future<List<int>> readFreshForFullReplace(String path) async {
+  Future<List<int>> readFreshForFullReplace(String path, int maxBytes) async {
     await _guard();
     try {
-      return await readFreshSnapshot(path);
+      return await readFreshSnapshot(path, maxBytes: maxBytes);
     } on BackupProtectionException catch (error) {
       if (!_fullReplaceStaging.contains(_path(path)) ||
           !{
@@ -161,7 +180,7 @@ class BackupProtectionSyncAdapter
         rethrow;
       // Only an explicitly journalled uncommitted publication may be a partial
       // envelope. Its raw digest is previewed; it never becomes imported data.
-      return protectionTransport.downloadRemoteFile(path);
+      return downloadSyncFile(protectionTransport, path, maxBytes);
     }
   }
 

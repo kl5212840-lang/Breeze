@@ -359,15 +359,19 @@ class ComicMetadataCopyPill extends StatelessWidget {
       type: MaterialType.transparency,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onLongPress: () async {
-          final copyText = item.onLongPress?.trim().isNotEmpty == true
-              ? item.onLongPress!.trim()
-              : item.name;
-          await Clipboard.setData(ClipboardData(text: copyText));
-          showSuccessToast(
-            t.comicInfo.copied(label: item.name.let(convertChineseForDisplay)),
-          );
-        },
+        onLongPress: item.extern['readOnly'] == true
+            ? null
+            : () async {
+                final copyText = item.onLongPress?.trim().isNotEmpty == true
+                    ? item.onLongPress!.trim()
+                    : item.name;
+                await Clipboard.setData(ClipboardData(text: copyText));
+                showSuccessToast(
+                  t.comicInfo.copied(
+                    label: item.name.let(convertChineseForDisplay),
+                  ),
+                );
+              },
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 44, minWidth: 44),
           child: Center(

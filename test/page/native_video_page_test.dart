@@ -9,13 +9,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:video_player/video_player.dart' show VideoPlayerController;
+import 'package:video_player/video_player.dart'
+    show VideoPlayer, VideoPlayerController;
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/widgets/native_material_surface.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
 import 'package:zephyr/page/video/native_video_page.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
+import 'package:zephyr/page/video/video_landscape_title.dart';
 import 'package:zephyr/page/video/video_playback_preferences.dart';
 import 'package:zephyr/page/video/video_playback_quick_panel.dart';
 import 'package:zephyr/page/video/video_playback_settings_page.dart';
@@ -31,6 +33,7 @@ class _FakeVideoPlatform extends VideoPlayerPlatform {
   final speeds = <double>[];
   final urls = <String>[];
   final volumes = <double>[];
+  final repeatValues = <bool>[];
   int _nextId = 0;
   int playCount = 0;
   int pauseCount = 0;
@@ -42,6 +45,8 @@ class _FakeVideoPlatform extends VideoPlayerPlatform {
   String? rejectPlayFor;
   String? stallPlayFor;
   Completer<void>? pendingPlay;
+  String? deferPauseFor;
+  Completer<void>? pendingPause;
   final failedMedia = <String>{};
   final stalledMedia = <String>{};
   int maxNativePlayers = 0;
@@ -98,7 +103,9 @@ class _FakeVideoPlatform extends VideoPlayerPlatform {
   Future<void> dispose(int playerId) async => _events.remove(playerId)?.close();
 
   @override
-  Future<void> setLooping(int playerId, bool looping) async {}
+  Future<void> setLooping(int playerId, bool looping) async {
+    repeatValues.add(looping);
+  }
 
   @override
   Future<void> setVolume(int playerId, double volume) async {
@@ -137,6 +144,9 @@ class _FakeVideoPlatform extends VideoPlayerPlatform {
       throw PlatformException(code: 'PauseUnavailable');
     }
     pauseCount++;
+    if (urls[playerId - 1] == deferPauseFor) {
+      await (pendingPause ??= Completer<void>()).future;
+    }
     _events[playerId]?.add(
       VideoEvent(
         eventType: VideoEventType.isPlayingStateUpdate,
@@ -259,10 +269,21 @@ Future<void> _quickSeek(WidgetTester tester, int seconds) async {
 void main() {
   late VideoPlayerPlatform originalPlatform;
   late _FakeVideoPlatform platform;
+  const connectivityChannel = MethodChannel(
+    'dev.fluttercommunity.plus/connectivity',
+  );
+  final messenger =
+      TestWidgetsFlutterBinding.ensureInitialized().defaultBinaryMessenger;
 
   setUp(() {
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(SystemChannels.platform, (_) async => null);
+    messenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (_) async => null,
+    );
+    messenger.setMockMethodCallHandler(
+      connectivityChannel,
+      (_) async => ['wifi'],
+    );
     SharedPreferences.setMockInitialValues({});
     originalPlatform = VideoPlayerPlatform.instance;
     platform = _FakeVideoPlatform();
@@ -270,10 +291,446 @@ void main() {
   });
 
   tearDown(() {
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(SystemChannels.platform, null);
+    messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+    messenger.setMockMethodCallHandler(connectivityChannel, null);
     VideoPlayerPlatform.instance = originalPlatform;
   });
+
+  final chapterCards = [
+    NativeVideoCard(
+      title: '序章',
+      watchUrl: Uri.parse('https://fixture.test/watch?v=1'),
+      coverUrl: null,
+    ),
+    NativeVideoCard(
+      title: '幕后花絮',
+      watchUrl: Uri.parse('https://fixture.test/watch?v=2'),
+      coverUrl: null,
+    ),
+  ];
+  NativePlaybackSession chapter(int index) => NativePlaybackSession(
+    title: '测试剧目',
+    watchUrl: chapterCards[index].watchUrl,
+    description: '',
+    tags: const [],
+    episodes: chapterCards,
+    sources: [
+      NativePlaybackSource(
+        url: Uri.parse('https://fixture.test/chapter-$index.mp4'),
+        label: 'A',
+        headers: const {},
+      ),
+    ],
+  );
+
+  for (final (repeat, autoplayNext, current, expectedNext) in [
+    (VideoRepeatMode.none, false, 0, null),
+    (VideoRepeatMode.none, true, 0, 1),
+    (VideoRepeatMode.none, true, 1, null),
+    (VideoRepeatMode.single, true, 0, null),
+    (VideoRepeatMode.playlist, false, 1, 0),
+  ]) {
+    testWidgets(
+      'natural completion with ${repeat.name}, autoplay=$autoplayNext, item=$current',
+      (tester) async {
+        final store = await SharedPreferences.getInstance();
+        for (var i = 0; i < chapterCards.length; i++) {
+          if (i != current) {
+            await store.setInt(
+              'breeze.video.progress.fixture.test.${i + 1}',
+              26000,
+            );
+          }
+        }
+        await VideoPlaybackPreferences.save('autoplayNext', autoplayNext);
+        await VideoPlaybackPreferences.save('repeatMode', repeat.name);
+        final reads = <Uri>[];
+        final committed = <Uri>[];
+        await tester.pumpWidget(
+          MaterialApp(
+            home: NativeVideoPage(
+              session: chapter(current),
+              onEpisodeChanged: (load) => committed.add(load.session.watchUrl),
+              loadEpisode: (watch) async {
+                reads.add(watch);
+                platform.position = Duration.zero;
+                final index = chapterCards.indexWhere(
+                  (card) => card.isCurrent(watch),
+                );
+                return (session: chapter(index), operations: null);
+              },
+            ),
+          ),
+        );
+        for (var i = 0; i < 5; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        expect(
+          platform.repeatValues.contains(true),
+          repeat == VideoRepeatMode.single,
+        );
+        platform.send(VideoEvent(eventType: VideoEventType.completed));
+        platform.send(VideoEvent(eventType: VideoEventType.completed));
+        for (var i = 0; i < 8; i++) {
+          await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        final expected = [
+          if (expectedNext != null) chapterCards[expectedNext].watchUrl,
+        ];
+        expect(reads, expected);
+        expect(committed, expected);
+        expect(platform.maxNativePlayers, 1);
+        expect(
+          platform.seekTargets,
+          isNot(contains(const Duration(seconds: 26))),
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
+
+  for (final (delayRead, leaveBeforeReply, replayBeforeReply) in [
+    (false, false, false),
+    (true, false, false),
+    (false, true, false),
+    (false, false, true),
+  ]) {
+    testWidgets(
+      'natural completion waits for site activity (read=$delayRead, exit=$leaveBeforeReply, replay=$replayBeforeReply)',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        await VideoPlaybackPreferences.save('controlsStyle', 'breeze');
+        await VideoPlaybackPreferences.save('autoplayNext', true);
+        final reply = Completer<void>();
+        var liked = false;
+        final operations = VideoSiteOperations(
+          page: chapterCards.first.watchUrl,
+          evaluate: (script) async {
+            if (delayRead && script.contains('const operation = "state"')) {
+              await reply.future;
+            }
+            if (script.contains('const operation = "like"')) {
+              await reply.future;
+              liked = true;
+            }
+            return {
+              'status': 'ok',
+              'signedIn': true,
+              'canLike': true,
+              'liked': liked,
+              'following': false,
+            };
+          },
+        );
+        final reads = <Uri>[], commits = <Uri>[];
+        await tester.pumpWidget(
+          MaterialApp(
+            home: NativeVideoPage(
+              session: chapter(0),
+              siteOperations: operations,
+              loadEpisode: (watch) async {
+                reads.add(watch);
+                return (session: chapter(1), operations: null);
+              },
+              onEpisodeChanged: (load) => commits.add(load.session.watchUrl),
+            ),
+          ),
+        );
+        for (var i = 0; i < 6; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        expect(platform.playCount, 1);
+        if (!delayRead) {
+          await tester.tap(find.byKey(const ValueKey('video-like')));
+          await tester.pump();
+        }
+        expect(operations.busy, isTrue);
+        expect(operations.writeInFlight, !delayRead);
+        platform.send(VideoEvent(eventType: VideoEventType.completed));
+        platform.send(VideoEvent(eventType: VideoEventType.completed));
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(reads, isEmpty);
+        if (leaveBeforeReply) await tester.pumpWidget(const SizedBox.shrink());
+        if (replayBeforeReply) {
+          await tester.tap(find.byTooltip(t.videoPlayback.replay));
+          await tester.pump();
+          expect(platform.playCount, 2);
+        }
+        reply.complete();
+        for (var i = 0; i < 8; i++) {
+          await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+        final expected = [
+          if (!leaveBeforeReply && !replayBeforeReply)
+            chapterCards.last.watchUrl,
+        ];
+        expect(reads, expected);
+        expect(commits, expected);
+        expect(platform.maxNativePlayers, 1);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
+
+  for (final episodeCount in [0, 1, 2]) {
+    testWidgets('playlist repeat without a loader for $episodeCount entries', (
+      tester,
+    ) async {
+      await VideoPlaybackPreferences.save('repeatMode', 'playlist');
+      final current = chapter(0);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NativeVideoPage(
+            session: NativePlaybackSession(
+              title: current.title,
+              watchUrl: current.watchUrl,
+              description: '',
+              tags: const [],
+              sources: current.sources,
+              episodes: chapterCards.take(episodeCount).toList(),
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(platform.repeatValues.contains(true), episodeCount == 1);
+      await _openQuick(tester);
+      final autoplay = find.byKey(const ValueKey('video-quick.autoplay-next'));
+      await _panelVisible(tester, autoplay);
+      expect(tester.widget<SwitchListTile>(autoplay).onChanged, isNull);
+      final repeat = find.byKey(const ValueKey('video-quick.repeat-mode'));
+      await _panelVisible(tester, repeat);
+      expect(
+        find.descendant(
+          of: repeat,
+          matching: find.text(
+            episodeCount == 1
+                ? t.videoPlayback.repeatPlaylist
+                : t.videoPlayback.repeatOff,
+          ),
+        ),
+        findsOneWidget,
+      );
+      expect(platform.urls, hasLength(1));
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
+  testWidgets('seeking to the end does not advance the episode', (
+    tester,
+  ) async {
+    await VideoPlaybackPreferences.save('autoplayNext', true);
+    final reads = <Uri>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NativeVideoPage(
+          session: chapter(0),
+          loadEpisode: (watch) async {
+            reads.add(watch);
+            return (session: chapter(1), operations: null);
+          },
+        ),
+      ),
+    );
+    for (var i = 0; i < 5; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    final timeline = tester.widget<Slider>(find.byType(Slider));
+    timeline.onChangeStart!(timeline.max);
+    timeline.onChanged!(timeline.max);
+    timeline.onChangeEnd!(timeline.max);
+    await tester.pump();
+    expect(platform.seekTargets.last, const Duration(minutes: 2));
+    platform.send(VideoEvent(eventType: VideoEventType.completed));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(reads, isEmpty);
+    expect(find.byTooltip(t.videoPlayback.replay), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+    'fullscreen episode controls keep transport together and use source names',
+    (tester) async {
+      const statusChannel = MethodChannel(
+        'dev.fluttercommunity.plus/connectivity_status',
+      );
+      messenger.setMockMethodCallHandler(statusChannel, (_) async => null);
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(statusChannel, null),
+      );
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 844);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await VideoPlaybackPreferences.save('autoplay', false);
+      final reading = Completer<NativeEpisodeLoad>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NativeVideoPage(
+            session: chapter(0),
+            loadEpisode: (_) => reading.future,
+          ),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      await tester.tap(find.byTooltip(t.videoPlayback.portraitFullscreen));
+      await tester.pumpAndSettle();
+      final previous = find.byTooltip(t.videoPlayback.previousEpisode);
+      final play = find.byTooltip(t.videoPlayback.play);
+      final next = find.byTooltip(t.videoPlayback.nextEpisode);
+      expect(
+        tester.getCenter(previous).dx,
+        lessThan(tester.getCenter(play).dx),
+      );
+      expect(tester.getCenter(play).dx, lessThan(tester.getCenter(next).dx));
+      expect(tester.getCenter(play).dy, tester.getCenter(next).dy);
+      expect(
+        tester.getCenter(find.byTooltip(t.videoPlayback.episodes)).dy,
+        lessThan(tester.getCenter(find.byType(Slider)).dy),
+      );
+      await tester.tap(find.byTooltip(t.videoPlayback.switchToLandscape));
+      await tester.pump(const Duration(milliseconds: 200));
+      tester.view.physicalSize = const Size(844, 390);
+      await tester.pumpAndSettle();
+      final title = find.byType(VideoLandscapeTitle);
+      expect(tester.widget<VideoLandscapeTitle>(title).title, '序章 · 测试剧目');
+      expect(
+        tester.getCenter(next).dx - tester.getCenter(play).dx,
+        inInclusiveRange(44, 52),
+      );
+      await tester.tap(next);
+      await tester.pump();
+      expect(
+        find.text(t.videoPlayback.episodeWaitingFor(episode: '幕后花絮')),
+        findsOneWidget,
+      );
+      expect(tester.widget<VideoLandscapeTitle>(title).title, '序章 · 测试剧目');
+      reading.complete((session: chapter(1), operations: null));
+      for (var i = 0; i < 6; i++) {
+        await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(tester.widget<VideoLandscapeTitle>(title).title, '幕后花絮 · 测试剧目');
+      await _openQuick(tester);
+      final mirror = find.byKey(const ValueKey('video-quick.mirror'));
+      await _panelVisible(tester, mirror);
+      await tester.tap(mirror);
+      await tester.pump();
+      expect(
+        tester
+            .widget<Transform>(
+              find.byKey(const ValueKey('video-picture-mirror')),
+            )
+            .transform
+            .entry(0, 0),
+        -1,
+      );
+      expect(platform.urls, hasLength(2));
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets('long landscape title scrolls with reduced motion on', (
+    tester,
+  ) async {
+    const name = '原站剧集名称 · 这段很长的标题需要在可用宽度内循环滚动';
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: MediaQuery(
+          data: MediaQueryData(disableAnimations: true),
+          child: Center(
+            child: SizedBox(
+              width: 128,
+              child: VideoLandscapeTitle(title: name, active: true),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final track = find.text(name).first;
+    final start = tester.getTopLeft(track).dx;
+    await tester.pump(const Duration(seconds: 2));
+    expect(tester.getTopLeft(track).dx, lessThan(start));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+    'portrait keeps one control bar and the active name during an episode load',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 844);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await VideoPlaybackPreferences.save('autoplay', false);
+      platform.stalledMedia.add('https://fixture.test/chapter-1.mp4');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NativeVideoPage(
+            session: chapter(0),
+            loadEpisode: (_) async => (session: chapter(1), operations: null),
+          ),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      await tester.tap(find.byTooltip(t.videoPlayback.portraitFullscreen));
+      await tester.pumpAndSettle();
+      final title = find.byKey(const ValueKey('video-portrait-episode-name'));
+      final toolbar = find.byKey(
+        const ValueKey('video-controls.portrait-bottom'),
+      );
+      final timeline = find.byType(Slider);
+      final toolbarRect = tester.getRect(toolbar);
+      final timelineRect = tester.getRect(timeline);
+      expect(tester.widget<Text>(title).data, '序章');
+
+      await tester.tap(find.byTooltip(t.videoPlayback.nextEpisode));
+      for (var i = 0; i < 6; i++) {
+        await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(platform.urls.last, 'https://fixture.test/chapter-1.mp4');
+      expect(find.byType(VideoPlayer), findsNothing);
+      expect(find.text(t.videoPlayback.minimizeShort), findsOneWidget);
+      expect(find.text(t.videoPlayback.landscapeShort), findsOneWidget);
+      expect(tester.getRect(toolbar), toolbarRect);
+      expect(tester.getRect(timeline), timelineRect);
+      expect(tester.widget<Text>(title).data, '序章');
+      final feedback = find.text(
+        t.videoPlayback.episodeWaitingFor(episode: '幕后花絮'),
+      );
+      expect(tester.getRect(feedback).bottom, lessThan(timelineRect.top));
+
+      platform.send(
+        VideoEvent(
+          eventType: VideoEventType.initialized,
+          duration: const Duration(minutes: 2),
+          size: const Size(1920, 1080),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(tester.widget<Text>(title).data, '幕后花絮');
+      expect(tester.getRect(toolbar), toolbarRect);
+      expect(tester.getRect(timeline), timelineRect);
+      expect(feedback, findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets(
     'loading controls accept hide and show taps and preserve intent after initialization',
@@ -663,7 +1120,15 @@ void main() {
     );
   }
 
-  for (final switching in ['automatic', 'manual', 'initial-prepare', 'retry']) {
+  for (final switching in [
+    'automatic',
+    'manual',
+    'manual-only',
+    'manual-prepare',
+    'manual-restore',
+    'initial-prepare',
+    'retry',
+  ]) {
     testWidgets(
       'latest manual resource choice interrupts $switching without overlapping native players',
       (tester) async {
@@ -706,12 +1171,17 @@ void main() {
         final cancellations = <Uri>[];
         if (switching == 'initial-prepare') {
           platform.stalledMedia.add('https://media.test/a.mp4');
+        } else if (switching == 'manual-prepare') {
+          platform.stalledMedia.add('https://media.test/b.mp4');
         }
         await tester.pumpWidget(
           MaterialApp(
             home: NativeVideoPage(
               session: session(cards.first),
-              autoResourceFallback: switching != 'retry',
+              autoResourceFallback:
+                  switching == 'automatic' ||
+                  switching == 'manual' ||
+                  switching == 'initial-prepare',
               initialPlaybackState: (
                 position: const Duration(seconds: 10),
                 playing: true,
@@ -731,7 +1201,15 @@ void main() {
               onResolutionCancelled: cancellations.add,
               loadEpisode: (url) async {
                 reads.add(url);
-                if (url == cards[1].watchUrl) return delayed.future;
+                if (switching == 'manual-restore') {
+                  if (url == cards[1].watchUrl) {
+                    throw StateError('Line unavailable');
+                  }
+                  if (url == cards.first.watchUrl) return delayed.future;
+                }
+                if (url == cards[1].watchUrl && switching != 'manual-prepare') {
+                  return delayed.future;
+                }
                 return (
                   session: session(cards.firstWhere((c) => c.watchUrl == url)),
                   operations: null,
@@ -748,8 +1226,12 @@ void main() {
           }
         }
 
-        Future<void> choose(String id) async {
-          final entry = find.byKey(const ValueKey('video-inline.sources'));
+        Future<void> choose(String id, {bool whileWaiting = false}) async {
+          final entry = find.byKey(
+            ValueKey(
+              whileWaiting ? 'video-switch.sources' : 'video-inline.sources',
+            ),
+          );
           await tester.ensureVisible(entry);
           await tester.tap(entry);
           await tester.pump();
@@ -770,7 +1252,7 @@ void main() {
         if (switching == 'automatic') {
           platform.failCurrentSource();
           await settle();
-        } else if (switching == 'manual') {
+        } else if (switching.startsWith('manual')) {
           await choose('b');
         }
         if (switching == 'retry') {
@@ -781,9 +1263,16 @@ void main() {
           tester.widget<TextButton>(retry).onPressed!();
           await tester.pump();
         } else if (switching != 'initial-prepare') {
-          expect(reads, [cards[1].watchUrl]);
+          expect(reads, [
+            cards[1].watchUrl,
+            if (switching == 'manual-restore') cards.first.watchUrl,
+          ]);
         }
-        await choose('c');
+        await choose(
+          'c',
+          whileWaiting:
+              switching == 'automatic' || switching == 'manual-prepare',
+        );
         expect(reads.last, cards[2].watchUrl);
         expect(changes.single.session.watchUrl, cards[2].watchUrl);
         expect(platform.maxNativePlayers, 1);
@@ -793,8 +1282,12 @@ void main() {
           await settle();
           expect(changes.single.session.watchUrl, cards[2].watchUrl);
           expect(platform.urls.last, 'https://media.test/c.mp4');
-        } else if (switching != 'initial-prepare') {
-          delayed.complete((session: session(cards[1]), operations: null));
+        } else if (switching != 'initial-prepare' &&
+            switching != 'manual-prepare') {
+          delayed.complete((
+            session: session(cards[switching == 'manual-restore' ? 0 : 1]),
+            operations: null,
+          ));
           await settle();
           expect(changes.single.session.watchUrl, cards[2].watchUrl);
         }
@@ -828,7 +1321,9 @@ void main() {
           reason:
               'play=${platform.playCount}; pause=${platform.pauseCount}; position=${platform.position}; seeks=${platform.seekTargets}; text=${tester.widgetList<Text>(find.descendant(of: current, matching: find.byType(Text))).map((e) => e.data).join(" | ")}',
         );
-        if (switching == 'automatic' || switching == 'manual') {
+        if (switching == 'manual-restore') {
+          expect(cancellations, contains(cards.first.watchUrl));
+        } else if (switching == 'automatic' || switching.startsWith('manual')) {
           final cancelled = find.byKey(const ValueKey('video-resource-line.b'));
           expect(
             find.descendant(
@@ -850,6 +1345,126 @@ void main() {
         await tester.runAsync(() => Future<void>.delayed(Duration.zero));
       },
     );
+  }
+
+  testWidgets('native error during main setup never reports media prepared', (
+    tester,
+  ) async {
+    const media = 'https://media.test/setup.mp4';
+    platform.stallPlayFor = media;
+    var prepared = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NativeVideoPage(
+          session: NativePlaybackSession(
+            title: 'Setup failure',
+            watchUrl: Uri.parse('https://fixture.test/watch'),
+            sources: [
+              NativePlaybackSource(
+                url: Uri.parse(media),
+                label: 'auto',
+                headers: const {},
+              ),
+            ],
+            description: '',
+            tags: const [],
+          ),
+          initialPlaybackState: (position: Duration.zero, playing: true),
+          onMediaPrepared: () => prepared++,
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(platform.pendingPlay, isNotNull);
+    expect(prepared, 0);
+    platform.failCurrentSource();
+    await tester.pump();
+    platform.pendingPlay!.complete();
+    for (var n = 0; n < 8; n++) {
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(prepared, 0);
+    expect(find.text(t.videoPlayback.playFailed), findsOneWidget);
+    expect(platform._events, isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  for (final nativeError in [false, true]) {
+    testWidgets('episode pause rejection with native error=$nativeError', (
+      tester,
+    ) async {
+      final cards = [
+        for (var n = 1; n <= 2; n++)
+          NativeVideoCard(
+            title: '第$n集',
+            watchUrl: Uri.parse('https://fixture.test/watch?episode=$n'),
+            coverUrl: null,
+          ),
+      ];
+      NativePlaybackSession session(
+        NativeVideoCard card,
+      ) => NativePlaybackSession(
+        title: card.title,
+        watchUrl: card.watchUrl,
+        sources: [
+          NativePlaybackSource(
+            url: Uri.parse(
+              'https://media.test/${card.watchUrl.queryParameters['episode']}.mp4',
+            ),
+            label: 'auto',
+            headers: const {},
+          ),
+        ],
+        description: '',
+        tags: const [],
+        episodes: cards,
+      );
+      final reads = <Uri>[], commits = <Uri>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NativeVideoPage(
+            session: session(cards.first),
+            initialPlaybackState: (position: Duration.zero, playing: true),
+            autoResourceFallback: true,
+            loadEpisode: (watch) async {
+              reads.add(watch);
+              return (session: session(cards.last), operations: null);
+            },
+            onEpisodeChanged: (result) => commits.add(result.session.watchUrl),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      platform.deferPauseFor = 'https://media.test/1.mp4';
+      await tester.tap(find.byKey(const ValueKey('video-inline.episodes')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ListTile, '第2集'));
+      for (var n = 0; n < 8; n++) {
+        await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(platform.pendingPause, isNotNull);
+      if (nativeError) {
+        platform.failCurrentSource();
+        await tester.pump();
+      }
+      platform.pendingPause!.completeError(
+        PlatformException(code: 'PauseUnavailable'),
+      );
+      for (var n = 0; n < 8; n++) {
+        await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      final expected = nativeError ? [cards.last.watchUrl] : isEmpty;
+      expect(reads, expected);
+      expect(commits, expected);
+      expect(platform.maxNativePlayers, 1);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    });
   }
 
   for (final stall in [false, true]) {
@@ -955,7 +1570,14 @@ void main() {
     );
   }
 
-  for (final buffering in ['paused', 'progressing', 'stalled']) {
+  for (final buffering in [
+    'paused',
+    'progressing',
+    'stalled',
+    'late',
+    'late-during-discovery',
+    'error-after-stall',
+  ]) {
     testWidgets('resource stall watchdog respects $buffering playback', (
       tester,
     ) async {
@@ -993,6 +1615,14 @@ void main() {
         episodes: [card],
       );
       final reads = <Uri>[];
+      final errors = <String>[];
+      final renewal = buffering == 'late-during-discovery'
+          ? Completer<NativePlaybackSession?>()
+          : null;
+      final singleLine =
+          buffering == 'late' ||
+          buffering == 'error-after-stall' ||
+          renewal != null;
       await tester.pumpWidget(
         MaterialApp(
           home: NativeVideoPage(
@@ -1003,7 +1633,7 @@ void main() {
               playing: buffering != 'paused',
             ),
             resourceLines: (current) => [
-              for (final card in cards)
+              for (final card in singleLine ? cards.take(1) : cards)
                 NativeVideoResourceLine(
                   id: card.watchUrl.queryParameters['line']!,
                   label: card.watchUrl.queryParameters['line']!,
@@ -1015,6 +1645,10 @@ void main() {
               reads.add(url);
               return (session: session(cards[1]), operations: null);
             },
+            onPlaybackError: errors.add,
+            recoverCurrentResource: renewal == null
+                ? null
+                : (_) => renewal.future,
           ),
         ),
       );
@@ -1024,7 +1658,7 @@ void main() {
       }
       platform.send(VideoEvent(eventType: VideoEventType.bufferingStart));
       await tester.pump();
-      for (var n = 0; n < 6; n++) {
+      for (var n = 0; n < (renewal == null ? 6 : 5); n++) {
         if (buffering == 'progressing') {
           platform.position = Duration(seconds: n + 1);
         }
@@ -1037,6 +1671,31 @@ void main() {
       }
       expect(reads, buffering == 'stalled' ? [cards[1].watchUrl] : isEmpty);
       expect(platform.maxNativePlayers, 1);
+      if (singleLine) {
+        final failure = renewal == null ? findsOneWidget : findsNothing;
+        expect(find.text(t.videoPlayback.playFailed), failure);
+        expect(errors, ['buffering_timeout']);
+        if (buffering != 'error-after-stall') {
+          platform.send(VideoEvent(eventType: VideoEventType.bufferingEnd));
+          await tester.pump();
+          expect(find.text(t.videoPlayback.playFailed), failure);
+          platform.position = const Duration(seconds: 1);
+          await tester.pump(const Duration(milliseconds: 250));
+          await tester.pump();
+          renewal?.complete(
+            session(cards.first).withSources(session(cards.last).sources),
+          );
+          await tester.pump(const Duration(milliseconds: 500));
+          expect(find.text(t.videoSource.lineResolving), findsNothing);
+          expect(find.text(t.videoPlayback.playFailed), findsNothing);
+          expect(platform.urls, ['https://media.test/a.mp4']);
+        } else {
+          platform.failCurrentSource();
+          await tester.pump();
+          expect(find.text(t.videoPlayback.playFailed), findsOneWidget);
+          expect(errors, ['buffering_timeout', 'Source expired']);
+        }
+      }
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.runAsync(() => Future<void>.delayed(Duration.zero));
@@ -1272,7 +1931,7 @@ void main() {
           if (outcome == 'cancel') {
             await tester.tap(find.byKey(const ValueKey('video-switch.cancel')));
           } else if (outcome == 'replace') {
-            final entry = find.byKey(const ValueKey('video-inline.sources'));
+            final entry = find.byKey(const ValueKey('video-switch.sources'));
             await tester.ensureVisible(entry);
             await tester.tap(entry);
             await tester.pump(const Duration(milliseconds: 250));
@@ -1479,7 +2138,7 @@ void main() {
             'status': 'ok',
             'signedIn': true,
             'canLike': true,
-            'canFollow': true,
+            'canFollow': !later,
             'capabilities': {'watchLater': 'ready', 'playlists': 'ready'},
             'liked': liked,
             'following': false,
@@ -1563,6 +2222,7 @@ void main() {
       await tester.tap(find.text(t.videoCommunity.watchLater));
       await tester.pump();
       expect(find.text(t.videoCommunity.inWatchLater), findsOneWidget);
+      expect(find.text(t.videoCommunity.actionsUnreadable), findsWidgets);
       await _closeQuick(tester);
       await tester.tap(find.byTooltip(t.videoPlayback.fullscreen));
       await tester.pumpAndSettle();
@@ -1582,6 +2242,10 @@ void main() {
         find.byTooltip(t.videoCommunity.like).hitTestable(),
         findsOneWidget,
       );
+      await tester.tap(find.byTooltip(t.videoCommunity.like).hitTestable());
+      await tester.pump();
+      expect(find.byType(SnackBar), findsNothing);
+      expect(liked, isFalse);
       expect(
         find.byTooltip(t.videoCommunity.favorite).hitTestable(),
         findsOneWidget,
@@ -1598,7 +2262,7 @@ void main() {
       await tester.tap(lock);
       await tester.pumpAndSettle();
       expect(find.byTooltip(t.videoPlayback.unlockControls), findsOneWidget);
-      expect(writes, ['like', 'savePlaylist', 'watchLater']);
+      expect(writes, ['like', 'savePlaylist', 'watchLater', 'like']);
       expect(platform.urls.length, 1);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
@@ -1680,6 +2344,24 @@ void main() {
         tester.widget<SwitchListTile>(swipeQuick).value,
         (await VideoPlaybackPreferences.read()).swipeSeek,
       );
+      final adjustments = find.byKey(
+        const ValueKey('video-quick.device-adjustments'),
+      );
+      final sides = find.byKey(const ValueKey('video-quick.adjustment-sides'));
+      expect(sides, findsNothing);
+      await _panelVisible(tester, adjustments);
+      await tester.tap(adjustments);
+      await tester.pumpAndSettle();
+      await _panelVisible(tester, sides);
+      await tester.tap(sides);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.text(t.videoPlayback.volumeLeftBrightnessRight).last,
+      );
+      await tester.pumpAndSettle();
+      final saved = await VideoPlaybackPreferences.read();
+      expect(saved.landscapeAdjustments, isTrue);
+      expect(saved.reverseLandscapeAdjustments, isTrue);
       await _closeQuick(tester);
       final sourceEntry = find.byKey(const ValueKey('video-inline.sources'));
       await tester.ensureVisible(sourceEntry);
@@ -1724,11 +2406,27 @@ void main() {
       await tester.tap(toggle);
       await tester.pumpAndSettle();
       expect((await VideoPlaybackPreferences.read()).swipeSeek, false);
+      final globalAdjustments = find.byKey(
+        const ValueKey('video-setting.landscapeAdjustments'),
+      );
+      await tester.ensureVisible(globalAdjustments);
+      expect(tester.widget<SwitchListTile>(globalAdjustments).value, isTrue);
+      expect(
+        find.text(t.videoPlayback.volumeLeftBrightnessRight),
+        findsOneWidget,
+      );
+      await tester.tap(globalAdjustments);
+      await tester.pumpAndSettle();
       expect(platform.urls.length, 1);
       // Return through the platform route contract; this test checks the
       // persisted setting and preserved player, not a platform back glyph.
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
+      await _openQuick(tester);
+      await _panelVisible(tester, adjustments);
+      expect(tester.widget<SwitchListTile>(adjustments).value, isFalse);
+      expect(sides, findsNothing);
+      await _closeQuick(tester);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
@@ -1833,6 +2531,11 @@ void main() {
             label: 'auto',
             headers: const {},
           ),
+          NativePlaybackSource(
+            url: Uri.parse('https://fixture.test/backup.mp4'),
+            label: 'backup',
+            headers: const {},
+          ),
         ],
         description: '',
         tags: const [],
@@ -1867,8 +2570,14 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      final picker = find.byKey(const ValueKey('video-inline.episodes'));
+      final sources = find.byKey(const ValueKey('video-inline.sources'));
+      expect(picker.hitTestable(), findsOneWidget);
+      expect(sources.hitTestable(), findsOneWidget);
       await tester.tap(find.text(t.videoCommunity.comments));
       await tester.pumpAndSettle();
+      expect(picker.hitTestable(), findsNothing);
+      expect(sources.hitTestable(), findsNothing);
       await tester.enterText(find.byType(TextField), 'Stay on this episode');
       await tester.tap(
         find.widgetWithText(FilledButton, t.videoCommunity.post),
@@ -1876,7 +2585,6 @@ void main() {
       await tester.pump();
       expect(operations.writeInFlight, isTrue);
 
-      final picker = find.byKey(const ValueKey('video-inline.episodes'));
       final next = find.byKey(ValueKey('episode-queue.${cards.last.watchUrl}'));
       Future<void> chooseNext() async {
         expect(picker.hitTestable(), findsOneWidget);
@@ -1890,11 +2598,11 @@ void main() {
         }
       }
 
+      await tester.tap(find.text(t.videoCommunity.overview));
+      await tester.pumpAndSettle();
       await chooseNext();
       expect(reads, isEmpty);
       expect(operations.writeInFlight, isTrue);
-      await tester.tap(find.text(t.videoCommunity.overview));
-      await tester.pumpAndSettle();
       final preview = find.byTooltip(cards.last.title);
       await tester.ensureVisible(preview);
       expect(preview.hitTestable(), findsOneWidget);
@@ -2660,6 +3368,263 @@ void main() {
   );
 
   testWidgets(
+    'scrub thumbnail stays in place and uses a larger source frame in landscape',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(430, 932);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      SharedPreferences.setMockInitialValues({
+        'breeze.video.defaults.controlsStyle': 'breeze',
+        'breeze.video.defaults.autoplay': false,
+      });
+      const channel = MethodChannel('breeze.video.seek-preview');
+      final requests = <Map<Object?, Object?>>[];
+      final firstFrame = Completer<Uint8List>();
+      final image = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4'
+        'nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
+      );
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method != 'frame') return null;
+        requests.add(call.arguments as Map<Object?, Object?>);
+        if (!firstFrame.isCompleted) return firstFrame.future;
+        return image;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+      final url = Uri.parse('https://example.test/media.mp4');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NativeVideoPage(
+            session: NativePlaybackSession(
+              title: 'Preview fixture',
+              watchUrl: Uri.parse('https://example.test/watch'),
+              sources: [
+                NativePlaybackSource(url: url, label: 'A', headers: const {}),
+              ],
+              description: '',
+              tags: const [],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final overlay = find.byKey(const ValueKey('video-scrub-preview'));
+      final window = find.byKey(const ValueKey('video-scrub-window'));
+      final frame = find.byKey(const ValueKey('video-scrub-frame'));
+      final time = find.byKey(const ValueKey('video-scrub-time'));
+      final seeksBefore = platform.seekTargets.length;
+      Future<TestGesture> beginScrub() async {
+        final slider = tester.getRect(find.byType(Slider));
+        final start = slider.centerLeft + Offset(slider.width * .22, 0);
+        final drag = await tester.startGesture(start);
+        await drag.moveBy(Offset(slider.width * .23, 0));
+        await tester.pump();
+        final box = tester.widget<Container>(window);
+        expect(box.decoration, isA<BoxDecoration>());
+        expect(box.foregroundDecoration, isA<BoxDecoration>());
+        await tester.pump(const Duration(milliseconds: 180));
+        return drag;
+      }
+
+      final aborted = await beginScrub();
+      expect(overlay, findsOneWidget);
+      final windowBounds = tester.getRect(window);
+      final timeCenter = tester.getCenter(time);
+      expect(frame, findsNothing);
+      firstFrame.complete(image);
+      await tester.pump(const Duration(milliseconds: 160));
+      await tester.pump();
+      expect(frame, findsOneWidget);
+      expect(tester.widget<Image>(frame).gaplessPlayback, isTrue);
+      expect(tester.getRect(window), windowBounds);
+      expect(tester.getCenter(time), timeCenter);
+      expect(requests.last['url'], url.toString());
+      expect(requests.last['wideThumbnail'], false);
+      expect(platform.seekTargets, hasLength(seeksBefore));
+      await aborted.cancel();
+      await tester.pump();
+      expect(overlay, findsNothing);
+      expect(platform.seekTargets, hasLength(seeksBefore));
+
+      final submitted = await beginScrub();
+      expect(frame, findsOneWidget);
+      await submitted.up();
+      await tester.pump();
+      expect(overlay, findsNothing);
+      expect(platform.seekTargets, hasLength(seeksBefore + 1));
+
+      await tester.tap(find.byIcon(Icons.fullscreen_rounded));
+      tester.view.physicalSize = const Size(932, 430);
+      await tester.pumpAndSettle();
+      final landscape = await beginScrub();
+      expect(requests.last['wideThumbnail'], true);
+      expect(tester.getSize(window).width, greaterThan(windowBounds.width));
+      expect(tester.getSize(window).width, lessThanOrEqualTo(272));
+      expect(tester.getRect(window).bottom, lessThan(tester.getRect(time).top));
+      expect(tester.takeException(), isNull);
+      await landscape.cancel();
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'line selection during buffering preserves intent and applies the active thumbnail policy',
+    (tester) async {
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(430, 932);
+      SharedPreferences.setMockInitialValues({
+        'breeze.video.defaults.controlsStyle': 'breeze',
+      });
+      const preview = MethodChannel('breeze.video.seek-preview');
+      messenger.setMockMethodCallHandler(
+        SystemChannels.platform_views,
+        (_) async => null,
+      );
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(
+          SystemChannels.platform_views,
+          null,
+        ),
+      );
+      final previewCalls = <String>[];
+      messenger.setMockMethodCallHandler(preview, (call) async {
+        previewCalls.add(call.method);
+        return null;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(preview, null));
+      final cards = [
+        for (final line in ['a', 'b', 'c'])
+          NativeVideoCard(
+            title: 'Same episode',
+            coverUrl: null,
+            watchUrl: Uri.parse(
+              'https://fixture.test/movie.html?line=$line&episode=1',
+            ),
+          ),
+      ];
+      NativePlaybackSession session(NativeVideoCard card) =>
+          NativePlaybackSession(
+            title: card.title,
+            watchUrl: card.watchUrl,
+            sources: [
+              NativePlaybackSource(
+                url: Uri.https(
+                  'media.test',
+                  '${card.watchUrl.queryParameters['line']}.mp4',
+                ),
+                label: 'auto',
+                headers: const {},
+              ),
+            ],
+            description: '',
+            tags: const [],
+          );
+      final changes = <Uri>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NativeVideoPage(
+            session: session(cards.first),
+            initialPlaybackState: (
+              position: const Duration(seconds: 10),
+              playing: true,
+            ),
+            allowSeekThumbnails: (current) =>
+                current.watchUrl != cards.first.watchUrl,
+            resourceLines: (current) => [
+              for (final card in cards)
+                NativeVideoResourceLine(
+                  id: card.watchUrl.queryParameters['line']!,
+                  label: card.watchUrl.queryParameters['line']!,
+                  current: card.watchUrl == current.watchUrl,
+                  target: card,
+                ),
+            ],
+            loadEpisode: (watch) async => (
+              session: session(
+                cards.singleWhere((card) => card.watchUrl == watch),
+              ),
+              operations: null,
+            ),
+            onEpisodeChanged: (load) => changes.add(load.session.watchUrl),
+          ),
+        ),
+      );
+      Future<void> settle() async {
+        for (var n = 0; n < 10; n++) {
+          await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+          await tester.pump(const Duration(milliseconds: 100));
+        }
+      }
+
+      Future<TestGesture> scrub() async {
+        final slider = tester.getRect(find.byType(Slider));
+        final drag = await tester.startGesture(slider.center);
+        await drag.moveBy(Offset(slider.width / 8, 0));
+        await tester.pump(const Duration(milliseconds: 200));
+        return drag;
+      }
+
+      Future<void> choose(String id) async {
+        final entry = find.byKey(const ValueKey('video-inline.sources'));
+        await tester.ensureVisible(entry);
+        await tester.tap(entry);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        final line = find.byKey(ValueKey('video-resource-line.$id'));
+        await _panelVisible(tester, line);
+        await tester.tap(line);
+        await settle();
+      }
+
+      await settle();
+      expect(platform.playCount, 1);
+      final time = find.byKey(const ValueKey('video-scrub-time'));
+      final window = find.byKey(const ValueKey('video-scrub-window'));
+      final initialScrub = await scrub();
+      expect(time, findsOneWidget);
+      expect(window, findsNothing);
+      expect(previewCalls, isEmpty);
+      await initialScrub.cancel();
+      await tester.pump();
+
+      platform.send(VideoEvent(eventType: VideoEventType.bufferingStart));
+      platform.send(
+        VideoEvent(
+          eventType: VideoEventType.isPlayingStateUpdate,
+          isPlaying: false,
+        ),
+      );
+      await tester.pump();
+      await choose('b');
+      expect(changes, [cards[1].watchUrl]);
+      expect(platform.playCount, 2);
+      expect(platform.seekTargets.last, const Duration(seconds: 10));
+      final otherScrub = await scrub();
+      expect(window, findsOneWidget);
+      await otherScrub.cancel();
+      await tester.pump();
+
+      await tester.tap(find.byTooltip(t.videoPlayback.pause));
+      await tester.pump();
+      platform.send(VideoEvent(eventType: VideoEventType.bufferingStart));
+      await tester.pump();
+      await choose('c');
+      expect(changes, [cards[1].watchUrl, cards[2].watchUrl]);
+      expect(platform.playCount, 2);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
     'seek preview, buffering, sound, controls and replay remain usable',
     (tester) async {
       final session = NativePlaybackSession(
@@ -2780,6 +3745,155 @@ void main() {
       await tester.pump();
     },
   );
+
+  testWidgets('buffering taps keep playback controls reachable', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NativeVideoPage(
+          session: NativePlaybackSession(
+            title: 'Buffering controls',
+            watchUrl: Uri.parse('https://fixture.test/watch'),
+            sources: [
+              NativePlaybackSource(
+                url: Uri.parse('https://fixture.test/video.mp4'),
+                label: 'auto',
+                headers: const {},
+              ),
+            ],
+            description: '',
+            tags: const [],
+          ),
+          initialPlaybackState: (position: Duration.zero, playing: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 6));
+    final pause = find.byTooltip(t.videoPlayback.pause).hitTestable();
+    expect(pause, findsNothing);
+    final surface = tester.getRect(
+      find.byKey(const ValueKey('video-gesture-surface')),
+    );
+    final tap = surface.topLeft + const Offset(60, 20);
+    platform.send(VideoEvent(eventType: VideoEventType.bufferingStart));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(pause, findsOneWidget);
+
+    await tester.tapAt(tap);
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(pause, findsOneWidget);
+    await tester.pump(const Duration(seconds: 6));
+    expect(pause, findsOneWidget);
+    await _openQuick(tester);
+    await tester.pump(const Duration(seconds: 6));
+    expect(find.byType(VideoPlaybackQuickPanel), findsOneWidget);
+    await _closeQuick(tester);
+    expect(pause, findsOneWidget);
+
+    platform.send(VideoEvent(eventType: VideoEventType.bufferingEnd));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 4));
+    expect(pause, findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
+    expect(pause, findsNothing);
+    await tester.tapAt(tap);
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(pause, findsOneWidget);
+    await tester.tapAt(tap);
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(pause, findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  for (final buffering in [true, false]) {
+    testWidgets('slow online scrub seek recovers with buffering=$buffering', (
+      tester,
+    ) async {
+      const media = 'https://media.test/watch.m3u8';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: NativeVideoPage(
+            session: NativePlaybackSession(
+              title: 'Slow online seek',
+              watchUrl: Uri.parse('https://fixture.test/watch'),
+              sources: [
+                NativePlaybackSource(
+                  url: Uri.parse(media),
+                  label: 'auto',
+                  headers: const {},
+                ),
+              ],
+              description: '',
+              tags: const [],
+            ),
+            initialPlaybackState: (position: Duration.zero, playing: true),
+            autoResourceFallback: true,
+          ),
+        ),
+      );
+      for (var i = 0; i < 5; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      final controller = tester
+          .widget<VideoPlayer>(find.byType(VideoPlayer))
+          .controller;
+      final pausesBefore = platform.pauseCount;
+      final seeksBefore = platform.seekTargets.length;
+      final slider = tester.getRect(find.byType(Slider));
+      platform.stallSeek = true;
+      final drag = await tester.startGesture(
+        slider.centerLeft + Offset(slider.width * .25, 0),
+      );
+      await drag.moveBy(Offset(slider.width * .1, 0));
+      await drag.up();
+      await tester.pump();
+      expect(platform.seekTargets, hasLength(seeksBefore + 1));
+      final target = platform.seekTargets.last;
+      platform.position = Duration.zero;
+      if (buffering) {
+        platform.send(VideoEvent(eventType: VideoEventType.bufferingStart));
+      }
+      await tester.pump();
+
+      await tester.pump(const Duration(seconds: 6));
+      expect(find.text(t.videoPlayback.playFailed), findsNothing);
+      expect(
+        find.text(t.videoPlayback.buffering),
+        buffering ? findsOneWidget : findsNothing,
+      );
+      expect(
+        find.byTooltip(t.videoPlayback.pause).hitTestable(),
+        findsOneWidget,
+        reason: 'the controls stay available while the seek is pending',
+      );
+      expect(platform.pauseCount, pausesBefore);
+
+      if (!buffering) {
+        await tester.pump(const Duration(seconds: 15));
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.text(t.videoPlayback.actionFailed), findsOneWidget);
+        expect(find.text(t.videoPlayback.playFailed), findsNothing);
+        expect(platform.pauseCount, pausesBefore);
+      }
+
+      platform.pendingSeek!.complete();
+      platform.position = target;
+      platform.send(VideoEvent(eventType: VideoEventType.bufferingEnd));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(controller.value.position, target);
+      expect(controller.value.isPlaying, isTrue);
+      expect(controller.value.isBuffering, isFalse);
+      expect(platform.urls, [media]);
+      expect(find.text(t.videoPlayback.playFailed), findsNothing);
+      expect(find.text(t.videoPlayback.buffering), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    });
+  }
 
   for (final command in ['pause', 'seek', 'speed', 'volume']) {
     testWidgets('platform $command failures have a visible recovery path', (
@@ -2956,6 +4070,261 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+
+  for (final reversed in [false, true]) {
+    testWidgets(
+      'device adjustment follows side, lock and player bounds ($reversed)',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({
+          'breeze.video.defaults.landscapeAdjustments': true,
+          'breeze.video.defaults.reverseLandscapeAdjustments': reversed,
+          'breeze.video.defaults.controlsStyle': 'breeze',
+        });
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(390, 844);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        final messenger = tester.binding.defaultBinaryMessenger;
+        const brightness = MethodChannel('zephyr/video_screen_brightness');
+        final brightnessCalls = <MethodCall>[];
+        final delayedBrightness = Completer<double>();
+        var delayRead = false;
+        messenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          (_) async => null,
+        );
+        messenger.setMockMethodCallHandler(brightness, (call) async {
+          brightnessCalls.add(call);
+          return switch (call.method) {
+            'get' => delayRead ? delayedBrightness.future : .5,
+            'getVolume' => .75,
+            'set' || 'setVolume' => call.arguments,
+            _ => null,
+          };
+        });
+        addTearDown(() {
+          messenger.setMockMethodCallHandler(brightness, null);
+          messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            home: NativeVideoPage(
+              session: NativePlaybackSession(
+                title: 'Landscape controls',
+                watchUrl: Uri.parse('https://example.test/watch'),
+                sources: [
+                  NativePlaybackSource(
+                    url: Uri.parse('https://example.test/test.mp4'),
+                    label: '720p',
+                    headers: const {},
+                  ),
+                ],
+                description: '',
+                tags: const [],
+              ),
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pump(const Duration(milliseconds: 200));
+        final surface = find.byKey(const ValueKey('video-gesture-surface'));
+        final initialVolumeCount = platform.volumes.length;
+        final inlineFrame = tester.getRect(surface);
+        final inlineLeft = inlineFrame.left + inlineFrame.width * .24;
+        final inlineRight = inlineFrame.left + inlineFrame.width * .72;
+        await tester.dragFrom(
+          Offset(inlineLeft, inlineFrame.bottom + 72),
+          const Offset(0, -50),
+        );
+        await tester.pump();
+        expect(brightnessCalls, isEmpty);
+        await tester.dragFrom(
+          Offset(inlineLeft, inlineFrame.center.dy),
+          const Offset(0, -55),
+        );
+        await tester.pump();
+        expect(brightnessCalls.last.method, reversed ? 'setVolume' : 'set');
+        expect(
+          brightnessCalls.last.arguments as double,
+          greaterThan(reversed ? .75 : .5),
+        );
+        await tester.dragFrom(
+          Offset(inlineRight, inlineFrame.center.dy),
+          const Offset(0, 55),
+        );
+        await tester.pump();
+        expect(brightnessCalls.last.method, reversed ? 'set' : 'setVolume');
+        expect(
+          brightnessCalls.last.arguments as double,
+          lessThan(reversed ? .5 : .75),
+        );
+        expect(platform.volumes, hasLength(initialVolumeCount));
+        brightnessCalls.clear();
+        delayRead = !reversed;
+
+        await tester.tap(find.byTooltip(t.videoPlayback.fullscreen));
+        await tester.pump();
+        tester.view.physicalSize = const Size(844, 390);
+        await tester.pump(const Duration(milliseconds: 200));
+        final frame = tester.getRect(surface);
+        final xBrightness = frame.width * (reversed ? .72 : .24);
+        final xVolume = frame.width * (reversed ? .24 : .72);
+        final seeksBeforeAdjustment = platform.seekTargets.length;
+        final brightnessDrag = await tester.startGesture(
+          frame.topLeft + Offset(xBrightness, 170),
+        );
+        await brightnessDrag.moveBy(const Offset(24, -16));
+        await brightnessDrag.moveBy(const Offset(4, -59));
+        await brightnessDrag.up();
+        await tester.pump();
+        expect(
+          platform.seekTargets,
+          hasLength(seeksBeforeAdjustment),
+          reason: 'a nearly diagonal start must not make a vertical drag seek',
+        );
+        if (!reversed) {
+          expect(brightnessCalls.map((call) => call.method), ['get']);
+          delayedBrightness.complete(.5);
+          await tester.pump();
+        }
+        expect(brightnessCalls.first.method, 'get');
+        expect(brightnessCalls.last.method, 'set');
+        expect(brightnessCalls.last.arguments as double, greaterThan(.5));
+        expect(find.byIcon(Icons.light_mode_outlined), findsOneWidget);
+
+        await tester.dragFrom(
+          frame.topLeft + Offset(xVolume, 125),
+          const Offset(0, 86),
+        );
+        await tester.pump();
+        expect(
+          brightnessCalls.map((call) => call.method),
+          contains('getVolume'),
+        );
+        expect(brightnessCalls.last.method, 'setVolume');
+        expect(
+          brightnessCalls.last.arguments as double,
+          inExclusiveRange(0, .75),
+        );
+        expect(platform.volumes, hasLength(initialVolumeCount));
+        expect(find.byIcon(Icons.volume_up_outlined), findsOneWidget);
+        final volumeCount = platform.volumes.length;
+        final brightnessCount = brightnessCalls.length;
+        await tester.dragFrom(
+          frame.topLeft + Offset(xVolume, 20),
+          const Offset(0, 130),
+        );
+        await tester.pump();
+        expect(platform.volumes, hasLength(volumeCount));
+        expect(brightnessCalls, hasLength(brightnessCount));
+
+        final seek = await tester.startGesture(
+          frame.topLeft + Offset(xVolume, 160),
+        );
+        await seek.moveBy(const Offset(16, 24));
+        await seek.moveBy(const Offset(114, 4));
+        await seek.up();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(platform.seekTargets, hasLength(seeksBeforeAdjustment + 1));
+        expect(platform.volumes, hasLength(volumeCount));
+        expect(brightnessCalls, hasLength(brightnessCount));
+
+        await tester.dragFrom(frame.center, const Offset(3, -110));
+        await tester.pump();
+        expect(platform.seekTargets, hasLength(seeksBeforeAdjustment + 1));
+        expect(platform.volumes, hasLength(volumeCount));
+        expect(brightnessCalls, hasLength(brightnessCount));
+
+        await tester.tap(find.byTooltip(t.videoPlayback.lockControls));
+        await tester.pump(const Duration(milliseconds: 200));
+        await tester.dragFrom(
+          frame.topLeft + Offset(xBrightness, 170),
+          const Offset(0, -76),
+        );
+        await tester.pump();
+        expect(brightnessCalls, hasLength(brightnessCount));
+        await tester.tap(find.byTooltip(t.videoPlayback.unlockControls));
+        await tester.pump(const Duration(milliseconds: 200));
+        await tester.tap(
+          find.byTooltip(t.videoPlayback.exitFullscreen).hitTestable().last,
+        );
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(
+          brightnessCalls.any((call) => call.method == 'restore'),
+          isFalse,
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        expect(
+          brightnessCalls.any((call) => call.method == 'restore'),
+          isFalse,
+        );
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+  }
+
+  testWidgets('paused fullscreen seek refreshes the settled timeline', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'breeze.video.defaults.autoplay': false,
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NativeVideoPage(
+          session: NativePlaybackSession(
+            title: 'Paused seek timeline',
+            watchUrl: Uri.parse('https://example.test/watch'),
+            sources: [
+              NativePlaybackSource(
+                url: Uri.parse('https://example.test/test.mp4'),
+                label: '720p',
+                headers: const {},
+              ),
+            ],
+            description: '',
+            tags: const [],
+          ),
+        ),
+      ),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.tap(find.byTooltip(t.videoPlayback.fullscreen));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.byTooltip(t.videoPlayback.play), findsOneWidget);
+    final controller = tester
+        .widget<VideoPlayer>(find.byType(VideoPlayer))
+        .controller;
+    final slider = find.byType(Slider);
+    final surface = find.byKey(const ValueKey('video-gesture-surface'));
+    final start = tester.getRect(surface).center + const Offset(-100, -30);
+
+    platform.stallSeek = true;
+    await tester.dragFrom(start, const Offset(170, 0));
+    await tester.pump();
+    expect(platform.pendingSeek, isNotNull);
+    final target = platform.seekTargets.last;
+    expect(target, greaterThan(Duration.zero));
+
+    platform.send(VideoEvent(eventType: VideoEventType.bufferingStart));
+    await tester.pump();
+    platform.send(VideoEvent(eventType: VideoEventType.bufferingEnd));
+    await tester.pump();
+    expect(tester.widget<Slider>(slider).value, 0);
+
+    platform.pendingSeek!.complete();
+    await tester.pump();
+    expect(controller.value.position, target);
+    expect(
+      tester.widget<Slider>(slider).value,
+      target.inMilliseconds.toDouble(),
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 100));
+  });
 
   testWidgets('playback stays inline until fullscreen is requested', (
     tester,
@@ -3377,6 +4746,27 @@ void main() {
     expect(find.text(t.videoPlayback.playFailed), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
+  });
+
+  testWidgets('native video expands a short four-line synopsis', (
+    tester,
+  ) async {
+    const synopsis = '简介\n甲\n乙\n最后一段';
+    final session = NativePlaybackSession.fromDetailResponse({
+      'data': {'title': 'Video with short synopsis', 'description': synopsis},
+    }, watchUrl: Uri.parse('https://hanime1.me/watch?v=17'));
+    await tester.pumpWidget(
+      MaterialApp(home: NativeVideoPage(session: session)),
+    );
+    await tester.pump(const Duration(milliseconds: 300));
+    final preview = find.text(synopsis);
+    final expand = find.text(t.videoPlayback.expandDescription);
+    expect(tester.widget<Text>(preview).maxLines, 3);
+    await tester.ensureVisible(expand);
+    await tester.tap(expand);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(tester.widget<Text>(preview).maxLines, isNull);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(

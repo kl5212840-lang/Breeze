@@ -69,6 +69,19 @@ void main() {
             await tester.tap(trigger);
             await tester.pumpAndSettle();
             expect(panel, findsOneWidget);
+            expect(
+              find.descendant(of: panel, matching: find.byType(BackdropFilter)),
+              platform == TargetPlatform.android
+                  ? findsOneWidget
+                  : findsNothing,
+            );
+            expect(
+              find.descendant(
+                of: trigger,
+                matching: find.byType(BackdropFilter),
+              ),
+              findsNothing,
+            );
             if (select) {
               await tester.tap(find.text('Page action'));
             } else {

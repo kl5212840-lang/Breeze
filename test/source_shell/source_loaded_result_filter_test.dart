@@ -9,6 +9,7 @@ import 'package:zephyr/page/comic_list/cubit/plugin_paged_comic_list_cubit.dart'
 import 'package:zephyr/page/comic_list/cubit/plugin_paged_comic_list_state.dart';
 import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
 import 'package:zephyr/page/search_result/view/source_loaded_result_filter.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
 
 import '../test_helper.dart';
@@ -224,6 +225,7 @@ void main() {
           closeTo(tester.getRect(filter).center.dy, 1),
         );
         expect(tester.getSize(filter).height, greaterThanOrEqualTo(44));
+        expect(tester.widget<SourceChromeIconButton>(filter).bare, isTrue);
         await tester.enterText(search, '尚未读取');
         await tester.pump();
         expect(
@@ -439,6 +441,99 @@ void main() {
       expect(find.byKey(const ValueKey('shelf-option-tags-标签甲')), findsNothing);
       await tester.tap(find.byTooltip(t.common.cancel));
       await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'public facet sheet quietly follows matching pages and stops after failure',
+    (tester) async {
+      final keyword = TextEditingController(text: 'keyword');
+      addTearDown(keyword.dispose);
+      var entries = [
+        _comic('first', 'keyword first', '第一類', 'tag'),
+        _comic('unmatched', 'other title', 'Unmatched category', 'tag'),
+        _comic('blocked', 'keyword blocked', 'Blocked category', 'tag'),
+      ];
+      var loading = false, failed = false, reads = 0;
+      late StateSetter update;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: StatefulBuilder(
+              builder: (_, setState) {
+                update = setState;
+                return SourceLoadedResultFilter(
+                  entries: entries,
+                  scope: 'fixture|publicSearch',
+                  publicBrowseFacets: true,
+                  compactControls: true,
+                  searchController: keyword,
+                  blockedCategories: const {'Blocked category'},
+                  loadingMore: loading,
+                  complete: false,
+                  filterScopeLabel: 'Loaded ${entries.length}',
+                  onLoadMore: failed
+                      ? null
+                      : () {
+                          reads++;
+                          setState(() => loading = true);
+                        },
+                  builder: (_, visible, controls) => Column(
+                    children: [
+                      controls,
+                      for (final entry in visible)
+                        Text(entry.title, key: ValueKey(entry.id)),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('first')), findsOneWidget);
+      expect(find.byKey(const ValueKey('unmatched')), findsNothing);
+      expect(find.byKey(const ValueKey('blocked')), findsNothing);
+      expect(reads, 0);
+      await tester.tap(find.byKey(const ValueKey('source-loaded.filters')));
+      await tester.pumpAndSettle();
+      final first = find.byKey(const ValueKey('shelf-option-category-第一類'));
+      final second = find.byKey(const ValueKey('shelf-option-category-第一类'));
+      final more = find.byKey(const ValueKey('shelf-filter-more-metadata'));
+      await tester.tap(find.textContaining(t.bookshelf.facets.category).first);
+      await tester.pumpAndSettle();
+      expect(first, findsOneWidget);
+      expect(second, findsNothing);
+      expect(find.text('Unmatched category'), findsNothing);
+      expect(find.text('Blocked category'), findsNothing);
+      expect(reads, 1);
+      expect(more, findsNothing);
+      await tester.tap(first);
+      update(() {
+        entries = [
+          ...entries,
+          _comic('second', 'keyword second', '第一类', 'tag'),
+        ];
+        loading = false;
+      });
+      await tester.pumpAndSettle();
+      expect(reads, 2);
+      update(() {
+        loading = false;
+        failed = true;
+      });
+      await tester.pumpAndSettle();
+      expect(first, findsOneWidget);
+      expect(second, findsOneWidget);
+      expect(find.text('Loaded 4'), findsOneWidget);
+      expect(more, findsNothing);
+      await tester.tap(find.byKey(const ValueKey('shelf-filter-apply')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('first')), findsOneWidget);
+      expect(find.byKey(const ValueKey('second')), findsNothing);
+      expect(reads, 2);
       expect(tester.takeException(), isNull);
     },
   );

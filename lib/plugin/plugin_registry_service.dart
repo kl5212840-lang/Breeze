@@ -16,6 +16,7 @@ import 'package:zephyr/src/rust/qjs.dart';
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/service/local_plugin_installation_state.dart';
 import 'package:zephyr/service/download/download_queue_manager.dart';
+import 'package:zephyr/service/download/download_cancel_signal.dart';
 import 'package:zephyr/page/video/video_download.dart';
 import 'package:zephyr/network/sync/sync_service.dart'
     show runExclusiveStorageOperation;
@@ -259,12 +260,21 @@ class PluginRegistryService {
   Future<Map<String, dynamic>> fetchPluginInfo({
     required String uuid,
     required String runtimeName,
+    String? taskGroupKey,
+    bool Function()? current,
   }) async {
     final plugin = _states[uuid];
     if (plugin == null || plugin.isDeleted) {
       throw StateError('插件不可用: $uuid');
     }
+    void ensureCurrent() {
+      if (current?.call() == false ||
+          taskGroupKey != null && isDownloadCancelSignaled(taskGroupKey)) {
+        throw const DownloadTaskCancelledException();
+      }
+    }
 
+    ensureCurrent();
     final onceRuntimeName = await ensureQjsRuntimeReady(
       pluginId: uuid,
       runtimeName: runtimeName,
@@ -274,11 +284,12 @@ class PluginRegistryService {
     final bundleJs = bundleUrl?.isNotEmpty == true
         ? null
         : await loadQjsBundleJs(uuid);
-    final bytes = await runWithPluginSessionRuntimeCall(
+    ensureCurrent();
+    final read = runWithPluginSessionRuntimeCall(
       onceRuntimeName,
       () => qjsTaskCall(
         runtimeName: onceRuntimeName,
-        taskGroupKey: '',
+        taskGroupKey: taskGroupKey ?? '',
         isOnce: true,
         bundleJs: bundleJs,
         bundleUrl: bundleUrl?.isNotEmpty == true ? bundleUrl : null,
@@ -286,12 +297,17 @@ class PluginRegistryService {
         argsJson: '{}',
       ),
     );
+    final bytes = await (taskGroupKey == null
+        ? read
+        : raceWithDownloadCancel(taskGroupKey, read));
+    ensureCurrent();
     final raw = utf8.decode(bytes, allowMalformed: true);
     final decoded = requireJsonMap(jsonDecode(raw));
     // A released runtime can finish after a replacement has been installed.
     // Commit metadata together, only while it still belongs to this bundle.
-    final current = _states[uuid];
-    if (current == null || !_sameInfoSource(plugin, current)) {
+    final installed = _states[uuid];
+    if (installed == null || !_sameInfoSource(plugin, installed)) {
+      if (taskGroupKey != null) throw const PluginSessionChanged();
       return decoded;
     }
     final found = _objectbox?.pluginInfoBox

@@ -34,7 +34,8 @@ ComicFollow mergeComicFollowRecord(ComicFollow local, ComicFollow incoming) {
       observed.hasUpdate && observed.detectedChapterCount > acknowledged;
   if (identical(observed, latestEdit) &&
       latestEdit.lastChapterCount == acknowledged &&
-      latestEdit.hasUpdate == hasUpdate) {
+      latestEdit.hasUpdate == hasUpdate &&
+      latestEdit.lastChapterUpdateAt == local.lastChapterUpdateAt) {
     return latestEdit;
   }
   return latestEdit.copyWith(
@@ -43,6 +44,7 @@ ComicFollow mergeComicFollowRecord(ComicFollow local, ComicFollow incoming) {
     detectedChapterTitle: observed.detectedChapterTitle,
     hasUpdate: hasUpdate,
     updateTime: observed.updateTime,
+    lastChapterUpdateAt: local.lastChapterUpdateAt,
   );
 }
 

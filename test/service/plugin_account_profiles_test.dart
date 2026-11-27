@@ -47,11 +47,29 @@ void main() {
     expect(PluginAccountProfiles.read(_source).profiles.values, hasLength(2));
   });
 
+  test('a token-only login cannot inherit the previous account password', () async {
+    await PluginAccountProfiles.submitLogin(
+      _source,
+      submit: () async {
+        replaceActivePluginAccount(_source, {
+          'auth.account': 'new-legacy-account',
+          'auth.authorization': 'new-legacy-session',
+          'auth.password': 'password-A',
+        });
+      },
+    );
+    final profiles = PluginAccountProfiles.read(_source).profiles.values;
+    final current = profiles.singleWhere((entry) => entry.identity == 'new-legacy-account');
+    final previous = profiles.singleWhere((entry) => entry.identity == 'A');
+    expect(PluginAccountProfiles.savedNativePassword(current), isNull);
+    expect(PluginAccountProfiles.savedNativePassword(previous), 'password-A');
+  });
+
   test('legacy active login can seed its username without reading saved list order', () async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(PluginAccountProfiles.selectedKey);
     await _active('legacy');
-    expect(await PluginAccountProfiles.currentLoginHint(_source), isNull);
+    expect(await PluginAccountProfiles.currentLoginHint(_source), 'legacy');
     expect(
       await PluginAccountProfiles.currentLoginHint(
         _source, legacySessionKey: 'auth.authorization',
@@ -86,6 +104,44 @@ void main() {
     expect(jsonDecode(onLoadPluginConfig(_source,pluginAccountProfilesKey,'null'))['value'],isNull,
       reason:'plugin code cannot read the other saved accounts');
   });
+  test('a queued save cannot attach a stale receipt to the next account', () async {
+    const proofA = PluginAccountAuthentication(serverIdentity: 'server-A');
+    expect(
+      PluginAccountIdentities.confirm(
+        _source,
+        proofA,
+        generation: pluginSessionWriteFence.generation(_source),
+      ),
+      isTrue,
+    );
+    final b = PluginAccountProfiles.read(_source)
+        .profiles
+        .values
+        .singleWhere((profile) => profile.identity == 'B');
+    final authentication = Completer<PluginAccountAuthentication>();
+    final switching = PluginAccountProfiles.switchTo(
+      _source,
+      b.id,
+      authenticate: (_) => authentication.future,
+    );
+    // The switch owns the queue but has not advanced the session yet.
+    expect(PluginAccountIdentities.current(_source), same(proofA));
+    final saving = expectLater(
+      PluginAccountProfiles.rememberVerifiedCurrent(_source, proofA),
+      throwsA(isA<PluginSessionChanged>()),
+    );
+    authentication.complete(
+      const PluginAccountAuthentication(serverIdentity: 'server-B'),
+    );
+    await switching;
+    await saving;
+    expect(
+      PluginAccountProfiles.read(_source).profiles[b.id]?.serverIdentity,
+      'server-B',
+    );
+    expect(await PluginAccountProfiles.selected(_source), b.id);
+  });
+
   test('failed verification preserves old active fields and selection; newer owner is never rolled back',() async {
     final b=PluginAccountProfiles.read(_source).profiles.values.singleWhere((p)=>p.identity=='B');
     final before=await PluginAccountProfiles.selected(_source);

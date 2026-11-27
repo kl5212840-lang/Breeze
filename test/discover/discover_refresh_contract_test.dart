@@ -40,6 +40,8 @@ class _Registry extends Fake implements PluginRegistryService {
   Future<Map<String, dynamic>> fetchPluginInfo({
     required String uuid,
     required String runtimeName,
+    String? taskGroupKey,
+    bool Function()? current,
   }) {
     final gate = Completer<Map<String, dynamic>>();
     pending.add(gate);

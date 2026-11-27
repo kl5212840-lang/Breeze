@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:zephyr/page/bookshelf/cubit/search_status.dart';
 import 'package:zephyr/page/bookshelf/models/shelf_page_mode.dart';
 import 'package:zephyr/page/bookshelf/widgets/video_bookshelf_pane.dart';
+import 'package:zephyr/page/donwload_task/view/download_task_cover.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
@@ -101,9 +102,63 @@ void main() {
             expect(_rail(tester, mode).responsivePreview, isTrue);
             expect(_rail(tester, mode).items.single.title, contains('电影'));
           }
+          final favoriteAction = find.descendant(
+            of: find.byKey(const ValueKey('profile-video-favorite')),
+            matching: find.widgetWithText(TextButton, '查看全部'),
+          );
+          final actionBeforeRefresh = tester.getRect(favoriteAction);
+          VideoWatchHistory.changes.value++;
+          await tester.pump();
+          for (final mode in ShelfPageMode.values) {
+            final rail = _rail(tester, mode);
+            expect(rail.loading, isFalse, reason: 'Warm local refresh keeps its content in place');
+            expect(rail.countLabel, '1');
+            expect(rail.items.single.title, contains('电影'));
+          }
+          expect(tester.getRect(favoriteAction), actionBeforeRefresh);
+          await _ready(tester);
           expect(find.byType(ApiVideoLibraryPage), findsNothing, reason: 'Reading previews cannot start a source catalog or player');
-          tester.widget<SourceChoiceMenu<String>>(find.byKey(const ValueKey('profile-video-module'))).onChanged!(modules.last.id);
-          await tester.pump(); await _ready(tester);
+          Map<String, dynamic> download() =>
+              (_rail(tester, ShelfPageMode.download).items.single.cover
+                      as DownloadVideoTaskCover)
+                  .row;
+          final movieDownload = download();
+          final moduleMenu = find.byKey(const ValueKey('profile-video-module'));
+          void chooseModule(SourceVideoModule module) =>
+              tester.widget<SourceChoiceMenu<String>>(moduleMenu).onChanged!(module.id);
+          chooseModule(modules.last);
+          await tester.pump();
+          for (final mode in ShelfPageMode.values) {
+            expect(
+              _rail(tester, mode).items.map((item) => item.title),
+              everyElement(contains('里番')),
+            );
+          }
+          await _ready(tester);
+          final animeDownload = download();
+          chooseModule(modules.first);
+          await tester.pump();
+          for (final mode in ShelfPageMode.values) {
+            final rail = _rail(tester, mode);
+            expect(rail.loading, isFalse);
+            expect(rail.countLabel, '1');
+            expect(rail.items.single.title, contains('电影'));
+          }
+          await _until(
+            tester,
+            () => !identical(download(), movieDownload),
+            'The warm movie snapshot is refreshed in the background',
+          );
+          chooseModule(modules.last);
+          await tester.pump();
+          for (final mode in ShelfPageMode.values) {
+            expect(_rail(tester, mode).items.single.title, contains('里番'));
+          }
+          await _until(
+            tester,
+            () => !identical(download(), animeDownload),
+            'The warm animation snapshot is refreshed in the background',
+          );
           for (final mode in ShelfPageMode.values) {
             final rail = _rail(tester, mode);
             expect(rail.items, hasLength(1)); expect(rail.items.single.title, contains('里番'));

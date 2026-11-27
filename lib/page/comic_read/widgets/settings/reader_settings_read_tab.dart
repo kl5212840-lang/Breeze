@@ -240,7 +240,6 @@ class _AutoReadSection extends StatelessWidget {
             suffix: t.reader.screenHeightPercent,
             onChanged: (value) {
               final percent = value.clamp(10, 100);
-              HapticFeedback.selectionClick();
               context.updateEffectiveReadSetting(
                 (current) =>
                     current.copyWith(autoScrollColumnDistancePercent: percent),
@@ -257,7 +256,6 @@ class _AutoReadSection extends StatelessWidget {
             suffix: t.reader.milliseconds,
             onChanged: (value) {
               final intervalMs = value.clamp(300, 5000);
-              HapticFeedback.selectionClick();
               context.updateEffectiveReadSetting(
                 (current) =>
                     current.copyWith(autoScrollColumnIntervalMs: intervalMs),
@@ -274,7 +272,6 @@ class _AutoReadSection extends StatelessWidget {
             suffix: t.reader.milliseconds,
             onChanged: (value) {
               final intervalMs = value.clamp(800, 10000);
-              HapticFeedback.selectionClick();
               context.updateEffectiveReadSetting(
                 (current) =>
                     current.copyWith(autoScrollPageIntervalMs: intervalMs),

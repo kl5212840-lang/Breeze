@@ -9,6 +9,9 @@ import 'package:zephyr/page/download/models/download_chapter.dart';
 import 'package:zephyr/service/download/download_admission.dart';
 import 'package:zephyr/service/download/models/download_task_json.dart';
 
+typedef DownloadTaskKeySnapshot =
+    Map<String, ({DownloadTask? latest, DownloadTask? incomplete})>;
+
 /// DownloadTask 的唯一读写入口。
 ///
 /// ObjectBox 实体暂时保持兼容，任务 payload 和检查点都存放在
@@ -134,7 +137,32 @@ class DownloadTaskRepository {
     }
   }
 
-  DownloadTask? findByTaskKey(String taskKey, {bool incompleteOnly = false}) {
+  /// Captures the latest row and latest incomplete row for each requested key.
+  /// The caller holds the write transaction while using and updating this map.
+  DownloadTaskKeySnapshot indexTaskKeys(Set<String> keys) {
+    final snapshot =
+        <String, ({DownloadTask? latest, DownloadTask? incomplete})>{};
+    for (final task in getAll()) {
+      final key = _taskKeyOf(task);
+      if (!keys.contains(key)) continue;
+      final previous = snapshot[key];
+      final latest = previous?.latest;
+      final incomplete = previous?.incomplete;
+      snapshot[key] = (
+        latest: task.id > (latest?.id ?? 0) ? task : latest,
+        incomplete: !task.isCompleted && task.id > (incomplete?.id ?? 0)
+            ? task
+            : incomplete,
+      );
+    }
+    return snapshot;
+  }
+
+  DownloadTask? findByTaskKey(
+    String taskKey, {
+    bool incompleteOnly = false,
+    DownloadTaskKeySnapshot? snapshot,
+  }) {
     DownloadTask? result;
     final normalizedKey = taskKey.trim();
     if (normalizedKey.isNotEmpty) {
@@ -149,6 +177,12 @@ class DownloadTaskRepository {
           return cached;
         }
         _taskKeyCache.remove(normalizedKey);
+      }
+      if (snapshot != null) {
+        final entry = snapshot[normalizedKey];
+        result = incompleteOnly ? entry?.incomplete : entry?.latest;
+        if (result != null) _taskKeyCache[normalizedKey] = result.id;
+        return result;
       }
       final candidates = getAll(incompleteOnly: incompleteOnly)
         ..sort((a, b) => b.id.compareTo(a.id));

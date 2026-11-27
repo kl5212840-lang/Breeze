@@ -1,11 +1,14 @@
 import 'dart:async';
-import 'dart:typed_data';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/source_downloaded_videos_page.dart';
+import 'package:zephyr/page/video/video_hls_assets.dart';
+import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/page/video/video_local_resources.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
@@ -418,7 +421,177 @@ void main() {
     });
   }
 
+  testWidgets('grouped downloads accept ninth-second verified inventory', (
+    tester,
+  ) async {
+    const source = 'slow-grouped-download-fixture';
+    const quality = '720p';
+    final page = Uri.parse('https://fixture.test/watch?v=44');
+    final resourceId = VideoLocalResources.identity(source, page, quality);
+    await tester.runAsync(() async {
+      SharedPreferences.setMockInitialValues({});
+      await useIsolatedDownloadFixture();
+      final file = await VideoLocalResources.file(resourceId);
+      await file.parent.create(recursive: true);
+      await file.writeAsBytes(
+        Uint8List(24)..setAll(0, [0, 0, 0, 24, 102, 116, 121, 112]),
+      );
+      await VideoLocalResources.saved(
+        resourceId: resourceId,
+        bytes: 24,
+        source: source,
+        video: page,
+        title: 'Slow inventory',
+        quality: quality,
+        taskKey: source,
+      );
+    });
+    final native = Completer<List<Object?>>();
+    final metadataPending = Completer<void>();
+    final metadataStarted = Completer<void>();
+    final holdMetadata = VideoLibraryStore.shared.updateSnapshot(
+      (_) => VideoLibrarySnapshot(),
+      beforeWrite: (_, _) async {
+        metadataStarted.complete();
+        await metadataPending.future;
+      },
+    );
+    var listStarted = false;
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(VideoHlsAssets.channel, (call) async {
+      expect(call.method, 'list');
+      listStarted = true;
+      return native.future;
+    });
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(VideoHlsAssets.channel, null),
+    );
+    final style = ValueNotifier('breeze');
+    addTearDown(style.dispose);
+
+    Future<void> waitFor(bool Function() condition) async {
+      final deadline = DateTime.now().add(const Duration(seconds: 5));
+      while (!condition() && DateTime.now().isBefore(deadline)) {
+        await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+        await tester.pump();
+      }
+      expect(condition(), isTrue);
+    }
+
+    try {
+      await waitFor(() => metadataStarted.isCompleted);
+      await tester.pumpWidget(
+        AppInterfaceStyleScope(
+          style: style,
+          child: const MaterialApp(
+            home: SourceDownloadedVideosPage(
+              source: source,
+              groupDownloads: true,
+            ),
+          ),
+        ),
+      );
+      await waitFor(() => listStarted);
+      await tester.pump(const Duration(seconds: 9));
+      final retry = find.text('${t.common.loadingFailed} · ${t.common.retry}');
+      expect(retry, findsNothing);
+      native.complete([]);
+      final row = find.byKey(ValueKey('source-download.$resourceId'));
+      await waitFor(() => row.evaluate().isNotEmpty);
+      expect(retry, findsNothing);
+    } finally {
+      if (!native.isCompleted) native.complete([]);
+      metadataPending.complete();
+      await holdMetadata;
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
   final grouping = ValueVariant<bool>({true, false});
+  testWidgets('source downloads retain their list when refresh fails', (
+    tester,
+  ) async {
+    final grouped = grouping.currentValue!;
+    const source = 'source-download-refresh-fixture';
+    const title = 'Retained download';
+    const quality = '720p';
+    final page = Uri.parse('https://fixture.test/watch?v=43');
+    final resourceId = VideoLocalResources.identity(source, page, quality);
+    late Directory root;
+    await tester.runAsync(() async {
+      SharedPreferences.setMockInitialValues({});
+      await useIsolatedDownloadFixture();
+      final file = await VideoLocalResources.file(resourceId);
+      root = file.parent;
+      await root.create(recursive: true);
+      await file.writeAsBytes(
+        Uint8List(24)..setAll(0, [0, 0, 0, 24, 102, 116, 121, 112]),
+      );
+      await VideoLocalResources.saved(
+        resourceId: resourceId,
+        bytes: 24,
+        source: source,
+        video: page,
+        title: title,
+        quality: quality,
+        taskKey: 'source-download-refresh-fixture',
+      );
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SourceDownloadedVideosPage(
+          source: source,
+          groupDownloads: grouped,
+        ),
+      ),
+    );
+    Future<void> waitFor(Finder finder, {bool present = true}) async {
+      final elapsed = Stopwatch()..start();
+      while (finder.evaluate().isNotEmpty != present &&
+          elapsed.elapsed < const Duration(seconds: 5)) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(finder, present ? findsOneWidget : findsNothing);
+    }
+
+    final row = find.byKey(ValueKey('source-download.$resourceId'));
+    final retry = find.text('${t.common.loadingFailed} · ${t.common.retry}');
+    final count = find.text(t.videoLibrary.results(count: 1));
+    await waitFor(row);
+    if (grouped) expect(count, findsOneWidget);
+    final top = tester.getTopLeft(row);
+
+    final held = await tester.runAsync(() async {
+      final held = await root.rename('${root.path}.held');
+      await Link(root.path).create(held.path);
+      VideoLocalResources.invalidate();
+      return held;
+    });
+    try {
+      await waitFor(retry);
+      expect(row, findsOneWidget);
+      expect(tester.getTopLeft(row), top);
+      if (grouped) expect(count, findsOneWidget);
+    } finally {
+      await tester.runAsync(() async {
+        await Link(root.path).delete();
+        await held!.rename(root.path);
+      });
+    }
+
+    await tester.tap(retry);
+    await waitFor(retry, present: false);
+    expect(row, findsOneWidget);
+    expect(tester.getTopLeft(row), top);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  }, variant: grouping);
+
   testWidgets('source downloads close search before leaving the route', (
     tester,
   ) async {
@@ -427,6 +600,11 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(VideoHlsAssets.channel, (_) async => []);
+    addTearDown(
+      () => messenger.setMockMethodCallHandler(VideoHlsAssets.channel, null),
+    );
     await tester.runAsync(() async {
       SharedPreferences.setMockInitialValues({});
       await useIsolatedDownloadFixture();
@@ -491,7 +669,6 @@ void main() {
     expect(find.text(t.bookshelf.download), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
-    // Let the download store's bounded read finish after the route is disposed.
-    await tester.pump(const Duration(seconds: 8));
+    await tester.pump();
   }, variant: grouping);
 }

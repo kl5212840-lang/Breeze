@@ -70,8 +70,11 @@ class ComicListScene {
     required this.from,
     required this.body,
     this.filter,
+    this.cloudFavoriteFolderManagement = false,
+    this.profileRecords = false,
   });
 
+  final bool cloudFavoriteFolderManagement, profileRecords;
   final String title;
   final String from;
   final ComicListBodyConfig body;
@@ -83,6 +86,8 @@ class ComicListScene {
     final listMap = asJsonMap(map['list']);
 
     return ComicListScene(
+      cloudFavoriteFolderManagement:
+          map['cloudFavoriteFolderManagement'] == true,
       title: map['title']?.toString() ?? '',
       from: source.trim(),
       body: bodyMap.isNotEmpty

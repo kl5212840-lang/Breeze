@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
+import 'package:zephyr/page/video/video_picture_size.dart';
 import 'package:zephyr/page/video/video_playback_preferences.dart';
 import 'package:zephyr/page/video/video_selection_panel.dart';
 import 'package:zephyr/page/video/video_side_panel.dart';
@@ -54,6 +55,10 @@ class VideoPlaybackQuickPanel extends StatelessWidget {
     this.onAnalysis,
     this.showSeekActions = true,
     this.trackControls = const [],
+    this.activePictureSize,
+    this.mirrored = false,
+    this.onMirror,
+    this.playableEpisodeCount,
   });
 
   final bool? watchLater;
@@ -67,6 +72,10 @@ class VideoPlaybackQuickPanel extends StatelessWidget {
   final VoidCallback? onAnalysis;
   final bool showSeekActions;
   final List<Widget> trackControls;
+  final VideoPictureSize? activePictureSize;
+  final bool mirrored;
+  final ValueChanged<bool>? onMirror;
+  final int? playableEpisodeCount;
   final VideoQuickSection section;
   final VideoPlaybackPreferences preferences;
   final NativePlaybackSession session;
@@ -267,6 +276,47 @@ class VideoPlaybackQuickPanel extends StatelessWidget {
                 ],
                 VideoQuickSection.playback => [
                   ...trackControls,
+                  BreezeSwitchListTile(
+                    SwitchListTile.adaptive(
+                      key: const ValueKey('video-quick.autoplay-next'),
+                      title: Text(t.videoPlayback.autoplayNext),
+                      value:
+                          preferences.repeatMode == VideoRepeatMode.none &&
+                          (playableEpisodeCount ?? 2) > 1 &&
+                          preferences.autoplayNext,
+                      onChanged:
+                          preferences.repeatMode == VideoRepeatMode.none &&
+                              (playableEpisodeCount ?? 2) > 1
+                          ? (value) => onPreference('autoplayNext', value)
+                          : null,
+                    ),
+                  ),
+                  SettingChoiceTile<VideoRepeatMode>(
+                    key: const ValueKey('video-quick.repeat-mode'),
+                    title: t.videoPlayback.repeatMode,
+                    value:
+                        playableEpisodeCount == 0 &&
+                            preferences.repeatMode == VideoRepeatMode.playlist
+                        ? VideoRepeatMode.none
+                        : preferences.repeatMode,
+                    items: videoRepeatModeLabels()
+                      ..removeWhere(
+                        (mode, _) =>
+                            playableEpisodeCount == 0 &&
+                            mode == VideoRepeatMode.playlist,
+                      ),
+                    onChanged: (mode) => onPreference('repeatMode', mode.name),
+                  ),
+                  if (onMirror != null)
+                    BreezeSwitchListTile(
+                      SwitchListTile.adaptive(
+                        key: const ValueKey('video-quick.mirror'),
+                        title: Text(t.videoPlayback.mirrorVideo),
+                        value: mirrored,
+                        onChanged: onMirror,
+                      ),
+                    ),
+                  const Divider(height: 16, indent: 16, endIndent: 16),
                   if (onWatchLater != null)
                     ListTile(
                       leading: Icon(
@@ -296,12 +346,21 @@ class VideoPlaybackQuickPanel extends StatelessWidget {
                       onChanged: ready ? (_) => onMute() : null,
                     ),
                   ),
-                  BreezeSwitchListTile(
-                    SwitchListTile.adaptive(
-                      title: Text(t.videoPlayback.coverVideo),
-                      value: preferences.cover,
-                      onChanged: (value) => onPreference('cover', value),
-                    ),
+                  SettingChoiceTile<VideoPictureSize>(
+                    key: const ValueKey('video-quick.picture-size'),
+                    title: t.videoPlayback.pictureSize,
+                    value: activePictureSize ?? preferences.pictureSize,
+                    valueIsFallback: preferences.usesLegacyCover,
+                    items: videoPictureSizeLabels(),
+                    onChanged: (value) {
+                      if (preferences.usesLegacyCover ||
+                          value != preferences.pictureSize) {
+                        onPreference(
+                          VideoPictureSize.preferenceKey,
+                          value.name,
+                        );
+                      }
+                    },
                   ),
                   if (showSeekActions)
                     Padding(
@@ -350,6 +409,27 @@ class VideoPlaybackQuickPanel extends StatelessWidget {
                       onChanged: (value) => onPreference('swipeSeek', value),
                     ),
                   ),
+                  BreezeSwitchListTile(
+                    SwitchListTile.adaptive(
+                      key: const ValueKey('video-quick.device-adjustments'),
+                      title: Text(t.videoPlayback.landscapeAdjustments),
+                      value: preferences.landscapeAdjustments,
+                      onChanged: (value) =>
+                          onPreference('landscapeAdjustments', value),
+                    ),
+                  ),
+                  if (preferences.landscapeAdjustments)
+                    SettingChoiceTile<bool>(
+                      key: const ValueKey('video-quick.adjustment-sides'),
+                      title: t.videoPlayback.landscapeAdjustmentSides,
+                      value: preferences.reverseLandscapeAdjustments,
+                      items: {
+                        false: t.videoPlayback.brightnessLeftVolumeRight,
+                        true: t.videoPlayback.volumeLeftBrightnessRight,
+                      },
+                      onChanged: (value) =>
+                          onPreference('reverseLandscapeAdjustments', value),
+                    ),
                   SettingChoiceTile<double>(
                     key: const ValueKey('video-quick.hold-speed'),
                     title: t.videoPlayback.holdSpeed,

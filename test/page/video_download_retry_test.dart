@@ -347,6 +347,38 @@ void main(){
     expect(VideoDownloadRetry.canRetry(row), isFalse);
     expect(VideoDownloadRetry.needsSource(row), isTrue);
   });
+  test('explicit site quality retries the same row after initial resolution fails', () async {
+    final key = await VideoExportRecords.beginTransfer(
+      source: source,
+      video: watch,
+      title: 'Playlist entry',
+      quality: '',
+      queued: true,
+      siteQuality: true,
+    );
+    await VideoExportRecords.updateTransfer(
+      key,
+      received: null,
+      status: 'failed',
+      failureReason: 'network',
+      terminal: true,
+    );
+    final row = (await VideoExportRecords.readTaskSnapshot()).single;
+    expect(VideoDownloadRetry.canRetry(row), isTrue);
+    expect(VideoDownloadRetry.needsSource(row), isFalse);
+    final owner = VideoDownloadRetry.register(source, (task) async {
+      expect(task['url'], '$watch');
+      return VideoDownloadRetryResolution(choices: [oldChoice]);
+    }, current: () => true);
+    addTearDown(() => VideoDownloadRetry.unregister(source, owner));
+    expect(await VideoDownloadRetry.retry(row), isTrue);
+    await VideoEpisodeDownloadQueue.flush();
+    final after = (await VideoExportRecords.readTaskSnapshot()).single;
+    expect(after['key'], key);
+    expect(after['attempt'], 2);
+    expect(after['quality'], '720p');
+    expect(after['siteQuality'], isNull);
+  });
   test('old terminal callback cannot overwrite a new queued attempt',()async{
     final row=await failed();
     final first=await VideoExportRecords.restartTransfer(row);expect(first,isNotNull);

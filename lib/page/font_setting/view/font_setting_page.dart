@@ -1,3 +1,5 @@
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/widgets/touch_hover_intent.dart';
 import 'package:auto_route/annotations.dart';
 import 'package:file_selector/file_selector.dart';
@@ -24,15 +26,17 @@ class _FontSettingPageState extends State<FontSettingPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: SourceBackButton.nativeLeading(context),
         title: Text(
           t.fontSetting.title,
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
         ),
         actions: [
-          IconButton(
+          SourceChromeIconButton(
             tooltip: t.fontSetting.clear,
             onPressed: _busy ? null : _clearAll,
-            icon: const Icon(Icons.restart_alt_outlined),
+            icon: Icons.restart_alt_outlined,
+            symbol: 'arrow.counterclockwise',
           ),
         ],
       ),

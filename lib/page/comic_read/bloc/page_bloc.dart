@@ -29,6 +29,22 @@ class PageBloc extends Bloc<PageEvent, PageState> {
       retry: () async {
         final event = _lastEvent;
         if (isClosed || event == null || !_canRecover) return;
+        final source = canonicalQjsSource(event.from);
+        if (pluginSessionWriteFence.isChanging(source) ||
+            pluginSessionWriteFence.generation(source) != _recoveryGeneration) {
+          _canRecover = false;
+          _recovery.reset();
+          emit(
+            state.copyWith(
+              status: PageStatus.failure,
+              epInfo: null,
+              errorMessage: normalizeSearchErrorMessage(
+                const PluginSessionChanged(),
+              ),
+            ),
+          );
+          return;
+        }
         final completion = Completer<void>();
         _recoveryAttempt = completion;
         add(event);
@@ -53,8 +69,11 @@ class PageBloc extends Bloc<PageEvent, PageState> {
   late final ImageRecoveryController _recovery;
   PageEvent? _lastEvent;
   bool _canRecover = false;
+  int? _recoveryGeneration;
   Completer<void>? _recoveryAttempt;
   void setRecoveryActive(bool active) => _recovery.setActive(active);
+  bool get waitingForNetwork =>
+      _canRecover && !_recovery.hub.online && _recovery.hasPendingRecovery;
 
   @override
   Future<void> close() {
@@ -67,12 +86,14 @@ class PageBloc extends Bloc<PageEvent, PageState> {
 
   final Future<NormalComicEpInfo> Function(PageEvent event)? _loadPage;
 
-  void _scheduleRecovery(PageEvent event, Object error) {
+  void _scheduleRecovery(PageEvent event, Object error, int generation) {
     _canRecover =
         event.type != ComicEntryType.download &&
         event.type != ComicEntryType.historyAndDownload &&
+        error is! PluginSessionChanged &&
         imageFailureIsTransient(error);
     if (_canRecover) {
+      _recoveryGeneration = generation;
       _recovery.failed(error);
     }
   }
@@ -80,11 +101,11 @@ class PageBloc extends Bloc<PageEvent, PageState> {
   Future<void> _fetchPages(PageEvent event, Emitter<PageState> emit) async {
     if (isClosed) return;
     unawaited(_reads.cancel());
-    if (event != _lastEvent) {
-      _recovery.reset();
-    }
     final attempt = _recoveryAttempt;
     _recoveryAttempt = null;
+    if (attempt == null || event != _lastEvent) {
+      _recovery.reset();
+    }
     _lastEvent = event;
     _canRecover = false;
     emit(state.copyWith(status: PageStatus.initial));
@@ -93,7 +114,9 @@ class PageBloc extends Bloc<PageEvent, PageState> {
         event.type == ComicEntryType.download ||
         event.type == ComicEntryType.historyAndDownload;
     final source = canonicalQjsSource(event.from);
-    final generation = pluginSessionWriteFence.generation(source);
+    final generation = attempt != null
+        ? _recoveryGeneration!
+        : pluginSessionWriteFence.generation(source);
     bool ownsSession() =>
         isDownload ||
         generation == pluginSessionWriteFence.generation(source) &&
@@ -150,8 +173,9 @@ class PageBloc extends Bloc<PageEvent, PageState> {
           ),
         );
       } else {
-        _scheduleRecovery(event, failure);
+        _scheduleRecovery(event, failure, generation);
       }
+      if (!_canRecover) _recovery.succeeded();
       emit(
         state.copyWith(
           status: _canRecover && _recovery.recovering

@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/task_dialog.dart';
 import 'package:zephyr/page/setting/common/setting_page_route.dart';
 import 'package:zephyr/page/theme_color/view/theme_color_page.dart';
 import 'package:zephyr/page/webdav_sync/view/webdav_sync_page.dart';
@@ -74,7 +75,6 @@ Widget proxyToggle(
   required ProxyType type,
   required String currentProxy,
   String? title,
-  String? subtitle,
   void Function(ProxySettingState) applyProxy = applyGlobalProxySetting,
 }) {
   return Column(
@@ -87,7 +87,7 @@ Widget proxyToggle(
             hoverColor: hover.hoverColor(),
             secondary: const Icon(Icons.router_outlined),
             title: Text(title ?? t.settings.proxy),
-            subtitle: Text(subtitle ?? t.settings.proxyEnabledSubtitle),
+            subtitle: Text(t.settings.proxyApplyScope),
             thumbIcon: settingSwitchThumbIcon(context),
             value: enabled,
             onChanged: (value) async {
@@ -108,7 +108,6 @@ Widget proxyToggle(
           ),
         ),
       ),
-      SettingRowDescription(t.settings.proxyApplyScope),
       if (enabled) proxyTypeEdit(context, type, applyProxy: applyProxy),
       if (enabled)
         proxyAddressEdit(context, currentProxy, applyProxy: applyProxy),
@@ -314,10 +313,8 @@ class _KeywordManagementDialogState extends State<_KeywordManagementDialog> {
 
     return BlocBuilder<GlobalSettingCubit, GlobalSettingState>(
       builder: (context, state) {
-        return Dialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
+        return TaskDialogSurface(
+          radius: 20,
           child: Container(
             width: double.maxFinite,
             constraints: const BoxConstraints(maxWidth: 400),

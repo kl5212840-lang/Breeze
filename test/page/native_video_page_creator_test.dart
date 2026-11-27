@@ -303,8 +303,8 @@ void main() {
       expect(works, 1);
       await tester.tap(find.text(t.videoCommunity.comments).first);
       await tester.pumpAndSettle();
-      expect(sources.hitTestable(), findsOneWidget);
-      expect(playlist.hitTestable(), findsOneWidget);
+      expect(sources.hitTestable(), findsNothing);
+      expect(playlist.hitTestable(), findsNothing);
       expect(author.hitTestable(), findsNothing);
       await tester.tap(find.text(t.videoCommunity.overview).first);
       await tester.pumpAndSettle();

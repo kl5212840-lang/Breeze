@@ -30,6 +30,7 @@ internal class VideoMp4Transfer {
     companion object {
         const val MAX_TRANSFER_MILLIS = 3_600_000L
         private const val MIN_FREE_BYTES = 32 * 1024 * 1024L
+        private val retryDelays = longArrayOf(1000, 3000, 7000)
     }
 
     @Volatile var cancelled = false
@@ -39,6 +40,7 @@ internal class VideoMp4Transfer {
     @Volatile var total = -1L
         private set
     private var connection: HttpURLConnection? = null
+    private val retrySignal = java.lang.Object()
 
     fun cancel() {
         val pending = synchronized(this) {
@@ -46,6 +48,7 @@ internal class VideoMp4Transfer {
             connection.also { connection = null }
         }
         pending?.disconnect()
+        synchronized(retrySignal) { retrySignal.notifyAll() }
     }
 
     fun download(
@@ -55,9 +58,41 @@ internal class VideoMp4Transfer {
         headers: Map<String, String>,
         clock: () -> Long,
         open: (URI) -> HttpURLConnection,
+        retryTransient: Boolean = false,
         progress: () -> Unit,
     ) {
         val started = clock()
+        var retries = 0
+        while (true) {
+            try {
+                downloadAttempt(file, original, referer, headers, clock, started, open, progress)
+                return
+            } catch (error: VideoMp4Failure) {
+                val transient = error.reason in setOf("network", "timeout", "incomplete") ||
+                    error.httpStatus in setOf(408, 500, 502, 503, 504)
+                if (!retryTransient || !transient || cancelled ||
+                    retries >= retryDelays.size || clock() - started >= MAX_TRANSFER_MILLIS) throw error
+                val delay = retryDelays[retries++]
+                synchronized(retrySignal) {
+                    if (!cancelled) retrySignal.wait(delay)
+                }
+                check(!cancelled)
+                received = 0L
+                total = -1L
+            }
+        }
+    }
+
+    private fun downloadAttempt(
+        file: File,
+        original: URI,
+        referer: URI,
+        headers: Map<String, String>,
+        clock: () -> Long,
+        started: Long,
+        open: (URI) -> HttpURLConnection,
+        progress: () -> Unit,
+    ) {
         var target = original
         repeat(6) { hop ->
             check(!cancelled)

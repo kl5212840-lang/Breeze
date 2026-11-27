@@ -13,6 +13,7 @@ import 'package:video_player/video_player.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/network/source_network_policy.dart';
 import 'package:zephyr/network/playback_trace.dart';
+import 'package:zephyr/page/video/video_download_resolution.dart';
 
 /// Bounded diagnostic categories; never include raw exceptions or request data.
 String omoRelayFailureCategory(Object error) {
@@ -135,6 +136,16 @@ class OmoNetworkContext {
   HttpServer? _server;
   Future<HttpServer>? _startingServer;
   final _assets = <String, _OmoMediaAsset>{};
+  final _assetIds = <(String, Uri), String>{};
+  static const _replayLimit = 12 * 1024 * 1024;
+  static const _replayEntryLimit = 3 * 1024 * 1024;
+  final _replayClock = Stopwatch()..start();
+  final _replays = <(String, String?), _OmoMediaReplay>{};
+  int _nextReplay = 0;
+  final _seekRenditions = <String, String>{};
+  final _seekWindows = <String, _OmoSeekWindow>{};
+  int _replayBytes = 0;
+  int _collectingBytes = 0;
   final _relayTrace = PlaybackTrace();
   int _relaySequence = 0;
   String get relayDiagnostics =>
@@ -157,15 +168,43 @@ class OmoNetworkContext {
   }
 
   final _requests = <String>{};
-  final _jobs = <String, _OmoFetchJob>{};
+  final _jobs = <(String, String), _OmoFetchJob>{};
+  final _passiveBridgeTokens = <String>{};
+
+  /// A probe borrows this visit, but owns only its own native HTTP requests.
+  String passiveBridgeToken(VideoDownloadResolutionOwner owner) {
+    owner.check();
+    final visit = _delegate ?? this;
+    if (_closed || visit._closed || !owner.passive || owner.source != source) {
+      throw const VideoResolutionCancelled();
+    }
+    final alias = _opaque();
+    Future<void>? retirement;
+    Future<void> retire() => retirement ??= visit._retirePassiveBridge(alias);
+    owner.onCancel(retire);
+    owner.onClose(() => unawaited(retire().catchError((Object _) {})));
+    visit._passiveBridgeTokens.add(alias);
+    return alias;
+  }
+
+  Future<void> _retirePassiveBridge(String alias) async {
+    _passiveBridgeTokens.remove(alias);
+    final owned = _jobs.entries
+        .where((entry) => entry.key.$1 == alias)
+        .toList();
+    for (final entry in owned) {
+      _retireFetchJob(entry.key, entry.value);
+    }
+    await Future.wait(owned.map((entry) => _cancel(entry.value.nativeId)));
+  }
 
   void _retireFetchJob(
-    String id,
+    (String, String) key,
     _OmoFetchJob job, [
     String reason = 'Request cancelled',
   ]) {
-    if (!identical(_jobs[id], job)) return;
-    _jobs.remove(id);
+    if (!identical(_jobs[key], job)) return;
+    _jobs.remove(key);
     job.expiry?.cancel();
     if (!job.finished) {
       job.error = StateError(reason);
@@ -370,8 +409,15 @@ class OmoNetworkContext {
         ? jsonDecode(args[1] as String) as Map
         : args[1] as Map;
     final id = payload['request'] as String;
+    final bridgeToken = payload['context'] as String;
+    final key = (bridgeToken, id);
     final context = _visits
-        .where((visit) => visit.token == payload['context'] && !visit._closed)
+        .where(
+          (visit) =>
+              !visit._closed &&
+              (visit.token == bridgeToken ||
+                  visit._passiveBridgeTokens.contains(bridgeToken)),
+        )
         .firstOrNull;
     final runtime = args[0].toString().split(':').last;
     final traceSource = SourceNetworkPolicies.canonicalSource(runtime);
@@ -382,7 +428,7 @@ class OmoNetworkContext {
         'fetch callback; sessionFound=${context != null}; '
             'sourceMatches=${context?.source == traceSource}; '
             'requestLength=${id.length}; requestValid=${RegExp(r"^[a-zA-Z0-9_-]{1,80}$").hasMatch(id)}; '
-            'jobs=${context?._jobs.length}; duplicate=${context?._jobs.containsKey(id)}; '
+            'jobs=${context?._jobs.length}; duplicate=${context?._jobs.containsKey(key)}; '
             'timeoutType=${payload["timeout"].runtimeType}',
       );
     }
@@ -394,13 +440,15 @@ class OmoNetworkContext {
       throw const FormatException('Invalid request');
     }
     if (cancel) {
-      final job = context._jobs[id];
-      if (job != null) context._retireFetchJob(id, job);
-      await context._cancel(id);
+      final job = context._jobs[key];
+      if (job != null) {
+        context._retireFetchJob(key, job);
+        await context._cancel(job.nativeId);
+      }
       return '{}';
     }
     if (poll) {
-      final job = context._jobs[id];
+      final job = context._jobs[key];
       if (job == null) throw StateError('Request expired');
       if (!job.finished) return '{"pending":true}';
       PlaybackTrace.note(
@@ -408,7 +456,7 @@ class OmoNetworkContext {
         'dart_transport',
         'poll completed; error=${job.error != null}',
       );
-      context._retireFetchJob(id, job);
+      context._retireFetchJob(key, job);
       if (job.error != null) {
         Error.throwWithStackTrace(job.error!, job.stack ?? StackTrace.current);
       }
@@ -417,7 +465,7 @@ class OmoNetworkContext {
     // Count running work, not results abandoned by a previous JS consumer.
     // Keep the original eight-request concurrency bound.
     if (context._jobs.values.where((job) => !job.finished).length >= 8 ||
-        context._jobs.containsKey(id)) {
+        context._jobs.containsKey(key)) {
       throw StateError('Request capacity reached');
     }
     final mode = payload['responseMode'];
@@ -439,17 +487,17 @@ class OmoNetworkContext {
       );
       context._retireFetchJob(old.key, old.value, 'Response expired');
     }
-    final job = _OmoFetchJob();
-    context._jobs[id] = job;
+    final job = _OmoFetchJob(context.token == bridgeToken ? id : _opaque());
+    context._jobs[key] = job;
     job.expiry = Timer(timeout + const Duration(seconds: 5), () {
-      if (!identical(context._jobs[id], job)) return;
+      if (!identical(context._jobs[key], job)) return;
       PlaybackTrace.note(
         traceSource,
         'dart_transport',
         'expired abandoned request',
       );
-      context._retireFetchJob(id, job, 'Request expired');
-      unawaited(context._cancel(id).catchError((Object _) {}));
+      context._retireFetchJob(key, job, 'Request expired');
+      unawaited(context._cancel(job.nativeId).catchError((Object _) {}));
     });
     PlaybackTrace.note(
       traceSource,
@@ -461,7 +509,7 @@ class OmoNetworkContext {
         Future<String> responseBody() async {
           final response = await context.start(
             Uri.parse(payload['url'] as String),
-            requestId: id,
+            requestId: job.nativeId,
             // Source HTML needs the same access-verification session as WK.
             // Native code attaches cookies only to declared first-party
             // origins, never to parser/CDN hosts. Media/images keep false.
@@ -469,6 +517,7 @@ class OmoNetworkContext {
             headers: Map<String, String>.from(payload['headers'] as Map? ?? {}),
             timeout: timeout,
           );
+          if (job.finished) throw const VideoResolutionCancelled();
           final body = await response.bytes(2500000);
           PlaybackTrace.note(
             context.source,
@@ -496,7 +545,8 @@ class OmoNetworkContext {
           job.stack = stack;
         }
       } finally {
-        if (identical(context._jobs[id], job)) await context._cancel(id);
+        if (identical(context._jobs[key], job))
+          await context._cancel(job.nativeId);
         job.finished = true;
         if (!job.completed.isCompleted) job.completed.complete();
       }
@@ -516,7 +566,7 @@ class OmoNetworkContext {
       }
       return job.result!;
     } finally {
-      context._retireFetchJob(id, job);
+      context._retireFetchJob(key, job);
     }
   }
 
@@ -599,13 +649,26 @@ class OmoNetworkContext {
     if (_closed || server == null) throw StateError('Network session closed');
     final lease = _opaque();
     final local = _asset(url, headers, lease);
+    _assets[local]!.isRoot = true;
     final endpoint = Uri(
       scheme: 'http',
       host: '127.0.0.1',
       port: server.port,
       path: '/$local',
     );
-    return _OmoPlayer(endpoint, () => _release(lease));
+    return _OmoPlayer(
+      endpoint,
+      () => _release(lease),
+      () => _assets[local]?.playlist == true,
+      (position) => _cachedSeekWindow(lease, endpoint, position),
+      () {
+        final track = _assets[local]?.iframeTrack;
+        if (_closed || track == null || _assets[track]?.lease != lease) {
+          return null;
+        }
+        return endpoint.replace(path: '/$track');
+      },
+    );
   }
 
   String _asset(
@@ -613,37 +676,350 @@ class OmoNetworkContext {
     Map<String, String> headers,
     String lease, {
     String kind = 'media',
+    bool replayable = false,
   }) {
-    if (_assets.length >= 20000) throw StateError('Media playlist too large');
     // Do not let a server-provided URI escape the chosen network path.
     if (url.scheme != 'https' || url.userInfo.isNotEmpty || url.host.isEmpty) {
       throw const FormatException('Unsupported media URL');
     }
-    final previous = _assets.entries
-        .where((entry) => entry.value.lease == lease && entry.value.url == url)
-        .firstOrNull;
-    if (previous != null) return previous.key;
-    final suffix =
-        RegExp(
-          r'\.(m3u8|mp4|m4a|m4s|ts|aac|key)$',
-          caseSensitive: false,
-        ).firstMatch(url.path)?.group(0) ??
-        '.bin';
+    final key = (lease, url);
+    final previous = _assetIds[key];
+    if (previous != null) return previous;
+    if (_assets.length >= 20000) throw StateError('Media playlist too large');
+    final suffix = kind == 'iframe'
+        ? '.m3u8'
+        : RegExp(
+                r'\.(m3u8|mp4|m4a|m4s|ts|aac|key)$',
+                caseSensitive: false,
+              ).firstMatch(url.path)?.group(0) ??
+              '.bin';
     final id = '${_opaque()}$suffix';
+    final playlist =
+        kind == 'iframe' || url.path.toLowerCase().endsWith('.m3u8');
     _assets[id] = _OmoMediaAsset(
       url,
       Map.unmodifiable(headers),
       lease,
-      kind == 'media' && url.path.toLowerCase().endsWith('.m3u8')
-          ? 'playlist'
-          : kind,
+      playlist && kind == 'media' ? 'playlist' : kind,
+      playlist: playlist,
+      replayable: replayable,
     );
+    _assetIds[key] = id;
     return id;
   }
 
-  Future<void> _serve(HttpRequest request) async {
+  static Duration _replayLifetime(Map<String, String> headers) {
+    final directives = (headers['cache-control'] ?? '').toLowerCase();
+    if (directives.contains('no-store') ||
+        directives.contains('no-cache') ||
+        headers['pragma']?.toLowerCase().contains('no-cache') == true ||
+        headers['vary']?.trim() == '*') {
+      return Duration.zero;
+    }
+    var seconds = 30;
+    final maxAge = RegExp(
+      r'(?:^|,)\s*max-age\s*=\s*"?([0-9]+)',
+    ).firstMatch(directives);
+    if (maxAge != null) {
+      seconds = min(
+        seconds,
+        (int.tryParse(maxAge[1]!) ?? 0) -
+            (int.tryParse(headers['age'] ?? '') ?? 0),
+      );
+    } else if (headers['expires'] case final expires?) {
+      try {
+        seconds = min(
+          seconds,
+          HttpDate.parse(expires).difference(DateTime.now()).inSeconds,
+        );
+      } on HttpException {
+        return Duration.zero;
+      }
+    }
+    return Duration(seconds: max(0, seconds));
+  }
+
+  static _OmoProgressiveRepresentation? _progressiveRepresentation(
+    OmoNetworkResponse response,
+    String? range,
+    int length,
+  ) {
+    final headers = response.headers;
+    final mime = headers['content-type']?.split(';').first.trim().toLowerCase();
+    final encoding = headers['content-encoding']?.trim().toLowerCase();
+    if (response.status != HttpStatus.partialContent ||
+        !const {
+          'video/mp4',
+          'application/mp4',
+          'video/quicktime',
+        }.contains(mime) ||
+        encoding != null && encoding != 'identity' ||
+        headers.containsKey('vary')) {
+      return null;
+    }
+
+    final requested = RegExp(r'^bytes=(\d+)-(\d*)$').firstMatch(range ?? '');
+    final returned = RegExp(
+      r'^bytes (\d+)-(\d+)/(\d+)$',
+    ).firstMatch(headers['content-range'] ?? '');
+    if (requested == null || returned == null) return null;
+    final start = int.tryParse(returned[1]!);
+    final end = int.tryParse(returned[2]!);
+    final total = int.tryParse(returned[3]!);
+    final requestedEnd = int.tryParse(requested[2]!);
+    if (start == null ||
+        end == null ||
+        total == null ||
+        int.tryParse(requested[1]!) != start ||
+        requested[2]!.isNotEmpty && requestedEnd == null ||
+        end < start ||
+        end >= total ||
+        end != min(requestedEnd ?? total - 1, total - 1) ||
+        end - start + 1 != length) {
+      return null;
+    }
+
+    final tag = headers['etag']?.trim();
+    final strongTag = tag != null && RegExp(r'^"[^"]*"$').hasMatch(tag)
+        ? tag
+        : null;
+    final modified = headers['last-modified'];
+    if (strongTag == null &&
+        modified == null &&
+        !RegExp(
+          r'(?:^|,)\s*max-age\s*=',
+          caseSensitive: false,
+        ).hasMatch(headers['cache-control'] ?? '') &&
+        !headers.containsKey('expires')) {
+      return null;
+    }
+    return (response.url, mime!, total, tag, modified);
+  }
+
+  void _remember(
+    (String, String?) key,
+    int status,
+    Map<String, String> headers,
+    Uint8List body,
+    Duration lifetime, {
+    _OmoSeekTimeline? timeline,
+  }) {
+    if (body.isEmpty ||
+        body.length > _replayEntryLimit ||
+        lifetime <= Duration.zero) {
+      return;
+    }
+    _forget(key);
+    while (_replayBytes + body.length > _replayLimit || _replays.length >= 32) {
+      _forget(_replays.keys.first);
+    }
+    _replays[key] = _OmoMediaReplay(
+      status,
+      headers,
+      body,
+      _replayClock.elapsed + lifetime,
+      ++_nextReplay,
+      timeline,
+    );
+    _replayBytes += body.length;
+  }
+
+  void _forget((String, String?) key) {
+    _replayBytes -= _replays.remove(key)?.body.length ?? 0;
+  }
+
+  _OmoMediaReplay? _freshReplay((String, String?) key) {
+    final replay = _replays[key];
+    return replay != null && replay.expires > _replayClock.elapsed
+        ? replay
+        : null;
+  }
+
+  void _noteSeekSegment(
+    String id,
+    _OmoMediaAsset asset,
+    _OmoMediaReplay replay,
+  ) {
+    if (asset.kind != 'segment' ||
+        asset.seekAuxiliary ||
+        !replay.fullTransportStream) {
+      return;
+    }
+    final matches = [
+      for (final entry in _replays.entries)
+        if (entry.key.$2 == null &&
+            _assets[entry.key.$1]?.lease == asset.lease &&
+            _assets[entry.key.$1]?.seekAuxiliary == false &&
+            entry.value.expires > _replayClock.elapsed &&
+            entry.value.timeline?.ids.contains(id) == true)
+          entry.key.$1,
+    ];
+    if (matches.length == 1) {
+      _seekRenditions[asset.lease] = matches.single;
+    } else {
+      _seekRenditions.remove(asset.lease);
+    }
+  }
+
+  ({Uri url, Duration position})? _cachedSeekWindow(
+    String lease,
+    Uri endpoint,
+    Duration target,
+  ) {
+    final rendition = _seekRenditions[lease];
+    final renditionAsset = _assets[rendition];
+    if (_closed ||
+        rendition == null ||
+        renditionAsset == null ||
+        renditionAsset.lease != lease ||
+        renditionAsset.seekAuxiliary) {
+      return null;
+    }
+    final manifest = _freshReplay((rendition, null));
+    final segment = manifest?.timeline?.at(target);
+    if (segment == null) return null;
+    final segmentAsset = _assets[segment.id];
+    if (segmentAsset == null ||
+        segmentAsset.lease != lease ||
+        segmentAsset.seekAuxiliary) {
+      return null;
+    }
+    final entry = _replays.entries
+        .where(
+          (entry) =>
+              entry.key.$1 == segment.id &&
+              entry.value.expires > _replayClock.elapsed &&
+              entry.value.fullTransportStream,
+        )
+        .lastOrNull;
+    if (entry == null) return null;
+    _seekWindows.removeWhere((_, window) => _windowReplay(window) == null);
+    final _OmoSeekWindow window = (
+      lease: lease,
+      rendition: rendition,
+      manifestVersion: manifest!.version,
+      segmentKey: entry.key,
+      segmentVersion: entry.value.version,
+      duration: segment.duration,
+    );
+    var id = _seekWindows.entries
+        .where((entry) => entry.value == window)
+        .firstOrNull
+        ?.key;
+    if (id == null) {
+      if (_seekWindows.length >= 12) {
+        _seekWindows.remove(_seekWindows.keys.first);
+      }
+      id = _opaque();
+      _seekWindows[id] = window;
+    }
+    return (
+      url: endpoint.replace(path: '/seek-preview/$id.m3u8'),
+      position: target - segment.start,
+    );
+  }
+
+  _OmoMediaReplay? _windowReplay(_OmoSeekWindow window) {
+    if (_closed ||
+        _seekRenditions[window.lease] != window.rendition ||
+        _assets[window.rendition]?.seekAuxiliary != false ||
+        _assets[window.segmentKey.$1]?.lease != window.lease ||
+        _assets[window.segmentKey.$1]?.seekAuxiliary != false ||
+        _freshReplay((window.rendition, null))?.version !=
+            window.manifestVersion) {
+      return null;
+    }
+    final replay = _freshReplay(window.segmentKey);
+    return replay?.version == window.segmentVersion ? replay : null;
+  }
+
+  Future<void> _serveSeekWindow(HttpRequest request) async {
     final response = request.response;
-    final asset = _assets[request.uri.path.replaceFirst('/', '')];
+    try {
+      final match = RegExp(
+        r'^/seek-preview/([a-f0-9]+)\.(m3u8|ts)$',
+      ).firstMatch(request.uri.path);
+      final id = match?[1];
+      final window = _seekWindows[id];
+      final replay = window == null ? null : _windowReplay(window);
+      if (id == null ||
+          request.uri.hasQuery ||
+          !['GET', 'HEAD'].contains(request.method) ||
+          replay == null) {
+        response.statusCode = HttpStatus.notFound;
+        return;
+      }
+      final playlist = match![2] == 'm3u8';
+      final seconds =
+          window!.duration.inMicroseconds / Duration.microsecondsPerSecond;
+      final bytes = playlist
+          ? utf8.encode(
+              '#EXTM3U\n#EXT-X-VERSION:3\n'
+              '#EXT-X-TARGETDURATION:${seconds.ceil()}\n'
+              '#EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:$seconds,\n'
+              '/seek-preview/$id.ts\n#EXT-X-ENDLIST\n',
+            )
+          : replay.body;
+      response.headers
+        ..set(HttpHeaders.cacheControlHeader, 'no-store')
+        ..set(
+          HttpHeaders.contentTypeHeader,
+          playlist ? 'application/vnd.apple.mpegurl' : 'video/mp2t',
+        )
+        ..set(HttpHeaders.acceptRangesHeader, 'bytes');
+      var start = 0, end = bytes.length - 1;
+      final ranges = request.headers[HttpHeaders.rangeHeader];
+      if (ranges != null) {
+        final range = ranges.singleOrNull;
+        final bounds = range == null
+            ? null
+            : RegExp(r'^bytes=(\d*)-(\d*)$').firstMatch(range);
+        final lower = int.tryParse(bounds?[1] ?? '');
+        final upper = int.tryParse(bounds?[2] ?? '');
+        if (bounds == null ||
+            bounds[1]!.isNotEmpty && lower == null ||
+            bounds[2]!.isNotEmpty && upper == null ||
+            lower == null && (upper == null || upper <= 0) ||
+            lower != null && (lower > end || upper != null && upper < lower)) {
+          response.statusCode = HttpStatus.requestedRangeNotSatisfiable;
+          response.headers.set(
+            HttpHeaders.contentRangeHeader,
+            'bytes */${bytes.length}',
+          );
+          return;
+        }
+        start = lower ?? max(0, bytes.length - upper!);
+        if (lower != null && upper != null) end = min(end, upper);
+        response.statusCode = HttpStatus.partialContent;
+        response.headers.set(
+          HttpHeaders.contentRangeHeader,
+          'bytes $start-$end/${bytes.length}',
+        );
+      }
+      response.contentLength = end - start + 1;
+      if (request.method == 'GET') {
+        response.add(Uint8List.sublistView(bytes, start, end + 1));
+      }
+    } on HttpException {
+      // The preview reader disconnected.
+    } finally {
+      try {
+        await response.close();
+      } catch (_) {
+        /* Client cancelled the preview. */
+      }
+    }
+  }
+
+  Future<void> _serve(HttpRequest request) async {
+    if (request.uri.path.startsWith('/seek-preview/')) {
+      await _serveSeekWindow(request);
+      return;
+    }
+    final response = request.response;
+    final localId = request.uri.path.replaceFirst('/', '');
+    final asset = _assets[localId];
+    bool live() => !_closed && identical(_assets[localId], asset);
     String? upstreamRequestId;
     final clock = Stopwatch()..start();
     final requestNumber = ++_relaySequence;
@@ -675,10 +1051,48 @@ class OmoNetworkContext {
         'request=$requestNumber; kind=$kind; begin; method=${request.method}; host=${asset.url.host}:${asset.url.port}',
       );
       final headers = <String, String>{...asset.headers};
-      final range = request.headers.value(HttpHeaders.rangeHeader);
-      final knownPlaylist = asset.url.path.toLowerCase().endsWith('.m3u8');
+      final knownPlaylist = asset.playlist;
+      final range = knownPlaylist
+          ? null
+          : request.headers.value(HttpHeaders.rangeHeader);
+      final progressive = asset.isRoot && kind == 'media' && !knownPlaylist;
+      final allowsProgressiveReplay =
+          progressive &&
+          request.method == 'GET' &&
+          !(request.headers[HttpHeaders.cacheControlHeader] ?? const <String>[])
+              .any(
+                (value) =>
+                    _replayLifetime({'cache-control': value}) == Duration.zero,
+              ) &&
+          !(request.headers['pragma'] ?? const <String>[]).any(
+            (value) => value.toLowerCase().contains('no-cache'),
+          ) &&
+          !const [
+            'if-range',
+            'if-match',
+            'if-none-match',
+            'if-modified-since',
+            'if-unmodified-since',
+          ].any((name) => request.headers[name] != null);
       final playlistHead = knownPlaylist && request.method == 'HEAD';
-      if (range != null && !knownPlaylist) headers['Range'] = range;
+      if (range != null) headers['Range'] = range;
+      final replayKey = (localId, range);
+      if (_replays[replayKey] case final cached?
+          when request.method == 'GET' &&
+              (!progressive || allowsProgressiveReplay)) {
+        _forget(replayKey);
+        if (cached.expires > _replayClock.elapsed) {
+          _replays[replayKey] = cached;
+          _replayBytes += cached.body.length;
+          response.statusCode = cached.status;
+          cached.headers.forEach(response.headers.set);
+          response.add(cached.body);
+          bytes = cached.body.length;
+          terminal = 'reused';
+          _noteSeekSegment(localId, asset, cached);
+          return;
+        }
+      }
       // Own the native transfer before waiting for its response headers.
       final id = _opaque();
       if (_requests.contains(id)) throw StateError('Duplicate request');
@@ -690,7 +1104,7 @@ class OmoNetworkContext {
         headers: headers,
         requestId: id,
       );
-      if (_closed || !_assets.values.contains(asset)) return;
+      if (!live()) return;
       _noteRelay(
         'request=$requestNumber; kind=$kind; headers_ms=${clock.elapsedMilliseconds}; status=${upstream.status}; final_host=${upstream.url.host}:${upstream.url.port}',
       );
@@ -711,12 +1125,12 @@ class OmoNetworkContext {
             .whenComplete(upstream.cancel),
       );
       response.statusCode = upstream.status;
-      if (_closed || !_assets.values.contains(asset)) return;
+      if (!live()) return;
       final type = upstream.headers['content-type'] ?? '';
       final first = request.method == 'HEAD' && !playlistHead
           ? null
           : await upstream.read();
-      if (_closed || !_assets.values.contains(asset)) return;
+      if (!live()) return;
       if (first != null) firstBody(first.length);
       final playlist =
           (request.method != 'HEAD' || playlistHead) &&
@@ -732,28 +1146,66 @@ class OmoNetworkContext {
           1024 * 1024,
           first: first,
           onChunk: (length) {
-            if (_closed || !_assets.values.contains(asset))
-              throw StateError('Media lease retired');
+            if (!live()) throw StateError('Media lease retired');
             firstBody(length);
           },
         );
-        if (_closed || !_assets.values.contains(asset)) return;
+        if (!live()) return;
+        asset.playlist = true;
         bytes = data.length;
+        final playlistBody = utf8.decode(data);
+        final vod = RegExp(
+          r'^#EXT-X-ENDLIST\s*$',
+          multiLine: true,
+        ).hasMatch(playlistBody);
+        String? iframeTrack;
         final body = omoRewritePlaylist(
-          utf8.decode(data),
+          playlistBody,
           upstream.url,
           (uri) => '/${_asset(uri, asset.headers, asset.lease)}',
-          localTyped: (uri, role) =>
-              '/${_asset(uri, asset.headers, asset.lease, kind: role)}',
+          localTyped: (uri, role) {
+            final id = _asset(
+              uri,
+              asset.headers,
+              asset.lease,
+              kind: role == 'alternate' ? 'playlist' : role,
+              replayable:
+                  vod &&
+                  asset.kind != 'iframe' &&
+                  (role == 'segment' || role == 'map'),
+            );
+            if (asset.seekAuxiliary || role == 'alternate') {
+              _assets[id]!.seekAuxiliary = true;
+            }
+            if (asset.isRoot && role == 'iframe') iframeTrack ??= id;
+            return '/$id';
+          },
         );
+        if (asset.isRoot) asset.iframeTrack = iframeTrack;
         final encoded = utf8.encode(body);
-        response.headers.contentType = ContentType(
-          'application',
-          'vnd.apple.mpegurl',
-        );
+        const contentType = 'application/vnd.apple.mpegurl';
+        response.headers.set('content-type', contentType);
         response.contentLength = encoded.length;
-        if (request.method != 'HEAD') response.add(encoded);
+        if (request.method != 'HEAD') {
+          response.add(encoded);
+          if (vod && encoded.length <= _replayEntryLimit) {
+            _remember(
+              replayKey,
+              200,
+              {
+                'content-type': contentType,
+                'content-length': '${encoded.length}',
+              },
+              encoded,
+              _replayLifetime(upstream.headers),
+              timeline: asset.seekAuxiliary
+                  ? null
+                  : _OmoSeekTimeline.parse(body),
+            );
+          }
+        }
       } else {
+        final mediaHeaders = <String, String>{};
         for (final name in [
           'content-type',
           'content-length',
@@ -761,27 +1213,94 @@ class OmoNetworkContext {
           'accept-ranges',
         ]) {
           final value = upstream.headers[name];
-          if (value != null) response.headers.set(name, value);
+          if (value != null) mediaHeaders[name] = value;
         }
-        if (first != null) {
-          response.add(first);
-          await response.flush();
+        mediaHeaders.forEach(response.headers.set);
+        final lifetime = _replayLifetime(upstream.headers);
+        final expectedLength =
+            int.tryParse(mediaHeaders['content-length'] ?? '') ?? 0;
+        final representation = progressive && range != null
+            ? _progressiveRepresentation(upstream, range, expectedLength)
+            : null;
+        if (progressive &&
+            range != null &&
+            requestNumber > asset.progressiveObservation) {
+          asset.progressiveObservation = requestNumber;
+          if (asset.progressiveRepresentation != representation ||
+              lifetime == Duration.zero) {
+            for (final key
+                in _replays.keys.where((key) => key.$1 == localId).toList()) {
+              _forget(key);
+            }
+            asset.progressiveRepresentation = representation;
+            asset.progressiveGeneration = requestNumber;
+          }
         }
-        while (request.method != 'HEAD') {
-          final chunk = await upstream.read();
-          if (_closed || !_assets.values.contains(asset)) return;
-          if (chunk == null) break;
-          firstBody(chunk.length);
-          response.add(chunk);
-          await response.flush();
+        final progressiveGeneration = asset.progressiveGeneration;
+        final canReplay =
+            (asset.replayable ||
+                allowsProgressiveReplay &&
+                    representation != null &&
+                    requestNumber >= progressiveGeneration &&
+                    asset.progressiveRepresentation == representation) &&
+            request.method == 'GET' &&
+            (upstream.status == 200 ||
+                upstream.status == 206 &&
+                    mediaHeaders.containsKey('content-range')) &&
+            lifetime > Duration.zero &&
+            expectedLength > 0 &&
+            expectedLength <= _replayEntryLimit &&
+            _collectingBytes + expectedLength <= _replayEntryLimit * 2;
+        if (canReplay) _collectingBytes += expectedLength;
+        BytesBuilder? replay = canReplay ? BytesBuilder(copy: false) : null;
+        void collect(Uint8List chunk) {
+          final buffer = replay;
+          if (buffer == null) return;
+          if (buffer.length + chunk.length > expectedLength) {
+            replay = null;
+            return;
+          }
+          buffer.add(chunk);
+        }
+
+        try {
+          if (first != null) {
+            collect(first);
+            response.add(first);
+            await response.flush();
+          }
+          while (request.method != 'HEAD') {
+            final chunk = await upstream.read();
+            if (!live()) return;
+            if (chunk == null) break;
+            firstBody(chunk.length);
+            collect(chunk);
+            response.add(chunk);
+            await response.flush();
+          }
+          final finished = replay;
+          if (finished != null &&
+              finished.length == expectedLength &&
+              asset.progressiveGeneration == progressiveGeneration) {
+            _remember(
+              replayKey,
+              upstream.status,
+              mediaHeaders,
+              finished.takeBytes(),
+              progressive ? lifetime - clock.elapsed : lifetime,
+            );
+            if (_freshReplay(replayKey) case final replay?) {
+              _noteSeekSegment(localId, asset, replay);
+            }
+          }
+        } finally {
+          if (canReplay) _collectingBytes -= expectedLength;
         }
       }
       terminal = 'done';
       if (upstream.status >= 400) category = 'http_status';
     } catch (error) {
-      terminal = _closed || asset == null || !_assets.values.contains(asset)
-          ? 'retired'
-          : 'fail';
+      terminal = asset == null || !live() ? 'retired' : 'fail';
       category = omoRelayFailureCategory(error);
       // Never expose signed URLs, account cookies or raw native error text.
       try {
@@ -806,11 +1325,20 @@ class OmoNetworkContext {
   }
 
   Future<void> _release(String lease) async {
+    _seekRenditions.remove(lease);
+    _seekWindows.removeWhere((_, window) => window.lease == lease);
     final requestIds = [
       for (final asset in _assets.values)
         if (asset.lease == lease) ...asset.requestIds,
     ];
+    _assetIds.removeWhere((key, _) => key.$1 == lease);
     _assets.removeWhere((_, asset) => asset.lease == lease);
+    for (final key
+        in _replays.keys
+            .where((key) => !_assets.containsKey(key.$1))
+            .toList()) {
+      _forget(key);
+    }
     await Future.wait(requestIds.map(_cancel));
   }
 
@@ -830,8 +1358,14 @@ class OmoNetworkContext {
     // Retire before the last handle releases policy ownership, so a new visit
     // cannot borrow a closing native token after changing its proxy.
     _visits.remove(this);
+    _passiveBridgeTokens.clear();
     if (identical(_sources[source], this)) _sources.remove(source);
     _assets.clear();
+    _assetIds.clear();
+    _replays.clear();
+    _seekRenditions.clear();
+    _seekWindows.clear();
+    _replayBytes = 0;
     for (final entry in _jobs.entries.toList()) {
       _retireFetchJob(entry.key, entry.value, 'Network session closed');
     }
@@ -890,21 +1424,161 @@ class OmoNetworkResponse {
   Future<void> cancel() => context._cancel(id);
 }
 
+typedef _OmoProgressiveRepresentation = (Uri, String, int, String?, String?);
+
 class _OmoMediaAsset {
-  _OmoMediaAsset(this.url, this.headers, this.lease, this.kind);
+  _OmoMediaAsset(
+    this.url,
+    this.headers,
+    this.lease,
+    this.kind, {
+    required this.playlist,
+    required this.replayable,
+  });
   final Uri url;
   final Map<String, String> headers;
   final String lease;
   final String kind;
+  bool playlist;
+  bool isRoot = false;
+  _OmoProgressiveRepresentation? progressiveRepresentation;
+  int progressiveGeneration = 0;
+  int progressiveObservation = 0;
+  bool seekAuxiliary = false;
+  String? iframeTrack;
+  final bool replayable;
   final requestIds = <String>{};
 }
 
+class _OmoMediaReplay {
+  _OmoMediaReplay(
+    this.status,
+    this.headers,
+    this.body,
+    this.expires,
+    this.version,
+    this.timeline,
+  );
+  final int status;
+  final Map<String, String> headers;
+  final Uint8List body;
+  final Duration expires;
+  final int version;
+  final _OmoSeekTimeline? timeline;
+
+  bool get fullTransportStream =>
+      (status == HttpStatus.ok ||
+          status == HttpStatus.partialContent &&
+              headers['content-range'] ==
+                  'bytes 0-${body.length - 1}/${body.length}') &&
+      body.length >= 188 * 3 &&
+      body.length % 188 == 0 &&
+      body[0] == 0x47 &&
+      body[188] == 0x47 &&
+      body[376] == 0x47;
+}
+
+typedef _OmoSeekSegment = ({String id, Duration start, Duration duration});
+typedef _OmoSeekWindow = ({
+  String lease,
+  String rendition,
+  int manifestVersion,
+  (String, String?) segmentKey,
+  int segmentVersion,
+  Duration duration,
+});
+
+class _OmoSeekTimeline {
+  const _OmoSeekTimeline(this.segments, this.ids);
+  final List<_OmoSeekSegment> segments;
+  final Set<String> ids;
+
+  static _OmoSeekTimeline? parse(String rewritten) {
+    final segments = <_OmoSeekSegment>[];
+    final ids = <String>{};
+    final unsupported = RegExp(
+      r'^#EXT-X-(?:BYTERANGE|DISCONTINUITY|GAP|I-FRAMES-ONLY|KEY|MAP|PART|PRELOAD-HINT|SESSION-KEY|SKIP|START|STREAM-INF)(?:$|:|-)',
+    );
+    var start = Duration.zero;
+    Duration? segmentDuration;
+    for (final raw in const LineSplitter().convert(rewritten)) {
+      final line = raw.trim();
+      if (unsupported.hasMatch(line)) return null;
+      if (line.startsWith('#EXTINF:')) {
+        final seconds = double.tryParse(line.substring(8).split(',').first);
+        if (segmentDuration != null ||
+            seconds == null ||
+            !seconds.isFinite ||
+            seconds <= 0 ||
+            seconds > 3600) {
+          return null;
+        }
+        segmentDuration = Duration(
+          microseconds: (seconds * Duration.microsecondsPerSecond).round(),
+        );
+      } else if (line.isNotEmpty && !line.startsWith('#')) {
+        if (!RegExp(r'^/[a-f0-9]+\.(?:ts|bin)$').hasMatch(line) ||
+            segmentDuration == null ||
+            segmentDuration == Duration.zero) {
+          return null;
+        }
+        final id = line.substring(1);
+        if (!ids.add(id)) return null;
+        segments.add((id: id, start: start, duration: segmentDuration));
+        start += segmentDuration;
+        segmentDuration = null;
+      }
+    }
+    return segments.isEmpty || segmentDuration != null
+        ? null
+        : _OmoSeekTimeline(segments, ids);
+  }
+
+  _OmoSeekSegment? at(Duration target) {
+    var lower = 0, upper = segments.length;
+    while (lower < upper) {
+      final middle = (lower + upper) ~/ 2;
+      final segment = segments[middle];
+      if (target < segment.start) {
+        upper = middle;
+      } else if (target >= segment.start + segment.duration) {
+        lower = middle + 1;
+      } else {
+        return segment;
+      }
+    }
+    return null;
+  }
+}
+
+/// An optional preview backed solely by bytes already forwarded to this player.
+({Uri url, Duration position})? omoCachedSeekWindow(
+  VideoPlayerController player,
+  Duration target,
+) => player is _OmoPlayer ? player.cachedSeekWindow(target) : null;
+
+/// The I-frame rendition advertised by the current root playlist, if any.
+Uri? omoIFrameSeekTrack(VideoPlayerController player) =>
+    player is _OmoPlayer ? player.iframeSeekTrack() : null;
+
 class _OmoPlayer extends VideoPlayerController {
-  _OmoPlayer(super.url, this.release)
-    : super.networkUrl(
+  _OmoPlayer(
+    super.url,
+    this.release,
+    this._servesPlaylist,
+    this.cachedSeekWindow,
+    this.iframeSeekTrack,
+  ) : super.networkUrl(
         videoPlayerOptions: VideoPlayerOptions(allowBackgroundPlayback: true),
       );
   final AsyncCallback release;
+  final bool Function() _servesPlaylist;
+  final ({Uri url, Duration position})? Function(Duration) cachedSeekWindow;
+  final Uri? Function() iframeSeekTrack;
+  @override
+  VideoFormat? get formatHint =>
+      _servesPlaylist() ? VideoFormat.hls : super.formatHint;
+
   @override
   Future<void> dispose() async {
     try {
@@ -952,6 +1626,10 @@ String omoRewritePlaylist(
             ? 'key'
             : line.trimLeft().startsWith('#EXT-X-MAP:')
             ? 'map'
+            : line.trimLeft().startsWith('#EXT-X-I-FRAME-STREAM-INF:')
+            ? 'iframe'
+            : line.trimLeft().startsWith('#EXT-X-MEDIA:')
+            ? 'alternate'
             : RegExp(
                 r'^#EXT-X-(?:PART|PRELOAD-HINT):',
               ).hasMatch(line.trimLeft())
@@ -966,6 +1644,9 @@ String omoRewritePlaylist(
 }
 
 class _OmoFetchJob {
+  _OmoFetchJob(this.nativeId);
+
+  final String nativeId;
   final completed = Completer<void>();
   Timer? expiry;
   bool finished = false;

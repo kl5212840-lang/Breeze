@@ -699,15 +699,16 @@ final class HlsAssetStore {
     }
     guard rootType == .typeDirectory else { throw StoreError.invalidPath }
     var enumerationError: Error?
-    guard let enumeration = fm.enumerator(at: url, includingPropertiesForKeys: nil,
+    let properties: Set<URLResourceKey> = [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
+    guard let enumeration = fm.enumerator(at: url, includingPropertiesForKeys: Array(properties),
       options: [], errorHandler: { _, error in enumerationError = error; return false }) else { throw StoreError.invalidPath }
     var bytes: Int64 = 0
     for case let child as URL in enumeration {
-      let attributes = try fm.attributesOfItem(atPath: child.path)
-      guard let type = attributes[.type] as? FileAttributeType,
-        type == .typeDirectory || type == .typeRegular else { throw StoreError.invalidPath }
-      if type == .typeRegular {
-        let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
+      let values = try child.resourceValues(forKeys: properties)
+      guard values.isSymbolicLink == false,
+        values.isDirectory == true || values.isRegularFile == true else { throw StoreError.invalidPath }
+      if values.isRegularFile == true {
+        let size = Int64(values.fileSize ?? 0)
         guard size >= 0, bytes <= Int64.max - size else { throw StoreError.invalidMetadata }
         bytes += size
       }

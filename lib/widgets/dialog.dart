@@ -1,19 +1,20 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 Future<void> nothingDialog(BuildContext context) async {
   return showDialog<void>(
     context: context,
     barrierDismissible: false, // user must tap button!
     builder: (BuildContext context) {
-      return AlertDialog(
+      return ShortAlert(
         title: Text(t.common.underConstruction),
         content: SingleChildScrollView(
           child: ListBody(children: <Widget>[Text(t.common.comingSoon)]),
         ),
-        actions: <Widget>[
-          TextButton(
+        actions: [
+          ShortAlertAction(
             child: Text(t.common.gotIt),
             onPressed: () {
               context.pop();
@@ -36,19 +37,19 @@ Future<void> commonDialog(
     context: context,
     barrierDismissible: false, // user must tap button!
     builder: (BuildContext context) {
-      return AlertDialog(
+      return ShortAlert(
         title: Text(title),
         content: SingleChildScrollView(
           child: ListBody(children: <Widget>[SelectableText(content)]),
         ),
-        actions: <Widget>[
-          TextButton(
+        actions: [
+          ShortAlertAction(
             child: Text(t.common.cancel),
             onPressed: () {
               context.pop();
             },
           ),
-          TextButton(
+          ShortAlertAction(
             child: Text(t.common.ok),
             onPressed: () {
               context.pop();

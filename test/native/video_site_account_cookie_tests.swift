@@ -88,6 +88,30 @@ enum VideoSiteAccountCookieTests {
       do { _ = try omo.cookie(wrongName, origin: omoOrigin); preconditionFailure("undeclared Omo cookie accepted") }
       catch VideoSiteAccountCookiePolicy.Failure.rejected {}
     }
+    let hanimeOrigin = URL(string: "https://hanime1.me")!
+    let hanime = try VideoSiteAccountCookiePolicy(home: hanimeOrigin,
+      source: "1e600cff-8ebe-4517-8aa4-6678aec46424")
+    let otherSource = try VideoSiteAccountCookiePolicy(home: hanimeOrigin, source: "different-plugin")
+    for name in ["hanime1_session", "remember_web_" + String(repeating: "a", count: 40)] {
+      var observed = raw
+      observed["name"] = name
+      observed["domain"] = ".hanime1.me"
+      observed["secure"] = false
+      let original = try hanime.cookie(observed, origin: hanimeOrigin)
+      precondition(hanime.wire(original)?["secure"] as? Bool == false)
+      do { _ = try otherSource.cookie(observed, origin: hanimeOrigin); preconditionFailure("wrong source") }
+      catch VideoSiteAccountCookiePolicy.Failure.rejected {}
+      for (key, value) in [("domain", "other.hanime1.me"), ("path", "/login"),
+                           ("httpOnly", false), ("name", "unrelated")] as [(String, Any)] {
+        var rejected = observed
+        rejected[key] = value
+        do { _ = try hanime.cookie(rejected, origin: hanimeOrigin); preconditionFailure("foreign cookie") }
+        catch VideoSiteAccountCookiePolicy.Failure.rejected {}
+      }
+      observed["secure"] = true
+      let restored = try hanime.cookie(observed, origin: hanimeOrigin)
+      precondition(restored.isSecure && restored.isHTTPOnly)
+    }
     print("Video site account cookie boundary: 7 groups passed")
   }
 }

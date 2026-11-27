@@ -14,6 +14,7 @@ import 'package:zephyr/page/video/api_video_repository.dart';
 import 'package:zephyr/page/video/api_video_models.dart';
 import 'package:zephyr/page/video/omofun_account_page.dart';
 import 'package:zephyr/page/video/omofun_site_client.dart';
+import 'package:zephyr/page/search/widget/search_field_decoration.dart';
 import 'package:zephyr/page/video/video_search_page.dart';
 import 'package:zephyr/page/video/video_site_browser.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
@@ -182,13 +183,22 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byType(VideoSearchEntry));
+      final openSearch = find.byKey(const ValueKey('api-catalog.open-search'));
+      expect(openSearch, findsOneWidget);
+      expect(find.byType(VideoSearchEntry), findsNothing);
+      await tester.tap(openSearch);
       await tester.pumpAndSettle();
       final input = find.descendant(
         of: find.byType(VideoSearchEntry),
         matching: find.byType(TextField),
       );
+      expect(input, findsOneWidget);
       expect(find.byType(VideoSearchPage), findsNothing);
+      expect(
+        ModalRoute.of(tester.element(input))?.settings.name,
+        'breeze.video.search-task',
+      );
+      expect(tester.widget<TextField>(input).focusNode?.hasFocus, isTrue);
       final filters = find.byKey(const ValueKey('video-search.filters'));
       final panel = find.byType(ApiVideoFilterPanel);
       expect(panel, findsNothing);
@@ -229,7 +239,17 @@ void main() {
       await tester.pumpAndSettle();
       expect(panel, findsNothing);
       expect(calls, hasLength(1));
-      await tester.tap(find.byTooltip(t.videoSearch.submit));
+      final submit = find.descendant(
+        of: find.byType(VideoSearchEntry),
+        matching: find.byType(SearchFieldSubmitButton),
+      );
+      expect(submit, findsOneWidget);
+      final submitButton = find.descendant(
+        of: submit,
+        matching: find.byType(IconButton),
+      );
+      expect(tester.widget<IconButton>(submitButton).onPressed, isNotNull);
+      await tester.tap(submit);
       await tester.pumpAndSettle();
       expect(calls, hasLength(2));
       expect(calls.last['query'], 'Filtered title');
@@ -304,30 +324,43 @@ void main() {
       expect(collection().items.map((item) => item.id), ['1']);
       expect(find.text(t.videoLibrary.officialSearch), findsOne);
 
-      await tester.tap(find.byType(VideoSearchEntry));
+      final openSearch = find.byKey(const ValueKey('api-catalog.open-search'));
+      expect(openSearch, findsOneWidget);
+      expect(find.byType(VideoSearchEntry), findsNothing);
+      await tester.tap(openSearch);
       await tester.pumpAndSettle();
       final input = find.descendant(
         of: find.byType(VideoSearchEntry),
         matching: find.byType(TextField),
       );
+      expect(input, findsOneWidget);
       expect(find.byType(VideoSearchPage), findsNothing);
       expect(tester.widget<TextField>(input).controller?.text, 'Adventure');
+      final editorScope = find.descendant(
+        of: find.byType(VideoSearchEntry),
+        matching: find.byTooltip(t.comicList.scope),
+      );
+      final submit = find.descendant(
+        of: find.byType(VideoSearchEntry),
+        matching: find.byTooltip(t.videoSearch.submit),
+      );
       await tester.enterText(input, 'Comedy');
-      await tester.tap(find.byTooltip(t.comicList.scope));
+      await tester.tap(editorScope);
       await tester.pumpAndSettle();
       await tester.tap(find.text(t.sourceShell.searchScopeTitle).last);
       await tester.pumpAndSettle();
-      await tester.testTextInput.receiveAction(TextInputAction.search);
+      await tester.tap(submit);
       await tester.pumpAndSettle();
       expect(collection().items, isEmpty);
 
-      await tester.tap(find.byType(VideoSearchEntry));
+      await tester.tap(openSearch);
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip(t.comicList.scope));
+      expect(input, findsOneWidget);
+      await tester.tap(editorScope);
       await tester.pumpAndSettle();
       await tester.tap(find.text(t.common.all).last);
       await tester.pumpAndSettle();
-      await tester.testTextInput.receiveAction(TextInputAction.search);
+      await tester.tap(submit);
       await tester.pumpAndSettle();
       expect(collection().items.map((item) => item.id), ['2']);
       expect(find.byType(OmoSiteWebPage), findsNothing);
@@ -395,7 +428,11 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        expect(find.byType(VideoSearchEntry), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('api-catalog.open-search')),
+          findsOneWidget,
+        );
+        expect(find.byType(VideoSearchEntry), findsNothing);
         expect(
           find.byKey(const ValueKey('api-catalog.local-query')),
           findsNothing,

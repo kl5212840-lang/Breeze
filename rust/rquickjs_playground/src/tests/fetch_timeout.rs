@@ -12,7 +12,10 @@
 //! 均为本机 127.0.0.1 慢速服务器，不依赖外网。
 
 use crate::tests::run_async_script;
-use crate::web_runtime::{BuildHttpClientOptions, HttpClientConfig, build_http_client_ex};
+use crate::web_runtime::{
+    BuildHttpClientOptions, HttpClientConfig, HttpReadScope, build_http_client_ex,
+    cancel_http_read_group,
+};
 use serde_json::Value;
 use std::sync::mpsc;
 use std::thread;
@@ -795,11 +798,93 @@ fn cancel_aborts_fetch_promptly() {
     let result = run_async_script(&script).expect("cancel script");
     println!("[cancel] {result}");
     let v: Value = serde_json::from_str(&result).expect("parse cancel");
+    assert_eq!(v["canceled"], true, "{v}");
     let elapsed = v["elapsed"].as_u64().unwrap_or(0);
     // 取消后应快速返回（<1s），而不是等满服务器 2s 延迟
     assert!(elapsed < 1000, "取消后应快速返回，elapsed={elapsed}ms: {v}");
 
     shutdown(handle, tx);
+}
+
+#[test]
+fn fetch_timeout_rejects_without_waiting_for_native_acknowledgement() {
+    let script = r#"
+        (async () => {
+          let cancels = 0, releases = 0;
+          const release = __native_buffer_free;
+          globalThis.__native_buffer_free = (id) => { releases++; return release(id); };
+          globalThis.__http_request_cancel = () => { cancels++; };
+          let acknowledge;
+          globalThis.__http_request_promise = () => Object.assign(
+            new Promise(resolve => { acknowledge = resolve; }), {__hostRequestId: 1});
+
+          const request = fetch("http://127.0.0.1/test", {timeout: 20});
+          const name = await request.then(() => "success", error => error.name);
+          const buffer = await native.put(new Uint8Array([1, 2, 3]));
+          acknowledge(JSON.stringify({ok:true,status:200,nativeBufferId:buffer,offloadedBytes:3}));
+          await new Promise(resolve => setTimeout(resolve, 10));
+          return JSON.stringify({name, cancels, releases});
+        })()
+    "#;
+    let output = run_async_script(script).expect("run fetch deadline");
+    let result: Value = serde_json::from_str(&output).expect("decode deadline");
+    assert_eq!(
+        result,
+        serde_json::json!({"name":"TimeoutError","cancels":1,"releases":1})
+    );
+}
+
+#[test]
+fn fetch_scope_aborts_the_socket_and_late_retry_without_touching_writes() {
+    let server = Server::http("127.0.0.1:0").expect("start local test server");
+    let base = format!("http://{}", server.server_addr());
+    let scope = HttpReadScope::new("scope-test", "scope-read");
+    let token = scope.token();
+    let script = format!(
+        r#"
+        (async () => {{
+          const read = new Request("{base}/read", {{
+            breezeReadScope: "{token}",
+            timeout: 1000,
+          }});
+          const active = await fetch(read.clone()).then(() => "success", error => error.name);
+          const late = await fetch("{base}/late", {{
+            breezeReadScope: "{token}",
+            timeout: 1000,
+          }}).then(() => "success", error => error.name);
+          const write = await fetch("{base}/write", {{
+            method: "POST",
+            breezeReadScope: "{token}",
+            timeout: 1000,
+          }});
+          await write.text();
+          return JSON.stringify({{active, late, status: write.status}});
+        }})()
+        "#,
+    );
+    let caller = thread::spawn(move || run_async_script(&script).map_err(|e| e.to_string()));
+    let first = server
+        .recv_timeout(Duration::from_secs(2))
+        .expect("wait for scoped read")
+        .expect("scoped read reached the wire");
+    assert_eq!(first.url(), "/read");
+    cancel_http_read_group("scope-test", "scope-read");
+
+    // Keep the original HTTP response blocked, as under a strict packet drop.
+    let write = server
+        .recv_timeout(Duration::from_secs(2))
+        .expect("wait for write")
+        .expect("scope cancellation allowed the other request to start");
+    assert_eq!(write.url(), "/write");
+    assert_eq!(write.method(), &tiny_http::Method::Post);
+    write.respond(Response::from_string("ok")).unwrap();
+    drop(first);
+    let output = caller.join().unwrap().expect("scope test should finish");
+    let result: Value = serde_json::from_str(&output).expect("decode scope test");
+    assert_eq!(
+        result,
+        serde_json::json!({"active":"AbortError","late":"AbortError","status":200})
+    );
 }
 
 // 修复前：`__native_buffer_take_raw` 返回 Vec<u8> 经 rquickjs 慢转换，

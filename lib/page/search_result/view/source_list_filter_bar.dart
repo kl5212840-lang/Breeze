@@ -27,6 +27,8 @@ class SourceListFilterBar extends StatelessWidget {
     this.lockedCategories = const {},
     this.onLockedCategoryTap,
     this.contentInset,
+    this.categoryLabel,
+    this.fullCategoryTouchTargets = false,
   });
 
   final List<String> categories;
@@ -46,6 +48,8 @@ class SourceListFilterBar extends StatelessWidget {
   final Set<String> lockedCategories;
   final ValueChanged<String>? onLockedCategoryTap;
   final double? contentInset;
+  final String? categoryLabel;
+  final bool fullCategoryTouchTargets;
 
   static const _categoryColors = <Color>[
     Color(0xFFF4B546),
@@ -61,8 +65,10 @@ class SourceListFilterBar extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final display = watchChineseDisplayConverter(context);
+    final labeledCategories = categoryLabel != null && categories.isNotEmpty;
     final clear = SourceChromeIconButton(
       key: const ValueKey('source-list.clear-blocked'),
+      bare: true,
       tooltip: '清除屏蔽 (${blockedCategories.length})',
       onPressed: onClearBlockedCategories,
       icon: Icons.filter_alt_off_outlined,
@@ -99,21 +105,34 @@ class SourceListFilterBar extends StatelessWidget {
                           contentInset ??
                           CollectionToolbarMetrics.sourceContentInset,
                     ),
-                    itemCount: categories.length,
+                    itemCount: categories.length + (labeledCategories ? 1 : 0),
                     separatorBuilder: (_, _) => const SizedBox(width: 6),
                     itemBuilder: (context, index) {
-                      final category = categories[index];
+                      if (labeledCategories && index == 0) {
+                        return Center(
+                          child: Text(
+                            categoryLabel!,
+                            style: Theme.of(context).textTheme.labelMedium
+                                ?.copyWith(color: scheme.onSurfaceVariant),
+                          ),
+                        );
+                      }
+                      final category =
+                          categories[index - (labeledCategories ? 1 : 0)];
                       final blocked = blockedCategories.contains(category);
                       final locked = lockedCategories.contains(category);
                       final tint =
                           _categoryColors[index % _categoryColors.length];
-                      final fill = blocked
-                          ? scheme.surfaceContainerHighest
-                          : Color.lerp(
-                              tint,
-                              scheme.surface,
-                              isDark ? 0.83 : 0.84,
-                            )!;
+                      final fill = switch ((labeledCategories, blocked)) {
+                        (true, true) => scheme.secondaryContainer,
+                        (true, false) => Colors.transparent,
+                        (false, true) => scheme.surfaceContainerHighest,
+                        (false, false) => Color.lerp(
+                          tint,
+                          scheme.surface,
+                          isDark ? 0.83 : 0.84,
+                        )!,
+                      };
                       return Center(
                         child: Tooltip(
                           message: locked
@@ -128,8 +147,8 @@ class SourceListFilterBar extends StatelessWidget {
                                 : null,
                             child: ActionChip(
                               key: ValueKey('category-$category'),
-                              visualDensity: const VisualDensity(
-                                horizontal: -2,
+                              visualDensity: VisualDensity(
+                                horizontal: fullCategoryTouchTargets ? -1 : -2,
                               ),
                               materialTapTargetSize:
                                   MaterialTapTargetSize.padded,
@@ -141,8 +160,11 @@ class SourceListFilterBar extends StatelessWidget {
                                 alignment: Alignment.center,
                                 children: [
                                   Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 16,
+                                    padding: EdgeInsetsDirectional.only(
+                                      start: labeledCategories
+                                          ? (blocked ? 20 : 11)
+                                          : 16,
+                                      end: labeledCategories ? 11 : 16,
                                     ),
                                     child: Text(
                                       display(category),
@@ -170,12 +192,16 @@ class SourceListFilterBar extends StatelessWidget {
                               labelStyle: TextStyle(
                                 color: locked
                                     ? scheme.onSurface.withValues(alpha: .38)
+                                    : labeledCategories
+                                    ? blocked
+                                          ? scheme.onSecondaryContainer
+                                          : scheme.onSurfaceVariant
                                     : blocked
                                     ? scheme.onSurfaceVariant
                                     : scheme.onSurface,
                               ),
                               side: BorderSide(
-                                color: blocked
+                                color: blocked || labeledCategories
                                     ? scheme.outlineVariant
                                     : tint.withValues(alpha: .45),
                               ),

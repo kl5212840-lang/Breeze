@@ -14,6 +14,42 @@ ShelfFacetEntry entry(
 );
 
 void main() {
+  test('team choices preserve distinct public option identities', () {
+    final traditional = entry(
+      'traditional',
+      fields: {
+        'team': {'譯者'},
+      },
+    );
+    final simplified = entry(
+      'simplified',
+      fields: {
+        'team': {'译者'},
+      },
+    );
+    const selected = ShelfFacetSelection(
+      values: {
+        'team': {'譯者'},
+      },
+    );
+    expect(
+      shelfFacetOptions(
+        [traditional, simplified],
+        selected,
+        currentFolder: null,
+      )['team'],
+      {'譯者': 1, '译者': 1},
+    );
+    expect(
+      shelfFacetMatches(traditional, selected, currentFolder: null),
+      isTrue,
+    );
+    expect(
+      shelfFacetMatches(simplified, selected, currentFolder: null),
+      isFalse,
+    );
+  });
+
   test(
     'reserved third-party metadata remains distinct from missing values',
     () {

@@ -12,18 +12,32 @@ import 'package:zephyr/widgets/app_interface_style.dart';
 
 import '../test_helper.dart';
 
+class _CountingReaderSettings extends GlobalSettingCubit {
+  int writes = 0;
+
+  @override
+  void updateReadSetting(
+    ReadSettingState Function(ReadSettingState current) updates,
+  ) {
+    writes++;
+    super.updateReadSetting(updates);
+  }
+}
+
 Future<GlobalSettingCubit> _open(
   WidgetTester tester, {
   String style = 'breeze',
   Brightness brightness = Brightness.light,
   ReadSettingState? read,
+  GlobalSettingCubit? settingsCubit,
   bool perComic = false,
+  String comicId = 'comic-a',
   double textScale = 2,
 }) async {
-  final settings = GlobalSettingCubit();
+  final settings = settingsCubit ?? GlobalSettingCubit();
   if (read != null) settings.emit(settings.state.copyWith(readSetting: read));
   final preferences = ComicReadPreferenceCubit();
-  if (perComic) preferences.bind('density-fixture', 'comic-a');
+  if (perComic) preferences.bind('density-fixture', comicId);
   final interface = ValueNotifier(style);
   addTearDown(settings.close);
   addTearDown(preferences.close);
@@ -51,7 +65,7 @@ Future<GlobalSettingCubit> _open(
                 onPressed: () => showReaderSettingsSheet(
                   context,
                   source: perComic ? 'density-fixture' : '',
-                  comicId: perComic ? 'comic-a' : '',
+                  comicId: perComic ? comicId : '',
                 ),
                 child: const Text('open-settings'),
               ),
@@ -188,6 +202,395 @@ void main() {
     variant: TargetPlatformVariant.only(TargetPlatform.iOS),
   );
 
+  testWidgets(
+    'custom menu area previews width and remembers it when disabled',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final settings = _CountingReaderSettings();
+      await _open(
+        tester,
+        read: const ReadSettingState(),
+        settingsCubit: settings,
+      );
+      await _tab(tester, t.reader.gesture);
+      final toggle = find.text(t.reader.customToolbarTapArea);
+      final slider = find.byKey(
+        const ValueKey('reader.toolbar-tap-area.width'),
+      );
+      final preview = find.byKey(
+        const ValueKey('reader.toolbar-tap-area.preview'),
+      );
+      expect(slider, findsNothing);
+      await _show(tester, toggle);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(settings.state.readSetting.customToolbarTapArea, isTrue);
+      expect(tester.widget<Slider>(slider).value, 50);
+      expect(tester.widget<FractionallySizedBox>(preview).widthFactor, .5);
+
+      await _show(tester, slider);
+      final control = tester.widget<Slider>(slider);
+      expect(control.semanticFormatterCallback!(64), '64%');
+      final semantics = tester.ensureSemantics();
+      try {
+        await tester.pump();
+        final labelledSlider = find.descendant(
+          of: slider,
+          matching: find.bySemanticsLabel(t.reader.toolbarTapAreaWidth),
+        );
+        expect(labelledSlider, findsOneWidget);
+        expect(tester.getSemantics(labelledSlider).value, '50%');
+      } finally {
+        semantics.dispose();
+      }
+      final highlightedBand = find.descendant(
+        of: preview,
+        matching: find.byType(ColoredBox),
+      );
+      final originalBand = tester.getRect(highlightedBand);
+      control.onChanged!(64);
+      await tester.pump();
+      expect(tester.widget<FractionallySizedBox>(preview).widthFactor, .64);
+      expect(
+        tester.getRect(highlightedBand).width,
+        closeTo(originalBand.width * .64 / .50, .1),
+      );
+      expect(tester.getRect(highlightedBand).center.dx, originalBand.center.dx);
+      expect(tester.getRect(highlightedBand).height, originalBand.height);
+      expect(settings.state.readSetting.toolbarTapAreaPercent, 50);
+      control.onChangeEnd!(64);
+      await tester.pumpAndSettle();
+      expect(settings.state.readSetting.toolbarTapAreaPercent, 64);
+
+      await _show(tester, toggle);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(slider, findsNothing);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Slider>(slider).value, 64);
+      await _show(tester, slider);
+      final inputSemantics = tester.ensureSemantics();
+      final writes = settings.writes;
+      try {
+        await tester.pump();
+        final node = tester.getSemantics(
+          find.descendant(
+            of: slider,
+            matching: find.bySemanticsLabel(t.reader.toolbarTapAreaWidth),
+          ),
+        );
+        node.owner!.performAction(node.id, SemanticsAction.increase);
+        await tester.pumpAndSettle();
+        expect(settings.state.readSetting.toolbarTapAreaPercent, 66);
+        expect(settings.writes, writes + 1);
+
+        node.owner!.performAction(node.id, SemanticsAction.focus);
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+        await tester.pumpAndSettle();
+        expect(settings.state.readSetting.toolbarTapAreaPercent, 68);
+        expect(settings.writes, writes + 2);
+      } finally {
+        inputSemantics.dispose();
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'setting sliders preview a drag and ignore vertical cancellation',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final settings = _CountingReaderSettings();
+      await _open(
+        tester,
+        settingsCubit: settings,
+        read: const ReadSettingState(customToolbarTapArea: true),
+      );
+      await _tab(tester, t.reader.gesture);
+      final slider = find.byKey(
+        const ValueKey('reader.toolbar-tap-area.width'),
+      );
+      await _show(tester, slider);
+      final origin = tester.getCenter(slider);
+      final initialWrites = settings.writes;
+
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final haptics = <String>[];
+      messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'HapticFeedback.vibrate') {
+          haptics.add(call.arguments.toString());
+        }
+        return null;
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
+      );
+
+      final scroll = await tester.startGesture(origin + const Offset(38, 0));
+      await scroll.moveBy(const Offset(0, -45));
+      await scroll.up();
+      await tester.pumpAndSettle();
+      expect(settings.state.readSetting.toolbarTapAreaPercent, 50);
+      expect(settings.writes, initialWrites);
+      expect(haptics, isEmpty);
+
+      await _show(tester, slider);
+      final cancelled = await tester.startGesture(tester.getCenter(slider));
+      await cancelled.moveBy(const Offset(63, 0));
+      await tester.pump();
+      await cancelled.cancel();
+      await tester.pumpAndSettle();
+      expect(settings.state.readSetting.toolbarTapAreaPercent, 50);
+      expect(settings.writes, initialWrites);
+
+      final valid = await tester.startGesture(tester.getCenter(slider));
+      await valid.moveBy(const Offset(27, 0));
+      await tester.pump();
+      await valid.moveBy(const Offset(30, 0));
+      await tester.pump();
+      expect(tester.widget<Slider>(slider).value, greaterThan(50));
+      expect(settings.writes, initialWrites);
+      await valid.up();
+      await tester.pumpAndSettle();
+      expect(settings.state.readSetting.toolbarTapAreaPercent, greaterThan(50));
+      expect(settings.writes, initialWrites + 1);
+      expect(haptics, everyElement('HapticFeedbackType.selectionClick'));
+
+      await _show(tester, slider);
+      await tester.tapAt(tester.getCenter(slider) - const Offset(40, 0));
+      await tester.pumpAndSettle();
+      expect(settings.state.readSetting.toolbarTapAreaPercent, lessThan(50));
+      expect(settings.writes, initialWrites + 2);
+      expect(haptics.length, inInclusiveRange(2, 4));
+    },
+  );
+
+  testWidgets('info sliders align their values and mark only stepped units', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await _open(
+      tester,
+      brightness: Brightness.dark,
+      read: const ReadSettingState(
+        pageInfoEdgePadding: 24,
+        pageInfoFontSize: 16,
+        pageInfoOpacityPercent: 75,
+      ),
+    );
+    await _tab(tester, t.reader.infoBar);
+
+    Future<int> checkSlider(String title, String value) async {
+      final slider = find.byWidgetPredicate(
+        (widget) => widget is Slider && widget.label == title,
+      );
+      await _show(tester, slider);
+      final bounds = tester.getRect(slider);
+      expect(bounds.height, 44);
+      expect(tester.getRect(find.text(value)).right, closeTo(bounds.right, .1));
+      var marks = 0;
+      expect(
+        slider,
+        paints..everything((symbol, arguments) {
+          if (symbol == #drawCircle && arguments[1] == 1.0) marks++;
+          return true;
+        }),
+      );
+      return marks;
+    }
+
+    expect(
+      await checkSlider(t.reader.edgePadding, '24 ${t.reader.pixels}'),
+      inExclusiveRange(2, 49),
+    );
+    expect(await checkSlider(t.reader.fontSize, '16 ${t.reader.pixels}'), 11);
+    expect(await checkSlider(t.reader.backgroundOpacity, '75%'), 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'percent input previews exact values and commits only on confirmation',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      const bottomSafeArea = FakeViewPadding(bottom: 34);
+      tester.view.viewPadding = bottomSafeArea;
+      tester.view.padding = bottomSafeArea;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetViewPadding);
+      addTearDown(tester.view.resetPadding);
+      final settings = _CountingReaderSettings();
+      await _open(
+        tester,
+        brightness: Brightness.dark,
+        settingsCubit: settings,
+        read: const ReadSettingState(customToolbarTapArea: true),
+      );
+      await _tab(tester, t.reader.gesture);
+      final field = find.byKey(const ValueKey('reader.slider-percent.input'));
+      final slider = find.byKey(
+        const ValueKey('reader.toolbar-tap-area.width'),
+      );
+      final dialog = find.byKey(const ValueKey('reader.slider-percent.dialog'));
+      final band = find.descendant(
+        of: dialog,
+        matching: find.byKey(const ValueKey('reader.toolbar-tap-area.preview')),
+      );
+      Rect? sliderFrame;
+      double? scrollOffset;
+      double offset() => Scrollable.of(tester.element(slider)).position.pixels;
+      final cancel = find.text(t.common.cancel);
+      final confirm = find.text(t.common.confirm);
+      final error = find.text(t.reader.sliderPercentageRange(min: 30, max: 70));
+
+      Future<void> open(String label) async {
+        final value = find.text(label);
+        await _show(tester, value);
+        sliderFrame = tester.getRect(slider);
+        scrollOffset = offset();
+        await tester.tap(value);
+        await tester.pumpAndSettle();
+        expect(field, findsOneWidget);
+        expect(tester.getRect(slider), sliderFrame);
+        expect(offset(), scrollOffset);
+      }
+
+      await open('50%');
+      tester.view.padding = const FakeViewPadding();
+      tester.view.viewInsets = const FakeViewPadding(bottom: 260);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pumpAndSettle();
+      await _show(tester, confirm);
+      expect(confirm.hitTestable(), findsOneWidget);
+      expect(cancel.hitTestable(), findsOneWidget);
+      expect(tester.getRect(confirm).bottom, lessThan(380));
+      expect(tester.getRect(slider), sliderFrame);
+      expect(offset(), scrollOffset);
+      tester.view.padding = bottomSafeArea;
+      tester.view.resetViewInsets();
+      await tester.pumpAndSettle();
+      final input = tester.widget<TextField>(field);
+      expect(input.keyboardType, TextInputType.number);
+      expect(
+        input.controller!.selection,
+        const TextSelection(baseOffset: 0, extentOffset: 2),
+      );
+      await tester.enterText(field, '５７％');
+      await tester.pump();
+      expect(tester.widget<Slider>(slider).value, 57);
+      expect(tester.widget<FractionallySizedBox>(band).widthFactor, .57);
+      expect(tester.getRect(slider), sliderFrame);
+      expect(offset(), scrollOffset);
+      expect(settings.writes, 0);
+
+      for (final invalid in ['', '57.5', '71%', '-40']) {
+        await tester.enterText(field, invalid);
+        await tester.testTextInput.receiveAction(TextInputAction.done);
+        await tester.pumpAndSettle();
+        expect(error, findsOneWidget);
+        expect(settings.writes, 0);
+        expect(tester.widget<TextField>(field).focusNode!.hasFocus, isTrue);
+      }
+      await tester.enterText(field, '57%');
+      await tester.pumpAndSettle();
+      expect(error, findsNothing);
+      await _show(tester, cancel);
+      await tester.tap(cancel);
+      await tester.pumpAndSettle();
+      expect(field, findsNothing);
+      expect(tester.widget<Slider>(slider).value, 50);
+      expect(settings.writes, 0);
+
+      await open('50%');
+      await tester.enterText(field, '57%');
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(field, findsNothing);
+      expect(settings.state.readSetting.toolbarTapAreaPercent, 57);
+      expect(settings.writes, 1);
+
+      await open('57%');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(field, findsNothing);
+      expect(settings.writes, 1);
+
+      await open('57%');
+      await tester.enterText(field, '70');
+      await _show(tester, confirm);
+      await tester.tap(confirm);
+      await tester.pumpAndSettle();
+      expect(settings.state.readSetting.toolbarTapAreaPercent, 70);
+      expect(settings.writes, 2);
+
+      await open('70%');
+      await tester.enterText(field, '30');
+      tester.view.physicalSize = const Size(640, 320);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 138);
+      await tester.pumpAndSettle();
+      await _show(tester, cancel);
+      expect(cancel.hitTestable(), findsOneWidget);
+      expect(tester.getRect(cancel).bottom, lessThan(182));
+      tester.view.resetViewInsets();
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(settings.writes, 2);
+      expect(settings.state.readSetting.toolbarTapAreaPercent, 70);
+      expect(field, findsNothing);
+    },
+  );
+
+  testWidgets('auto-read sliders keep exact steps and the per-comic owner', (
+    tester,
+  ) async {
+    final settings = await _open(
+      tester,
+      perComic: true,
+      comicId: 'slider-fixture',
+      read: const ReadSettingState(autoScroll: true),
+    );
+    await _tab(tester, t.reader.perComicThisComic);
+    Finder slider(String title) => find.byWidgetPredicate(
+      (widget) => widget is Slider && widget.label == title,
+    );
+    final interval = slider(t.reader.webtoonScrollInterval);
+    final row = tester.widget<Slider>(interval);
+    expect((row.min, row.max, row.divisions), (300.0, 5000.0, 47));
+    final page = tester.widget<Slider>(
+      slider(t.reader.singlePageScrollInterval),
+    );
+    expect((page.min, page.max, page.divisions), (800.0, 10000.0, 92));
+    final distance = tester.widget<Slider>(
+      slider(t.reader.webtoonScrollDistance),
+    );
+    expect((distance.min, distance.max, distance.divisions), (10.0, 100.0, 90));
+    final comic = tester.element(interval).read<ComicReadPreferenceCubit>();
+    row.onChanged!(2300);
+    await tester.pump();
+    expect(comic.state.override, isNull);
+    row.onChangeEnd!(2300);
+    await tester.pumpAndSettle();
+    expect(comic.state.override!.keys, {'autoScrollColumnIntervalMs'});
+    expect(comic.state.override!.setting.autoScrollColumnIntervalMs, 2300);
+    expect(settings.state.readSetting.autoScrollColumnIntervalMs, 1600);
+  });
+
   testWidgets('tap zones follow reading direction and the webtoon switch', (
     tester,
   ) async {
@@ -199,7 +602,14 @@ void main() {
     await _tab(tester, t.reader.gesture);
     Finder option(String title) => find.widgetWithText(ChoiceChip, title);
     final enable = find.text(t.reader.enableWebtoonTapPageTurn);
+    final custom = find.text(t.reader.customToolbarTapArea);
+    final needsCustom = find.text(t.reader.tapPageTurnNeedsCustomArea);
     expect(option(t.reader.tapPageTurnWebtoonAll), findsNothing);
+    expect(enable, findsNothing);
+    expect(needsCustom, findsOneWidget);
+    await _show(tester, custom);
+    await tester.tap(custom);
+    await tester.pumpAndSettle();
     expect(find.text(t.reader.tapPageTurnWebtoonDisabled), findsOneWidget);
     await _show(tester, enable);
     await tester.tap(enable);
@@ -243,6 +653,22 @@ void main() {
     );
     expect(find.text(t.reader.tapPageTurnAllHelp), findsOneWidget);
     expect(enable, findsOneWidget);
+    await _show(tester, custom);
+    await tester.tap(custom);
+    await tester.pumpAndSettle();
+    expect(option(t.reader.fullscreen), findsNothing);
+    expect(enable, findsNothing);
+    expect(needsCustom, findsOneWidget);
+    expect(
+      settings.state.readSetting.tapPageTurnMode,
+      ReaderTapPageTurnMode.fullScreen,
+    );
+    await tester.tap(custom);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<ChoiceChip>(option(t.reader.fullscreen)).selected,
+      isTrue,
+    );
   });
 
   testWidgets('per-comic tap zones keep the global webtoon switch separate', (
@@ -250,6 +676,12 @@ void main() {
   ) async {
     final settings = await _open(tester, perComic: true, textScale: 1);
     await _tab(tester, t.reader.perComicThisComic);
+    final customDisabled = find.text(t.reader.tapPageTurnNeedsCustomArea);
+    expect(customDisabled, findsOneWidget);
+    settings.updateReadSetting(
+      (value) => value.copyWith(customToolbarTapArea: true),
+    );
+    await tester.pumpAndSettle();
     final hint = find.text(t.reader.tapPageTurnWebtoonPerComicDisabled);
     await _show(tester, hint);
     expect(hint, findsOneWidget);
@@ -276,6 +708,18 @@ void main() {
       settings.state.readSetting.tapPageTurnMode,
       ReaderTapPageTurnMode.rightHand,
     );
+    settings.updateReadSetting(
+      (value) => value.copyWith(customToolbarTapArea: false),
+    );
+    await tester.pumpAndSettle();
+    expect(customDisabled, findsOneWidget);
+    expect(full, findsNothing);
+    expect(preferences.state.override!.keys, {'tapPageTurnMode'});
+    settings.updateReadSetting(
+      (value) => value.copyWith(customToolbarTapArea: true),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.widget<ChoiceChip>(full).selected, isTrue);
   });
 
   for (final style in ['system', 'breeze']) {

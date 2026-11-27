@@ -1,3 +1,4 @@
+import 'package:zephyr/page/setting/global/search_scope_settings_page.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -90,6 +91,14 @@ class _GlobalSettingPageState extends State<GlobalSettingPage> {
           const AppearanceSettingRoute(),
           (_) => const AppearanceSettingPage(),
         ),
+      ),
+      const Divider(height: 1, thickness: 0.3),
+      settingCategoryTile(
+        icon: Icons.search_rounded,
+        symbol: 'magnifyingglass',
+        title: t.search.title,
+        subtitle: t.search.defaultScope,
+        onTap: () => openSearchScopeSettings(context),
       ),
       const Divider(height: 1, thickness: 0.3),
       settingCategoryTile(

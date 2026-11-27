@@ -236,8 +236,9 @@ class _ComicReadPageState extends State<_ComicReadPage>
     _readerRecoverySubscription = ImageRecoveryHub.instance.recovered.listen((
       _,
     ) {
-      unawaited(_recoverCurrentReadingPosition());
+      _resumeImagePrefetch();
     });
+    _seamless.bindBoundaryRecovery(_recoverObservedBoundary);
 
     WidgetsBinding.instance.addObserver(this);
     _lifecycleController.init();
@@ -274,6 +275,8 @@ class _ComicReadPageState extends State<_ComicReadPage>
     _readerRecoverySubscription?.cancel();
     _inputController.dispose();
     _imagePrefetchController.dispose();
+    _seamless.bindBoundaryRecovery(null);
+    _seamless.setBoundaryRecoveryActive(false);
     _seamless.configurePrefetch(count: 1, active: false);
     _volumeController.dispose();
     _pageController.dispose();
@@ -310,6 +313,11 @@ class _ComicReadPageState extends State<_ComicReadPage>
                   const Center(child: CircularProgressIndicator()),
                 );
               case PageStatus.failure:
+                if (context.read<PageBloc>().waitingForNetwork) {
+                  return _pendingReader(
+                    Center(child: Text(t.download.waitingForNetwork)),
+                  );
+                }
                 return _pendingReader(
                   ComicErrorWidget(
                     state: state,
@@ -382,29 +390,32 @@ class _ComicReadPageState extends State<_ComicReadPage>
 
   void _setRecoveryActive(bool active) {
     _readerRegionActive = active;
-    if (!active) _inputController.stopZoomAnimation();
+    if (!active) _inputController.cancelViewerInteraction();
     _autoReadController.setVisible(active && _historyController.ownsSession);
-    context.read<PageBloc>().setRecoveryActive(active);
+    final owned = active && _historyController.ownsSession;
+    context.read<PageBloc>().setRecoveryActive(owned);
+    _seamless.setBoundaryRecoveryActive(owned);
     _imagePrefetchController.setActive(active);
     final setting = context.readEffectiveReadSetting();
     context.read<ReaderSeamlessCubit>().configurePrefetch(
       count: setting.preloadChapterCount,
       active: active && _historyController.ownsSession,
     );
-    if (active) unawaited(_recoverCurrentReadingPosition());
+    if (active) _resumeImagePrefetch();
   }
 
   @override
   void didChangeMetrics() {
-    _inputController.stopZoomAnimation();
+    _inputController.cancelViewerInteraction();
     _lifecycleController.didChangeMetrics();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _lifecycleController.didChangeAppLifecycleState(state);
-    if (state != AppLifecycleState.resumed)
-      _inputController.stopZoomAnimation();
+    if (state != AppLifecycleState.resumed) {
+      _inputController.cancelViewerInteraction();
+    }
     final active =
         state == AppLifecycleState.resumed &&
         _readerRegionActive &&
@@ -425,22 +436,23 @@ class _ComicReadPageState extends State<_ComicReadPage>
     }
   }
 
-  Future<void> _recoverCurrentReadingPosition() async {
-    if (!mounted ||
-        !_readerRegionActive ||
-        !_historyController.ownsSession ||
-        ModalRoute.of(context)?.isCurrent == false)
-      return;
-    final hub = ImageRecoveryHub.instance;
-    if (!hub.foreground || !hub.online) return;
-    final readSetting = context.readEffectiveReadSetting();
-    final reader = context.read<ReaderCubit>();
-    _prefetchImagesAroundSlot(reader.state.currentSlot, readSetting);
-    final seamless = context.read<ReaderSeamlessCubit>();
-    final result = await seamless.onGlobalSlotObserved(
-      reader.state.currentSlot,
-      readSetting,
-      readAnchor: _readBoundaryAnchor,
+  void _resumeImagePrefetch() {
+    if (!_canRecoverReadingPosition) return;
+    final anchor = _readBoundaryAnchor();
+    if (anchor != null) {
+      _prefetchImagesAroundSlot(anchor.slot, anchor.setting);
+    }
+  }
+
+  Future<void> _recoverObservedBoundary(int nextOrder) async {
+    ReaderBoundaryAnchor? currentAnchor() =>
+        _canRecoverReadingPosition ? _readBoundaryAnchor() : null;
+    final anchor = currentAnchor();
+    if (anchor == null) return;
+    final result = await _seamless.retryObservedBoundary(
+      nextOrder,
+      anchor,
+      readAnchor: currentAnchor,
     );
     if (!_canRecoverReadingPosition) return;
     if (result.targetGlobalSlot case final target?) {
@@ -465,6 +477,7 @@ class _ComicReadPageState extends State<_ComicReadPage>
       _readerRegionActive &&
       _historyController.ownsSession &&
       ImageRecoveryHub.instance.foreground &&
+      ImageRecoveryHub.instance.online &&
       ModalRoute.of(context)?.isCurrent != false;
 
   void _refreshState(VoidCallback fn) {

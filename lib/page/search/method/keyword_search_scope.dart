@@ -6,11 +6,14 @@ import 'package:zephyr/src/rust/api/qjs.dart';
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/util/text/public_search_text.dart';
 
-enum KeywordSearchScope { title, all, author, tags, team }
+enum KeywordSearchScope { title, all, author, tags, team, work, character }
 
 /// A host-only query condition. Plugin actions with no marker retain their
 /// declared browse, author or tag request unchanged.
 const keywordSearchScopeKey = 'breezeKeywordScope';
+
+/// A Bika result filter that operates only on the loaded items.
+const bikaLoadedTitleOnlyKey = 'breezeBikaLoadedTitleOnly';
 
 const copyComicSourceId = 'b28da416-f2d4-4208-a85e-8b4c7c648e48';
 const _jmSource = '6886291b-f524-441c-844b-c2efae9899a9';
@@ -20,18 +23,30 @@ const defaultKeywordSearchScopes = [
   KeywordSearchScope.all,
 ];
 
+String? jmSearchDiscoveryFunction(String source, [Map<String, dynamic>? info]) {
+  if (normalizePluginId(source) != _jmSource) return null;
+  final metadata =
+      info ?? PluginRegistryService.I.getCachedPluginInfo(_jmSource);
+  final name = asJsonMap(
+    metadata?['breezeExperience'],
+  )['jmSearchDiscoveryFunction'];
+  return name is String && name.trim().isNotEmpty ? name : null;
+}
+
 bool supportsCopyTopicSearch(String source, [Map<String, dynamic>? info]) {
   if (source != copyComicSourceId) return false;
   final metadata = info ?? PluginRegistryService.I.getCachedPluginInfo(source);
   return asJsonMap(metadata?['breezeExperience'])['copyTopicSearch'] == 1;
 }
 
-List<KeywordSearchScope> sourceKeywordSearchScopes(String source) {
-  final experience = asJsonMap(
-    PluginRegistryService.I.getCachedPluginInfo(
-      normalizePluginId(source),
-    )?['breezeExperience'],
-  );
+List<KeywordSearchScope> sourceKeywordSearchScopes(
+  String source, [
+  Map<String, dynamic>? metadata,
+]) {
+  final info =
+      metadata ??
+      PluginRegistryService.I.getCachedPluginInfo(normalizePluginId(source));
+  final experience = asJsonMap(info?['breezeExperience']);
   if (source == copyComicSourceId) {
     return [
       ...defaultKeywordSearchScopes,
@@ -41,18 +56,23 @@ List<KeywordSearchScope> sourceKeywordSearchScopes(String source) {
     ];
   }
   if (source == _jmSource) {
+    final enhanced = jmSearchDiscoveryFunction(source, info) != null;
     return [
       ...defaultKeywordSearchScopes,
+      if (enhanced) KeywordSearchScope.work,
       KeywordSearchScope.author,
       KeywordSearchScope.tags,
+      if (enhanced) KeywordSearchScope.character,
     ];
   }
-  if (isBikaExperienceSource(source) && experience['publicSearchFields'] == 1) {
+  if (isBikaExperienceSource(source)) {
     return [
-      ...defaultKeywordSearchScopes,
-      KeywordSearchScope.author,
-      KeywordSearchScope.tags,
-      KeywordSearchScope.team,
+      KeywordSearchScope.all,
+      if (experience['publicSearchFields'] == 1) ...[
+        KeywordSearchScope.author,
+        KeywordSearchScope.tags,
+        KeywordSearchScope.team,
+      ],
     ];
   }
   return defaultKeywordSearchScopes;
@@ -72,6 +92,8 @@ KeywordSearchScope? parseSourceKeywordSearchScope(Object? value) =>
       'author' => KeywordSearchScope.author,
       'tags' => KeywordSearchScope.tags,
       'team' => KeywordSearchScope.team,
+      'work' => KeywordSearchScope.work,
+      'character' => KeywordSearchScope.character,
       _ => parseKeywordSearchScope(value),
     };
 
@@ -83,7 +105,12 @@ KeywordSearchScope sourceKeywordSearchScope(
   Map<String, dynamic> extern,
 ) {
   final explicit = explicitKeywordSearchScope(extern);
-  if (explicit != null) return explicit;
+  if (explicit != null) {
+    return isBikaExperienceSource(source) &&
+            explicit == KeywordSearchScope.title
+        ? KeywordSearchScope.all
+        : explicit;
+  }
   if (source == copyComicSourceId) {
     if (extern[copySearchTopicKey] is String) return KeywordSearchScope.tags;
     return switch (extern['q_type']) {
@@ -94,6 +121,15 @@ KeywordSearchScope sourceKeywordSearchScope(
     };
   }
   if (source == _jmSource) {
+    final scope = switch (extern['search_type']) {
+      'work' => KeywordSearchScope.work,
+      'author' => KeywordSearchScope.author,
+      'tag' => KeywordSearchScope.tags,
+      'character' => KeywordSearchScope.character,
+      'site' => KeywordSearchScope.all,
+      _ => null,
+    };
+    if (scope != null) return scope;
     return switch (extern['main_tag']?.toString()) {
       '2' => KeywordSearchScope.author,
       '3' => KeywordSearchScope.tags,
@@ -111,6 +147,23 @@ KeywordSearchScope sourceKeywordSearchScope(
   return KeywordSearchScope.all;
 }
 
+/// Reopen old Bika source searches using the supported site scope.
+Map<String, dynamic> migrateBikaKeywordSearchDraft(
+  String source,
+  Map<String, dynamic> extern,
+) {
+  if (!isBikaExperienceSource(source)) return extern;
+  final oldTitleScope =
+      explicitKeywordSearchScope(extern) == KeywordSearchScope.title;
+  if (!oldTitleScope && !extern.containsKey(bikaLoadedTitleOnlyKey)) {
+    return extern;
+  }
+  return {
+    ...extern,
+    if (oldTitleScope) keywordSearchScopeKey: KeywordSearchScope.all.name,
+  }..remove(bikaLoadedTitleOnlyKey);
+}
+
 Map<String, dynamic> changeKeywordSearchScope(
   Map<String, dynamic> extern,
   KeywordSearchScope scope,
@@ -119,7 +172,8 @@ Map<String, dynamic> changeKeywordSearchScope(
   ..remove('copySearchVariants')
   ..remove('bikaSearchField')
   ..remove('q_type')
-  ..remove('main_tag');
+  ..remove('main_tag')
+  ..remove('search_type');
 
 List<String> copySearchVariants(String keyword) {
   if (!RegExp(r'[\u3400-\u9fff]').hasMatch(keyword)) return const [];
@@ -141,7 +195,26 @@ Map<String, dynamic> keywordSearchRequestExtern(
   String keyword = '',
 }) {
   final scope = explicitKeywordSearchScope(extern);
-  final request = {...extern}..remove(keywordSearchScopeKey);
+  final request = {...extern}
+    ..remove(keywordSearchScopeKey)
+    ..remove(bikaLoadedTitleOnlyKey);
+  if (isBikaExperienceSource(source)) {
+    if (scope != null) {
+      request.remove('bikaSearchField');
+      final field = switch (scope) {
+        KeywordSearchScope.author => 'author',
+        KeywordSearchScope.tags => 'tag',
+        KeywordSearchScope.team => 'team',
+        _ => null,
+      };
+      if (field != null) request['bikaSearchField'] = field;
+    }
+    // Bika's exact-field endpoints do not accept a positive category filter.
+    if (const {'author', 'tag', 'team'}.contains(request['bikaSearchField'])) {
+      request.remove('categories');
+    }
+    return request;
+  }
   if (scope == null) return request;
   if (source == copyComicSourceId) {
     if (scope == KeywordSearchScope.tags) {
@@ -163,23 +236,22 @@ Map<String, dynamic> keywordSearchRequestExtern(
       request.remove('copySearchVariants');
     }
   } else if (source == _jmSource) {
+    if (scope == KeywordSearchScope.work ||
+        scope == KeywordSearchScope.character ||
+        jmSearchDiscoveryFunction(source) != null) {
+      request['search_type'] = switch (scope) {
+        KeywordSearchScope.work => 'work',
+        KeywordSearchScope.author => 'author',
+        KeywordSearchScope.tags => 'tag',
+        KeywordSearchScope.character => 'character',
+        _ => 'site',
+      };
+    }
     request['main_tag'] = switch (scope) {
       KeywordSearchScope.author => 2,
       KeywordSearchScope.tags => 3,
       _ => 0,
     };
-  } else if (isBikaExperienceSource(source)) {
-    request.remove('bikaSearchField');
-    switch (scope) {
-      case KeywordSearchScope.author:
-        request['bikaSearchField'] = 'author';
-      case KeywordSearchScope.tags:
-        request['bikaSearchField'] = 'tag';
-      case KeywordSearchScope.team:
-        request['bikaSearchField'] = 'team';
-      case KeywordSearchScope.title || KeywordSearchScope.all:
-        break;
-    }
   }
   return request;
 }

@@ -10,6 +10,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:video_player/video_player.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/donwload_task/service/download_center_projection.dart';
@@ -32,6 +33,7 @@ import 'package:zephyr/page/video/video_local_playback.dart';
 import 'package:zephyr/page/video/video_local_resources.dart';
 import 'package:zephyr/page/video/video_public_metadata.dart';
 import 'package:zephyr/page/video/video_site_browser.dart';
+import 'package:zephyr/page/video/video_picture_size.dart';
 import 'package:zephyr/page/video/video_playback_preferences.dart';
 import 'package:zephyr/page/video/video_watch_history.dart';
 
@@ -762,6 +764,43 @@ void main() {
         expect(find.byType(VideoPlaybackQuickPanel), findsOneWidget);
         expect(find.text(t.videoPlayback.backToWeb), findsNothing);
         expect(find.text(t.sourceShell.exitSource), findsNothing);
+        final frame = find.byType(VideoPictureFrame);
+        final viewport = tester.getRect(frame);
+        final sizeRow = find.byKey(const ValueKey('video-quick.picture-size'));
+        await tester.scrollUntilVisible(
+          sizeRow,
+          120,
+          scrollable: find
+              .descendant(
+                of: find.byType(VideoPlaybackQuickPanel),
+                matching: find.byType(Scrollable),
+              )
+              .first,
+        );
+        await _until(
+          tester,
+          () => nativeControlChannels.containsKey(t.videoPlayback.pictureSize),
+        );
+        tester.binding.channelBuffers.push(
+          nativeControlChannels[t.videoPlayback.pictureSize]!,
+          const StandardMethodCodec().encodeMethodCall(
+            MethodCall('select', VideoPictureSize.standard.index.toString()),
+          ),
+          (_) {},
+        );
+        await _until(
+          tester,
+          () =>
+              tester.widget<VideoPictureFrame>(frame).size ==
+              VideoPictureSize.standard,
+        );
+        final media = tester.getRect(find.byType(VideoPlayer));
+        expect(media.width / media.height, closeTo(4 / 3, .01));
+        expect(media.center.dx, closeTo(viewport.center.dx, .01));
+        expect(media.center.dy, closeTo(viewport.center.dy, .01));
+        expect(tester.getRect(frame), viewport);
+        expect(platform.sources, hasLength(1));
+        expect(noNetwork.calls, 0);
         // Device back first dismisses the panel, then pops this one local route.
         await tester.binding.handlePopRoute();
         await tester.pump(const Duration(milliseconds: 300));
@@ -967,6 +1006,75 @@ void main() {
         privacy.localImagePath.value = previousArtwork;
         fit.state.value = previousFit;
       }
+    }),
+  );
+
+  testWidgets(
+    'local HLS retry rereads the generation of the same downloaded resource',
+    (tester) => host(tester, () async {
+      late String id;
+      await tester.runAsync(() async => id = await seed(true));
+      final selected = Map<String, dynamic>.of(hlsRows.single);
+      hlsRows.single
+        ..['assetId'] = 'replacement-asset'
+        ..['generation'] = 'replacement-generation';
+      messenger.setMockMethodCallHandler(VideoHlsAssets.channel, (call) async {
+        nativeCalls.add(call);
+        if (call.method == 'list') return hlsRows;
+        if (call.method == 'acquirePlayback') {
+          final binding = call.arguments as Map;
+          if (binding['resourceId'] != id ||
+              binding['assetId'] != hlsRows.single['assetId'] ||
+              binding['generation'] != hlsRows.single['generation']) {
+            throw PlatformException(code: 'staleBinding');
+          }
+          return {'leaseId': 'offline-reader', 'fileURL': package};
+        }
+        if (call.method == 'releasePlayback') return true;
+        throw MissingPluginException();
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: _DownloadsOrigin(resourceId: id, resource: selected),
+        ),
+      );
+      await tester.tap(find.text('Open download'));
+      final retry = find.text(t.common.retry).hitTestable();
+      await _until(
+        tester,
+        () => retry.evaluate().isNotEmpty,
+        reason: 'Retry can receive a tap after the local route enters',
+      );
+      expect(nativeCalls.any((c) => c.method == 'list'), isFalse);
+      expect(platform.sources, isEmpty);
+
+      await tester.tap(retry);
+      await _until(
+        tester,
+        () => platform.plays > 0,
+        reason: 'Playback starts using the refreshed local generation',
+      );
+
+      final acquisitions = nativeCalls
+          .where((c) => c.method == 'acquirePlayback')
+          .map((c) => c.arguments)
+          .toList();
+      expect(acquisitions, [
+        {
+          'resourceId': id,
+          'assetId': 'offline-asset',
+          'generation': 'offline-generation',
+        },
+        {
+          'resourceId': id,
+          'assetId': 'replacement-asset',
+          'generation': 'replacement-generation',
+        },
+      ]);
+      expect(platform.sources.single.uri, package);
+      expect(noNetwork.calls, 0);
+      expect(tester.takeException(), isNull);
     }),
   );
 

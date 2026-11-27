@@ -230,7 +230,10 @@ String _findNdkPath(String? ndkVersion) {
     final home =
         Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
     if (home != null) {
-      final path = p.join(home, 'Android', 'Sdk', 'ndk', ndkVersion);
+      final defaultSdkRoot = Platform.isMacOS
+          ? p.join(home, 'Library', 'Android', 'sdk')
+          : p.join(home, 'Android', 'Sdk');
+      final path = p.join(defaultSdkRoot, 'ndk', ndkVersion);
       if (Directory(path).existsSync()) return path;
     }
   }

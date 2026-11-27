@@ -4,7 +4,9 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart';
 import 'package:zephyr/network/sync/sync_service.dart';
@@ -13,6 +15,7 @@ import 'package:zephyr/plugin/plugin_install_service.dart';
 import 'package:zephyr/plugin/plugin_host_compatibility.dart';
 import 'package:zephyr/page/plugin_store/cubit/plugin_store_cubit.dart';
 import 'package:zephyr/page/plugin_store/models/cloud_plugin_item.dart';
+import 'package:zephyr/page/plugin_store/view/plugin_store_page.dart';
 import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/network/http/plugin/qjs_network_route.dart';
@@ -25,6 +28,7 @@ import 'package:zephyr/service/comic_follow/comic_follow_chapter_reader.dart';
 import 'package:zephyr/src/rust/api/http.dart' as rust_http;
 import 'package:zephyr/src/rust/frb_generated.dart';
 import 'package:zephyr/src/rust/qjs.dart';
+import 'package:zephyr/widgets/toast.dart';
 
 import '../test_helper.dart';
 
@@ -36,6 +40,9 @@ const _firstPartyRoot =
     'https://raw.githubusercontent.com/$personalPluginCatalogRepository/main';
 const _formalCatalog = '$_firstPartyRoot/catalog/v1/plugins_data.json';
 const _formalIndex = '$_firstPartyRoot/updates/v1/bika.json';
+const _formalIndexApi =
+    'https://api.github.com/repos/$personalPluginCatalogRepository'
+    '/contents/updates/v1/bika.json?ref=main';
 const _formalAsset =
     'https://github.com/$personalPluginCatalogRepository/releases/download/plugins-fixture/Bika-v0.1.2.cjs';
 const _legacySource = 'previous publicly distributed bundle';
@@ -222,6 +229,394 @@ void main() {
     'repo': 'fixture/source',
     'manifest': {'uuid': _uuid, 'version': '0.1.4', 'updateUrl': _releaseUrl},
   });
+
+  test(
+    'store installs eligible missing plugins in order despite a failure',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      await LocalPluginInstallationState.instance.reload();
+      await seed(enabled: false);
+      const bad = 'batch-bad';
+      const good = 'batch-good';
+      const concurrent = 'batch-installed-concurrently';
+      const newer = 'batch-newer';
+      const blocked = 'batch-incompatible';
+      const noVersion = 'batch-no-version';
+      const installedOffCatalog = 'batch-off-catalog';
+      final now = DateTime.utc(2026);
+      await PluginRegistryService.I.upsert(
+        PluginInfo(
+          uuid: newer,
+          version: '2.0.0',
+          originScript: 'newer local bundle',
+          insertedAt: now,
+          updatedAt: now,
+          isEnabled: false,
+          isDeleted: false,
+          lastLoadSuccess: true,
+          debug: false,
+        ),
+      );
+      await PluginRegistryService.I.upsert(
+        PluginInfo(
+          uuid: installedOffCatalog,
+          version: '1.0.0',
+          originScript: 'local-only bundle',
+          insertedAt: now,
+          updatedAt: now,
+          isEnabled: false,
+          isDeleted: false,
+          lastLoadSuccess: true,
+          debug: false,
+        ),
+      );
+      Map<String, dynamic> entry(String uuid, {String version = '1.0.0'}) => {
+        'repo': 'fixture/$uuid',
+        'manifest': {
+          'uuid': uuid,
+          'version': version,
+          'updateUrl': 'https://fixture.invalid/$uuid/latest',
+          if (uuid == blocked)
+            'requirements': {
+              'version': 1,
+              'capabilities': {'videoLibraryProtocol': 99},
+            },
+        },
+      };
+      final catalog = [
+        entry(_uuid, version: '0.1.4'),
+        entry(bad),
+        entry(bad),
+        entry(concurrent),
+        entry(good),
+        entry(newer),
+        entry(blocked),
+        entry(noVersion, version: ''),
+      ];
+      final firstAssetRequested = Completer<void>();
+      final firstAssetRelease = Completer<void>();
+      addTearDown(() {
+        if (!firstAssetRelease.isCompleted) firstAssetRelease.complete();
+      });
+      final downloads = <String>[];
+      api.getInfoOverride = {'uuid': good, 'version': '1.0.0'};
+      api.request = (url) async {
+        if (url == _formalCatalog) return '[]';
+        if (url.endsWith('/plugins_data.json') ||
+            url.endsWith('/plugin-list')) {
+          return jsonEncode(catalog);
+        }
+        final uri = Uri.parse(url);
+        final uuid = uri.pathSegments.first;
+        if (uri.pathSegments.last == 'latest') {
+          return jsonEncode({
+            'tag_name': '1.0.0',
+            'assets': [
+              {
+                'name': '$uuid.cjs',
+                'browser_download_url':
+                    'https://fixture.invalid/$uuid/download.cjs',
+              },
+            ],
+          });
+        }
+        downloads.add(uuid);
+        if (uuid == bad) {
+          firstAssetRequested.complete();
+          await firstAssetRelease.future;
+        }
+        return 'fixture bundle $uuid';
+      };
+
+      final store = PluginStoreCubit();
+      addTearDown(store.close);
+      final notices = <ToastEvent>[];
+      final subscription = eventBus.on<ToastEvent>().listen(notices.add);
+      addTearDown(subscription.cancel);
+      await store.loadCloudPlugins();
+      final planner = store.cloudBatchCandidates;
+      final install = planner[CloudPluginBatchAction.install]!;
+      final update = planner[CloudPluginBatchAction.update]!;
+      expect(install.map((item) => item.manifest.uuid), [
+        bad,
+        concurrent,
+        good,
+      ]);
+      expect(update.map((item) => item.manifest.uuid), [_uuid]);
+
+      final processing = store.installCloudBatch(
+        CloudPluginBatchAction.install,
+        install,
+      );
+      await firstAssetRequested.future;
+      expect(store.state.installing, isTrue);
+      expect(
+        store.state.installMessage,
+        t.plugin.cloudBatchInstalling(current: 1, total: 3, name: bad),
+      );
+      expect(
+        store.cloudBatchCandidates.values.every((items) => items.isEmpty),
+        isTrue,
+      );
+      await store.installFromCloud(update.single);
+      expect(downloads, [bad]);
+      final registry = PluginRegistryService.I;
+      await registry.upsert(
+        PluginInfo(
+          uuid: concurrent,
+          version: '0.1.0',
+          originScript: 'installed through another route',
+          insertedAt: now,
+          updatedAt: now,
+          isEnabled: false,
+          isDeleted: false,
+          lastLoadSuccess: true,
+          debug: false,
+        ),
+      );
+      firstAssetRelease.complete();
+
+      final installed = (await processing)!;
+      final failures = installed.failures;
+      expect(failures.map((failure) => failure.plugin), [bad]);
+      expect(failures.single.reason, isNot(contains('期望=')));
+      expect(downloads, [bad, good]);
+      expect(store.state.installing, isFalse);
+      expect(store.state.installMessage, isEmpty);
+      expect(
+        installed.message,
+        [
+          t.plugin.cloudBatchInstalled(count: 1),
+          t.plugin.cloudBatchFailed(count: 1),
+          t.plugin.cloudBatchSkipped(count: 1),
+        ].join(' · '),
+      );
+      expect(registry.getByUuid(good)?.version, '1.0.0');
+      expect(registry.getByUuid(bad), isNull);
+      expect(registry.getByUuid(_uuid)?.version, '0.1.3');
+      expect(registry.getByUuid(newer)?.version, '2.0.0');
+      expect(
+        registry.getByUuid(installedOffCatalog)?.originScript,
+        'local-only bundle',
+      );
+      expect(
+        registry.getByUuid(concurrent)?.originScript,
+        'installed through another route',
+      );
+      expect(
+        store.cloudBatchCandidates[CloudPluginBatchAction.install]!.map(
+          (item) => item.manifest.uuid,
+        ),
+        [bad],
+      );
+
+      api.getInfoOverride = {'uuid': _uuid, 'version': '0.1.4'};
+      final updated = (await store.installCloudBatch(
+        CloudPluginBatchAction.update,
+        update,
+      ))!;
+      expect(updated.failures, isEmpty);
+      expect(downloads, [bad, good, _uuid]);
+      expect(registry.getByUuid(_uuid)?.version, '0.1.4');
+      expect(registry.getByUuid(_uuid)?.isEnabled, isFalse);
+      expect(store.state.installMessage, isEmpty);
+      expect(updated.message, t.plugin.cloudBatchUpdated(count: 1));
+      await Future<void>.delayed(Duration.zero);
+      expect(notices.map((event) => (event.type, event.message)), [
+        (ToastType.success, t.plugin.cloudPluginUpdated(name: _uuid)),
+        (ToastType.success, updated.message),
+      ]);
+    },
+  );
+
+  test(
+    'batch candidates keep the cloud mode when installation state changes',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final local = LocalPluginInstallationState.instance;
+      await local.reload();
+      await seed(enabled: false);
+      final service = PluginInstallService.I;
+      final item = catalogItem();
+      expect(service.cloudBatchActionFor(item), CloudPluginBatchAction.update);
+      await expectLater(
+        service.installFromCloud(
+          item,
+          batchAction: CloudPluginBatchAction.install,
+        ),
+        throwsA(isA<PluginLifecycleChanged>()),
+      );
+      final installed = objectbox.pluginInfoBox.getAll().single;
+      installed.getInfoJson = jsonEncode({
+        'releaseSeries': 1,
+        'updateUrl': _formalIndex,
+      });
+      objectbox.pluginInfoBox.put(installed);
+      expect(service.cloudBatchActionFor(item), isNull);
+      await expectLater(
+        service.installFromCloud(
+          item,
+          batchAction: CloudPluginBatchAction.update,
+        ),
+        throwsA(isA<PluginLifecycleChanged>()),
+      );
+      installed.isDeleted = true;
+      objectbox.pluginInfoBox.put(installed);
+      expect(service.cloudBatchActionFor(item), CloudPluginBatchAction.install);
+      await expectLater(
+        service.installFromCloud(
+          item,
+          batchAction: CloudPluginBatchAction.update,
+        ),
+        throwsA(isA<PluginLifecycleChanged>()),
+      );
+      expect(
+        objectbox.pluginInfoBox.getAll().single.originScript,
+        'old bundle',
+      );
+    },
+  );
+
+  testWidgets(
+    'store bulk confirmation uses the full catalog on a narrow phone',
+    (tester) async {
+      Map<String, dynamic> entry(
+        String uuid,
+        String name, {
+        String version = '1.0.0',
+      }) => {
+        'repo': 'fixture/$uuid',
+        'manifest': {
+          'uuid': uuid,
+          'name': name,
+          'version': version,
+          'updateUrl': _releaseUrl,
+        },
+      };
+      final catalog = [
+        entry(_uuid, 'Installed fixture'),
+        entry('store-alpha', 'Alpha fixture'),
+        entry('store-beta', 'Beta fixture'),
+      ];
+      SharedPreferences.setMockInitialValues({
+        'plugin_store.catalog.sources.v1': jsonEncode({
+          'official': catalog,
+          'personal': [],
+          'personalVersioned': true,
+        }),
+      });
+      await tester.runAsync(() async {
+        await LocalPluginInstallationState.instance.reload();
+        await seed(enabled: false);
+      });
+      var assetRequests = 0;
+      api.request = (url) async {
+        if (url == _formalCatalog) return '[]';
+        if (url.endsWith('/plugins_data.json') ||
+            url.endsWith('/plugin-list')) {
+          return jsonEncode(catalog);
+        }
+        assetRequests++;
+        throw StateError('Unexpected asset request: $url');
+      };
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(375, 812);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              textScaler: TextScaler.linear(
+                MediaQuery.sizeOf(context).width > 600 ? 1 : 1.5,
+              ),
+              disableAnimations: true,
+            ),
+            child: child!,
+          ),
+          home: const PluginStorePage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final importButton = find.byTooltip(t.common.import);
+      expect(importButton, findsOneWidget);
+      expect(find.text(t.plugin.localInstall), findsNothing);
+      expect(find.text(t.plugin.networkInstall), findsNothing);
+      await tester.tap(importButton);
+      await tester.pumpAndSettle();
+      expect(find.text(t.plugin.localInstall), findsOneWidget);
+      await tester.tap(find.text(t.plugin.networkInstall));
+      await tester.pumpAndSettle();
+      expect(find.text(t.plugin.addFromNetwork), findsOneWidget);
+      await tester.tap(find.text(t.common.cancel));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'Alpha');
+      await tester.pumpAndSettle();
+      expect(find.text('Alpha fixture'), findsOneWidget);
+      expect(find.text('Beta fixture'), findsNothing);
+      final installAll = find.widgetWithText(
+        OutlinedButton,
+        t.plugin.cloudInstallAll,
+      );
+      final updateAll = find.widgetWithText(
+        FilledButton,
+        t.plugin.cloudUpdateAll,
+      );
+      final refresh = find.byTooltip(t.common.refresh);
+      final sectionTitle = find.text(t.plugin.cloudComponents);
+      expect(
+        (tester.getCenter(refresh).dy - tester.getCenter(sectionTitle).dy)
+            .abs(),
+        lessThan(1),
+      );
+      expect(
+        tester.getTopLeft(refresh).dx - tester.getTopRight(sectionTitle).dx,
+        lessThan(16),
+      );
+      expect(tester.getSize(updateAll).width, tester.getSize(installAll).width);
+      expect(
+        tester.getBottomLeft(updateAll).dy,
+        lessThan(tester.getTopLeft(installAll).dy),
+      );
+      expect(tester.widget<FilledButton>(updateAll).onPressed, isNotNull);
+      await tester.tap(installAll);
+      await tester.pumpAndSettle();
+      expect(
+        find.text(t.plugin.confirmCloudInstallAll(count: 2)),
+        findsOneWidget,
+      );
+      await tester.tap(find.text(t.common.cancel));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+      await tester.tap(updateAll);
+      await tester.pumpAndSettle();
+      expect(
+        find.text(t.plugin.confirmCloudUpdateAll(count: 1)),
+        findsOneWidget,
+      );
+      expect(assetRequests, 0);
+      tester.view.physicalSize = const Size(812, 375);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(t.common.cancel));
+      await tester.pumpAndSettle();
+      expect(tester.getCenter(updateAll).dy, tester.getCenter(installAll).dy);
+      expect(tester.getSize(updateAll), tester.getSize(installAll));
+      expect(tester.getSize(updateAll).height, inInclusiveRange(44, 50));
+      expect(tester.getSize(updateAll).width, lessThanOrEqualTo(160));
+      catalog
+        ..clear()
+        ..add(entry(_uuid, 'Installed fixture', version: '0.1.3'));
+      await tester.tap(refresh);
+      await tester.pumpAndSettle();
+      expect(tester.widget<OutlinedButton>(installAll).onPressed, isNull);
+      expect(tester.widget<FilledButton>(updateAll).onPressed, isNull);
+      expect(find.text(t.plugin.cloudNoUpdates), findsOneWidget);
+      expect(find.text(t.plugin.cloudNoInstalls), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   for (final enabled in [false, true]) {
     test(
@@ -1197,14 +1592,23 @@ void main() {
     }
 
     test(
-      'store replaces an exact higher-numbered old bundle and keeps state',
+      'batch updates an exact higher-numbered old bundle and keeps state',
       () async {
         await seedManaged(script: '\n$_legacySource\n');
         final requests = serveMigration();
         final before = objectbox.pluginInfoBox.getAll().single;
         final config = objectbox.pluginConfigBox.getAll().single.toJson();
+        final item = await readStoreItem();
+        final service = PluginInstallService.I;
         expect(
-          await PluginInstallService.I.installFromCloud(await readStoreItem()),
+          service.cloudBatchActionFor(item),
+          CloudPluginBatchAction.update,
+        );
+        expect(
+          await service.installFromCloud(
+            item,
+            batchAction: CloudPluginBatchAction.update,
+          ),
           '更新成功',
         );
         final after = objectbox.pluginInfoBox.getAll().single;
@@ -1215,6 +1619,7 @@ void main() {
         expect(after.sortOrder, before.sortOrder);
         expect(after.insertedAt, before.insertedAt);
         expect(objectbox.pluginConfigBox.getAll().single.toJson(), config);
+        expect(service.cloudBatchActionFor(item), isNull);
         expect(requests.where((url) => url == _formalIndex), hasLength(1));
       },
     );
@@ -1295,6 +1700,47 @@ void main() {
     });
 
     test(
+      'local update replaces same-version bytes and preserves installation',
+      () async {
+        await seedManaged(version: '0.1.2', script: 'previous local bundle');
+        final before = objectbox.pluginInfoBox.getAll().single;
+        final config = objectbox.pluginConfigBox.getAll().single.toJson();
+        const candidate = 'updated local bundle';
+
+        expect(
+          await PluginInstallService.I.installFromLocalBytes(
+            utf8.encode(candidate),
+            fileName: 'Bika-0.1.2.cjs',
+            expectedUuid: _managedUuid,
+            allowReplaceExisting: true,
+          ),
+          '更新成功',
+        );
+        final after = objectbox.pluginInfoBox.getAll().single;
+        expect(after.id, before.id);
+        expect(after.uuid, before.uuid);
+        expect(after.version, before.version);
+        expect(after.originScript, candidate);
+        expect(after.insertedAt, before.insertedAt);
+        expect(after.sortOrder, before.sortOrder);
+        expect(after.isEnabled, before.isEnabled);
+        expect(jsonDecode(after.getInfoJson)['updateUrl'], _formalIndex);
+        expect(objectbox.pluginConfigBox.getAll().single.toJson(), config);
+
+        final requests = serveMigration(oldVersion: '0.1.2');
+        expect(
+          await PluginCloudUpdateService.I.syncPluginFromSelfChannel(
+            _managedUuid,
+          ),
+          isFalse,
+        );
+        await PluginCloudUpdateService.I.silentUpdateFromCloud();
+        expect(requests, isNot(contains(_formalAsset)));
+        expect(objectbox.pluginInfoBox.getAll().single.originScript, candidate);
+      },
+    );
+
+    test(
       'an independent index alone cannot authorize a self-channel downgrade',
       () async {
         await seedManaged();
@@ -1308,7 +1754,7 @@ void main() {
           ),
           isFalse,
         );
-        expect(requests, [_formalIndex]);
+        expect(requests, [_formalIndex, _formalIndexApi]);
         expect(api.calls, isEmpty);
         expect(
           objectbox.pluginInfoBox.getAll().single.originScript,
@@ -1346,6 +1792,51 @@ void main() {
     );
 
     test(
+      'unusable raw metadata falls back to the same repository Contents API',
+      () async {
+        await seedManaged();
+        serveMigration();
+        final validResponse = api.request;
+        final requests = <String>[];
+        final catalogApi = Uri.https(
+          'api.github.com',
+          '/repos/$personalPluginCatalogRepository/contents/catalog/v1/plugins_data.json',
+          {'ref': 'main'},
+        ).toString();
+        final indexApi = Uri.https(
+          'api.github.com',
+          '/repos/$personalPluginCatalogRepository/contents/updates/v1/bika.json',
+          {'ref': 'main'},
+        ).toString();
+        api.request = (url) async {
+          requests.add(url);
+          if (url == _formalCatalog)
+            return '<html>temporarily unavailable</html>';
+          if (url == _formalIndex) return '{"tag_name":"v0.1.1"}';
+          if (url == catalogApi) return validResponse(_formalCatalog);
+          if (url == indexApi) return validResponse(_formalIndex);
+          return validResponse(url);
+        };
+
+        await PluginInstallService.I.installFromCloud(await readStoreItem());
+
+        expect(
+          requests,
+          containsAllInOrder([
+            _formalCatalog,
+            catalogApi,
+            _formalIndex,
+            indexApi,
+          ]),
+        );
+        expect(
+          objectbox.pluginInfoBox.getAll().single.originScript,
+          _formalSource,
+        );
+      },
+    );
+
+    test(
       'index and downloaded bytes must agree before the new script can run',
       () async {
         await seedManaged();
@@ -1364,6 +1855,149 @@ void main() {
         );
         expect(api.calls, isEmpty);
         expect(objectbox.pluginInfoBox.getAll().single.toJson(), before);
+      },
+    );
+
+    test(
+      'store updates and reinstalls recover from first-party index timeouts',
+      () async {
+        await seedManaged(version: '0.1.1');
+        serveMigration();
+        final direct = api.request;
+        final requests = <String>[];
+        const staleMirror = 'https://v4.gh-proxy.org/$_formalIndex';
+        const workingMirror = 'https://gh-proxy.org/$_formalIndex';
+        api.request = (url) async {
+          requests.add(url);
+          if (url == _formalIndex || url == _formalIndexApi) {
+            throw TimeoutException('first-party index unavailable');
+          }
+          if (url == staleMirror) {
+            final stale = jsonDecode(await direct(_formalIndex)) as Map;
+            stale['scriptSha256'] = publishedPluginScriptSha256('stale bundle');
+            return jsonEncode(stale);
+          }
+          if (url == workingMirror) return direct(_formalIndex);
+          return direct(url);
+        };
+
+        final item = await readStoreItem();
+        final service = PluginInstallService.I;
+        expect(
+          await service.installFromCloud(
+            item,
+            batchAction: CloudPluginBatchAction.update,
+          ),
+          '更新成功',
+        );
+        expect(await service.installFromCloud(item, reinstall: true), '更新成功');
+        expect(
+          requests,
+          containsAllInOrder([
+            _formalIndex,
+            _formalIndexApi,
+            staleMirror,
+            workingMirror,
+            _formalAsset,
+          ]),
+        );
+        expect(
+          objectbox.pluginInfoBox.getAll().single.originScript,
+          _formalSource,
+        );
+      },
+    );
+
+    test(
+      'first-party update can use the contents API while raw is pending',
+      () async {
+        await seedManaged(version: '0.1.1');
+        serveMigration();
+        final direct = api.request;
+        final rawRequested = Completer<void>();
+        final rawResponse = Completer<String>();
+        final requests = <String>[];
+        api.request = (url) async {
+          requests.add(url);
+          if (url == _formalIndex) {
+            rawRequested.complete();
+            return rawResponse.future;
+          }
+          if (url == _formalIndexApi) {
+            await rawRequested.future;
+            return direct(_formalIndex);
+          }
+          return direct(url);
+        };
+        final item = await readStoreItem();
+        try {
+          expect(
+            await PluginInstallService.I
+                .installFromCloud(
+                  item,
+                  batchAction: CloudPluginBatchAction.update,
+                )
+                .timeout(const Duration(seconds: 3)),
+            '更新成功',
+          );
+          expect(
+            requests,
+            containsAllInOrder([_formalIndex, _formalIndexApi, _formalAsset]),
+          );
+          expect(requests.where((url) => url.endsWith(_formalIndex)), [
+            _formalIndex,
+          ]);
+        } finally {
+          rawResponse.complete('');
+        }
+      },
+    );
+
+    test(
+      'first-party reinstall exhausts bad compressed copies and verifies plain CJS',
+      () async {
+        await seedManaged(version: '0.1.2');
+        final requests = <String>[];
+        const compressed = '$_formalAsset.br';
+        serveMigration(
+          indexOverrides: {
+            'assets': [
+              {'name': 'Bika-v0.1.2.cjs', 'browser_download_url': _formalAsset},
+              {
+                'name': 'Bika-v0.1.2.cjs.br',
+                'browser_download_url': compressed,
+              },
+            ],
+          },
+        );
+        final direct = api.request;
+        const healthyPlain = 'https://v4.gh-proxy.org/$_formalAsset';
+        api.request = (url) async {
+          requests.add(url);
+          if (url.endsWith(compressed)) {
+            throw TimeoutException('compressed artifact timed out');
+          }
+          if (url == _formalAsset) return 'truncated response body';
+          if (url == healthyPlain) return _formalSource;
+          return direct(url);
+        };
+        final item = await readStoreItem();
+        expect(
+          await PluginInstallService.I.installFromCloud(item, reinstall: true),
+          '更新成功',
+        );
+        expect(
+          requests,
+          containsAllInOrder([compressed, _formalAsset, healthyPlain]),
+        );
+        expect(
+          objectbox.pluginInfoBox.getAll().single.originScript,
+          _formalSource,
+        );
+        expect(
+          api.calls.where((call) => call == 'global:getInfo'),
+          hasLength(1),
+        );
       },
     );
 

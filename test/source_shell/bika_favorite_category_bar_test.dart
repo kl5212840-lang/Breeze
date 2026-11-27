@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/config/global/global_setting.dart';
+import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart' show objectbox;
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/comic_list/cubit/jm_collection_snapshots.dart';
@@ -27,6 +28,111 @@ void main() {
     JmCollectionSnapshots.instance.clear();
   });
   tearDown(() => SourceListBlockPreferences.flush());
+
+  testWidgets(
+    'Bika jump retains local matches and names an empty target page',
+    (tester) async {
+      const bika = 'e9f18928-3ba8-4d86-a12e-b53a62f47933';
+      final search = TextEditingController(text: 'wanted');
+      final settings = GlobalSettingCubit();
+      tester.view.physicalSize = const Size(320, 740);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(search.dispose);
+      addTearDown(settings.close);
+      final requested = <int>[];
+      await tester.pumpWidget(
+        BlocProvider.value(
+          value: settings,
+          child: MaterialApp(
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: child!,
+            ),
+            home: Scaffold(
+              body: PluginPagedComicListView(
+                pluginId: bika,
+                fnPath: 'getFavoriteData',
+                coreBuilder: (page) => {'page': page},
+                externBuilder: (_) => const {
+                  'source': 'cloudFavorite',
+                  'sort': 'dd',
+                },
+                cloudFavorite: true,
+                detailedView: true,
+                loadedSearchController: search,
+                loadedSearchExpanded: false,
+                loadedChromeBuilder: (_, chrome) => Column(
+                  children: [
+                    if (chrome.pageNavigation case final button?) button,
+                    Text('${chrome.total} loaded / ${chrome.shown} matches'),
+                  ],
+                ),
+                requestPage: (_, _, core, _) async {
+                  final page = core['page'] as int;
+                  requested.add(page);
+                  return {
+                    'source': bika,
+                    'data': {
+                      'paging': {'page': page, 'pages': 3, 'total': 3},
+                      'items': [
+                        {
+                          'id': 'fixture-$page',
+                          'source': bika,
+                          'title': page == 3
+                              ? 'different work'
+                              : 'wanted $page',
+                          'subtitle': '',
+                          'finished': false,
+                          'likesCount': 0,
+                          'viewsCount': 0,
+                          'updatedAt': '',
+                          'cover': {
+                            'id': 'fixture-$page',
+                            'url': '',
+                            'path': '',
+                            'extern': {},
+                          },
+                          'metadata': [],
+                          'raw': {},
+                          'extern': {},
+                        },
+                      ],
+                    },
+                  };
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final pageButton = find.byKey(
+        const ValueKey('plugin-list.page-progress'),
+      );
+      expect(pageButton, findsOneWidget);
+      expect(tester.getSize(pageButton).height, greaterThanOrEqualTo(44));
+
+      await tester.tap(pageButton);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).hitTestable(), '3');
+      await tester.tap(find.text(t.common.ok));
+      await tester.pumpAndSettle();
+      expect(requested.last, 3);
+      expect(search.text, 'wanted');
+      expect(
+        find.text(t.searchResult.pageProgress(page: 3, pages: 3)),
+        findsOneWidget,
+      );
+      expect(find.text('1 loaded / 0 matches'), findsOneWidget);
+      expect(find.text('different work'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   testWidgets('category-only mode reuses colored block and restore chips', (
     tester,
@@ -115,15 +221,16 @@ void main() {
       title: id,
       subtitle: '',
       finished: false,
-      likesCount: 0,
+      likesCount: 331,
       viewsCount: 0,
       updatedAt: '',
       cover: UnifiedComicCover(id: id, url: '', path: '', extern: const {}),
       metadata: [
+        const UnifiedComicMetadata(type: 'author', name: '作者', value: ['收藏作者']),
         const UnifiedComicMetadata(type: 'tags', name: '标签', value: ['测试标签']),
         UnifiedComicMetadata(type: 'categories', name: '分类', value: [category]),
       ],
-      raw: const {},
+      raw: const {'pagesCount': 21},
       extern: const {},
     );
     final settings = GlobalSettingCubit();
@@ -139,6 +246,7 @@ void main() {
               coreBuilder: (page) => {'page': page},
               externBuilder: (_) => const {},
               cloudFavorite: true,
+              detailedView: true,
               collectionTargetId: 'folder-a',
               requestPage: (_, __, ___, ____) async => {
                 'source': bika,
@@ -162,12 +270,33 @@ void main() {
     expect(find.byKey(const ValueKey('category-短篇')), findsOneWidget);
     expect(find.text('color-work'), findsOneWidget);
     expect(find.text('short-work'), findsOneWidget);
+    final colorRow = find.byKey(const ValueKey('detail-color-work'));
+    for (final text in [
+      '收藏作者',
+      '全彩 · 测试标签',
+      '331',
+      t.searchResult.itemPageCount(count: 21),
+    ]) {
+      expect(
+        find.descendant(of: colorRow, matching: find.text(text)),
+        findsOneWidget,
+      );
+    }
+    expect(
+      find.descendant(
+        of: colorRow,
+        matching: find.byIcon(Icons.favorite_border),
+      ),
+      findsOneWidget,
+    );
+
     await tester.enterText(
       find.byKey(const ValueKey('source-loaded.search')),
       'work',
     );
     await tester.tap(find.byKey(const ValueKey('category-全彩')));
     await tester.pumpAndSettle();
+    expect(find.byType(SnackBar), findsNothing);
     expect(
       tester
           .widget<TextField>(find.byKey(const ValueKey('source-loaded.search')))
@@ -195,6 +324,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('category-全彩')));
     await tester.pumpAndSettle();
     expect(find.text('color-work'), findsOneWidget);
+    expect(find.byType(SnackBar), findsNothing);
     await tester.tap(find.byKey(const ValueKey('category-全彩')));
     await tester.pumpAndSettle();
     final cubit = tester

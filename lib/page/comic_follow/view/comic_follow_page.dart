@@ -5,6 +5,7 @@ import 'package:zephyr/widgets/collection_cover_fit.dart';
 import 'package:zephyr/widgets/work_list_divider.dart';
 
 import 'package:auto_route/auto_route.dart';
+import 'package:flutter/cupertino.dart' show CupertinoColors;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/config/router/router.gr.dart';
@@ -14,6 +15,7 @@ import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/comic_follow/cubit/comic_follow_cubit.dart';
 import 'package:zephyr/page/comic_follow/view/follow_display.dart';
 import 'package:zephyr/page/comic_follow/widgets/comic_follow_reminder_widgets.dart';
+import 'package:zephyr/page/comic_follow/widgets/comic_follow_row_actions.dart';
 import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
@@ -37,6 +39,7 @@ import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/widgets/error_view.dart';
 import 'package:zephyr/widgets/pull_refresh_feedback.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 import 'package:zephyr/widgets/toast.dart';
 
 const _followContentWidth = 768.0;
@@ -50,9 +53,15 @@ String _followSourceName(String source) {
 
 @RoutePage()
 class ComicFollowPage extends StatefulWidget {
-  const ComicFollowPage({super.key, this.embedded = false, this.active = true});
+  const ComicFollowPage({
+    super.key,
+    this.embedded = false,
+    this.active = true,
+    this.openSwipe,
+  });
 
   final bool embedded, active;
+  final ValueNotifier<String?>? openSwipe;
 
   @override
   State<ComicFollowPage> createState() => _ComicFollowPageState();
@@ -60,6 +69,9 @@ class ComicFollowPage extends StatefulWidget {
 
 class _ComicFollowPageState extends State<ComicFollowPage>
     with WidgetsBindingObserver, AutoRouteAwareStateMixin<ComicFollowPage> {
+  ValueNotifier<String?>? _localOpenRow;
+  ValueNotifier<String?> get _openRow =>
+      widget.openSwipe ?? (_localOpenRow ??= ValueNotifier<String?>(null));
   ComicFollowCubit? _cubit;
   bool _routeVisible = true, _active = false;
 
@@ -100,6 +112,7 @@ class _ComicFollowPageState extends State<ComicFollowPage>
         _routeVisible &&
         visible &&
         (lifecycle == null || lifecycle == AppLifecycleState.resumed);
+    if (!active) _openRow.value = null;
     if (_active == active) return;
     _active = active;
     _cubit?.setPageCheckingActive(this, active);
@@ -136,20 +149,25 @@ class _ComicFollowPageState extends State<ComicFollowPage>
   @override
   void dispose() {
     _cubit?.setPageCheckingActive(this, false);
+    _localOpenRow?.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) =>
-      _ComicFollowPageContent(embedded: widget.embedded);
+      _ComicFollowPageContent(embedded: widget.embedded, openRow: _openRow);
 }
 
 /// Foreground-only update checks keep the detailed list and reading position.
 class _ComicFollowPageContent extends StatefulWidget {
-  const _ComicFollowPageContent({required this.embedded});
+  const _ComicFollowPageContent({
+    required this.embedded,
+    required this.openRow,
+  });
 
   final bool embedded;
+  final ValueNotifier<String?> openRow;
 
   @override
   State<_ComicFollowPageContent> createState() =>
@@ -175,6 +193,7 @@ class _ComicFollowPageContentState extends State<_ComicFollowPageContent> {
   }
 
   void _toggleSearch() {
+    widget.openRow.value = null;
     if (_searching) {
       _searchFocus.unfocus();
       setState(() {
@@ -224,9 +243,12 @@ class _ComicFollowPageContentState extends State<_ComicFollowPageContent> {
                   ? null
                   : Padding(
                       padding: EdgeInsetsDirectional.only(start: outerInset),
-                      child: CollectionToolbarMetrics.leading(
-                        context,
-                        const SourceBackButton(),
+                      child: TapRegion(
+                        groupId: widget.openRow,
+                        child: CollectionToolbarMetrics.leading(
+                          context,
+                          const SourceBackButton(),
+                        ),
                       ),
                     ),
               leadingWidth:
@@ -246,6 +268,7 @@ class _ComicFollowPageContentState extends State<_ComicFollowPageContent> {
                       closeKey: const ValueKey('follow-search-toggle'),
                       query: _query,
                       inline: true,
+                      animateExpansion: true,
                       focusNode: _searchFocus,
                       leadingControlWidth: KeywordScopeMenu.leadingWidth(
                         context,
@@ -448,6 +471,7 @@ class _ComicFollowPageContentState extends State<_ComicFollowPageContent> {
     if (visibleItems.isNotEmpty) {
       list = _FollowList(
         controller: widget.embedded ? _scroll : null,
+        openRow: widget.openRow,
         items: visibleItems,
         state: state,
         scrollKey: PageStorageKey(('follow-list', keyword.isNotEmpty)),
@@ -611,6 +635,7 @@ class _FollowToolbar extends StatelessWidget {
     };
     final sorts = {
       ComicFollowSort.lastRead.name: t.comicFollow.lastRead,
+      ComicFollowSort.recentUpdate.name: t.comicFollow.recentUpdate,
       ComicFollowSort.update.name: t.comicFollow.lastUpdate,
     };
     final sortLabel = sorts[state.sort.name]!;
@@ -619,6 +644,7 @@ class _FollowToolbar extends StatelessWidget {
           systemControls: systemControls,
           child: NativeVideoMenu(
             key: const ValueKey('follow-sort'),
+            bare: true,
             label: showLabel ? sortLabel : '',
             tooltip: '${t.comicFollow.sort} · $sortLabel',
             selected: state.sort.name,
@@ -715,6 +741,7 @@ class _FollowToolbar extends StatelessWidget {
 class _FollowList extends StatelessWidget {
   const _FollowList({
     required this.controller,
+    required this.openRow,
     required this.items,
     required this.state,
     required this.scrollKey,
@@ -722,6 +749,7 @@ class _FollowList extends StatelessWidget {
   });
 
   final ScrollController? controller;
+  final ValueNotifier<String?> openRow;
   final List<ComicFollow> items;
   final ComicFollowState state;
   final PageStorageKey<(String, bool)> scrollKey;
@@ -731,7 +759,7 @@ class _FollowList extends StatelessWidget {
   Widget build(BuildContext context) {
     final cubit = context.read<ComicFollowCubit>();
     // 外层已用 ConstrainedBox(768) 居中，这里只留固定边距。
-    return ListView.separated(
+    final list = ListView.separated(
       key: scrollKey,
       controller: controller,
       physics: const AlwaysScrollableScrollPhysics(),
@@ -750,16 +778,22 @@ class _FollowList extends StatelessWidget {
         return _FollowCard(
           key: ValueKey(follow.uniqueKey),
           follow: follow,
+          openRow: openRow,
           history: history,
-          readChapterPosition: cubit.readChapterPositionFor(follow, history),
           hasUnreadUpdate: state.hasUnreadUpdate(follow),
           unreadChapterCount: state.unreadChapterCount(follow),
           checking: state.checkingKeys.contains(follow.uniqueKey),
           checkDeferred: cubit.isCheckDeferred(follow),
           failure: state.checkErrors[follow.uniqueKey],
-          lastAttempt: state.lastAttempts[follow.uniqueKey],
         );
       },
+    );
+    return NotificationListener<ScrollStartNotification>(
+      onNotification: (notification) {
+        if (notification.dragDetails != null) openRow.value = null;
+        return false;
+      },
+      child: list,
     );
   }
 }
@@ -768,25 +802,23 @@ class _FollowCard extends StatelessWidget {
   const _FollowCard({
     super.key,
     required this.follow,
+    required this.openRow,
     required this.history,
-    required this.readChapterPosition,
     required this.hasUnreadUpdate,
     required this.unreadChapterCount,
     required this.checking,
     required this.checkDeferred,
     this.failure,
-    this.lastAttempt,
   });
 
   final ComicFollow follow;
+  final ValueNotifier<String?> openRow;
   final UnifiedComicHistory? history;
-  final int? readChapterPosition;
   final bool hasUnreadUpdate;
   final int unreadChapterCount;
   final bool checking;
   final bool checkDeferred;
   final ComicFollowCheckFailure? failure;
-  final DateTime? lastAttempt;
 
   // Use the bookshelf frame as the minimum; follow cards can grow to 96×144.
   static const _minimumCoverWidth = 80.0;
@@ -795,23 +827,13 @@ class _FollowCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     final cover = resolveFollowCover(follow);
 
-    return Dismissible(
-      key: ValueKey('dismiss-${follow.uniqueKey}'),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
-        decoration: BoxDecoration(
-          color: scheme.errorContainer,
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Icon(Icons.delete_outline, color: scheme.onErrorContainer),
-      ),
-      confirmDismiss: (_) => _askUnfollow(context),
-      onDismissed: (_) => _removeFollow(context),
+    return ComicFollowRowActions(
+      rowKey: follow.uniqueKey,
+      openRow: openRow,
+      onMarkRead: hasUnreadUpdate ? () => _markRead(context) : null,
+      onUnfollow: () => _confirmUnfollow(context),
       child: Material(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(16),
@@ -819,8 +841,11 @@ class _FollowCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           splashFactory: NoSplash.splashFactory,
           highlightColor: CollectionPressFeedback.surfaceHighlight(context),
-          onTap: () => _openDetail(context),
-          onLongPress: () => _onLongPress(context),
+          onTap: () {
+            openRow.value = null;
+            unawaited(_openDetail(context));
+          },
+          onLongPress: () => openRow.value = follow.uniqueKey,
           child: Padding(
             padding: const EdgeInsets.all(10),
             child: Column(
@@ -854,8 +879,6 @@ class _FollowCard extends StatelessWidget {
                         _buildLatestLine(theme),
                         const SizedBox(height: 6),
                         _buildReadingLine(theme),
-                        _buildProgress(theme),
-                        const SizedBox(height: 8),
                         _buildActivity(context, theme),
                       ],
                     );
@@ -908,31 +931,71 @@ class _FollowCard extends StatelessWidget {
     );
   }
 
-  /// 长按走“菜单式”二次确认：先弹取消追更确认框，确认后真正移除并 toast。
-  Future<void> _onLongPress(BuildContext context) async {
-    final confirmed = await _askUnfollow(context);
-    if (confirmed == true && context.mounted) {
-      await _removeFollow(context);
+  Future<void> _markRead(BuildContext context) async {
+    try {
+      final marked = await context.read<ComicFollowCubit>().markAsRead(follow);
+      if (marked) showSuccessToast(t.sourceNotices.read);
+    } catch (_) {
+      if (context.mounted) showErrorToast(t.common.loadingFailed);
     }
+  }
+
+  Future<void> _confirmUnfollow(BuildContext context) async {
+    final confirmed = await _askUnfollow(context);
+    if (confirmed != true || !context.mounted) return;
+    final removed = await context.read<ComicFollowCubit>().removeFollow(
+      follow.source,
+      follow.comicId,
+      confirmedFollow: follow,
+    );
+    if (removed) showSuccessToast(t.comicFollow.unfollowed);
   }
 
   Widget _buildCover(UnifiedComicCover cover, double width, double height) =>
       CollectionCoverFitBuilder(
-        builder: (context, fit) => ClipRRect(
-          borderRadius: BorderRadius.circular(10),
-          child: CoverWidget(
-            key: ValueKey('follow-cover-${follow.uniqueKey}'),
-            fileServer: cover.url,
-            path: cover.cachePath,
-            id: follow.comicId,
-            pictureType: PictureType.cover,
-            from: follow.source,
-            roundedCorner: false,
-            width: width,
-            height: height,
-            fit: fit,
-            containBackground: true,
-          ),
+        builder: (context, fit) => Stack(
+          clipBehavior: Clip.none,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: CoverWidget(
+                key: ValueKey('follow-cover-${follow.uniqueKey}'),
+                fileServer: cover.url,
+                path: cover.cachePath,
+                id: follow.comicId,
+                pictureType: PictureType.cover,
+                from: follow.source,
+                roundedCorner: false,
+                width: width,
+                height: height,
+                fit: fit,
+                containBackground: true,
+              ),
+            ),
+            if (hasUnreadUpdate)
+              PositionedDirectional(
+                top: -4,
+                start: -4,
+                child: ComicFollowReminderBadge(
+                  child: IgnorePointer(
+                    child: SizedBox.square(
+                      key: ValueKey('follow-update-dot-${follow.uniqueKey}'),
+                      dimension: 14,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: CupertinoColors.systemRed.resolveFrom(context),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: Theme.of(context).colorScheme.surface,
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       );
 
@@ -944,17 +1007,12 @@ class _FollowCard extends StatelessWidget {
     style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
   );
 
-  String get _latestText {
+  String get _chapterSummary {
     final title = follow.detectedChapterTitle.trim();
     final count = follow.detectedChapterCount;
-    if (follow.lastCheckFailed || checkDeferred) {
-      return title.isEmpty
-          ? t.comicFollow.knownCount(count: count)
-          : t.comicFollow.knownChapter(count: count, chapter: title);
-    }
     return title.isEmpty
-        ? t.comicFollow.latestCount(count: count)
-        : t.comicFollow.latestChapter(count: count, chapter: title);
+        ? t.comicFollow.readProgressUnknown(total: count)
+        : t.comicFollow.chapterSummary(count: count, chapter: title);
   }
 
   /// 来源插件名 + 作者，插件名走 getCachedPluginInfo（含 DB 兜底）。
@@ -994,32 +1052,6 @@ class _FollowCard extends StatelessWidget {
 
   String _pluginLabel() => _followSourceName(follow.source);
 
-  /// A small progress track complements the chapter title without repeating
-  /// its total a second time. Unknown progress is not presented as zero.
-  Widget _buildProgress(ThemeData theme) {
-    final position = readChapterPosition;
-    final total = follow.detectedChapterCount;
-    if (position == null || position <= 0 || position > total) {
-      return const SizedBox.shrink();
-    }
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Semantics(
-        label: t.comicFollow.readProgress(read: position, total: total),
-        child: LinearProgressIndicator(
-          value: followReadProgress(
-            chapterPosition: position,
-            detectedTotal: total,
-          ),
-          minHeight: 2,
-          borderRadius: BorderRadius.circular(2),
-          backgroundColor: theme.colorScheme.surfaceContainerHighest,
-          color: theme.colorScheme.outlineVariant,
-        ),
-      ),
-    );
-  }
-
   TextStyle? _latestStyle(ThemeData theme) =>
       theme.textTheme.bodyMedium?.copyWith(
         color: hasUnreadUpdate
@@ -1028,22 +1060,30 @@ class _FollowCard extends StatelessWidget {
         fontWeight: hasUnreadUpdate ? FontWeight.w600 : FontWeight.normal,
       );
 
-  Widget _buildLatestLine(ThemeData theme) => Wrap(
-    key: ValueKey('follow-latest-${follow.uniqueKey}'),
-    crossAxisAlignment: WrapCrossAlignment.center,
-    spacing: 8,
-    runSpacing: 4,
-    children: [
-      Text(
-        _latestText,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: _latestStyle(theme),
-      ),
-      if (hasUnreadUpdate)
-        ComicFollowReminderBadge(child: _UnreadPill(count: unreadChapterCount)),
-    ],
-  );
+  Widget _buildLatestLine(ThemeData theme) {
+    final latest = Text(
+      _chapterSummary,
+      key: ValueKey('follow-latest-${follow.uniqueKey}'),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+      style: _latestStyle(theme),
+    );
+    if (!hasUnreadUpdate) return latest;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        latest,
+        ComicFollowReminderBadge(
+          child: _FollowUpdateBadge(
+            key: ValueKey('follow-update-${follow.uniqueKey}'),
+            count: unreadChapterCount,
+          ),
+        ),
+      ],
+    );
+  }
 
   Widget _buildReadingLine(ThemeData theme) {
     final chapter = history?.chapterTitle.trim() ?? '';
@@ -1067,72 +1107,45 @@ class _FollowCard extends StatelessWidget {
   }
 
   Widget _buildActivity(BuildContext context, ThemeData theme) {
-    final timeStyle = theme.textTheme.labelSmall?.copyWith(
+    final style = theme.textTheme.bodySmall?.copyWith(
       color: theme.colorScheme.onSurfaceVariant,
     );
-    final checkTime = switch ((
-      follow.lastCheckFailed,
-      checkDeferred,
-      lastAttempt,
-    )) {
-      (true, _, final DateTime attemptedAt) => t.comicFollow.lastCheckAttempt(
-        time: formatFollowCheckTime(attemptedAt),
-      ),
-      (true, _, null) => null,
-      (false, true, _) => t.comicFollow.lastSuccessfulCheck(
-        time: formatFollowCheckTime(follow.updateTime),
-      ),
-      (false, false, _) => t.comicFollow.checkTime(
-        time: formatFollowCheckTime(follow.updateTime),
-      ),
-    };
+    final actionExtent = CollectionToolbarMetrics.actionExtentOf(context);
     final readAt = history?.lastReadAt;
-    return Column(
+    return ConstrainedBox(
       key: ValueKey('follow-check-${follow.uniqueKey}'),
-      crossAxisAlignment: CrossAxisAlignment.start,
-      spacing: 4,
-      children: [
-        if (follow.lastCheckFailed) _buildCheckFailure(context, theme),
-        if (checkDeferred && !follow.lastCheckFailed)
-          _buildCheckFailureStatus(
-            context,
-            theme,
-            ComicFollowCheckFailure.sourceUnavailable,
-          ),
-        Wrap(
-          key: ValueKey('follow-times-${follow.uniqueKey}'),
-          spacing: 12,
-          runSpacing: 4,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            if (readAt != null)
-              Text(
+      constraints: BoxConstraints(minHeight: actionExtent),
+      child: Align(
+        alignment: AlignmentDirectional.centerStart,
+        heightFactor: 1,
+        child: checking
+            ? _buildCheckingLabel(style)
+            : follow.lastCheckFailed
+            ? _buildCheckFailure(context, style)
+            : checkDeferred
+            ? _buildCheckFailureStatus(
+                context,
+                style,
+                ComicFollowCheckFailure.sourceUnavailable,
+              )
+            : readAt == null
+            ? null
+            : Text(
                 t.comicFollow.lastReadAt(time: formatFollowCheckTime(readAt)),
-                style: timeStyle,
+                style: style,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-            if (checking && !checkDeferred && !follow.lastCheckFailed)
-              _buildCheckingLabel(timeStyle)
-            else if (checkTime != null)
-              Text(checkTime, style: timeStyle),
-          ],
-        ),
-        if (follow.lastCheckFailed)
-          Text(
-            t.comicFollow.lastSuccessfulCheck(
-              time: formatFollowCheckTime(follow.updateTime),
-            ),
-            style: timeStyle,
-          ),
-      ],
+      ),
     );
   }
 
-  Widget _buildCheckFailure(BuildContext context, ThemeData theme) {
+  Widget _buildCheckFailure(BuildContext context, TextStyle? style) {
     if (failure != ComicFollowCheckFailure.pluginDisabled &&
         failure != ComicFollowCheckFailure.pluginMissing) {
       return _buildCheckFailureStatus(
         context,
-        theme,
+        style,
         failure ?? ComicFollowCheckFailure.unknown,
       );
     }
@@ -1151,13 +1164,13 @@ class _FollowCard extends StatelessWidget {
         return plugin.isEnabled ? null : ComicFollowCheckFailure.pluginDisabled;
       },
       builder: (context, unavailable) =>
-          _buildCheckFailureStatus(context, theme, unavailable),
+          _buildCheckFailureStatus(context, style, unavailable),
     );
   }
 
   Widget _buildCheckFailureStatus(
     BuildContext context,
-    ThemeData theme,
+    TextStyle? style,
     ComicFollowCheckFailure? reason,
   ) {
     final message = switch (reason) {
@@ -1178,34 +1191,31 @@ class _FollowCard extends StatelessWidget {
     final needsPlugin =
         reason == ComicFollowCheckFailure.pluginDisabled ||
         reason == ComicFollowCheckFailure.pluginMissing;
-    final style = theme.textTheme.bodyMedium?.copyWith(
-      color: theme.colorScheme.onSurfaceVariant,
-    );
-    final status = checking
-        ? _buildCheckingLabel(style)
-        : message == null
+    final status = message == null
         ? null
-        : Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Text(message, style: style),
+        : Text(
+            message,
+            style: style,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           );
     if (needsPlugin) return status!;
     final actionExtent = CollectionToolbarMetrics.actionExtentOf(context);
-    return Wrap(
+    return Row(
       spacing: 8,
-      runSpacing: 4,
-      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        ?status,
-        TextButton.icon(
+        if (status != null) Flexible(child: status),
+        TextButton(
           key: ValueKey('follow-retry-${follow.uniqueKey}'),
           style: TextButton.styleFrom(
+            textStyle: Theme.of(context).textTheme.labelMedium,
             minimumSize: Size.square(actionExtent),
             padding: const EdgeInsets.symmetric(horizontal: 4),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.standard,
           ),
-          onPressed: checking ? null : () => _retry(context),
-          icon: const Icon(Icons.refresh, size: 18),
-          label: Text(t.common.retry),
+          onPressed: () => _retry(context),
+          child: Text(t.common.retry, maxLines: 1),
         ),
       ],
     );
@@ -1219,7 +1229,14 @@ class _FollowCard extends StatelessWidget {
         child: CircularProgressIndicator(strokeWidth: 2),
       ),
       const SizedBox(width: 8),
-      Flexible(child: Text(t.comicFollow.checkingUpdates, style: style)),
+      Flexible(
+        child: Text(
+          t.comicFollow.checkingUpdates,
+          style: style,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
     ],
   );
 
@@ -1241,61 +1258,36 @@ class _FollowCard extends StatelessWidget {
     return context.read<ComicFollowCubit>().checkUpdateForItem(follow);
   }
 
-  Future<bool?> _askUnfollow(BuildContext context) {
-    return showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(t.comicFollow.unfollow),
-        content: Text(t.comicFollow.unfollowConfirm(title: follow.title)),
-        actions: [
-          TextButton(
-            onPressed: () => dialogContext.pop(false),
-            child: Text(t.common.cancel),
-          ),
-          TextButton(
-            onPressed: () => dialogContext.pop(true),
-            child: Text(t.common.ok),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _removeFollow(BuildContext context) async {
-    await context.read<ComicFollowCubit>().removeFollow(
-      follow.source,
-      follow.comicId,
-    );
-    showSuccessToast(t.comicFollow.unfollowed);
-  }
+  Future<bool?> _askUnfollow(BuildContext context) => confirmShortAlert(
+    context: context,
+    title: Text(t.comicFollow.unfollow),
+    content: Text(t.comicFollow.unfollowConfirm(title: follow.title)),
+    confirmLabel: t.comicInfo.unfollow,
+    destructive: true,
+    barrierDismissible: false,
+    adaptiveRoute: true,
+  );
 }
 
-TextStyle? _followUnreadStyle(ThemeData theme) => theme.textTheme.labelSmall
-    ?.copyWith(color: theme.colorScheme.primary, fontWeight: FontWeight.w600);
-
-class _UnreadPill extends StatelessWidget {
-  const _UnreadPill({required this.count});
+class _FollowUpdateBadge extends StatelessWidget {
+  const _FollowUpdateBadge({super.key, required this.count});
   final int count;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final background = Color.alphaBlend(
-      scheme.primary.withValues(alpha: .09),
-      scheme.surface,
-    );
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+    final ink = BreezeThemeColors.readableOn(scheme.onPrimary, scheme.primary);
+    final style = (theme.textTheme.labelSmall ?? const TextStyle(fontSize: 11))
+        .copyWith(color: ink, fontWeight: FontWeight.w700);
+    return DecoratedBox(
       decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(5),
+        color: scheme.primary,
+        borderRadius: BorderRadius.circular(6),
       ),
-      child: Text(
-        t.comicFollow.newChaptersShort(diff: count),
-        style: _followUnreadStyle(theme)?.copyWith(
-          color: BreezeThemeColors.readableOn(scheme.primary, background),
-        ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+        child: Text(t.comicFollow.newChaptersShort(diff: count), style: style),
       ),
     );
   }

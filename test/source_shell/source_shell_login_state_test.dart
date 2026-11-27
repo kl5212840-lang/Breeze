@@ -5,6 +5,7 @@ import 'package:zephyr/main.dart' show eventBus;
 import 'package:zephyr/page/source_shell/view/source_shell_page.dart';
 import 'package:zephyr/page/source_shell/models/source_shell_section.dart';
 import 'package:zephyr/util/event/event.dart';
+import 'package:zephyr/widgets/breeze_navigation_bar.dart';
 import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 
 void main() {
@@ -24,7 +25,10 @@ void main() {
       ),
     );
     expect(find.byTooltip(t.sourceShell.account), findsNothing);
-    expect(find.widgetWithText(NavigationDestination, '我的'), findsOneWidget);
+    expect(
+      find.widgetWithText(BreezeNavigationTab, t.videoSource.me).hitTestable(),
+      findsOneWidget,
+    );
     expect(find.byType(SearchQueryField), findsNothing);
     expect(find.byTooltip(t.sourceShell.search), findsOneWidget);
     expect(

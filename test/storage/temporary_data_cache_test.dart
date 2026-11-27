@@ -34,6 +34,7 @@ void main() {
     'clearing during a detail request keeps the result without restoring its cache',
     () async {
       final pending = Completer<Map<String, dynamic>>();
+      final fresh = Completer<Map<String, dynamic>>();
       var calls = 0;
       final home = Uri.parse('https://cache.example/');
       Map<String, dynamic> detail() => {
@@ -49,16 +50,19 @@ void main() {
         catalogFn: 'list',
         detailFn: 'item',
         playbackFn: 'play',
-        pluginCall: (_, _) async => ++calls == 1 ? pending.future : detail(),
+        pluginCall: (_, _) => ++calls == 1 ? pending.future : fresh.future,
       );
       final result = repo.item('1');
       await Future<void>.delayed(Duration.zero);
       TemporaryDataCaches.clear(source: 'cache-pending');
+      final reopened = repo.item('1');
+      await Future<void>.delayed(Duration.zero);
+      expect(calls, 2);
       pending.complete(detail());
       expect((await result).title, '作品');
       expect(repo.cacheEntryCount, 0);
-      expect((await repo.item('1')).title, '作品');
-      expect(calls, 2);
+      fresh.complete(detail());
+      expect((await reopened).title, '作品');
       expect(repo.cacheEntryCount, 1);
     },
   );

@@ -20,6 +20,7 @@ import 'package:zephyr/page/comic_read/widgets/modes/read_mode_transition_style.
 import 'package:zephyr/page/comic_read/widgets/modes/read_mode_utils.dart';
 import 'package:zephyr/page/download/adapters/download_chapter_adapter.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/service/image_recovery.dart';
 import 'package:zephyr/service/page_read_tasks.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/event/event.dart';
@@ -59,9 +60,43 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     required this._comicInfo,
     required this._initialOrder,
     Future<NormalComicEpInfo> Function(int order)? readChapter,
+    ImageRecoveryHub? recoveryHub,
   }) : _readChapterOverride = readChapter,
        super(const ReaderSeamlessState()) {
     _initChapterCatalog();
+    _boundaryRecovery = ImageRecoveryController(
+      active: false,
+      hub: recoveryHub,
+      retry: () async {
+        final order = _recoveryOrder;
+        if (order != null) await _retryBoundary?.call(order);
+      },
+      onChanged: _updateBoundaryStatus,
+    );
+    if (!_isDownloadEntryType) {
+      _sessionChanges = pluginSessionWriteFence.changes.listen((change) {
+        if (isClosed || change.source != normalizePluginId(_from)) return;
+        ++_prefetchEpoch;
+        _chapterReads.clear();
+        unawaited(_reads.cancel());
+        _boundaryFailures.clear();
+        _recoveryOrder = null;
+        _boundaryRecovery.reset();
+        _emit(
+          state.copyWith(
+            loadingChapterOrders: const {},
+            prefetchingChapterOrders: const {},
+            prefetchedChapterInfoByOrder: const {},
+            transitionStatusByNextOrder: {
+              for (final entry in state.transitionStatusByNextOrder.entries)
+                if (_resolveTargetOrderForBoundary(entry.key) == null)
+                  entry.key: entry.value,
+            },
+          ),
+        );
+        _syncBoundaryRecovery();
+      });
+    }
   }
 
   final Future<NormalComicEpInfo> Function(int order)? _readChapterOverride;
@@ -77,8 +112,30 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
   final _reads = PageReadTasks();
   final _chapterReads = <int, Future<NormalComicEpInfo>>{};
 
+  late final ImageRecoveryController _boundaryRecovery;
+  StreamSubscription<PluginSessionBoundary>? _sessionChanges;
+  final _boundaryFailures = <int, ({Object error, int generation})>{};
+  Future<void> Function(int)? _retryBoundary;
+  int? _observedBoundary;
+  bool _hasObservedEntryImage = false;
+  int? _recoveryOrder;
+  bool _boundaryRecoveryActive = false;
+  bool _observedFailureEligible = false;
+
+  void bindBoundaryRecovery(Future<void> Function(int nextOrder)? retry) {
+    _retryBoundary = retry;
+    _syncBoundaryRecovery();
+  }
+
+  void setBoundaryRecoveryActive(bool active) {
+    _boundaryRecoveryActive = active;
+    _syncBoundaryRecovery();
+  }
+
   @override
   Future<void> close() {
+    _boundaryRecovery.dispose();
+    unawaited(_sessionChanges?.cancel());
     unawaited(_reads.cancel());
     return super.close();
   }
@@ -531,11 +588,16 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     int baseGlobalSlot,
     ReadSettingState readSetting,
   ) {
-    var result = baseGlobalSlot;
-    if (_hasLeadingTransition(readSetting)) {
-      result += 1;
-    }
-    return result;
+    final entryChapter = _resolveImageSlotContextByChapterOrder(
+      chapterOrder: _initialOrder,
+      readSetting: readSetting,
+    );
+    if (entryChapter == null) return baseGlobalSlot;
+    final entrySlot = baseGlobalSlot.clamp(
+      0,
+      entryChapter.chapterImageCount - 1,
+    );
+    return entryChapter.chapterStartSlot + entrySlot;
   }
 
   /// Image pages represented by a slot, excluding standalone transition cards.
@@ -559,15 +621,8 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     return (primary, second == null ? null : entries[second]);
   }
 
-  int resolveEntryDefaultGlobalSlot(ReadSettingState readSetting) {
-    return _hasLeadingTransition(readSetting) ? 1 : 0;
-  }
-
-  bool _hasLeadingTransition(ReadSettingState readSetting) {
-    if (!isSeamlessEnabled() || state.loadedChapters.isEmpty) return false;
-    final leadingChapterOrder = state.loadedChapters.first.order;
-    return _shouldShowTransition(nextOrder: leadingChapterOrder);
-  }
+  int resolveEntryDefaultGlobalSlot(ReadSettingState readSetting) =>
+      resolveHistoryGlobalSlot(0, readSetting);
 
   // ==================== 用户动作入口 ====================
 
@@ -595,53 +650,158 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
       return const SeamlessBoundaryResult();
     }
 
-    final transitionNextOrder = transitionNextOrderByGlobalSlot(
-      globalSlot,
-      readSetting,
-    );
-    if (transitionNextOrder != null) {
-      if (_resolveTargetOrderForBoundary(transitionNextOrder) == null ||
-          (_isDownloadEntryType &&
-              state.transitionStatusByNextOrder[transitionNextOrder] ==
-                  SeamlessTransitionStatus.error)) {
+    if (!_hasObservedEntryImage) {
+      _hasObservedEntryImage =
+          resolveHistorySlotImages(globalSlot, readSetting)?.$1.chapterOrder ==
+          _initialOrder;
+    }
+    final boundary = _unresolvedBoundaryBySlot(globalSlot, readSetting);
+    _observedBoundary = boundary;
+    _syncBoundaryRecovery();
+    if (boundary != null) {
+      if (_boundaryFailures.containsKey(boundary)) {
         return const SeamlessBoundaryResult();
       }
       return _ensureBoundaryResolved(
-        nextOrder: transitionNextOrder,
+        nextOrder: boundary,
         currentGlobalSlot: globalSlot,
         readSetting: readSetting,
         readAnchor: readAnchor,
       );
     }
 
-    final totalSlots = resolveTotalSlots(readSetting);
-    if (totalSlots <= 0) return const SeamlessBoundaryResult();
-
-    final remainToEnd = totalSlots - globalSlot - 1;
-    if (remainToEnd <= _nextAutoResolveThreshold &&
-        canLoadNextChapter() &&
-        (!_isDownloadEntryType ||
-            state.currentChapterOrder == state.loadedChapters.last.order)) {
-      final nextOrder = _resolveAdjacentChapterOrder(previous: false);
-      if (_isDownloadEntryType &&
-          state.transitionStatusByNextOrder[nextOrder] ==
-              SeamlessTransitionStatus.error) {
-        return const SeamlessBoundaryResult();
-      }
-      if (nextOrder != null) {
-        return _ensureBoundaryResolved(
-          nextOrder: nextOrder,
-          currentGlobalSlot: globalSlot,
-          readSetting: readSetting,
-          readAnchor: readAnchor,
-        );
-      }
+    if (transitionNextOrderByGlobalSlot(globalSlot, readSetting) != null) {
+      return const SeamlessBoundaryResult();
     }
-
-    if (remainToEnd <= _nextPrefetchThreshold && canLoadNextChapter()) {
+    final remainToEnd = resolveTotalSlots(readSetting) - globalSlot - 1;
+    if (remainToEnd >= 0 &&
+        remainToEnd <= _nextPrefetchThreshold &&
+        canLoadNextChapter()) {
       await _prefetchNextChaptersIfNeeded(readSetting.preloadChapterCount);
     }
     return const SeamlessBoundaryResult();
+  }
+
+  int? _unresolvedBoundaryBySlot(int slot, ReadSettingState setting) {
+    final transition = transitionNextOrderByGlobalSlot(slot, setting);
+    if (transition != null) {
+      // A rebuilt reader can report its leading card before the selected
+      // chapter is positioned. Wait for an entry image before treating a
+      // passive return to that card as a request for the preceding chapter.
+      if (!_hasObservedEntryImage &&
+          transition == _initialOrder &&
+          state.loadedChapters.first.order == _initialOrder) {
+        return null;
+      }
+      return _resolveTargetOrderForBoundary(transition) == null
+          ? null
+          : transition;
+    }
+    final remainToEnd = resolveTotalSlots(setting) - slot - 1;
+    if (remainToEnd < 0 ||
+        remainToEnd > _nextAutoResolveThreshold ||
+        !canLoadNextChapter() ||
+        (_isDownloadEntryType &&
+            state.currentChapterOrder != state.loadedChapters.last.order)) {
+      return null;
+    }
+    return _resolveAdjacentChapterOrder(previous: false);
+  }
+
+  Future<SeamlessBoundaryResult> retryObservedBoundary(
+    int nextOrder,
+    ReaderBoundaryAnchor anchor, {
+    required ReaderBoundaryAnchor? Function() readAnchor,
+  }) async {
+    bool current() {
+      final latest = readAnchor();
+      return !isClosed &&
+          _boundaryRecoveryActive &&
+          _observedBoundary == nextOrder &&
+          latest != null &&
+          _unresolvedBoundaryBySlot(latest.slot, latest.setting) == nextOrder;
+    }
+
+    final failure = _boundaryFailures[nextOrder];
+    final source = normalizePluginId(_from);
+    if (!current() ||
+        failure == null ||
+        pluginSessionWriteFence.isChanging(source) ||
+        failure.generation != pluginSessionWriteFence.generation(source)) {
+      return const SeamlessBoundaryResult();
+    }
+    return _ensureBoundaryResolved(
+      nextOrder: nextOrder,
+      currentGlobalSlot: anchor.slot,
+      readSetting: anchor.setting,
+      readAnchor: readAnchor,
+      isStillCurrent: current,
+    );
+  }
+
+  void _syncBoundaryRecovery() {
+    if (isClosed) return;
+    final observed = _observedBoundary;
+    final failure = _boundaryFailures[observed];
+    final source = normalizePluginId(_from);
+    final eligible =
+        !_isDownloadEntryType &&
+        failure != null &&
+        failure.error is! PluginLoginRequiredException &&
+        failure.error is! PluginSessionChanged &&
+        !pluginSessionWriteFence.isChanging(source) &&
+        pluginSessionWriteFence.generation(source) == failure.generation &&
+        imageFailureIsTransient(failure.error);
+
+    if (eligible && _recoveryOrder != observed) {
+      final previous = _recoveryOrder;
+      _boundaryRecovery.reset();
+      _recoveryOrder = observed;
+      if (previous != null && _boundaryFailures.containsKey(previous)) {
+        _setTransitionStatus(previous, SeamlessTransitionStatus.error);
+      }
+    }
+    _observedFailureEligible = eligible;
+    _boundaryRecovery.setActive(
+      _boundaryRecoveryActive && eligible && _retryBoundary != null,
+    );
+    if (eligible) _boundaryRecovery.failed(failure.error);
+    _updateBoundaryStatus();
+  }
+
+  void _updateBoundaryStatus() {
+    final order = _recoveryOrder;
+    if (isClosed || order == null || !_boundaryFailures.containsKey(order)) {
+      return;
+    }
+    final recovering =
+        _boundaryRecoveryActive &&
+        _observedFailureEligible &&
+        _observedBoundary == order &&
+        _retryBoundary != null &&
+        _boundaryRecovery.hasPendingRecovery;
+    _setTransitionStatus(
+      order,
+      !recovering
+          ? SeamlessTransitionStatus.error
+          : _boundaryRecovery.hub.online
+          ? SeamlessTransitionStatus.loading
+          : SeamlessTransitionStatus.waitingForNetwork,
+    );
+  }
+
+  void _recordBoundaryFailure(int order, Object error, int generation) {
+    _boundaryFailures[order] = (error: error, generation: generation);
+    _setTransitionStatus(order, SeamlessTransitionStatus.error);
+    _syncBoundaryRecovery();
+  }
+
+  void _clearBoundaryFailure(int order) {
+    _boundaryFailures.remove(order);
+    if (_recoveryOrder == order) {
+      _recoveryOrder = null;
+      _boundaryRecovery.succeeded();
+    }
   }
 
   /// 用户通过边缘拉取或边界按钮触发前后章加载。
@@ -668,7 +828,8 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
       }
       return _ensureBoundaryResolved(
         nextOrder: nextOrder,
-        currentGlobalSlot: state.currentChapterStartSlot,
+        currentGlobalSlot:
+            readAnchor?.call()?.slot ?? state.currentChapterStartSlot,
         readSetting: readSetting,
         readAnchor: readAnchor,
         promptForLogin: true,
@@ -709,6 +870,8 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     ReaderBoundaryAnchor? Function()? readAnchor,
   }) async {
     if (!isSeamlessEnabled() || isClosed) return const SeamlessBoundaryResult();
+    final source = normalizePluginId(_from);
+    final generation = pluginSessionWriteFence.generation(source);
     final startingAnchor = readAnchor?.call();
     _revealTransition(nextOrder: nextOrder);
     final result = await _ensureBoundaryResolved(
@@ -718,6 +881,9 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
       readAnchor: readAnchor,
       promptForLogin: true,
     );
+    if (!_ownsChapterSession(source, generation)) {
+      return const SeamlessBoundaryResult();
+    }
     if (isClosed ||
         result.targetGlobalSlot != null ||
         _resolveTargetOrderForBoundary(nextOrder) != null) {
@@ -763,76 +929,50 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
   }
 
   Future<void> _prefetchChapterByOrderIfNeeded(int order) async {
-    if (_isOrderLoaded(order)) return;
-    if (_isDownloadEntryType &&
-        state.transitionStatusByNextOrder[order] ==
-            SeamlessTransitionStatus.error) {
+    if (_isOrderLoaded(order) ||
+        _boundaryFailures.containsKey(order) ||
+        state.prefetchedChapterInfoByOrder.containsKey(order) ||
+        state.loadingChapterOrders.contains(order)) {
       return;
     }
-    if (state.prefetchedChapterInfoByOrder.containsKey(order)) return;
     final epoch = _prefetchEpoch;
-    final isVisible = state.visibleTransitionNextOrders.contains(order);
-    if (state.prefetchingChapterOrders.contains(order)) {
-      final pending = _chapterReads[order];
-      if (pending == null) return;
-      try {
-        final chapterInfo = await pending;
-        if (isClosed ||
-            !_prefetchActive ||
-            epoch != _prefetchEpoch ||
-            _isOrderLoaded(order))
-          return;
-        if (chapterInfo.length <= 0 || chapterInfo.docs.isEmpty) {
-          if (isVisible)
-            _setTransitionStatus(order, SeamlessTransitionStatus.error);
-          return;
-        }
-        _setPrefetchedChapterInfo(order, chapterInfo);
-        if (isVisible)
-          _setTransitionStatus(order, SeamlessTransitionStatus.ready);
-      } catch (_) {
-        if (!isClosed &&
-            _prefetchActive &&
-            epoch == _prefetchEpoch &&
-            isVisible)
-          _setTransitionStatus(order, SeamlessTransitionStatus.error);
-      }
-      return;
-    }
-    if (state.loadingChapterOrders.contains(order)) return;
+    final source = normalizePluginId(_from);
+    final generation = pluginSessionWriteFence.generation(source);
+    final ownsPrefetch = !state.prefetchingChapterOrders.contains(order);
+    final pending = _chapterReads[order];
+    if (!ownsPrefetch && pending == null) return;
 
-    _addPrefetchingOrder(order);
-    if (isVisible) {
-      _setTransitionStatus(order, SeamlessTransitionStatus.loading);
+    if (ownsPrefetch) {
+      _addPrefetchingOrder(order);
+      if (state.visibleTransitionNextOrders.contains(order)) {
+        _setTransitionStatus(order, SeamlessTransitionStatus.loading);
+      }
     }
+
+    bool current() =>
+        !isClosed &&
+        _prefetchActive &&
+        epoch == _prefetchEpoch &&
+        !_isOrderLoaded(order) &&
+        _ownsChapterSession(source, generation);
 
     try {
-      final chapterInfo = await _readChapterByOrder(order);
-      if (isClosed ||
-          !_prefetchActive ||
-          epoch != _prefetchEpoch ||
-          _isOrderLoaded(order))
-        return;
+      final chapterInfo = await (pending ?? _readChapterByOrder(order));
+      if (!current()) return;
       if (chapterInfo.length <= 0 || chapterInfo.docs.isEmpty) {
-        if (isVisible) {
-          _setTransitionStatus(order, SeamlessTransitionStatus.error);
-        }
-        return;
+        throw const FormatException('Empty chapter');
       }
 
       _setPrefetchedChapterInfo(order, chapterInfo);
-      if (isVisible) {
+      if (state.visibleTransitionNextOrders.contains(order)) {
         _setTransitionStatus(order, SeamlessTransitionStatus.ready);
       }
-    } catch (_) {
-      if (!isClosed &&
-          _prefetchActive &&
-          epoch == _prefetchEpoch &&
-          isVisible) {
-        _setTransitionStatus(order, SeamlessTransitionStatus.error);
-      }
+    } catch (error) {
+      if (current()) _recordBoundaryFailure(order, error, generation);
     } finally {
-      _removePrefetchingOrder(order);
+      if (ownsPrefetch && _ownsChapterSession(source, generation)) {
+        _removePrefetchingOrder(order);
+      }
     }
   }
 
@@ -842,7 +982,13 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     required ReadSettingState readSetting,
     bool promptForLogin = false,
     ReaderBoundaryAnchor? Function()? readAnchor,
+    bool Function()? isStillCurrent,
   }) async {
+    final source = normalizePluginId(_from);
+    final generation = pluginSessionWriteFence.generation(source);
+    if (!_ownsChapterSession(source, generation)) {
+      return const SeamlessBoundaryResult();
+    }
     if (!state.visibleTransitionNextOrders.contains(nextOrder)) {
       _revealTransition(nextOrder: nextOrder);
     }
@@ -856,6 +1002,9 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
       return const SeamlessBoundaryResult();
     }
 
+    if (promptForLogin && _recoveryOrder == nextOrder) {
+      _boundaryRecovery.reset();
+    }
     _addLoadingOrder(targetOrder);
     if (!_isDownloadEntryType ||
         state.transitionStatusByNextOrder[nextOrder] !=
@@ -864,21 +1013,23 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
     }
 
     final startingAnchor = readAnchor?.call();
-    final source = normalizePluginId(_from);
-    final generation = pluginSessionWriteFence.generation(source);
     try {
       final prefetched = state.prefetchedChapterInfoByOrder[targetOrder];
       final chapterInfo = prefetched ?? await _readChapterByOrder(targetOrder);
+      if (!_ownsChapterSession(source, generation)) {
+        return const SeamlessBoundaryResult();
+      }
       if (prefetched != null) {
         _removePrefetchedChapterInfo(targetOrder);
       }
-      if (isClosed) {
+      if (isClosed || isStillCurrent?.call() == false) {
+        _syncBoundaryRecovery();
         return const SeamlessBoundaryResult();
       }
       if (chapterInfo.length <= 0 || chapterInfo.docs.isEmpty) {
-        _setTransitionStatus(nextOrder, SeamlessTransitionStatus.error);
-        return const SeamlessBoundaryResult();
+        throw const FormatException('Empty chapter');
       }
+      _clearBoundaryFailure(nextOrder);
 
       final shouldPrepend = _shouldPrependOrder(targetOrder);
       // A previous chapter may arrive after the reader has scrolled or
@@ -913,10 +1064,14 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
       }
       return const SeamlessBoundaryResult(didLoad: true);
     } catch (error) {
-      if (!isClosed &&
-          promptForLogin &&
-          error is PluginLoginRequiredException &&
-          pluginSessionWriteFence.generation(source) == generation) {
+      if (!_ownsChapterSession(source, generation)) {
+        return const SeamlessBoundaryResult();
+      }
+      if (isClosed || isStillCurrent?.call() == false) {
+        _syncBoundaryRecovery();
+        return const SeamlessBoundaryResult();
+      }
+      if (promptForLogin && error is PluginLoginRequiredException) {
         eventBus.fire(
           NeedLogin(
             from: error.payload.pluginId,
@@ -924,21 +1079,29 @@ class ReaderSeamlessCubit extends Cubit<ReaderSeamlessState> {
           ),
         );
       }
-      _setTransitionStatus(nextOrder, SeamlessTransitionStatus.error);
+      _recordBoundaryFailure(nextOrder, error, generation);
       return const SeamlessBoundaryResult();
     } finally {
-      _removeLoadingOrder(targetOrder);
+      if (_ownsChapterSession(source, generation)) {
+        _removeLoadingOrder(targetOrder);
+      }
     }
   }
 
+  bool _ownsChapterSession(String source, int generation) =>
+      _isDownloadEntryType ||
+      !pluginSessionWriteFence.isChanging(source) &&
+          pluginSessionWriteFence.generation(source) == generation;
+
   Future<NormalComicEpInfo> _readChapterByOrder(int order) =>
       _chapterReads.putIfAbsent(order, () {
-        final task = _loadChapterByOrder(order);
-        return task.whenComplete(() {
-          // Map.remove returns the shared Future itself; returning it from
-          // whenComplete would make this completion wait on itself forever.
-          _chapterReads.remove(order);
+        late final Future<NormalComicEpInfo> task;
+        task = _loadChapterByOrder(order).whenComplete(() {
+          if (identical(_chapterReads[order], task)) {
+            _chapterReads.remove(order);
+          }
         });
+        return task;
       });
 
   Future<NormalComicEpInfo> _loadChapterByOrder(int order) async {

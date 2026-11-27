@@ -30,6 +30,7 @@ import 'package:zephyr/page/video/source_video_list_header.dart';
 import 'package:zephyr/page/search/widget/search_keyboard.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_selection_toolbar.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_floating_selection_actions.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 class ApiVideoFavorites extends StatefulWidget {
   const ApiVideoFavorites({
@@ -570,7 +571,6 @@ class _ApiVideoFavoritesState extends State<ApiVideoFavorites> {
 
   Widget _filterButton(bool empty) => SourceFilterIconButton(
     key: const ValueKey('local-favorites.filter'),
-    bare: false,
     tooltip: _facets.isActive
         ? t.videoFilters.active
         : t.bookshelf.facets.title,
@@ -630,18 +630,18 @@ class _ApiVideoFavoritesState extends State<ApiVideoFavorites> {
     final confirmed = await showDialog<bool>(
       context: context,
       useRootNavigator: true,
-      builder: (dialog) => AlertDialog(
-        scrollable: true,
+      builder: (dialog) => ShortAlert(
         title: Text(t.videoLibrary.removeSelected),
         content: Text(
           '${t.videoLibrary.batchRemoveHint(count: selected.length)}\n\n${t.videoLibrary.localFavoriteRemovalHint}',
         ),
         actions: [
-          TextButton(
+          ShortAlertAction(
             onPressed: () => Navigator.pop(dialog, false),
             child: Text(t.common.cancel),
           ),
-          TextButton(
+          ShortAlertAction(
+            destructive: true,
             onPressed: () => Navigator.pop(dialog, true),
             child: Text(t.common.remove),
           ),
@@ -932,6 +932,7 @@ class _ApiVideoFavoritesState extends State<ApiVideoFavorites> {
             if (_selecting)
               BookshelfSelectionToolbar(
                 keyPrefix: 'local-favorites.selection',
+                inTitleBar: true,
                 selectedCount: visibleSelected.length,
                 allSelected:
                     rows.isNotEmpty &&
@@ -1411,22 +1412,12 @@ class _FolderManagerState extends State<_FolderManager> {
   }
 
   Future<void> _delete(String id) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await confirmShortAlert(
       context: context,
-      builder: (dialog) => AlertDialog(
-        title: Text(t.videoLibrary.deleteFolder),
-        content: Text(t.videoLibrary.folderDeleteHint),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialog, false),
-            child: Text(t.common.cancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialog, true),
-            child: Text(t.common.delete),
-          ),
-        ],
-      ),
+      title: Text(t.videoLibrary.deleteFolder),
+      content: Text(t.videoLibrary.folderDeleteHint),
+      confirmLabel: t.common.delete,
+      destructive: true,
     );
     if (confirmed == true && mounted) {
       await _change(() => widget.store.deleteFolder(id));

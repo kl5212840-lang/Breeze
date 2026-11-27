@@ -408,6 +408,10 @@ Future<DownloadPictureResult> _downloadSingleJob({
       shouldRetryUntilSuccess: shouldRetryUntilSuccess,
       shouldRetry: (error) {
         if (error is! DownloadImageJobException) return true;
+        if (error.retryReason == ComicDownloadRetryReason.rateLimited ||
+            comicDownloadRetryAfter(error.result.error) != null) {
+          return false;
+        }
         if (error.result.status == DownloadPictureResultStatus.emptyData) {
           emptyResponses++;
           return emptyResponses <= downloadSilentRetryCount;

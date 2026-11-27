@@ -1,6 +1,7 @@
 import 'package:zephyr/network/sync/plugin_account_profiles_data.dart'
     show accountProfileDigest;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
 
 typedef VideoAccountCall =
     Future<Map<String, dynamic>> Function(String, Map<String, dynamic>);
@@ -25,6 +26,34 @@ class VideoAccountBackup {
       );
     return accountProfileDigest(ordered);
   }
+
+  /// Hanime1 may renew its short-lived session on an authenticated read.
+  /// A matching remember cookie ties both reads to the same saved login.
+  bool matchesAuthenticatedRead(VideoAccountBackup? before, String source) {
+    if (before == null || before.origin.origin != origin.origin) return false;
+    if (before.sessionFingerprint == sessionFingerprint) return true;
+    if (source != hanimeSourceId || origin.origin != 'https://hanime1.me') {
+      return false;
+    }
+    Map<Object?, Object?> remember(VideoAccountBackup snapshot) => {
+      for (final cookie in snapshot.cookies)
+        if (_hanimeRemember.hasMatch('${cookie['name']}') &&
+            cookie['path'] == '/')
+          cookie['name']: cookie['value'],
+    };
+    final one = remember(before);
+    final two = remember(this);
+    return one.isNotEmpty &&
+        one.length == two.length &&
+        one.entries.every((entry) => two[entry.key] == entry.value);
+  }
+
+  static final _hanimeRemember = RegExp(r'^remember_web_[a-f0-9]{40}$');
+
+  static bool _hanimeAccountCookie(String? source, Uri origin, String name) =>
+      source == hanimeSourceId &&
+      origin.origin == 'https://hanime1.me' &&
+      (name == 'hanime1_session' || _hanimeRemember.hasMatch(name));
 
   static bool accountCookieName(String name) =>
       RegExp(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,120}$").hasMatch(name) &&
@@ -162,21 +191,30 @@ abstract interface class VideoAccountCookieLifetime {
 }
 
 class PlatformVideoAccountCookies implements VideoAccountCookies {
+  PlatformVideoAccountCookies({this.source});
+  final String? source;
   final _manager = CookieManager.instance();
   @override
   Future<List<Map<String, dynamic>>> read(Uri origin) async =>
       (await _manager.getCookies(url: WebUri(origin.toString())))
-          .map(
-            (c) => <String, dynamic>{
+          .map((c) {
+            final declaredRootCookie =
+                VideoAccountBackup._hanimeAccountCookie(source, origin, c.name) &&
+                (c.domain == null ||
+                    c.domain!.replaceFirst(RegExp(r'^\.'), '') == origin.host) &&
+                (c.path == null || c.path == '/');
+            return <String, dynamic>{
               'name': c.name,
               'value': '${c.value ?? ''}',
               'domain': c.domain ?? origin.host,
               'path': c.path ?? '/',
-              'httpOnly': c.isHttpOnly == true,
-              'secure': c.isSecure == true,
+              // Older Android WebView returns only name and value for these
+              // exact first-party cookies. Newer versions report flags.
+              'httpOnly': c.isHttpOnly ?? declaredRootCookie,
+              'secure': c.isSecure ?? declaredRootCookie,
               'expires': c.expiresDate?.toInt(),
-            },
-          )
+            };
+          })
           .toList();
   @override
   Future<void> set(Uri origin, Map<String, dynamic> cookie) async {

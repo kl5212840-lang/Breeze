@@ -14,6 +14,8 @@ import 'package:zephyr/page/source_shell/source_diagnostic_tools_tile.dart';
 import 'package:zephyr/page/source_shell/view/source_shell_page.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/page/video/video_native_navigation.dart';
+import 'package:zephyr/widgets/android_glass_plate.dart';
+import 'package:zephyr/widgets/android_toolbar_icon_button.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
 
@@ -29,6 +31,66 @@ void _openDiagnosticSettings(BuildContext context, String source) {
 }
 
 void main() {
+  testWidgets(
+    'Android page actions share inset material and the full hit target',
+    (tester) async {
+      var searches = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            appBar: AppBar(
+              actions: [
+                SourceChromeIconButton(
+                  icon: Icons.search,
+                  symbol: 'magnifyingglass',
+                  tooltip: 'Search',
+                  onPressed: () => searches++,
+                ),
+                NativeVideoMenu(
+                  label: '',
+                  tooltip: 'More',
+                  width: 48,
+                  selected: '',
+                  icon: Icons.more_horiz,
+                  options: const {'settings': 'Settings'},
+                  onSelected: (_) {},
+                  hostPresentation: true,
+                ),
+              ],
+            ),
+            body: Center(
+              child: SourceFilterIconButton(
+                tooltip: 'Filter',
+                onPressed: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final actions = find.byType(AndroidToolbarIconButton);
+      expect(actions, findsNWidgets(2));
+      for (final action in [actions.first, actions.last]) {
+        expect(tester.getSize(action), const Size(48, 48));
+        final plate = find.descendant(
+          of: action,
+          matching: find.byType(AndroidGlassPlate),
+        );
+        expect(tester.getSize(plate), const Size(40, 40));
+        expect(tester.getCenter(plate), tester.getCenter(action));
+      }
+      await tester.tapAt(
+        tester.getTopLeft(actions.first) + const Offset(3, 24),
+      );
+      expect(searches, 1);
+      await tester.tap(actions.last);
+      await tester.pumpAndSettle();
+      expect(find.text('Settings'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
   testWidgets(
     'all maintained sources share opt-in analysis and a settings switch',
     (tester) async {
@@ -250,7 +312,7 @@ void main() {
       }
       final menu = tester.widget<NativeVideoMenu>(find.byType(NativeVideoMenu));
       expect(menu.options.values, [
-        t.discover.settings,
+        t.plugin.pluginSettings,
         t.sourceShell.exitPlugin,
       ]);
       expect(menu.groups, [
@@ -369,7 +431,7 @@ void main() {
       expect(find.text('Change view'), findsOneWidget);
       expect(find.text('Playback settings'), findsNothing);
       expect(find.byType(Divider), findsNWidgets(2));
-      await tester.tap(find.text(t.discover.settings));
+      await tester.tap(find.text(t.plugin.pluginSettings));
       await tester.pumpAndSettle();
       expect(calls, 1);
       expect(find.text('Playback page'), findsOneWidget);
@@ -440,6 +502,83 @@ void main() {
   );
 
   testWidgets(
+    'source category search keeps the same native material as its title actions',
+    (tester) async {
+      final native = _NativeChannels()..install();
+      addTearDown(native.dispose);
+      SharedPreferences.setMockInitialValues({});
+      await SourceReturnPreferences.load();
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: SourceShellPage(
+            source: 'test-source',
+            sourceName: 'Source',
+            sections: [
+              SourceShellSection(id: 'categories', title: '分类', scene: null),
+            ],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final navigation = find.descendant(
+        of: find.byType(AppBar),
+        matching: find.byType(UiKitView),
+      );
+      final arguments = tester
+          .widgetList<UiKitView>(navigation)
+          .map((view) => view.creationParams! as Map)
+          .toList();
+      expect(
+        arguments.map((value) => value['symbol']),
+        containsAll(['chevron.left', 'magnifyingglass', 'ellipsis']),
+      );
+      expect(arguments.every((value) => value['bare'] == false), isTrue);
+      final search = find.byKey(const ValueKey('source-shell.search'));
+      expect(tester.getSize(search), const Size(44, 44));
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
+    'secondary title back is native while persistent content filter stays flat',
+    (tester) async {
+      final native = _NativeChannels()..install();
+      addTearDown(native.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              appBar: sourceSecondaryAppBar(context, title: 'Secondary route'),
+              body: SourceFilterIconButton(
+                tooltip: 'Content filter',
+                onPressed: () {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final titleView = find.descendant(
+        of: find.byType(AppBar),
+        matching: find.byType(UiKitView),
+      );
+      expect(
+        tester.widget<UiKitView>(titleView).creationParams,
+        containsPair('bare', false),
+      );
+      final filterView = find.descendant(
+        of: find.byType(SourceFilterIconButton),
+        matching: find.byType(UiKitView),
+      );
+      expect(
+        tester.widget<UiKitView>(filterView).creationParams,
+        containsPair('bare', true),
+      );
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
     'e-ink retains flat source controls and Material navigation on iOS',
     (tester) async {
       final settings = _EInkSettings();
@@ -476,7 +615,7 @@ void main() {
       expect(menu.height, greaterThanOrEqualTo(44));
       await tester.tap(find.byTooltip(t.sourceShell.navigationActions));
       await tester.pumpAndSettle();
-      expect(find.text(t.discover.settings), findsOneWidget);
+      expect(find.text(t.plugin.pluginSettings), findsOneWidget);
       expect(find.text(t.sourceShell.exitPlugin), findsOneWidget);
       await tester.tapAt(const Offset(100, 400));
       await tester.pumpAndSettle();

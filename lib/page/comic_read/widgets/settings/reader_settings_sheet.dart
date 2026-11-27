@@ -1,9 +1,13 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:zephyr/widgets/native_material_surface.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/cubit/comic_read_preference_cubit.dart';
 import 'package:zephyr/i18n/strings.g.dart';
@@ -13,6 +17,7 @@ import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_control_colors.dart';
 import 'package:zephyr/widgets/breeze_switch.dart';
+import 'package:zephyr/widgets/task_dialog.dart';
 
 part 'reader_settings_gesture_tab.dart';
 part 'reader_settings_info_tab.dart';
@@ -30,6 +35,7 @@ Future<void> showReaderSettingsSheet(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
+    elevation: AppInterfaceStyleScope.usesAndroidSystem(context) ? 0 : null,
     barrierLabel: t.common.close,
     isDismissible: true,
     enableDrag: true,
@@ -71,6 +77,7 @@ class _ReaderSettingsSheet extends StatelessWidget {
 
     return SafeArea(
       top: false,
+      maintainBottomViewPadding: true,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
         child: Stack(
@@ -123,24 +130,14 @@ class _ReaderSettingsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = context.theme.colorScheme;
-
     final perComicAvailable =
         source.trim().isNotEmpty && comicId.trim().isNotEmpty;
     final tabLength = perComicAvailable ? 4 : 3;
 
-    final breeze = !AppInterfaceStyleScope.usesSystem(context);
-    final nativeChoices =
-        !breeze && !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
-    return Material(
-      color: breeze ? colorScheme.surfaceContainerLow : colorScheme.surface,
-      surfaceTintColor: Colors.transparent,
-      elevation: breeze ? 8 : 16,
-      shadowColor: colorScheme.shadow.withValues(alpha: 0.24),
-      borderRadius: BorderRadius.circular(24),
-      // Rounded paint is enough here. A native choice must not inherit the
-      // card's curved clip when Flutter slices overlays during transitions.
-      clipBehavior: nativeChoices ? Clip.none : Clip.antiAlias,
+    return NativeMaterialSurface(
+      readableContent: true,
+      floating: true,
+      androidGlass: true,
       child: DefaultTabController(
         length: tabLength,
         child: Column(
@@ -588,70 +585,499 @@ class _SettingsDropdownTile extends StatelessWidget {
   }
 }
 
-class _SettingsSliderCard extends StatelessWidget {
-  final String title;
-  final int value;
-  final int min;
-  final int max;
-  final int divisions;
-  final String suffix;
-  final bool enabled;
-  final ValueChanged<int> onChanged;
-
+class _SettingsSliderCard extends StatefulWidget {
   const _SettingsSliderCard({
     required this.title,
     required this.value,
     required this.min,
     required this.max,
-    required this.divisions,
     required this.suffix,
-    this.enabled = true,
     required this.onChanged,
+    this.divisions,
+    this.enabled = true,
+    this.sliderKey,
+    this.preview,
   });
+
+  final String title, suffix;
+  final int value, min, max;
+  final int? divisions;
+  final bool enabled;
+  final Key? sliderKey;
+  final Widget Function(BuildContext, double)? preview;
+  final ValueChanged<int> onChanged;
+
+  @override
+  State<_SettingsSliderCard> createState() => _SettingsSliderCardState();
+}
+
+class _SettingsSliderCardState extends State<_SettingsSliderCard> {
+  double? _draft;
+  PointerDownEvent? _pointer;
+  bool _released = false, _vertical = false, _dragging = false;
+  int? _hapticBucket;
+  Duration? _lastHaptic;
+
+  bool _editing = false;
+
+  bool get _canEdit => widget.enabled && widget.suffix.startsWith('%');
+
+  Future<void> _startEditor() async {
+    if (!_canEdit || _editing) return;
+    _editing = true;
+    final result = await showDialog<int>(
+      context: context,
+      builder: (_) => _ReaderPercentageDialog(
+        title: widget.title,
+        value: widget.value.clamp(widget.min, widget.max),
+        min: widget.min,
+        max: widget.max,
+        preview: widget.preview,
+        onDraft: (value) {
+          if (mounted) setState(() => _draft = value?.toDouble());
+        },
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      _editing = false;
+      _draft = null;
+    });
+    if (result == null || result == widget.value || !_canEdit) return;
+    HapticFeedback.selectionClick();
+    widget.onChanged(result);
+  }
+
+  int? get _markedDivisions =>
+      widget.suffix.startsWith('%') ? null : widget.divisions;
+
+  int _rounded(double value) => value.round().clamp(widget.min, widget.max);
+
+  String _label(double value) =>
+      '${_rounded(value)}${widget.suffix.startsWith('%') ? '' : ' '}${widget.suffix}';
+
+  void _pointerDown(PointerDownEvent event) {
+    if (_pointer != null) return;
+    _pointer = event;
+    _released = _vertical = _dragging = false;
+    _hapticBucket = _bucket(widget.value.toDouble());
+    _lastHaptic = null;
+  }
+
+  int _bucket(double value) {
+    final fraction = (value - widget.min) / (widget.max - widget.min);
+    final divisions = _markedDivisions;
+    return divisions == null
+        ? (fraction * 10).floor()
+        : (fraction * divisions).round();
+  }
+
+  void _pointerMove(PointerMoveEvent event) {
+    final pointer = _pointer;
+    if (pointer?.pointer != event.pointer || _vertical || _dragging) return;
+    final delta = event.position - pointer!.position;
+    if (delta.distanceSquared <= 64) return;
+    _vertical = delta.dy.abs() > delta.dx.abs();
+    _dragging = !_vertical;
+    if (_vertical && _draft != null) setState(() => _draft = null);
+  }
+
+  void _pointerFinished(PointerEvent event) {
+    final pointer = _pointer;
+    if (pointer?.pointer != event.pointer) return;
+    _released = event is PointerUpEvent && !_vertical;
+    scheduleMicrotask(() {
+      if (!mounted || !identical(_pointer, pointer)) return;
+      _pointer = null;
+      _released = _vertical = _dragging = false;
+      if (_draft != null) setState(() => _draft = null);
+    });
+  }
+
+  void _preview(double value) {
+    if (_vertical || value == _draft) return;
+    setState(() => _draft = value);
+    if (!_dragging || _released || _pointer == null) return;
+    final bucket = _bucket(value);
+    if (bucket == _hapticBucket) return;
+    // Only confirmed horizontal travel generates milestone haptics.
+    final now = SchedulerBinding.instance.currentSystemFrameTimeStamp;
+    final endpoint = value == widget.min || value == widget.max;
+    if (!endpoint &&
+        _lastHaptic != null &&
+        now - _lastHaptic! < const Duration(milliseconds: 60)) {
+      return;
+    }
+    _hapticBucket = bucket;
+    _lastHaptic = now;
+    HapticFeedback.selectionClick();
+  }
+
+  void _commit(double value) {
+    if (_draft != null) setState(() => _draft = null);
+    if (_pointer != null && !_released) return;
+    final next = _rounded(value);
+    if (next == widget.value) return;
+    if (!_dragging || _lastHaptic == null) HapticFeedback.selectionClick();
+    widget.onChanged(next);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = context.theme.colorScheme;
+    final theme = context.theme;
+    final colors = theme.colorScheme;
+    final value =
+        _draft ?? widget.value.clamp(widget.min, widget.max).toDouble();
+    final divisions = _markedDivisions;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+      padding: const EdgeInsetsDirectional.fromSTEB(16, 8, 16, 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 8,
-            runSpacing: 4,
-            children: [
-              Text(title, style: context.theme.textTheme.bodyMedium),
-              Text(
-                '$value $suffix',
-                style: context.theme.textTheme.bodyMedium?.copyWith(
-                  color: enabled
-                      ? colorScheme.onSurface
-                      : colorScheme.onSurfaceVariant,
+          if (widget.preview case final preview?) ...[
+            preview(context, value),
+            const SizedBox(height: 8),
+          ],
+          _valueRow(
+            _canEdit
+                ? Semantics(
+                    button: true,
+                    label: t.reader.editSliderPercentage(title: widget.title),
+                    value: _label(value),
+                    onTap: _startEditor,
+                    excludeSemantics: true,
+                    child: TextButton(
+                      style: TextButton.styleFrom(
+                        alignment: AlignmentDirectional.centerEnd,
+                        padding: EdgeInsets.zero,
+                        minimumSize: const Size(44, 44),
+                      ),
+                      onPressed: _startEditor,
+                      child: _valueLabel(value, theme),
+                    ),
+                  )
+                : ExcludeSemantics(child: _valueLabel(value, theme)),
+          ),
+          SizedBox(
+            height: 44,
+            child: Listener(
+              onPointerDown: _pointerDown,
+              onPointerMove: _pointerMove,
+              onPointerUp: _pointerFinished,
+              onPointerCancel: _pointerFinished,
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 4,
+                  trackShape: divisions == null
+                      ? const RoundedRectSliderTrackShape()
+                      : _SettingsTickTrack(divisions),
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 8,
+                  ),
+                  activeTrackColor: colors.primary,
+                  inactiveTrackColor: colors.outlineVariant,
+                  activeTickMarkColor: colors.onPrimary,
+                  inactiveTickMarkColor: colors.onSurfaceVariant,
+                  disabledActiveTickMarkColor: colors.onSurfaceVariant
+                      .withValues(alpha: .46),
+                  disabledInactiveTickMarkColor: colors.onSurfaceVariant
+                      .withValues(alpha: .46),
+                  tickMarkShape: SliderTickMarkShape.noTickMark,
+                  showValueIndicator: ShowValueIndicator.never,
+                ),
+                child: Slider(
+                  key: widget.sliderKey,
+                  min: widget.min.toDouble(),
+                  max: widget.max.toDouble(),
+                  divisions: widget.divisions,
+                  value: value,
+                  label: widget.title,
+                  semanticFormatterCallback: _label,
+                  onChanged: widget.enabled && !_editing ? _preview : null,
+                  onChangeEnd: widget.enabled && !_editing ? _commit : null,
                 ),
               ),
-            ],
-          ),
-          Slider(
-            min: min.toDouble(),
-            max: max.toDouble(),
-            divisions: divisions,
-            value: value.clamp(min, max).toDouble(),
-            label: '$value$suffix',
-            onChanged: !enabled
-                ? null
-                : (newValue) {
-                    final nextValue = newValue.round().clamp(min, max);
-                    if (nextValue != value) {
-                      HapticFeedback.selectionClick();
-                      onChanged(nextValue);
-                    }
-                  },
+            ),
           ),
         ],
       ),
     );
+  }
+
+  Widget _valueRow(Widget value) => Row(
+    crossAxisAlignment: _canEdit
+        ? CrossAxisAlignment.center
+        : CrossAxisAlignment.start,
+    children: [
+      Expanded(
+        flex: 3,
+        child: ExcludeSemantics(
+          child: Text(widget.title, style: context.theme.textTheme.bodyMedium),
+        ),
+      ),
+      const SizedBox(width: 8),
+      Expanded(flex: 2, child: value),
+    ],
+  );
+
+  Widget _valueLabel(double value, ThemeData theme) => Text(
+    _label(value),
+    textAlign: TextAlign.end,
+    style: theme.textTheme.bodyMedium?.copyWith(
+      color: _canEdit
+          ? theme.colorScheme.primary
+          : widget.enabled
+          ? theme.colorScheme.onSurface
+          : theme.colorScheme.onSurfaceVariant,
+      fontFeatures: const [FontFeature.tabularFigures()],
+    ),
+  );
+}
+
+class _ReaderPercentageDialog extends StatefulWidget {
+  const _ReaderPercentageDialog({
+    required this.title,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.onDraft,
+    this.preview,
+  });
+
+  final String title;
+  final int value, min, max;
+  final ValueChanged<int?> onDraft;
+  final Widget Function(BuildContext, double)? preview;
+
+  @override
+  State<_ReaderPercentageDialog> createState() =>
+      _ReaderPercentageDialogState();
+}
+
+class _ReaderPercentageDialogState extends State<_ReaderPercentageDialog> {
+  late final _input = TextEditingController.fromValue(
+    TextEditingValue(
+      text: widget.value.toString(),
+      selection: TextSelection(
+        baseOffset: 0,
+        extentOffset: widget.value.toString().length,
+      ),
+    ),
+  );
+  final _focus = FocusNode();
+  final _fieldKey = GlobalKey();
+  int? _draft;
+  bool _invalid = false, _closing = false;
+
+  int? _readPercentage() {
+    final normalized = _input.text
+        .trim()
+        .replaceAll('％', '%')
+        .replaceAllMapped(
+          RegExp(r'[０-９]'),
+          (match) => String.fromCharCode(match[0]!.codeUnitAt(0) - 0xfee0),
+        );
+    final digits = RegExp(r'^([0-9]+)\s*%?$').firstMatch(normalized)?[1];
+    final value = int.tryParse(digits ?? '');
+    if (value == null || value < widget.min || value > widget.max) return null;
+    return value;
+  }
+
+  void _close([int? value]) {
+    if (_closing) return;
+    _closing = true;
+    Navigator.of(context).pop(value);
+  }
+
+  void _confirm() {
+    final value = _readPercentage();
+    if (value == null) {
+      setState(() => _invalid = true);
+      _focus.requestFocus();
+      return;
+    }
+    _close(value);
+  }
+
+  @override
+  void dispose() {
+    _input.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.theme;
+    final media = MediaQuery.of(context);
+    final viewportHeight = media.size.height - media.viewInsets.vertical;
+    final compact = viewportHeight < 250 + 55 * (media.textScaler.scale(1) - 1);
+    final title = t.reader.editSliderPercentage(title: widget.title);
+    final field = CallbackShortcuts(
+      key: _fieldKey,
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.enter): _confirm,
+        const SingleActivator(LogicalKeyboardKey.numpadEnter): _confirm,
+      },
+      child: TextField(
+        key: const ValueKey('reader.slider-percent.input'),
+        controller: _input,
+        focusNode: _focus,
+        autofocus: true,
+        keyboardType: TextInputType.number,
+        textInputAction: TextInputAction.done,
+        textAlign: TextAlign.end,
+        decoration: InputDecoration(
+          suffixText: '%',
+          errorText: _invalid
+              ? t.reader.sliderPercentageRange(min: widget.min, max: widget.max)
+              : null,
+          errorMaxLines: 3,
+        ),
+        onEditingComplete: _confirm,
+        onChanged: (_) {
+          if (_closing || ModalRoute.of(context)?.isCurrent != true) return;
+          final value = _readPercentage();
+          setState(() {
+            _draft = value;
+            if (value != null) _invalid = false;
+          });
+          widget.onDraft(value);
+        },
+      ),
+    );
+    final preview = widget.preview?.call(
+      context,
+      (_draft ?? widget.value).toDouble(),
+    );
+    final actions = <Widget>[
+      TextButton(onPressed: _close, child: Text(t.common.cancel)),
+      FilledButton(onPressed: _confirm, child: Text(t.common.confirm)),
+    ];
+    return CallbackShortcuts(
+      key: const ValueKey('reader.slider-percent.dialog'),
+      bindings: {const SingleActivator(LogicalKeyboardKey.escape): _close},
+      child: compact
+          ? TaskDialogSurface(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 320),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Semantics(
+                        header: true,
+                        namesRoute: true,
+                        child: Text(title, style: theme.textTheme.titleMedium),
+                      ),
+                      const SizedBox(height: 8),
+                      field,
+                      const SizedBox(height: 8),
+                      OverflowBar(
+                        alignment: MainAxisAlignment.end,
+                        spacing: 8,
+                        children: actions,
+                      ),
+                      if (preview != null) ...[
+                        const SizedBox(height: 8),
+                        preview,
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            )
+          : TaskDialog(
+              title: title,
+              width: 320,
+              content: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (preview != null) ...[preview, const SizedBox(height: 8)],
+                  field,
+                  const SizedBox(height: 12),
+                ],
+              ),
+              actions: actions,
+            ),
+    );
+  }
+}
+
+class _SettingsTickTrack extends RoundedRectSliderTrackShape {
+  const _SettingsTickTrack(this.divisions);
+
+  final int divisions;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _SettingsTickTrack && other.divisions == divisions;
+
+  @override
+  int get hashCode => divisions.hashCode;
+
+  @override
+  void paint(
+    PaintingContext context,
+    Offset offset, {
+    required RenderBox parentBox,
+    required SliderThemeData sliderTheme,
+    required Animation<double> enableAnimation,
+    required TextDirection textDirection,
+    required Offset thumbCenter,
+    Offset? secondaryOffset,
+    bool isDiscrete = false,
+    bool isEnabled = false,
+    double additionalActiveTrackHeight = 2,
+  }) {
+    super.paint(
+      context,
+      offset,
+      parentBox: parentBox,
+      sliderTheme: sliderTheme,
+      enableAnimation: enableAnimation,
+      textDirection: textDirection,
+      thumbCenter: thumbCenter,
+      secondaryOffset: secondaryOffset,
+      isDiscrete: isDiscrete,
+      isEnabled: isEnabled,
+      additionalActiveTrackHeight: additionalActiveTrackHeight,
+    );
+    final track = getPreferredRect(
+      parentBox: parentBox,
+      offset: offset,
+      sliderTheme: sliderTheme,
+      isDiscrete: isDiscrete,
+      isEnabled: isEnabled,
+    ).deflate((sliderTheme.trackHeight ?? 0) / 2);
+    if (track.width <= 0) return;
+    // Dense ranges show evenly spaced marks on real stops. The Slider
+    // still handles every step, including steps between major marks.
+    final intervals = (track.width / 14).floor().clamp(
+      1,
+      math.min(divisions, 24),
+    );
+    final active = Color.lerp(
+      sliderTheme.disabledActiveTickMarkColor,
+      sliderTheme.activeTickMarkColor,
+      enableAnimation.value,
+    )!;
+    final inactive = Color.lerp(
+      sliderTheme.disabledInactiveTickMarkColor,
+      sliderTheme.inactiveTickMarkColor,
+      enableAnimation.value,
+    )!;
+    final mark = Paint();
+    for (var i = 0; i <= intervals; i++) {
+      final fraction = (i * divisions / intervals).round() / divisions;
+      final x = track.left + fraction * track.width;
+      final isActive = textDirection == TextDirection.ltr
+          ? x <= thumbCenter.dx
+          : x >= thumbCenter.dx;
+      mark.color = isActive ? active : inactive;
+      context.canvas.drawCircle(Offset(x, track.center.dy), 1, mark);
+    }
   }
 }

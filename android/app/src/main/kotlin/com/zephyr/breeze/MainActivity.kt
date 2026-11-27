@@ -50,6 +50,8 @@ open class MainActivity: FlutterFragmentActivity() {
     private var pendingFilePickerResult: MethodChannel.Result? = null
     private var pendingFilePickerDestPath: String? = null
     private var videoSystemActions: VideoSystemActions? = null
+    private var videoScreenBrightness: VideoScreenBrightness? = null
+    private var videoSeekPreview: AndroidVideoSeekPreview? = null
     private var androidHlsAssets: AndroidHlsAssets? = null
     private var backupSecurity: BackupSecurityStore? = null
 
@@ -82,6 +84,10 @@ open class MainActivity: FlutterFragmentActivity() {
         LauncherAppIcon.register(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         videoSystemActions?.close()
         videoSystemActions = VideoSystemActions(this, flutterEngine.dartExecutor.binaryMessenger)
+        videoScreenBrightness?.close()
+        videoScreenBrightness = VideoScreenBrightness(this, flutterEngine.dartExecutor.binaryMessenger)
+        videoSeekPreview?.close()
+        videoSeekPreview = AndroidVideoSeekPreview(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         androidHlsAssets?.close()
         androidHlsAssets = AndroidHlsAssets(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
         backupSecurity?.close()
@@ -288,9 +294,24 @@ open class MainActivity: FlutterFragmentActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        videoSeekPreview?.setForeground(true)
+    }
+
+    override fun onStop() {
+        videoSeekPreview?.setForeground(false)
+        videoScreenBrightness?.restore()
+        super.onStop()
+    }
+
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         videoSystemActions?.close()
         videoSystemActions = null
+        videoScreenBrightness?.close()
+        videoScreenBrightness = null
+        videoSeekPreview?.close()
+        videoSeekPreview = null
         androidHlsAssets?.close()
         androidHlsAssets = null
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "breeze.download.capacity")

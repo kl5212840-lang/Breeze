@@ -13,6 +13,7 @@ import 'package:zephyr/object_box/migration/migration_v9_to_v10.dart';
 import 'package:zephyr/page/donwload_task/service/download_center_resources.dart';
 import 'package:zephyr/page/bookshelf/service/comic_link_service.dart';
 import 'package:zephyr/page/video/video_export_records.dart';
+import 'package:zephyr/page/video/video_hls_assets.dart';
 import 'package:zephyr/page/video/video_local_resources.dart';
 import 'package:zephyr/service/download/models/download_task_json.dart';
 
@@ -46,6 +47,23 @@ Future<void> waitFor(WidgetTester tester, bool Function() ready) async {
   await tester.pump();
 }
 
+Future<void> unmountAndDrainVideoInventory(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  // The host starts a real storage read from the widget test's fake-async
+  // zone. Let it finish in that zone before the next test needs the FIFO.
+  var finished = false;
+  Object? failure;
+  DownloadCenterResources.readVideos(waitForStorage: true).then<void>(
+    (_) => finished = true,
+    onError: (Object error, StackTrace _) {
+      failure = error;
+      finished = true;
+    },
+  );
+  await waitFor(tester, () => finished);
+  expect(failure, isNull);
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async {
@@ -53,10 +71,55 @@ void main() {
     await TestObjectBoxHelper.setUpTestObjectBox();
   });
   tearDownAll(TestObjectBoxHelper.tearDownTestObjectBox);
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    VideoLocalResources.invalidate();
+  });
   tearDown(() {
     objectbox.downloadTaskBox.removeAll();
     TestObjectBoxHelper.cleanComicFolderBoxes();
   });
+
+  test(
+    'first mount reuses a verified startup inventory only while current',
+    () async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      await useIsolatedDownloadFixture();
+      var reads = 0;
+      messenger.setMockMethodCallHandler(VideoHlsAssets.channel, (call) async {
+        expect(call.method, 'list');
+        reads++;
+        return [];
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(VideoHlsAssets.channel, null),
+      );
+
+      DownloadCenterResources.preloadVideoInventory();
+      final preloaded = DownloadCenterResources.readVideoPhases();
+      await preloaded.enriched;
+      final firstMount = DownloadCenterResources.readVideoPhases(
+        useStartupRead: true,
+      );
+      expect(firstMount.revision, preloaded.revision);
+      await firstMount.verified;
+      expect(reads, 1);
+
+      DownloadCenterResources.preloadVideoInventory();
+      final previous = DownloadCenterResources.readVideoPhases();
+      await previous.enriched;
+      VideoLocalResources.invalidate();
+      final afterStorageChange = DownloadCenterResources.readVideoPhases(
+        useStartupRead: true,
+      );
+      expect(afterStorageChange.revision, isNot(previous.revision));
+      await afterStorageChange.enriched;
+      expect(reads, 3);
+    },
+  );
 
   testWidgets(
     'resume and chapter taps work again after a reader replaces its route',
@@ -112,55 +175,62 @@ void main() {
         ],
       );
       addTearDown(router.dispose);
-      await tester.pumpWidget(
-        MaterialApp.router(routerConfig: router.config()),
-      );
-      Future<void> tapAndWait(Finder finder, Finder result) async {
-        await waitFor(tester, () => finder.hitTestable().evaluate().isNotEmpty);
-        await tester.tap(finder.hitTestable().first);
-        await waitFor(tester, () => result.hitTestable().evaluate().isNotEmpty);
-        await tester.pump(const Duration(milliseconds: 400));
-      }
+      try {
+        await tester.pumpWidget(
+          MaterialApp.router(routerConfig: router.config()),
+        );
+        Future<void> tapAndWait(Finder finder, Finder result) async {
+          await waitFor(
+            tester,
+            () => finder.hitTestable().evaluate().isNotEmpty,
+          );
+          await tester.tap(finder.hitTestable().first);
+          await waitFor(
+            tester,
+            () => result.hitTestable().evaluate().isNotEmpty,
+          );
+          await tester.pump(const Duration(milliseconds: 400));
+        }
 
-      final resume = find.byKey(const ValueKey('download-resume-entry'));
-      await tapAndWait(find.text(title), resume);
-      final chapter = find.byKey(
-        const ValueKey('download-chapter-open.chapter-11'),
-      );
-      await tapAndWait(chapter, find.text('reader chapter-11'));
-      final first = opened.last;
-      unawaited(
-        router.replace(
-          ComicReadRoute(
-            comicId: comicId,
-            from: source,
-            comicInfo: first.comicInfo,
-            type: ComicEntryType.download,
-            order: 12,
-            chapterId: 'chapter-12',
-            epsNumber: 2,
-            stringSelectCubit: first.stringSelectCubit,
+        final resume = find.byKey(const ValueKey('download-resume-entry'));
+        await tapAndWait(find.text(title), resume);
+        final chapter = find.byKey(
+          const ValueKey('download-chapter-open.chapter-11'),
+        );
+        await tapAndWait(chapter, find.text('reader chapter-11'));
+        final first = opened.last;
+        unawaited(
+          router.replace(
+            ComicReadRoute(
+              comicId: comicId,
+              from: source,
+              comicInfo: first.comicInfo,
+              type: ComicEntryType.download,
+              order: 12,
+              chapterId: 'chapter-12',
+              epsNumber: 2,
+              stringSelectCubit: first.stringSelectCubit,
+            ),
           ),
-        ),
-      );
-      await waitFor(
-        tester,
-        () => find.text('reader chapter-12').evaluate().isNotEmpty,
-      );
-      await tester.pump(const Duration(milliseconds: 400));
-      router.pop();
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      await tapAndWait(resume, find.text('reader chapter-12'));
-      expect(opened.last.logicalKey, 'chapter-12');
-      router.pop();
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 400));
-      await tapAndWait(chapter, find.text('reader chapter-11'));
-      expect(opened.last.logicalKey, 'chapter-11');
-
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump();
+        );
+        await waitFor(
+          tester,
+          () => find.text('reader chapter-12').evaluate().isNotEmpty,
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+        router.pop();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        await tapAndWait(resume, find.text('reader chapter-12'));
+        expect(opened.last.logicalKey, 'chapter-12');
+        router.pop();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        await tapAndWait(chapter, find.text('reader chapter-11'));
+        expect(opened.last.logicalKey, 'chapter-11');
+      } finally {
+        await unmountAndDrainVideoInventory(tester);
+      }
     },
   );
 
@@ -310,7 +380,6 @@ void main() {
   test(
     'managed resources survive task clearing; missing files stay outside the center',
     () async {
-      SharedPreferences.setMockInitialValues({});
       await useIsolatedDownloadFixture();
       VideoLocalResources.invalidate();
       final url = Uri.parse('https://hanime1.me/watch?v=51');
@@ -526,12 +595,12 @@ void main() {
           });
           final previousPlatform = debugDefaultTargetPlatformOverride;
           debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+          final nativeViews = <int>{};
           try {
             final messenger = TestDefaultBinaryMessengerBinding
                 .instance
                 .defaultBinaryMessenger;
             final channels = <MethodChannel>[];
-            final nativeViews = <int>{};
             messenger.setMockMethodCallHandler(SystemChannels.platform_views, (
               call,
             ) async {
@@ -549,7 +618,6 @@ void main() {
               return null;
             });
             addTearDown(() {
-              debugDefaultTargetPlatformOverride = previousPlatform;
               messenger.setMockMethodCallHandler(
                 SystemChannels.platform_views,
                 null,
@@ -577,12 +645,9 @@ void main() {
               ],
             );
             addTearDown(router.dispose);
-            // Unmount even when an assertion fails, while the native host and
-            // per-view channels still exist. Framework cleanup runs later.
-            addTearDown(() async {
-              await tester.pumpWidget(const SizedBox.shrink());
-              await waitFor(tester, () => nativeViews.isEmpty);
-            });
+            final comicTitle = find.byKey(
+              const ValueKey('download-title.comic:$source:$comicId'),
+            );
             await tester.pumpWidget(
               AppInterfaceStyleScope(
                 style: notifier,
@@ -601,7 +666,7 @@ void main() {
                 ),
               ),
             );
-            await waitFor(tester, () => find.text(title).evaluate().isNotEmpty);
+            await waitFor(tester, () => comicTitle.evaluate().isNotEmpty);
             expect(
               find.byType(NativeVideoSegmentedControl),
               findsOneWidget,
@@ -612,8 +677,9 @@ void main() {
               find.byKey(const ValueKey('download-clear-records')),
               findsNothing,
             );
-            expect(find.text(title), findsOneWidget);
-            await tester.tap(find.text(title));
+            expect(comicTitle, findsOneWidget);
+            expect(tester.widget<Text>(comicTitle).data, title);
+            await tester.tap(comicTitle);
             await waitFor(
               tester,
               () => find.text('offline-detail').evaluate().isNotEmpty,
@@ -623,7 +689,7 @@ void main() {
             expect(opened?.from, source);
             expect(opened?.type, ComicEntryType.download);
             await router.maybePop();
-            await waitFor(tester, () => find.text(title).evaluate().isNotEmpty);
+            await waitFor(tester, () => comicTitle.evaluate().isNotEmpty);
             await tester.pump(const Duration(milliseconds: 350));
             expect(
               objectbox.downloadTaskBox.count(),
@@ -650,7 +716,7 @@ void main() {
             });
             await waitFor(tester, () => objectbox.downloadTaskBox.count() == 1);
             expect(
-              find.text(title),
+              comicTitle,
               findsOneWidget,
               reason:
                   'existing task and persistent resource share one work row',
@@ -697,7 +763,7 @@ void main() {
               () =>
                   objectbox.unifiedDownloadBox.count() == 0 &&
                   objectbox.downloadTaskBox.count() == 0 &&
-                  find.text(title).evaluate().isEmpty,
+                  comicTitle.evaluate().isEmpty,
             );
             expect(await tester.runAsync(resourceDirectory.exists), isFalse);
             expect(
@@ -710,13 +776,13 @@ void main() {
             expect(objectbox.unifiedFavoriteBox.count(), 1);
             expect(objectbox.unifiedHistoryBox.count(), 1);
             expect(tester.takeException(), isNull);
-            await tester.pumpWidget(const SizedBox.shrink());
-            await tester.pump();
-            var drained = false;
-            DownloadCenterResources.readVideos().then((_) => drained = true);
-            await waitFor(tester, () => drained);
           } finally {
-            debugDefaultTargetPlatformOverride = previousPlatform;
+            try {
+              await unmountAndDrainVideoInventory(tester);
+              await waitFor(tester, () => nativeViews.isEmpty);
+            } finally {
+              debugDefaultTargetPlatformOverride = previousPlatform;
+            }
           }
         },
       );

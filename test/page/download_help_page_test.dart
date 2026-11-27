@@ -74,12 +74,16 @@ void main() {
             t.download.helpExport,
             t.download.helpHls,
             t.download.helpDelete,
-            defaultTargetPlatform == TargetPlatform.iOS
-                ? t.download.helpContinueIos
-                : t.download.helpContinue,
+            t.download.helpContinue,
           ]) {
             expect(find.textContaining(text), findsOneWidget);
           }
+          expect(
+            find.textContaining(t.download.helpContinueIos),
+            defaultTargetPlatform == TargetPlatform.iOS
+                ? findsOneWidget
+                : findsNothing,
+          );
           expect(
             ModalRoute.of(tester.element(find.byType(AlertDialog))),
             isA<PopupRoute<void>>(),

@@ -3,11 +3,12 @@ import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 import 'package:zephyr/page/search/method/search_history_entries.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search/method/copy_search_topic.dart';
+import 'package:zephyr/page/search/widget/jm_search_date_chip.dart';
 import 'package:zephyr/page/source_shell/source_list_presentation.dart';
 import 'package:zephyr/page/source_shell/source_list_scroll_positions.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart' hide Thumb;
-import 'package:flutter/rendering.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_speed_dial/flutter_speed_dial.dart';
 import 'package:zephyr/config/global/global_setting.dart';
@@ -19,6 +20,12 @@ import 'package:zephyr/page/search_result/view/source_quick_category_bar.dart';
 import 'package:zephyr/page/search_result/view/source_loaded_result_filter.dart';
 import 'package:zephyr/page/search_result/view/source_search_detail_list.dart';
 import 'package:zephyr/page/search_result/view/source_list_categories.dart';
+import 'package:zephyr/page/search_result/view/source_search_capabilities.dart';
+import 'package:zephyr/page/search_result/widgets/filtered_result_pages.dart';
+import 'package:zephyr/page/search_result/widgets/source_page_jump.dart';
+import 'package:zephyr/page/source_shell/source_category_settings_scope.dart';
+import 'package:zephyr/page/source_shell/bika_content_block_rules.dart';
+import 'package:zephyr/page/source_shell/bika_content_block_settings_scope.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/source_shell/widgets/bika_connection_notice.dart';
 import 'package:zephyr/util/error_filter.dart';
@@ -28,6 +35,10 @@ import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_mapper.
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
 import 'package:zephyr/widgets/section_header.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
+import 'package:zephyr/widgets/image_recovery_region.dart';
+import 'package:zephyr/widgets/source_page_divider.dart';
+import 'package:zephyr/widgets/toast.dart';
 
 SearchEvent searchRetryEvent(
   SearchEvent lastSuccessful,
@@ -72,17 +83,36 @@ class SearchResultPage extends StatelessWidget implements AutoRouteWrapper {
 
   @override
   Widget build(BuildContext context) {
+    final source = context.select<SearchCubit, String>(
+      (cubit) => cubit.state.from,
+    );
     return SourceExperienceBoundary(
-      source: context.select<SearchCubit, String>((cubit) => cubit.state.from),
-      builder: (_) => _SearchResultPage(searchEvent: searchEvent),
+      source: source,
+      builder: (_) => SourceCategorySettingsScope(
+        source: source,
+        builder: (_, blocked) => BikaContentBlockSettingsScope(
+          source: source,
+          builder: (_, rules) => _SearchResultPage(
+            searchEvent: searchEvent,
+            sourceBlockedCategories: blocked,
+            bikaContentRules: rules,
+          ),
+        ),
+      ),
     );
   }
 }
 
 class _SearchResultPage extends StatefulWidget {
   final SearchEvent searchEvent;
+  final Set<String> sourceBlockedCategories;
+  final BikaContentBlockRules bikaContentRules;
 
-  const _SearchResultPage({required this.searchEvent});
+  const _SearchResultPage({
+    required this.searchEvent,
+    required this.sourceBlockedCategories,
+    required this.bikaContentRules,
+  });
 
   @override
   State<_SearchResultPage> createState() => _SearchResultPageState();
@@ -93,10 +123,19 @@ class _SearchResultPageState extends State<_SearchResultPage>
   late SearchEvent searchEvent;
   final _scrollPositions = SourceListScrollPositions(detailed: true);
   ScrollController get _scrollController => _scrollPositions.controller;
+  final _resultItems = GlobalKey();
+  final _visiblePage = ValueNotifier<int?>(null);
+  List<int?> _presentedPages = const [];
+  bool _pageUpdatePending = false;
   late AnimationController _animationController;
   late Animation<Offset> _slideAnimation;
   bool _quickActionsHidden = false;
   bool _reduceMotion = false;
+  bool _shuffling = false;
+  int _shuffleAttempt = 0;
+  SearchState? _viewportFillRequestedFor;
+  SearchState? _pageRequestFor;
+  bool _filteredPaging = false;
   (String, String, int)? _topicLookupKey;
   Future<CopySearchTopic?>? _topicLookup;
 
@@ -130,6 +169,10 @@ class _SearchResultPageState extends State<_SearchResultPage>
             current.searchHistory,
             keyword,
             scope: widget.searchEvent.searchStates.from,
+            keywordScope: sourceKeywordSearchScope(
+              widget.searchEvent.searchStates.from,
+              widget.searchEvent.searchStates.pluginExtern,
+            ),
           ),
         ),
       );
@@ -149,6 +192,7 @@ class _SearchResultPageState extends State<_SearchResultPage>
   @override
   void dispose() {
     _animationController.dispose();
+    _visiblePage.dispose();
     _scrollPositions.removeListener(_onScroll);
     _scrollPositions.dispose();
     super.dispose();
@@ -157,7 +201,8 @@ class _SearchResultPageState extends State<_SearchResultPage>
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final source = context.read<SearchCubit>().state.from;
+    final search = context.watch<SearchCubit>().state;
+    final source = search.from;
     final resultState = context.watch<SearchBloc>().state;
     return BlocListener<SearchCubit, SearchStates>(
       listener: (_, _) => _scrollPositions.reset(),
@@ -185,61 +230,67 @@ class _SearchResultPageState extends State<_SearchResultPage>
                 context.watch<GlobalSettingCubit>().state.leftHandModeEnabled
                 ? FloatingActionButtonLocation.startFloat
                 : FloatingActionButtonLocation.endFloat,
-            floatingActionButton: SlideTransition(
-              position: _slideAnimation,
-              child: SpeedDial(
-                // SpeedDial reads its controller duration at creation.
-                key: ValueKey(_reduceMotion),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                buttonSize: const Size(56, 56),
-                childrenButtonSize: const Size(56, 56),
-                backgroundColor: colorScheme.primaryContainer,
-                foregroundColor: colorScheme.onPrimaryContainer,
-                icon: Icons.menu,
-                activeIcon: Icons.close,
-                useRotationAnimation: !_reduceMotion,
-                animationDuration: _reduceMotion
-                    ? Duration.zero
-                    : const Duration(milliseconds: 300),
-                spacing: 12,
-                spaceBetweenChildren: 8,
-                children: [
-                  SpeedDialChild(
-                    child: const Icon(Icons.vertical_align_top),
-                    label: t.searchResult.returnToTop,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+            floatingActionButton: isBikaRandomResult(search)
+                ? null
+                : SlideTransition(
+                    position: _slideAnimation,
+                    child: SpeedDial(
+                      // SpeedDial reads its controller duration at creation.
+                      key: ValueKey(_reduceMotion),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(22),
+                      ),
+                      buttonSize: Size.square(
+                        CollectionToolbarMetrics.actionExtentOf(context),
+                      ),
+                      childrenButtonSize: const Size(56, 56),
+                      backgroundColor: colorScheme.surfaceContainerHigh,
+                      foregroundColor: colorScheme.onSurface,
+                      elevation: 1,
+                      icon: Icons.unfold_more_rounded,
+                      tooltip: t.searchResult.resultNavigation,
+                      activeIcon: Icons.close,
+                      useRotationAnimation: !_reduceMotion,
+                      animationDuration: _reduceMotion
+                          ? Duration.zero
+                          : const Duration(milliseconds: 300),
+                      spacing: 12,
+                      spaceBetweenChildren: 8,
+                      children: [
+                        SpeedDialChild(
+                          child: const Icon(Icons.vertical_align_top),
+                          label: t.searchResult.returnToTop,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          backgroundColor: colorScheme.secondaryContainer,
+                          foregroundColor: colorScheme.onSecondaryContainer,
+                          onTap: () {
+                            if (!_scrollController.hasClients) return;
+                            if (_reduceMotion) {
+                              _scrollController.jumpTo(0);
+                            } else {
+                              _scrollController.animateTo(
+                                0,
+                                duration: const Duration(milliseconds: 500),
+                                curve: Curves.easeInOut,
+                              );
+                            }
+                          },
+                        ),
+                        SpeedDialChild(
+                          child: const Icon(Icons.shortcut),
+                          label: t.searchResult.jumpToPage,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          backgroundColor: colorScheme.secondaryContainer,
+                          foregroundColor: colorScheme.onSecondaryContainer,
+                          onTap: _jumpToPage,
+                        ),
+                      ],
                     ),
-                    backgroundColor: colorScheme.secondaryContainer,
-                    foregroundColor: colorScheme.onSecondaryContainer,
-                    onTap: () {
-                      if (!_scrollController.hasClients) return;
-                      if (_reduceMotion) {
-                        _scrollController.jumpTo(0);
-                      } else {
-                        _scrollController.animateTo(
-                          0,
-                          duration: const Duration(milliseconds: 500),
-                          curve: Curves.easeInOut,
-                        );
-                      }
-                    },
                   ),
-                  SpeedDialChild(
-                    child: const Icon(Icons.shortcut),
-                    label: t.searchResult.jumpToPage,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    backgroundColor: colorScheme.secondaryContainer,
-                    foregroundColor: colorScheme.onSecondaryContainer,
-                    onTap: _jumpToPage,
-                  ),
-                ],
-              ),
-            ),
           );
         },
       ),
@@ -254,20 +305,61 @@ class _SearchResultPageState extends State<_SearchResultPage>
   ) {
     final search = context.watch<SearchCubit>().state;
     final categories = sourceQuickCategories(search.from);
-    final pageLabel = _pageLabel(state);
-    Widget toolbar([Widget? filter]) => SourceQuickCategoryBar(
-      categories: categories,
-      detailedView: detailedView,
-      pageLabel: pageLabel,
-      onPageTap: _jumpToPage,
-      onViewChanged: onViewChanged,
-      leading: const SearchResultOptions(),
-      trailingAction: filter,
+    final random = isBikaRandomResult(search);
+    final appliedQuery = state.searchEvent.searchStates;
+    final appliedSort =
+        appliedQuery.from == search.from &&
+            appliedQuery.searchKeyword == search.searchKeyword
+        ? int.tryParse(appliedQuery.pluginExtern['sortBy']?.toString() ?? '')
+        : null;
+    Widget toolbar([Widget? filter]) => ValueListenableBuilder<int?>(
+      valueListenable: _visiblePage,
+      builder: (_, page, _) => SourceQuickCategoryBar(
+        categories: categories,
+        detailedView: detailedView,
+        pageLabel: _pageLabel(state, page),
+        pageWidthSample: state.totalPages > 0
+            ? t.searchResult.pageProgress(
+                page: state.totalPages,
+                pages: state.totalPages,
+              )
+            : state.currentPage > 0
+            ? t.searchResult.pageOnly(page: 9999)
+            : null,
+        appliedSort: appliedSort,
+        onPageTap: _jumpToPage,
+        onViewChanged: onViewChanged,
+        trailingAction: filter,
+        sourceBlockedCategories: widget.sourceBlockedCategories,
+        shuffling:
+            random &&
+            state.status == SearchStatus.initial &&
+            state.comics.isNotEmpty,
+        onShuffle:
+            random &&
+                (state.status == SearchStatus.success ||
+                    state.comics.isNotEmpty) &&
+                state.status != SearchStatus.initial
+            ? _shuffle
+            : null,
+      ),
     );
     Widget content(Widget controls, [List<UnifiedComicListItem>? entries]) =>
         Column(
           children: [
             controls,
+            if (jmSearchDiscoveryFunction(search.from) != null)
+              Padding(
+                padding: const EdgeInsetsDirectional.symmetric(
+                  horizontal: CollectionToolbarMetrics.searchResultContentInset,
+                ),
+                child: JmSearchDateChip(
+                  inline: true,
+                  onCleared: (next) => context.read<SearchBloc>().add(
+                    SearchEvent(searchStates: next),
+                  ),
+                ),
+              ),
             if (supportsCopyTopicSearch(search.from) &&
                 search.searchKeyword.trim().isNotEmpty &&
                 sourceKeywordSearchScope(search.from, search.pluginExtern) ==
@@ -288,13 +380,21 @@ class _SearchResultPageState extends State<_SearchResultPage>
         sourceKeywordSearchScope(search.from, search.pluginExtern),
       )),
       scope: '${search.from}|publicSearch',
-      entries: state.comics.map((item) => item.comic).toList(),
+      entries: _matchesSearchOwner(state.searchEvent.searchStates, search)
+          ? state.comics.map((item) => item.comic).toList()
+          : const [],
       blockedCategories: _blockedCategories(search),
       complete: state.hasReachedMax,
       publicBrowseFacets: true,
-      filterScopeLabel: t.videoLibrary.loadedResultScope,
+      filterScopeLabel: '',
       loadingMore: state.status == SearchStatus.loadingMore,
-      onChanged: () => _scrollPositions.reset(afterLayout: true),
+      onLoadMore:
+          _matchesSearchOwner(state.searchEvent.searchStates, search) &&
+              (state.status == SearchStatus.success ||
+                  state.status == SearchStatus.loadingMore)
+          ? _fetchSearchResult
+          : null,
+      onChanged: _restartFilteredRange,
       chromeBuilder: (_, chrome) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -339,31 +439,72 @@ class _SearchResultPageState extends State<_SearchResultPage>
   }
 
   Set<String> _blockedCategories(SearchStates search) => {
+    ...widget.sourceBlockedCategories,
     ...blockedCategoryNames(search.pluginExtern['blockedCategories']),
-    ...blockedCategoryNames(search.pluginExtern['settingsBlockedCategories']),
+    if (!isBikaExperienceSource(search.from))
+      ...blockedCategoryNames(search.pluginExtern['settingsBlockedCategories']),
   };
 
-  String? _pageLabel(SearchState state) {
+  bool _matchesSearchOwner(SearchStates applied, SearchStates search) =>
+      applied.from == search.from &&
+      applied.searchKeyword == search.searchKeyword &&
+      sourceKeywordSearchScope(applied.from, applied.pluginExtern) ==
+          sourceKeywordSearchScope(search.from, search.pluginExtern) &&
+      applied.pluginExtern['url'] == search.pluginExtern['url'];
+
+  void _restartFilteredRange() {
+    _scrollPositions.reset(afterLayout: true);
+    final bloc = context.read<SearchBloc>();
+    if (bloc.firstLoadedPage == 1) return;
+    final search = context.read<SearchCubit>().state;
+    if (_matchesSearchOwner(bloc.state.searchEvent.searchStates, search)) {
+      bloc.add(SearchEvent(searchStates: search));
+    }
+  }
+
+  void _shuffle() {
+    if (_shuffling) return;
+    final query = context.read<SearchCubit>().state;
+    if (!isBikaRandomResult(query)) return;
+    _shuffling = true;
+    _shuffleAttempt++;
+    context.read<SearchBloc>().add(SearchEvent(searchStates: query));
+  }
+
+  int _browsingPage(int? visible) =>
+      visible ?? context.read<SearchBloc>().firstLoadedPage;
+
+  String? _pageLabel(SearchState state, int? visible) {
     if (state.currentPage < 1 || state.status == SearchStatus.initial) {
       return null;
     }
+    final page = _browsingPage(visible);
     return state.totalPages > 0
-        ? t.searchResult.pageProgress(
-            page: state.currentPage,
-            pages: state.totalPages,
-          )
-        : t.searchResult.pageOnly(page: state.currentPage);
+        ? t.searchResult.pageProgress(page: page, pages: state.totalPages)
+        : t.searchResult.pageOnly(page: page);
   }
 
   Future<void> _jumpToPage() async {
-    final state = context.read<SearchBloc>().state;
-    final targetPage = await showNumberInputDialog(
-      context: context,
-      title: t.searchResult.jump,
-      initialValue: state.currentPage > 0 ? state.currentPage : 1,
-      hintText: state.totalPages > 0 ? '1–${state.totalPages}' : null,
+    final bloc = context.read<SearchBloc>();
+    final before = bloc.state;
+    final query = context.read<SearchCubit>().state;
+    final session = pluginSessionWriteFence.generation(query.from);
+    final visible = _browsingPage(_visiblePage.value);
+    final targetPage = await showSourcePageJumpDialog(
+      context,
+      page: visible,
+      totalPages: before.totalPages > 0 ? before.totalPages : null,
     );
     if (!mounted || targetPage == null) return;
+    final current = context.read<SearchCubit>().state;
+    final state = bloc.state;
+    if (!_matchesSearchOwner(query, current) ||
+        query.sortBy != current.sortBy ||
+        !_matchesSearchOwner(state.searchEvent.searchStates, current) ||
+        session != pluginSessionWriteFence.generation(query.from) ||
+        pluginSessionWriteFence.isChanging(query.from)) {
+      return;
+    }
     if (targetPage < 1 ||
         (state.totalPages > 0 && targetPage > state.totalPages)) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -377,9 +518,17 @@ class _SearchResultPageState extends State<_SearchResultPage>
       );
       return;
     }
-    if (targetPage == state.currentPage) return;
-    context.read<SearchBloc>().add(
-      searchEvent.copyWith(page: targetPage, status: SearchStatus.initial),
+    if (targetPage == visible &&
+        targetPage == bloc.firstLoadedPage &&
+        _scrollController.hasClients &&
+        _scrollController.offset <= 0) {
+      return;
+    }
+    bloc.add(
+      state.searchEvent.copyWith(
+        page: targetPage,
+        status: SearchStatus.initial,
+      ),
     );
     _scrollPositions.reset();
   }
@@ -388,18 +537,45 @@ class _SearchResultPageState extends State<_SearchResultPage>
     bool detailedView, {
     List<UnifiedComicListItem>? loadedEntries,
   }) => BlocConsumer<SearchBloc, SearchState>(
-    listenWhen: (_, state) => state.status == SearchStatus.initial,
-    listener: (_, _) => _scrollPositions.reset(),
+    listenWhen: (_, state) =>
+        state.status == SearchStatus.initial || _shuffling,
+    listener: (context, state) {
+      final random = isBikaRandomResult(context.read<SearchCubit>().state);
+      if (state.status == SearchStatus.initial) {
+        if (!random) {
+          _visiblePage.value = null;
+          _scrollPositions.reset();
+        }
+      } else if (_shuffling) {
+        _shuffling = false;
+        if (state.status == SearchStatus.success) {
+          _scrollPositions.reset();
+        } else if (state.status == SearchStatus.failure &&
+            state.comics.isNotEmpty &&
+            !BikaConnectionNotice.handlesFailure(state.result) &&
+            ModalRoute.isCurrentOf(context) != false) {
+          showErrorToast(t.comicList.loadFailedRetry);
+        }
+      }
+    },
     builder: (context, state) {
+      final search = context.read<SearchCubit>().state;
+      final random = isBikaRandomResult(search);
       Widget content() {
         switch (state.status) {
           case SearchStatus.initial:
+            if (random && state.comics.isNotEmpty) {
+              return _comicList(context, state, detailedView, loadedEntries);
+            }
             return Center(
               child: SourceLoadingIndicator(
                 source: context.read<SearchCubit>().state.from,
               ),
             );
           case SearchStatus.failure:
+            if (random && state.comics.isNotEmpty) {
+              return _comicList(context, state, detailedView, loadedEntries);
+            }
             return Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -447,20 +623,24 @@ class _SearchResultPageState extends State<_SearchResultPage>
                     JmListLikeCounts.source
                 ? JmCoverLikeScope(
                     counts: JmListLikeCounts.instance,
+                    subtleBadge: true,
                     child: results,
                   )
                 : results;
         }
       }
 
-      final search = context.read<SearchCubit>().state;
+      final results = content();
       return BikaConnectionNotice.wrap(
         source: search.from,
         scope: search,
         failure: state.status == SearchStatus.failure ? state.result : null,
         ready: state.status == SearchStatus.success,
-        retry: () => _refresh(SearchStatus.initial),
-        child: content(),
+        retry: random ? _shuffle : () => _refresh(SearchStatus.initial),
+        manualAttempt: _shuffleAttempt,
+        child: random
+            ? PageImageRefreshScope(revision: searchEvent, child: results)
+            : results,
       );
     },
   );
@@ -471,36 +651,121 @@ class _SearchResultPageState extends State<_SearchResultPage>
     bool detailedView,
     List<UnifiedComicListItem>? loadedEntries,
   ) {
+    _scheduleVisiblePageUpdate();
     final search = context.watch<SearchCubit>().state;
+    final random = isBikaRandomResult(search);
+    final blockedCategories = _blockedCategories(search);
+    final contentBlocks = widget.bikaContentRules;
     final returned = filterEntriesByBlockedCategories(
       state.comics.map((item) => item.comic),
-      _blockedCategories(search),
+      blockedCategories,
     );
+    final visible = contentBlocks.isEmpty
+        ? returned
+        : returned.where((entry) => !contentBlocks.blocks(entry)).toList();
     final applied = state.searchEvent.searchStates;
-    final titleOnly = needsLoadedTitleMatch(applied.from, applied.pluginExtern);
+    final titleOnly =
+        !random && needsLoadedTitleMatch(applied.from, applied.pluginExtern);
     final matchesTitle = titleOnly
         ? keywordTitleMatcher(applied.searchKeyword)
         : null;
     final entries =
         loadedEntries ??
         (matchesTitle == null
-            ? returned
-            : returned.where((entry) => matchesTitle([entry.title])).toList());
-    if ((titleOnly || loadedEntries != null) &&
+            ? visible
+            : visible.where((entry) => matchesTitle([entry.title])).toList());
+    if (random && entries.isEmpty && state.status == SearchStatus.success) {
+      return Center(child: Text(t.searchResult.noVisibleRandomWorks));
+    }
+    final bikaBlocking =
+        isBikaExperienceSource(search.from) &&
+        (blockedCategories.isNotEmpty || !contentBlocks.isEmpty);
+    final demand = SourceLoadedResultFilter.demandOf(context);
+    _filteredPaging =
+        !random && (bikaBlocking || titleOnly || demand?.filtering == true);
+    if (_filteredPaging) {
+      return FilteredResultPages(
+        key: ValueKey((
+          search.from,
+          search.searchKeyword,
+          sourceKeywordSearchScope(search.from, search.pluginExtern),
+          search.pluginExtern['url'],
+          search.pluginExtern['mode'],
+          pluginSessionWriteFence.generation(search.from),
+          search.sortBy,
+          Object.hashAllUnordered(blockedCategories),
+          contentBlocks,
+          demand?.criteria,
+        )),
+        matches: entries,
+        controller: _scrollController,
+        page: state.currentPage,
+        firstPage: context.read<SearchBloc>().firstLoadedPage,
+        ready:
+            state.status == SearchStatus.success &&
+            _matchesSearchOwner(applied, search),
+        complete: state.hasReachedMax,
+        failed: state.status == SearchStatus.getMoreFailure,
+        paused: demand?.editing == true,
+        batchSize: detailedView ? 5 : 9,
+        loadMore: _fetchSearchResult,
+        builder: (shown, progress) {
+          if (shown.isEmpty) {
+            final message = switch (progress) {
+              FilteredPageProgress.failed => userFacingErrorMessage(
+                state.result,
+              ),
+              FilteredPageProgress.checking when bikaBlocking && !titleOnly =>
+                t.common.loading,
+              _ when bikaBlocking && !titleOnly =>
+                t.searchResult.noVisibleRandomWorks,
+              _ => progress.emptyMessage!,
+            };
+            return CustomScrollView(
+              controller: _scrollController,
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(message, textAlign: TextAlign.center),
+                          if (state.status == SearchStatus.getMoreFailure)
+                            TextButton(
+                              onPressed: () =>
+                                  _refresh(SearchStatus.loadingMore),
+                              child: Text(t.common.retry),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }
+          return _resultList(
+            state,
+            shown,
+            detailed: detailedView,
+            random: false,
+            quiet: true,
+          );
+        },
+      );
+    }
+    if (loadedEntries != null &&
         entries.isEmpty &&
         (!state.hasReachedMax || returned.isNotEmpty)) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              loadedEntries != null
-                  ? t.videoLibrary.noLoadedMatches
-                  : t.videoLibrary.filteredLoaded(
-                      loaded: returned.length,
-                      shown: 0,
-                    ),
-            ),
+            Text(t.videoLibrary.noLoadedMatches),
             if (state.status == SearchStatus.loadingMore)
               const Padding(
                 padding: EdgeInsets.all(12),
@@ -520,45 +785,60 @@ class _SearchResultPageState extends State<_SearchResultPage>
         ),
       );
     }
-    if (detailedView) {
-      if (state.status == SearchStatus.success &&
-          entries.isEmpty &&
-          state.hasReachedMax) {
-        return Center(child: Text(t.comicList.nothingHere));
-      }
+    if (!random && entries.isNotEmpty) _fillShortViewport(state);
+    return _resultList(state, entries, detailed: detailedView, random: random);
+  }
+
+  Widget _resultList(
+    SearchState state,
+    List<UnifiedComicListItem> entries, {
+    required bool detailed,
+    required bool random,
+    bool quiet = false,
+  }) {
+    if (state.status == SearchStatus.success &&
+        entries.isEmpty &&
+        state.hasReachedMax) {
+      return Center(child: Text(t.comicList.nothingHere));
+    }
+    final terminal =
+        random || state.hasReachedMax && state.status == SearchStatus.success;
+    final confirmedPages = {
+      for (final row in state.comics)
+        if (row.sourcePage case final page?)
+          (row.comic.source, row.comic.id): page,
+    };
+    _presentedPages = random
+        ? const []
+        : [for (final row in entries) confirmedPages[(row.source, row.id)]];
+    final pageBreaks = random || !detailed
+        ? const <int>{}
+        : sourcePageBreaks(
+            entries,
+            (row) => confirmedPages[(row.source, row.id)],
+          );
+    if (detailed) {
       return SourceSearchDetailList(
         controller: _scrollController,
         entries: entries,
-        hasReachedMax:
-            state.hasReachedMax && state.status == SearchStatus.success,
+        pageBreaks: pageBreaks,
+        itemsSliverKey: _resultItems,
+        quietPaging: quiet,
+        hasReachedMax: terminal,
         isLoadingMore: state.status == SearchStatus.loadingMore,
         loadMoreFailed: state.status == SearchStatus.getMoreFailure,
         onRetryLoadMore: () => _refresh(SearchStatus.loadingMore),
         onLoadMore: _fetchSearchResult,
       );
     }
-    return _genericList(state, entries);
-  }
-
-  Widget _genericList(SearchState state, List<UnifiedComicListItem> entries) {
-    if (state.status == SearchStatus.success) {
-      if (entries.isEmpty && state.hasReachedMax) {
-        return Center(
-          child: Text(
-            t.comicList.nothingHere,
-            style: TextStyle(fontSize: 20.0),
-          ),
-        );
-      }
-    }
-
-    final list = mapToUnifiedComicSimplifyEntryInfoList(entries);
-
     return PluginComicGridSliver(
+      gridHorizontalInset: CollectionToolbarMetrics.searchResultContentInset,
       controller: _scrollController,
-      entries: list,
-      hasReachedMax:
-          state.hasReachedMax && state.status == SearchStatus.success,
+      physics: quiet ? const AlwaysScrollableScrollPhysics() : null,
+      entries: mapToUnifiedComicSimplifyEntryInfoList(entries),
+      itemsSliverKey: _resultItems,
+      quietPaging: quiet,
+      hasReachedMax: terminal,
       isLoadingMore: state.status == SearchStatus.loadingMore,
       loadMoreFailed: state.status == SearchStatus.getMoreFailure,
       onRetryLoadMore: () => _refresh(SearchStatus.loadingMore),
@@ -571,15 +851,49 @@ class _SearchResultPageState extends State<_SearchResultPage>
     bloc.add(searchRetryEvent(searchEvent, bloc.state, status));
   }
 
-  void _fetchSearchResult() {
+  void _fillShortViewport(SearchState state) {
+    if (state.status != SearchStatus.success ||
+        state.currentPage != context.read<SearchBloc>().firstLoadedPage ||
+        state.hasReachedMax ||
+        identical(_viewportFillRequestedFor, state)) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          identical(_viewportFillRequestedFor, state) ||
+          ModalRoute.isCurrentOf(context) == false ||
+          !identical(context.read<SearchBloc>().state, state) ||
+          context.read<SearchCubit>().state != state.searchEvent.searchStates ||
+          !_scrollController.hasClients) {
+        return;
+      }
+      final position = _scrollController.position;
+      if (!position.hasContentDimensions ||
+          position.maxScrollExtent > position.minScrollExtent) {
+        return;
+      }
+      // One automatic continuation keeps a sparse first page useful without
+      // draining a source that repeatedly returns sparse or duplicate pages.
+      _viewportFillRequestedFor = state;
+      _fetchSearchResult();
+    });
+  }
+
+  bool _fetchSearchResult() {
     final state = context.read<SearchBloc>().state;
-    if (state.status != SearchStatus.success || state.hasReachedMax) return;
+    if (state.status != SearchStatus.success ||
+        state.hasReachedMax ||
+        identical(_pageRequestFor, state)) {
+      return false;
+    }
+    _pageRequestFor = state;
     context.read<SearchBloc>().add(
       state.searchEvent.copyWith(
         page: state.currentPage + 1,
         status: SearchStatus.loadingMore,
       ),
     );
+    return true;
   }
 
   void _onScroll() {
@@ -587,6 +901,7 @@ class _SearchResultPageState extends State<_SearchResultPage>
         !mounted ||
         !_scrollController.hasClients)
       return;
+    _scheduleVisiblePageUpdate();
     final hideActions =
         switch (_scrollController.position.userScrollDirection) {
           ScrollDirection.reverse => true,
@@ -604,9 +919,22 @@ class _SearchResultPageState extends State<_SearchResultPage>
       }
     }
 
-    if (_isBottom) {
+    if (!_filteredPaging &&
+        _isBottom &&
+        ModalRoute.isCurrentOf(context) != false) {
       _fetchSearchResult();
     }
+  }
+
+  void _scheduleVisiblePageUpdate() {
+    if (_pageUpdatePending) return;
+    _pageUpdatePending = true;
+    WidgetsBinding.instance.ensureVisualUpdate();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pageUpdatePending = false;
+      if (!mounted) return;
+      _visiblePage.value = topVisibleSourcePage(_resultItems, _presentedPages);
+    });
   }
 
   bool get _isBottom {

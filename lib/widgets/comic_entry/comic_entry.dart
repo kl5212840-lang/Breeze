@@ -9,10 +9,12 @@ import 'package:zephyr/widgets/plugin_installation_guard.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/http/picture/picture.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
+import 'package:zephyr/service/comic_like_updates.dart';
 import 'package:zephyr/service/reader/reader_history_service.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/type/enum.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 class ComicEntryWidget extends StatelessWidget {
   const ComicEntryWidget({
@@ -33,7 +35,6 @@ class ComicEntryWidget extends StatelessWidget {
     final theme = Theme.of(context);
     const coverWidth = 100.0;
     const coverHeight = 133.0;
-    final statText = _buildStatText();
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -159,13 +160,23 @@ class ComicEntryWidget extends StatelessWidget {
                               fontWeight: FontWeight.w700,
                             ),
                           ),
-                          if (statText.isNotEmpty)
-                            Text(
-                              statText,
-                              style: theme.textTheme.labelMedium?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
+                          ListenableBuilder(
+                            listenable: ComicLikeUpdates.instance,
+                            builder: (context, _) {
+                              final statText = _buildStatText();
+                              return statText.isEmpty
+                                  ? const SizedBox.shrink()
+                                  : Text(
+                                      statText,
+                                      style: theme.textTheme.labelMedium
+                                          ?.copyWith(
+                                            color: theme
+                                                .colorScheme
+                                                .onSurfaceVariant,
+                                          ),
+                                    );
+                            },
+                          ),
                         ],
                       ),
                     ],
@@ -181,8 +192,12 @@ class ComicEntryWidget extends StatelessWidget {
 
   String _buildStatText() {
     final stats = <String>[];
-    if (comic.likesCount > 0) {
-      stats.add(t.comicEntry.likes(count: comic.likesCount));
+    final updated = ComicLikeUpdates.instance
+        .valueFor(comicLikeWork(comic.from, comic.id))
+        ?.totalLikes;
+    final likes = updated ?? comic.likesCount;
+    if (updated != null || likes > 0) {
+      stats.add(t.comicEntry.likes(count: likes));
     }
     if (comic.viewsCount > 0) {
       stats.add(t.comicEntry.views(count: comic.viewsCount));
@@ -198,15 +213,16 @@ class ComicEntryWidget extends StatelessWidget {
 
     await showDialog(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => ShortAlert(
         title: Text(title),
         content: Text(content),
         actions: [
-          TextButton(
+          ShortAlertAction(
             onPressed: () => dialogContext.pop(),
             child: Text(t.common.cancel),
           ),
-          TextButton(
+          ShortAlertAction(
+            destructive: true,
             onPressed: () async {
               dialogContext.pop();
               await _handleDelete();

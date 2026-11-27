@@ -270,9 +270,20 @@ void main() {
           of: target,
           matching: find.byType(UiKitView),
         );
-        // Back and concurrency are native controls. The other rows use
-        // Flutter switches, and completion alerts belong to Notifications.
-        expect(targetViews, findsNWidgets(2));
+        // Back and both concurrency choices remain native during navigation.
+        expect(targetViews, findsNWidgets(3));
+        for (final key in [
+          const ValueKey('comic-download-concurrency'),
+          const ValueKey('download-concurrency'),
+        ]) {
+          expect(
+            find.descendant(
+              of: find.byKey(key),
+              matching: find.byType(UiKitView),
+            ),
+            findsOneWidget,
+          );
+        }
         final identities = tester.stateList(targetViews).toList();
         final ids = _nativeRenders(
           tester,

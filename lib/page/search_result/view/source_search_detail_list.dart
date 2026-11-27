@@ -1,20 +1,25 @@
 import 'package:zephyr/page/video/video_native_navigation.dart';
-import 'package:zephyr/page/bookshelf/widgets/bookshelf_detailed_content.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart'
+    show normalizePluginId;
 import 'package:zephyr/widgets/collection_cover_fit.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/page/search_result/widgets/bottom_loader.dart';
 import 'package:zephyr/page/discover/service/discover_router.dart';
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
+import 'package:zephyr/service/comic_like_updates.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
 import 'package:zephyr/widgets/comic_entry/comic_record_time.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/cover.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/jm_cover_like_badge.dart';
 import 'package:zephyr/widgets/work_list_divider.dart';
+import 'package:zephyr/widgets/source_page_divider.dart';
+import 'package:zephyr/widgets/detailed_metadata.dart';
 import 'package:zephyr/service/plugin_account_authentication.dart';
 
 String formatSourceComicTimestamp(String value) =>
@@ -35,9 +40,17 @@ class SourceSearchDetailList extends StatelessWidget {
     this.shrinkWrap = false,
     this.collectionLayout = false,
     this.quietPaging = false,
+    this.entryBuilder,
+    this.pageBreaks = const {},
+    this.itemsSliverKey,
   });
 
+  final Widget Function(UnifiedComicListItem, Widget)? entryBuilder;
   final List<UnifiedComicListItem> entries;
+
+  /// Divider positions before the first visible item from a later source page.
+  final Set<int> pageBreaks;
+  final Key? itemsSliverKey;
   final bool hasReachedMax;
   final bool isLoadingMore;
   final bool loadMoreFailed;
@@ -57,16 +70,37 @@ class SourceSearchDetailList extends StatelessWidget {
       shrinkWrap: shrinkWrap,
       slivers: [
         SliverList.builder(
+          key: itemsSliverKey,
           itemCount: entries.length,
-          itemBuilder: (context, index) => WorkListRow(
-            divided: index + 1 < entries.length,
-            inset: collectionLayout ? 12 : 14,
-            child: SourceSearchDetailTile(
-              entry: entries[index],
+          itemBuilder: (context, index) {
+            final entry = entries[index];
+            final tile = SourceSearchDetailTile(
+              entry: entry,
               collectionLayout: collectionLayout,
               onReturned: onReturned,
-            ),
-          ),
+              showMetadata: entryBuilder == null,
+            );
+            final inset = collectionLayout
+                ? 12.0
+                : CollectionToolbarMetrics.searchResultContentInset;
+            final row = WorkListRow(
+              divided:
+                  index + 1 < entries.length && !pageBreaks.contains(index + 1),
+              inset: inset,
+              child: entryBuilder?.call(entry, tile) ?? tile,
+            );
+            if (index == 0 || !pageBreaks.contains(index)) return row;
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SourcePageDivider(
+                  key: ValueKey(('result-page-divider', index)),
+                ),
+                row,
+              ],
+            );
+          },
         ),
         if (hasReachedMax)
           SliverToBoxAdapter(
@@ -111,6 +145,8 @@ class SourceSearchDetailTile extends StatelessWidget {
     this.type = ComicEntryType.normal,
     this.localRecord = false,
     this.collectionLayout = false,
+    this.showMetadata = true,
+    this.horizontalInset,
     this.onReturned,
   });
 
@@ -120,19 +156,9 @@ class SourceSearchDetailTile extends StatelessWidget {
   /// Local saved-record revision is distinct from a source's comic update.
   final bool localRecord;
   final bool collectionLayout;
+  final bool showMetadata;
+  final double? horizontalInset;
   final VoidCallback? onReturned;
-
-  List<String> _values(String type) => entry
-      .metadataValues(type)
-      .map((value) => value.toString().trim())
-      .where((value) => value.isNotEmpty)
-      .toSet()
-      .toList();
-
-  bool get _jm => entry.source == PluginAccountAuthenticationService.jm;
-
-  String get _updatedAt =>
-      formatComicRecordTimestamp(entry.updatedAt, epochSeconds: _jm);
 
   void _returned(BuildContext context) {
     if (context.mounted && ModalRoute.of(context)?.isActive == true) {
@@ -142,75 +168,8 @@ class SourceSearchDetailTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final display = watchChineseDisplayConverter(context);
-    final authors = _values('author');
-    final author = authors.join(' / ');
-    final authorActions = [
-      for (final raw in asJsonList(entry.extern['authorActions']))
-        if (asJsonMap(raw) case final action)
-          if (action['label']?.toString().trim().isNotEmpty == true &&
-              asJsonMap(action['action']).isNotEmpty)
-            action,
-    ];
-    final linkedAuthors = authorActions
-        .map((item) => item['label'].toString().trim())
-        .toSet();
-    final staticAuthor = authors
-        .where((name) => !linkedAuthors.contains(name))
-        .join(' / ');
-    final statuses = _values('status');
-    final latest = _values('latest');
-    final detail = {...statuses, ...latest}.join(' · ');
-    final known = {
-      author,
-      ...authors,
-      ...statuses,
-      ...latest,
-      ...authorActions.map((item) => item['label'].toString().trim()),
-    };
-    final secondary = type == ComicEntryType.history
-        ? entry.subtitle.trim()
-        : entry.subtitle
-              .split(RegExp(r'\s*·\s*'))
-              .map((part) => part.trim())
-              .where((part) => part.isNotEmpty && !known.contains(part))
-              .join(' · ');
-    final categories = _values('categories').join(' · ');
-    final tagValues = _values(
-      'tags',
-    ).where((tag) => !_values('categories').contains(tag));
-    final tags = (_jm ? tagValues.take(3) : tagValues).join(' · ');
-    final aliases = _values(
-      'aliases',
-    ).where((alias) => alias != entry.title.trim()).join(' / ');
-    final popularity = _values('popularity').firstOrNull;
-    final updatedAt = _updatedAt;
-    final description = (entry.raw['description'] ?? '').toString().trim();
-    final pageCount = int.tryParse('${entry.raw['pagesCount'] ?? ''}') ?? 0;
-    final likeCounts = JmCoverLikeScope.maybeOf(context, entry.from);
-    final showTextLikes = likeCounts == null && entry.likesCount > 0;
-    final hasStats =
-        showTextLikes ||
-        popularity != null ||
-        (entry.finished && statuses.isEmpty) ||
-        pageCount > 0;
-
-    Widget line(String value, {Color? color, int maxLines = 1}) => Padding(
-      padding: EdgeInsets.only(top: collectionLayout ? 3 : 4),
-      child: Text(
-        display(value),
-        maxLines: maxLines,
-        overflow: TextOverflow.ellipsis,
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: color ?? colors.onSurfaceVariant,
-          height: 1.3,
-        ),
-      ),
-    );
-
     Widget coverImage({BoxFit fit = BoxFit.cover}) {
+      final likeCounts = JmCoverLikeScope.maybeOf(context, entry.from);
       final image = CoverWidget(
         fileServer: entry.cover.url,
         path: entry.cover.cachePath,
@@ -239,46 +198,6 @@ class SourceSearchDetailTile extends StatelessWidget {
       );
     }
 
-    if (collectionLayout) {
-      final info = entry.toSimplifyEntryInfo();
-      final collectionLabels = [
-        if (!_jm) ..._values('categories').take(1),
-        ...tagValues,
-      ];
-      final visibleLabels = collectionLabels.take(_jm ? 3 : 2).toList();
-      final hiddenLabelCount = collectionLabels.length - visibleLabels.length;
-      final collectionFacts = [
-        if (showTextLikes) t.comicInfo.likes(count: '${entry.likesCount}'),
-        if (popularity != null) t.comicList.popularity(count: popularity),
-        ...visibleLabels,
-        if (hiddenLabelCount > 0) '+$hiddenLabelCount',
-      ].where((value) => value.isNotEmpty).toSet().join(' · ');
-      final collectionByline = detail.isNotEmpty ? detail : secondary;
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        child: InkWell(
-          key: ValueKey('detail-${entry.id}'),
-          onTap: () async {
-            await context.pushRoute(
-              ComicInfoRoute(comicId: entry.id, type: type, from: entry.from),
-            );
-            if (context.mounted) _returned(context);
-          },
-          child: BookshelfDetailedContent(
-            cover: CollectionCoverFitBuilder(
-              builder: (_, fit) => coverImage(fit: fit),
-            ),
-            title: display(entry.title),
-            source: display(collectionByline),
-            metadata: display(collectionFacts),
-            description: display(info.description),
-            time: updatedAt.isEmpty
-                ? ''
-                : t.comicEntry.updatedAt(time: updatedAt),
-          ),
-        ),
-      );
-    }
     return InkWell(
       key: ValueKey('detail-${entry.id}'),
       onTap: () async {
@@ -288,143 +207,360 @@ class SourceSearchDetailTile extends StatelessWidget {
         if (context.mounted) _returned(context);
       },
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        padding: EdgeInsets.symmetric(
+          horizontal:
+              horizontalInset ??
+              (collectionLayout
+                  ? 12
+                  : CollectionToolbarMetrics.searchResultContentInset),
+          vertical: collectionLayout ? 6 : 11,
+        ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(7),
-              child: coverImage(),
+              child: collectionLayout
+                  ? CollectionCoverFitBuilder(
+                      builder: (_, fit) => coverImage(fit: fit),
+                    )
+                  : coverImage(),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    display(entry.title),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      height: 1.25,
-                    ),
-                  ),
-                  if (authorActions.isNotEmpty)
-                    LayoutBuilder(
-                      builder: (context, constraints) => Wrap(
-                        spacing: 8,
-                        children: [
-                          for (final item in authorActions)
-                            ConstrainedBox(
-                              constraints: BoxConstraints(
-                                maxWidth: constraints.maxWidth,
-                              ),
-                              child: TextButton(
-                                style: TextButton.styleFrom(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 2,
-                                  ),
-                                  minimumSize: const Size(44, 44),
-                                  alignment: Alignment.centerLeft,
-                                ),
-                                onPressed: () async {
-                                  await DiscoverRouter.route(
-                                    context,
-                                    action: asJsonMap(item['action']),
-                                    currentFrom: entry.from,
-                                  );
-                                  if (context.mounted) _returned(context);
-                                },
-                                child: Text(
-                                  display(item['label'].toString()),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  if (staticAuthor.isNotEmpty)
-                    line(staticAuthor, color: colors.primary, maxLines: 2),
-                  if (detail.isNotEmpty) line(detail),
-                  if (secondary.isNotEmpty)
-                    line(
-                      type == ComicEntryType.history
-                          ? '看到：$secondary'
-                          : secondary,
-                    ),
-                  if (type == ComicEntryType.history &&
-                      comicLastReadTimestamp(entry).isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: ComicLastReadLine(item: entry),
-                    ),
-                  if (aliases.isNotEmpty)
-                    line(t.comicList.aliases(names: aliases)),
-                  if (categories.isNotEmpty) line(categories),
-                  if (tags.isNotEmpty) line(tags, color: colors.secondary),
-                  if (type != ComicEntryType.history && updatedAt.isNotEmpty)
-                    line(
-                      localRecord
-                          ? t.comicEntry.recordUpdatedAt(time: updatedAt)
-                          : t.comicEntry.updatedAt(time: updatedAt),
-                    ),
-                  if (description.isNotEmpty) line(description, maxLines: 2),
-                  if (hasStats) ...[
-                    const SizedBox(height: 5),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 4,
-                      children: [
-                        if (showTextLikes)
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.favorite_border,
-                                size: 15,
-                                color: colors.primary,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                '${entry.likesCount}',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: colors.onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          ),
-                        if (popularity != null)
-                          Text(
-                            t.comicList.popularity(count: popularity),
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colors.onSurfaceVariant,
-                            ),
-                          ),
-                        if (entry.finished && statuses.isEmpty)
-                          Text(
-                            '完结',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colors.primary,
-                            ),
-                          ),
-                        if (pageCount > 0)
-                          Text(
-                            t.searchResult.itemPageCount(count: pageCount),
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colors.onSurfaceVariant,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ],
-                ],
+              child: ComicDetailedCaption(
+                entry: entry,
+                type: type,
+                localRecord: localRecord,
+                showMetadata: showMetadata,
+                onReturned: onReturned,
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class ComicDetailedCaption extends StatelessWidget {
+  const ComicDetailedCaption({
+    super.key,
+    required this.entry,
+    this.type = ComicEntryType.normal,
+    this.localRecord = false,
+    this.sourceName = '',
+    this.showViews = true,
+    this.showMetadata = true,
+    this.rankCount,
+    this.progress,
+    this.onReturned,
+  });
+
+  final UnifiedComicListItem entry;
+  final ComicEntryType type;
+  final bool localRecord;
+  final String sourceName;
+  final bool showViews;
+  final bool showMetadata;
+  final String? progress, rankCount;
+  final VoidCallback? onReturned;
+
+  static const _gap = 2.0;
+  static TextStyle _titleStyle(BuildContext context) =>
+      (Theme.of(context).textTheme.titleSmall ?? const TextStyle(fontSize: 14))
+          .copyWith(fontWeight: FontWeight.w700, height: 1.25);
+  static TextStyle _detailStyle(BuildContext context) =>
+      (Theme.of(context).textTheme.bodySmall ?? const TextStyle(fontSize: 12))
+          .copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+            height: 1.35,
+          );
+
+  List<String> _values(String type) => entry
+      .metadataValues(type)
+      .map((value) => value.toString().trim())
+      .where((value) => value.isNotEmpty)
+      .toSet()
+      .toList();
+
+  bool get _jm => entry.source == PluginAccountAuthenticationService.jm;
+
+  String get _updatedAt =>
+      formatComicRecordTimestamp(entry.updatedAt, epochSeconds: _jm);
+
+  void _returned(BuildContext context) {
+    if (context.mounted && ModalRoute.of(context)?.isActive == true) {
+      onReturned?.call();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: ComicLikeUpdates.instance,
+    builder: (context, _) => _buildCaption(
+      context,
+      ComicLikeUpdates.instance.valueFor(comicLikeWork(entry.from, entry.id)),
+    ),
+  );
+
+  Widget _buildCaption(BuildContext context, ComicLikeResult? vote) {
+    final colors = Theme.of(context).colorScheme;
+    final display = watchChineseDisplayConverter(context);
+    final authors = _values('author');
+    final history = type == ComicEntryType.history;
+    final copy =
+        normalizePluginId(entry.from) ==
+        PluginAccountAuthenticationService.copy;
+    final detailStyle = _detailStyle(context);
+    final authorTarget = DetailedMetadata.actionExtentOf(context);
+    final reportedAuthorActions = [
+      if (!history)
+        for (final raw in asJsonList(entry.extern['authorActions']))
+          if (asJsonMap(raw) case final action)
+            if (action['label']?.toString().trim().isNotEmpty == true &&
+                asJsonMap(action['action']).isNotEmpty)
+              action,
+    ];
+    final reportedAuthors = reportedAuthorActions
+        .map((item) => item['label'].toString().trim())
+        .toSet();
+    final authorActions = copy ? const [] : reportedAuthorActions;
+    final unlistedAuthors = reportedAuthors.difference(authors.toSet());
+    final staticAuthor = copy
+        ? {...authors, ...reportedAuthors}.join(' / ')
+        : authors.where((name) => !reportedAuthors.contains(name)).join(' / ');
+    final statuses = _values('status');
+    final latest = _values('latest');
+    final known = {
+      authors.join(' / '),
+      ...authors,
+      ...statuses,
+      ...latest,
+      ...reportedAuthors,
+    };
+    final secondary = entry.subtitle
+        .split(RegExp(r'\s*·\s*'))
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty && !known.contains(part));
+    final keywords = {
+      ...statuses,
+      ...latest,
+      ..._values('categories'),
+      ..._values('category'),
+      ..._values('tag'),
+      ..._values('tags'),
+      ...secondary,
+    };
+    final previewKeywordLimit = _jm ? 4 : 3;
+    final summary = keywords.take(previewKeywordLimit).join(' · ');
+    final reading = (progress ?? entry.subtitle).trim();
+    final popularity = _values('popularity').firstOrNull;
+    final updatedAt = history ? '' : _updatedAt;
+    final updateLabel = updatedAt.isEmpty
+        ? ''
+        : localRecord
+        ? t.comicEntry.recordUpdatedAt(time: updatedAt)
+        : t.comicEntry.updatedAt(time: updatedAt);
+    final pageCount = entry.publicPageCount;
+    final likeCounts = JmCoverLikeScope.maybeOf(context, entry.from);
+    final suppliedLikes = entry.publicLikesCount;
+    final totalLikes = vote?.totalLikes ?? suppliedLikes;
+    final totalViews = entry.publicViewsCount;
+    final visibleLikes = likeCounts == null ? totalLikes : null;
+    final metrics = [
+      if (pageCount != null) t.searchResult.itemPageCount(count: pageCount),
+      if (rankCount == null)
+        if (showViews && totalViews != null)
+          t.comicEntry.views(count: totalViews)
+        else if (popularity != null)
+          t.comicList.popularity(count: popularity)
+        else if (entry.finished && !statuses.contains(t.comicEntry.finished))
+          t.comicEntry.finished,
+    ];
+    final hasMetrics =
+        visibleLikes != null || rankCount != null || metrics.isNotEmpty;
+
+    final description = entry.raw['description'] is String
+        ? (entry.raw['description'] as String).trim()
+        : '';
+    final storedUpdates = <String>{
+      for (final (label, value) in entry.publicStoredTitleFacts)
+        if (label == '更新' || label == '更新时间') formatSourceComicTimestamp(value),
+    }..remove('');
+    final metadata = [
+      if (sourceName.isNotEmpty) (label: '', value: display(sourceName)),
+      for (final group in entry.publicDetailMetadata(
+        localRecord: localRecord || history,
+      ))
+        (label: display(group.label), value: display(group.values.join(' · '))),
+      if (unlistedAuthors.isNotEmpty)
+        (label: '', value: display(unlistedAuthors.join(' · '))),
+      if (secondary.isNotEmpty)
+        (label: '', value: display(secondary.join(' · '))),
+      if (description.isNotEmpty)
+        (label: t.comicInfo.description, value: display(description)),
+      if (history && reading.isNotEmpty)
+        (
+          label: '',
+          value: display(
+            progress == null ? t.bookshelf.readTo(chapter: reading) : reading,
+          ),
+        ),
+      if (history && comicLastReadTimestamp(entry).isNotEmpty)
+        (
+          label: '',
+          value: t.comicEntry.lastReadAt(time: comicLastReadTimestamp(entry)),
+        ),
+      if (updateLabel.isNotEmpty) (label: '', value: updateLabel),
+      for (final (label, value) in entry.publicStoredTitleFacts)
+        if (label == '章节数') (label: display(label), value: display(value)),
+      if (!history)
+        for (final update in storedUpdates)
+          if (localRecord || update != updatedAt)
+            (label: '', value: t.comicEntry.updatedAt(time: update)),
+      if (visibleLikes != null)
+        (label: '', value: t.comicInfo.likes(count: visibleLikes)),
+      if (pageCount != null)
+        (label: '', value: t.searchResult.itemPageCount(count: pageCount)),
+      if (rankCount case final count?) (label: '', value: display(count)),
+      if (totalViews != null)
+        (label: '', value: t.comicEntry.views(count: totalViews)),
+      if (entry.finished && !statuses.contains(t.comicEntry.finished))
+        (label: '', value: t.comicEntry.finished),
+    ];
+
+    Widget line(String value, {Color? color, String? semanticsLabel}) => Text(
+      display(value),
+      semanticsLabel: semanticsLabel,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: color == null ? detailStyle : detailStyle.copyWith(color: color),
+    );
+
+    return DetailedMetadata(
+      title: display(entry.title),
+      fields: showMetadata ? metadata : const [],
+      additional: !showMetadata || likeCounts == null
+          ? null
+          : (context) => ListenableBuilder(
+              listenable: Listenable.merge([
+                likeCounts,
+                ComicLikeUpdates.instance,
+              ]),
+              builder: (context, _) {
+                final exact =
+                    ComicLikeUpdates.instance
+                        .valueFor(comicLikeWork(entry.from, entry.id))
+                        ?.totalLikes ??
+                    likeCounts.countFor(entry.id) ??
+                    suppliedLikes;
+                if (exact == null) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Text(
+                    t.comicInfo.likes(count: exact),
+                    style: Theme.of(context).textTheme.bodyMedium,
+                  ),
+                );
+              },
+            ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        spacing: _gap,
+        children: [
+          Text(
+            display(entry.title),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: _titleStyle(context),
+          ),
+          if (sourceName.isNotEmpty ||
+              staticAuthor.isNotEmpty ||
+              authorActions.isNotEmpty)
+            Row(
+              spacing: 6,
+              children: [
+                if (sourceName.isNotEmpty) Flexible(child: line(sourceName)),
+                for (final item in authorActions)
+                  Flexible(
+                    child: TextButton(
+                      style: TextButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        minimumSize: Size.square(authorTarget),
+                        alignment: AlignmentDirectional.centerStart,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: () async {
+                        await DiscoverRouter.route(
+                          context,
+                          action: asJsonMap(item['action']),
+                          currentFrom: entry.from,
+                        );
+                        if (context.mounted) _returned(context);
+                      },
+                      child: line(
+                        item['label'].toString(),
+                        color: colors.primary,
+                      ),
+                    ),
+                  ),
+                if (staticAuthor.isNotEmpty)
+                  Flexible(
+                    child: line(
+                      staticAuthor,
+                      color: copy ? colors.onSurfaceVariant : colors.primary,
+                    ),
+                  ),
+              ],
+            ),
+          if (!history && summary.isNotEmpty)
+            line(
+              keywords.length > previewKeywordLimit ? '$summary …' : summary,
+            ),
+          if (history && reading.isNotEmpty)
+            line(
+              progress == null ? t.bookshelf.readTo(chapter: reading) : reading,
+            ),
+          if (history && comicLastReadTimestamp(entry).isNotEmpty)
+            ComicLastReadLine(item: entry),
+          if (updateLabel.isNotEmpty &&
+              (_jm || localRecord || summary.isEmpty || !hasMetrics))
+            line(updateLabel),
+          if (hasMetrics)
+            Wrap(
+              spacing: 8,
+              runSpacing: _gap,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                if (rankCount != null) line(rankCount!),
+                if (visibleLikes != null)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    spacing: 4,
+                    children: [
+                      Icon(
+                        vote?.liked == true
+                            ? Icons.favorite
+                            : Icons.favorite_border,
+                        size: 15,
+                        color: colors.primary,
+                      ),
+                      Flexible(
+                        child: line(
+                          '$visibleLikes',
+                          semanticsLabel: t.comicInfo.likes(
+                            count: visibleLikes,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                for (final metric in metrics) line(metric),
+              ],
+            ),
+        ],
       ),
     );
   }

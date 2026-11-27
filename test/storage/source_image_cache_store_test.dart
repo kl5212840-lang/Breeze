@@ -42,6 +42,23 @@ void main() {
     expect(await store.sizeBytes(), 0);
   });
 
+  test('measuring continues when an enumerated image is evicted', () async {
+    final removed = await write('cache/f_101/removed', 'evicted');
+    await write('cache/f_101/remaining', 'keep');
+    final store = SourceImageCacheStore(
+      root: p.join(root.path, 'cache'),
+      sourceSegments: ['f_101'],
+    );
+
+    final bytes = await IOOverrides.runWithIOOverrides(
+      store.sizeBytes,
+      _EvictImageBeforeLength(removed.path),
+    );
+
+    expect(await removed.exists(), isFalse);
+    expect(bytes, 4);
+  });
+
   test('global scope includes known partitions and retains unknown roots', () async {
     final first = await write('cache/f_101/image', 'one');
     final second = await write('cache/f_202/image', 'two');
@@ -82,4 +99,34 @@ void main() {
     await expectLater(store.clear(), throwsA(isA<FileSystemException>()));
     expect(await outside.readAsString(), 'keep');
   });
+}
+
+final class _EvictImageBeforeLength extends IOOverrides {
+  _EvictImageBeforeLength(this.path);
+
+  final String path;
+
+  @override
+  File createFile(String path) {
+    final file = super.createFile(path);
+    return path == this.path ? _EvictedImage(file) : file;
+  }
+}
+
+class _EvictedImage implements File {
+  _EvictedImage(this._file);
+
+  final File _file;
+
+  @override
+  String get path => _file.path;
+
+  @override
+  Future<int> length() async {
+    await _file.delete();
+    return _file.length();
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

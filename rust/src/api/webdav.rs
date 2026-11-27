@@ -12,6 +12,9 @@ use std::collections::{HashSet, VecDeque};
 use std::fmt::{Display, Formatter};
 use std::time::Duration;
 
+const MAX_ARCHIVE_READ: usize = 64 * 1024 * 1024 + 65536 + 8192;
+const ARCHIVE_READ_TIMEOUT: Duration = Duration::from_secs(120);
+
 #[derive(Debug)]
 struct WebDavStatusError(u16);
 
@@ -97,7 +100,8 @@ impl WebDavClient {
         if !status.is_success() {
             return Err(WebDavStatusError(status.as_u16()).into());
         }
-        let body = response.text().await?;
+        let bytes = read_bounded_response(response, MAX_ARCHIVE_READ).await?;
+        let body = String::from_utf8_lossy(&bytes);
         Ok(serde_xml_rs::from_str::<ListMultiStatus>(&strip_xml_ns(&body))?.responses)
     }
 }
@@ -208,10 +212,7 @@ pub async fn webdav_download_text(
         reqwest::StatusCode::OK => {}
         status => return Err(WebDavStatusError(status.as_u16()).into()),
     }
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| anyhow!(rquickjs_playground::tr!("md5-download-failed", e = e)))?;
+    let bytes = read_bounded_response(response, 1024).await?;
     Ok(String::from_utf8_lossy(&bytes).trim().to_string())
 }
 
@@ -324,6 +325,7 @@ pub async fn webdav_download_file(
     legacy_data_root_name: String,
     legacy_settings_root_name: String,
     remote_path: String,
+    max_bytes: u32,
 ) -> Result<Vec<u8>> {
     let client = build_client(&host, &username, &password)?;
     let request_path = normalize_any_managed_path(
@@ -332,7 +334,13 @@ pub async fn webdav_download_file(
         &legacy_data_root_name,
         &legacy_settings_root_name,
     )?;
-    download_file_with_retry(&client, &request_path).await
+    let limit = (max_bytes as usize).min(MAX_ARCHIVE_READ);
+    tokio::time::timeout(
+        ARCHIVE_READ_TIMEOUT,
+        download_file_with_retry(&client, &request_path, limit),
+    )
+    .await
+    .map_err(|_| anyhow!("Cloud download timed out"))?
 }
 
 #[frb]
@@ -430,7 +438,7 @@ fn build_client(host: &str, username: &str, password: &str) -> Result<WebDavClie
         BuildHttpClientOptions {
             no_proxy: false,
             https_only: false,
-            timeout: Some(Duration::from_secs(120)),
+            timeout: Some(ARCHIVE_READ_TIMEOUT),
             connect_timeout: Some(Duration::from_secs(10)),
             follow_redirects: Some(true),
             user_agent: None,
@@ -481,21 +489,41 @@ async fn ensure_directory(client: &WebDavClient, dir_path: &str) -> Result<()> {
     }
 }
 
-async fn download_file_with_retry(client: &WebDavClient, request_path: &str) -> Result<Vec<u8>> {
+async fn read_bounded_response(mut response: Response, max_bytes: usize) -> Result<Vec<u8>> {
+    if response
+        .content_length()
+        .is_some_and(|size| size > max_bytes as u64)
+    {
+        return Err(anyhow!("Cloud snapshot too large"));
+    }
+    let mut bytes = Vec::new();
+    loop {
+        let next = tokio::time::timeout(Duration::from_secs(30), response.chunk())
+            .await
+            .map_err(|_| anyhow!("Cloud download timed out"))??;
+        let Some(chunk) = next else { return Ok(bytes) };
+        if chunk.len() > max_bytes - bytes.len() {
+            return Err(anyhow!("Cloud snapshot too large"));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+}
+
+async fn download_file_with_retry(
+    client: &WebDavClient,
+    request_path: &str,
+    max_bytes: usize,
+) -> Result<Vec<u8>> {
     const MAX_RETRIES: usize = 3;
 
-    for _ in 0..MAX_RETRIES {
+    for attempt in 0..MAX_RETRIES {
         let response = client
             .get_raw(request_path)
             .await
             .map_err(|e| anyhow!(rquickjs_playground::tr!("file-download-failed", e = e)))?;
         let code = response.status().as_u16();
         if code == 200 || code == 206 {
-            let bytes = response
-                .bytes()
-                .await
-                .map_err(|e| anyhow!(rquickjs_playground::tr!("file-download-failed", e = e)))?;
-            return Ok(bytes.to_vec());
+            return read_bounded_response(response, max_bytes).await;
         }
         if code == 404 {
             return Err(anyhow!(rquickjs_playground::tr!(
@@ -503,7 +531,16 @@ async fn download_file_with_retry(client: &WebDavClient, request_path: &str) -> 
                 code = code
             )));
         }
-        if code == 409 || code == 423 || code == 429 || code >= 500 {
+        if code == 429
+            || (code == 503
+                && response
+                    .headers()
+                    .contains_key(reqwest::header::RETRY_AFTER))
+        {
+            return Err(WebDavStatusError(code).into());
+        }
+        if attempt + 1 < MAX_RETRIES && (code == 409 || code == 423 || code >= 500) {
+            drop(response);
             tokio::time::sleep(Duration::from_secs(2)).await;
             continue;
         }

@@ -771,13 +771,31 @@ void main() {
         ),
         findsOneWidget,
       );
+      final filteredOffset = tester
+          .state<ScrollableState>(results)
+          .position
+          .pixels;
       await tester.tap(find.byKey(const ValueKey('jm-collection.search')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('source-loaded.search')), findsNothing);
-      expect(find.text(t.videoLibrary.results(count: 267)), findsOneWidget);
-      expect(tester.state<ScrollableState>(results).position.pixels, 120);
+      expect(find.text(t.videoLibrary.results(count: 1)), findsOneWidget);
+      expect(
+        tester.state<ScrollableState>(results).position.pixels,
+        filteredOffset,
+      );
       await tester.tap(find.byKey(const ValueKey('jm-collection.search')));
       await tester.pumpAndSettle();
+      expect(
+        tester.widget<EditableText>(find.byType(EditableText)).controller.text,
+        '作品266',
+      );
+      await tester.tap(find.byTooltip(t.common.clear));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('source-loaded.search')),
+        findsOneWidget,
+      );
+      expect(find.text(t.videoLibrary.results(count: 267)), findsOneWidget);
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       expect(find.byType(ComicListPage), findsOneWidget);
@@ -835,6 +853,7 @@ void main() {
         NativeVideoMenu sort() => tester.widget<NativeVideoMenu>(sortFinder);
         expect(sort().options.keys, api.values);
         expect(sort().selected, api.values.first);
+        expect(sort().bare, isTrue);
         expect(
           find.descendant(of: find.byType(AppBar), matching: sortFinder),
           findsNothing,

@@ -12,30 +12,43 @@ import 'package:zephyr/page/comic_list/cubit/plugin_paged_comic_list_cubit.dart'
 import 'package:zephyr/page/comic_list/cubit/plugin_paged_comic_list_state.dart';
 import 'package:zephyr/page/comic_info/models/collect_comic.dart';
 import 'package:zephyr/page/comic_info/models/favorite_workflow.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
+import 'package:zephyr/page/source_shell/models/source_cloud_favorites.dart';
+import 'package:zephyr/page/source_shell/source_experience_preferences.dart';
 import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/service/jm_list_like_counts.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
 import '../test_helper.dart';
 
 const source = 'jm-durable-fixture';
-void account(String uid, {String token = 'fixture-token'}) {
+void account(
+  String uid, {
+  String token = 'fixture-token',
+  String pluginId = source,
+}) {
   onSavePluginConfig(
-    source,
+    pluginId,
     'auth.account',
     jsonEncode('fixture-login-$uid'),
     fromRuntime: false,
   );
   onSavePluginConfig(
-    source,
+    pluginId,
     'auth.userInfo',
     jsonEncode({'uid': uid}),
     fromRuntime: false,
   );
-  onSavePluginConfig(source, 'auth.jwt', jsonEncode(token), fromRuntime: false);
+  onSavePluginConfig(
+    pluginId,
+    'auth.jwt',
+    jsonEncode(token),
+    fromRuntime: false,
+  );
   PluginAccountIdentities.confirm(
-    source,
+    pluginId,
     PluginAccountAuthentication(serverIdentity: uid),
-    generation: pluginSessionWriteFence.generation(source),
+    generation: pluginSessionWriteFence.generation(pluginId),
   );
 }
 
@@ -86,6 +99,332 @@ void main() {
     await JmCollectionSnapshots.instance.flush();
     await JmCollectionMetadata.instance.settle();
   });
+
+  test(
+    'JM numbered collection accepts a terminal page in a partial range',
+    () async {
+      final jm = JmListLikeCounts.source;
+      var lastId = 'last';
+      final collection = PluginPagedComicListCubit(
+        pluginId: jm,
+        fnPath: 'getCloudFavoriteData',
+        coreBuilder: (page) => {'page': page},
+        externBuilder: (_) => const {},
+        requestPage: (_, _, core, _) async {
+          final page = core['page'] as int;
+          return {
+            'source': jm,
+            'data': {
+              'paging': {'page': page, 'pages': 3, 'total': 3},
+              'items': [
+                item(
+                  page == 3 ? lastId : 'page-$page',
+                ).copyWith(source: jm).toJson(),
+              ],
+            },
+          };
+        },
+      );
+      addTearDown(collection.close);
+      await collection.loadInitial();
+      expect(collection.sourcePageCount, 3);
+      expect(await collection.jumpToSourcePage(3), isTrue);
+      expect(collection.state.hasReachedMax, isTrue);
+      expect(collection.state.list.map((row) => row.id), ['last']);
+      lastId = 'new-last';
+      expect(await collection.refresh(), isTrue);
+      expect(collection.state.list.map((row) => row.id), ['new-last']);
+      expect(await collection.jumpToSourcePage(2), isTrue);
+      await collection.loadMore();
+      expect(collection.state.hasReachedMax, isTrue);
+      expect(collection.state.list.map((row) => row.id), [
+        'page-2',
+        'new-last',
+      ]);
+    },
+  );
+
+  for (final (plugin, function) in [
+    (bikaPlusSourceId, 'getFavoriteData'),
+    (source, 'fixture.numberedFavorites'),
+  ]) {
+    test(
+      'numbered favorite jumps use real pages and preserve cache ($function)',
+      () async {
+        const scope = {'source': 'cloudFavorite', 'sort': 'dd'};
+        final cache = JmCollectionSnapshots.instance;
+        account('jump-bika-pages', pluginId: plugin);
+        final issued = <int>[];
+        final pending = Completer<Map<String, dynamic>>();
+        var hold = false;
+        Map<String, dynamic> packet(int page) => {
+          'source': plugin,
+          'data': {
+            'paging': {'page': page, 'pages': 8, 'total': 8},
+            'items': [item('page-$page').copyWith(source: plugin).toJson()],
+          },
+        };
+
+        final cubit = PluginPagedComicListCubit(
+          pluginId: plugin,
+          fnPath: function,
+          privateCollection: true,
+          jmSnapshotCache: true,
+          coreBuilder: (page) => {'page': page},
+          externBuilder: (_) => scope,
+          requestPage: (_, _, core, _) async {
+            final page = core['page'] as int;
+            issued.add(page);
+            return hold ? pending.future : packet(page == 5 ? 4 : page);
+          },
+        );
+        addTearDown(cubit.close);
+        await cubit.loadInitial();
+        await cubit.loadMore();
+        expect(cubit.sourcePageCount, 8);
+        expect(cubit.state.list.map(cubit.reportedPageOf), [1, 2]);
+        expect(await cubit.jumpToSourcePage(2), isTrue);
+        expect(await cubit.jumpToSourcePage(6), isTrue);
+        expect(cubit.numberedRangeStart, 6);
+        expect(cubit.state.list.map(cubit.reportedPageOf), [6]);
+        await cubit.loadMore();
+        expect(cubit.state.list.map(cubit.reportedPageOf), [6, 7]);
+        expect(await cubit.jumpToSourcePage(9), isFalse);
+        expect(await cubit.jumpToSourcePage(5), isFalse);
+        expect(cubit.state.list.map(cubit.reportedPageOf), [6, 7]);
+        expect(await cubit.refresh(), isTrue);
+        expect(issued, [1, 2, 2, 6, 7, 5, 6, 7]);
+
+        await cache.flush();
+        final key = cache.key(plugin, function, const {'page': 1}, scope);
+        expect(cache.read(key, plugin)!.list.map((entry) => entry.id), [
+          'page-1',
+          'page-2',
+        ]);
+        hold = true;
+        final oldJump = cubit.jumpToSourcePage(8);
+        pluginSessionWriteFence.advance(plugin);
+        pending.complete(packet(8));
+        expect(await oldJump, isFalse);
+        expect(cubit.state.list, isEmpty);
+        expect(cubit.sourcePageCount, isNull);
+      },
+    );
+  }
+
+  test(
+    'numbered public catalogs refresh from the chosen source page',
+    () async {
+      final requests = <int>[];
+      final cubit = PluginPagedComicListCubit(
+        pluginId: source,
+        fnPath: 'fixture.numberedCatalog',
+        coreBuilder: (page) => {'page': page},
+        externBuilder: (_) => const {},
+        requestPage: (_, _, core, _) async {
+          final page = core['page'] as int;
+          requests.add(page);
+          return {
+            'source': source,
+            'data': {
+              'paging': {'page': page, 'pages': 5, 'total': 5},
+              'items': [item('public-$page').toJson()],
+            },
+          };
+        },
+      );
+      addTearDown(cubit.close);
+      await cubit.loadInitial();
+      expect(await cubit.jumpToSourcePage(3), isTrue);
+      await cubit.loadMore();
+      expect(await cubit.refresh(), isTrue);
+      expect(requests, [1, 3, 4, 3, 4]);
+      expect(cubit.state.list.map(cubit.reportedPageOf), [3, 4]);
+    },
+  );
+
+  test(
+    'totals, cursor feeds, and inconsistent page counts do not unlock jumps',
+    () async {
+      for (final paging in [
+        {'total': 1000},
+        {'page': 1, 'pages': 4, 'nextCursor': 'cursor-only'},
+        {'page': 1, 'pages': 1, 'hasReachedMax': false},
+      ]) {
+        final requests = <int>[];
+        final cubit = PluginPagedComicListCubit(
+          pluginId: source,
+          fnPath: 'fixture.unsafePaging',
+          coreBuilder: (page) => {'page': page},
+          externBuilder: (_) => const {},
+          requestPage: (_, _, core, _) async {
+            final page = core['page'] as int;
+            requests.add(page);
+            return {
+              'source': source,
+              'data': {
+                'paging': paging,
+                'items': [item('normal-row').toJson()],
+              },
+            };
+          },
+        );
+        try {
+          await cubit.loadInitial();
+          expect(cubit.state.list.single.id, 'normal-row');
+          expect(cubit.sourcePageCount, isNull);
+          expect(cubit.hasVerifiedSourcePages, isFalse);
+          expect(await cubit.jumpToSourcePage(2), isFalse);
+          expect(requests, [1]);
+        } finally {
+          await cubit.close();
+        }
+      }
+    },
+  );
+
+  test(
+    'Bika stores reported boundaries but not locally shifted pages',
+    () async {
+      const plugin = bikaPlusSourceId;
+      const function = 'getFavoriteData';
+      const scope = {'source': 'cloudFavorite', 'sort': 'dd'};
+      final cache = JmCollectionSnapshots.instance;
+      account('reported-bika-pages', pluginId: plugin);
+      final issuedPages = <int>[];
+      PluginPagedComicListCubit open(PluginPageRequest request) =>
+          PluginPagedComicListCubit(
+            pluginId: plugin,
+            fnPath: function,
+            privateCollection: true,
+            jmSnapshotCache: true,
+            coreBuilder: (page) => {'page': page},
+            externBuilder: (_) => scope,
+            requestPage: request,
+          );
+      final original = open((_, _, core, _) async {
+        final page = core['page'] as int;
+        issuedPages.add(page);
+        return {
+          'source': plugin,
+          'data': {
+            'paging': {'page': page, 'pages': 2, 'total': 3},
+            'items': [
+              for (final id in page == 1 ? ['one', 'two'] : ['three'])
+                item(id).copyWith(source: plugin).toJson(),
+            ],
+          },
+        };
+      });
+      await original.loadInitial();
+      await original.loadMore();
+      expect(issuedPages, [1, 2]);
+      expect(original.state.list.map(original.reportedPageOf), [1, 1, 2]);
+      await original.close();
+      await cache.flush();
+      cache.clear();
+
+      final warm = open((_, _, _, _) async => fail('Expected fresh snapshot'));
+      addTearDown(warm.close);
+      await warm.loadInitial();
+      expect(warm.state.list.map(warm.reportedPageOf), [1, 1, 2]);
+      expect(warm.sourcePageCount, 2);
+      final otherSort = cache.key(
+        plugin,
+        function,
+        const {'page': 1},
+        {'source': 'cloudFavorite', 'sort': 'da'},
+      );
+      expect(cache.officialPageCount(otherSort), isNull);
+      await cache.mutate(
+        source: plugin,
+        account: cache.accountScope(plugin)!,
+        generation: pluginSessionWriteFence.generation(plugin),
+        id: 'new',
+        item: item('new').copyWith(source: plugin),
+        favorited: true,
+        previouslyFavorited: false,
+      );
+      expect(warm.state.list.map((row) => row.id), [
+        'new',
+        'one',
+        'two',
+        'three',
+      ]);
+      expect(warm.state.list.map(warm.reportedPageOf), everyElement(isNull));
+      expect(warm.sourcePageCount, isNull);
+      final key = cache.key(plugin, function, const {'page': 1}, scope);
+      expect(cache.pageIdentities(key)[2], isNotEmpty);
+      expect(cache.officialPages(key), isEmpty);
+      await cache.flush();
+      cache.clear();
+      final restoredKey = cache.key(plugin, function, const {'page': 1}, scope);
+      expect(await cache.restore(restoredKey, plugin), isNotNull);
+      expect(cache.pageIdentities(restoredKey)[2], isNotEmpty);
+      expect(cache.officialPages(restoredKey), isEmpty);
+    },
+  );
+
+  test(
+    'legacy favorites expose verified bounds before the tail probe',
+    () async {
+      final cache = JmCollectionSnapshots.instance;
+      const query = {'source': 'cloudFavorite', 'sort': 'dd'};
+      const function = 'getCloudFavoriteData';
+      final generation = pluginSessionWriteFence.generation(source);
+      final key = cache.key(source, function, const {'page': 1}, query);
+      cache.write(
+        key,
+        source,
+        generation,
+        PluginPagedComicListState(
+          status: PluginPagedComicListStatus.success,
+          list: [item('first'), item('second')],
+          page: 2,
+          knownTotal: 3,
+        ),
+        pageIdentities: {
+          1: ['$source:first'],
+          2: ['$source:second'],
+        },
+      );
+      final reachedTail = Completer<void>();
+      final tail = Completer<Map<String, dynamic>>();
+      Map<String, dynamic> packet(int page, String id) => {
+        'source': source,
+        'data': {
+          'paging': {'page': page, 'pages': 3, 'total': 3},
+          'items': [item(id).toJson()],
+        },
+      };
+      final cubit = PluginPagedComicListCubit(
+        pluginId: source,
+        fnPath: function,
+        privateCollection: true,
+        jmSnapshotCache: true,
+        coreBuilder: (page) => {'page': page},
+        externBuilder: (_) => query,
+        requestPage: (_, _, core, _) async {
+          final page = core['page'] as int;
+          if (page == 1) return packet(1, 'first');
+          reachedTail.complete();
+          return tail.future;
+        },
+      );
+      addTearDown(cubit.close);
+      await cubit.loadInitial();
+      expect(cubit.sourcePageCount, isNull);
+      final refresh = cubit.refresh();
+      await reachedTail.future;
+      expect(cubit.sourcePageCount, 3);
+      expect(cubit.firstVerifiedSourcePage, 1);
+      expect(cubit.state.list.map((row) => row.id), ['first', 'second']);
+      tail.complete(packet(2, 'second'));
+      expect(await refresh, isTrue);
+      expect(cache.officialPageCount(key), 3);
+    },
+  );
+
   test(
     'a new verified owner retires an in-flight same-session collection',
     () async {
@@ -907,6 +1246,103 @@ void main() {
     },
   );
 
+  for (final (plugin, function, sortKey, newest, other) in [
+    (JmListLikeCounts.source, 'getCloudFavoriteData', 'order', 'mr', 'mp'),
+    (bikaPlusSourceId, 'getFavoriteData', 'sort', 'dd', 'da'),
+    (
+      copyComicSourceId,
+      'getCloudFavoriteData',
+      'ordering',
+      '-datetime_modifier',
+      'datetime_modifier',
+    ),
+  ]) {
+    test(
+      'the confirmed add reaches the warm newest list ($sortKey=$newest)',
+      () async {
+        account('confirmed-default', pluginId: plugin);
+        final cache = JmCollectionSnapshots.instance;
+        final generation = pluginSessionWriteFence.generation(plugin);
+        const sourceExtern = {'source': 'cloudFavorite'};
+        String key(Map<String, dynamic> extern) =>
+            cache.key(plugin, function, {'page': 1}, extern);
+        final preview = key(sourceExtern);
+        final newestKey = key({...sourceExtern, sortKey: newest});
+        final otherKey = key({...sourceExtern, sortKey: other});
+        final filteredKey = key({
+          ...sourceExtern,
+          sortKey: newest,
+          'tag': 'red',
+        });
+        final first = item('one').copyWith(source: plugin);
+        final pending = item('new').copyWith(source: plugin);
+        final before = PluginPagedComicListState(
+          status: PluginPagedComicListStatus.success,
+          list: [first],
+          knownTotal: 1,
+          hasReachedMax: true,
+        );
+        for (final key in [preview, newestKey, otherKey, filteredKey]) {
+          cache.write(key, plugin, generation, before);
+        }
+        final warm = PluginPagedComicListCubit(
+          pluginId: plugin,
+          fnPath: function,
+          privateCollection: true,
+          jmSnapshotCache: true,
+          coreBuilder: (page) => {'page': page},
+          externBuilder: (_) => {...sourceExtern, sortKey: newest},
+          requestPage: (_, _, _, _) async => fail('Warm read was not needed'),
+        );
+        addTearDown(() async {
+          if (!warm.isClosed) await warm.close();
+        });
+        await warm.loadInitial();
+        await cache.mutate(
+          source: plugin,
+          account: cache.accountScope(plugin)!,
+          generation: generation,
+          id: pending.id,
+          item: pending,
+          favorited: true,
+          previouslyFavorited: false,
+        );
+        expect(cache.read(preview, plugin)!.list.map((row) => row.id), [
+          'new',
+          'one',
+        ]);
+        expect(warm.state.list.map((row) => row.id), ['new', 'one']);
+        expect(warm.state.knownTotal, 2);
+        expect(cache.read(otherKey, plugin)!.list.map((row) => row.id), [
+          'one',
+        ]);
+        expect(cache.read(filteredKey, plugin)!.list.map((row) => row.id), [
+          'one',
+        ]);
+        expect(cache.read(filteredKey, plugin)!.knownTotal, isNull);
+        expect(cache.requiresRebuild(otherKey), isTrue);
+
+        await warm.close();
+        cache.clear();
+        final unmounted = item('unmounted').copyWith(source: plugin);
+        await cache.mutate(
+          source: plugin,
+          account: cache.accountScope(plugin)!,
+          generation: generation,
+          id: unmounted.id,
+          item: unmounted,
+          favorited: true,
+          previouslyFavorited: false,
+        );
+        expect(cache.read(newestKey, plugin)!.list.map((row) => row.id), [
+          'unmounted',
+          'new',
+          'one',
+        ]);
+      },
+    );
+  }
+
   test(
     'unknown remote conditions never inherit the global favorite count delta',
     () async {
@@ -1155,6 +1591,60 @@ void main() {
       expect(cache.read(key, source)!.list.single.id, 'one');
       expect(cache.read(key, source)!.knownTotal, isNull);
       expect(cache.requiresRebuild(key), isTrue);
+    },
+  );
+
+  test(
+    'first Copy profile preview checks the persisted equivalent default list',
+    () async {
+      const plugin = copyComicSourceId;
+      account('same-copy-account', pluginId: plugin);
+      final cache = JmCollectionSnapshots.instance;
+      final generation = pluginSessionWriteFence.generation(plugin);
+      final listKey = cache.key(
+        plugin,
+        'getCloudFavoriteData',
+        {'page': 1},
+        {'source': 'cloudFavorite', 'ordering': '-datetime_modifier'},
+      );
+      final previous = item('previous').copyWith(source: plugin);
+      final newest = item('newest').copyWith(source: plugin);
+      cache.write(
+        listKey,
+        plugin,
+        generation,
+        PluginPagedComicListState(
+          status: PluginPagedComicListStatus.success,
+          list: [previous],
+          knownTotal: 1,
+          hasReachedMax: true,
+        ),
+      );
+      await cache.flush();
+      cache.clear();
+      final query = SourceCloudFavoriteQuery(
+        plugin,
+        functionPath: 'getCloudFavoriteData',
+      );
+      expect(query.key, isNot(listKey));
+      expect(query.equivalentListKey, listKey);
+      final revision = cache.revision(plugin);
+      final observed = await cache.observePreview(
+        key: query.key,
+        equivalentListKey: query.equivalentListKey,
+        source: plugin,
+        generation: generation,
+        expectedRevision: revision,
+        items: [newest, previous],
+        total: 2,
+        headRead: cache.beginHeadRead(query.key),
+      );
+      expect(observed?.list.map((row) => row.id), ['newest', 'previous']);
+      expect(cache.revision(plugin), revision + 1);
+      expect(cache.requiresRebuild(listKey), isTrue);
+      expect(cache.read(listKey, plugin)!.list.map((row) => row.id), [
+        'previous',
+      ]);
     },
   );
 

@@ -6,11 +6,13 @@ import 'package:zephyr/page/video/video_community_page.dart';
 import 'package:zephyr/page/video/video_site_action_models.dart';
 import 'package:zephyr/page/video/video_site_operations.dart';
 import 'package:zephyr/page/video/video_public_metadata.dart';
+import 'package:zephyr/page/video/video_vote_tally_updates.dart';
 import 'package:zephyr/page/video/video_detail_action.dart';
 import 'package:zephyr/page/video/video_local_favorite_action.dart';
 
 /// One interaction state for the detail, fullscreen controls and quick panel.
-/// Unknown values remain unknown; only a confirmed result changes selection.
+/// Unknown totals remain unknown. A site-accepted vote can render while the
+/// same operation reads back the persisted selection and public tally.
 class VideoEngagementController extends ChangeNotifier {
   VideoEngagementController({required this.operations, required this.onLogin});
   final VideoSiteOperations operations;
@@ -21,10 +23,15 @@ class VideoEngagementController extends ChangeNotifier {
   String? error;
   bool? favorite;
   bool busy = false, held = false;
-  VideoSiteAction? pendingVote;
+  bool _voting = false;
   bool _disposed = false;
+  bool _voteNeedsRefresh = false;
+  VideoInteractionState? _observed;
   Object? _intent;
+  Timer? _tallyReadback;
+  bool _readingTally = false;
   bool get working => busy || held || _intent != null;
+  bool get _showProgress => busy && !_voting;
 
   void _changed() {
     if (!_disposed) notifyListeners();
@@ -48,39 +55,53 @@ class VideoEngagementController extends ChangeNotifier {
     if (state.actor == VideoSiteActor.unknown) {
       return t.videoCommunity.stateUnknown;
     }
-    if ([VideoSiteAction.like, VideoSiteAction.follow].any(
-      (action) => state.capability(action) != VideoActionCapability.ready,
-    )) {
+    if (state.capability(VideoSiteAction.follow) !=
+        VideoActionCapability.ready) {
       return t.videoCommunity.actionsUnreadable;
     }
     return null;
   }
 
-  Future<void> load({
+  Future<VideoSiteStatus?> load({
     bool refresh = false,
     VideoSiteResult<VideoInteractionState>? initial,
+    bool quiet = false,
   }) async {
-    if (busy || held || _disposed) return;
+    if (busy || held || _disposed) return null;
     busy = true;
-    error = null;
+    if (!quiet) error = null;
     _changed();
+    final previous = VideoVoteTallyUpdates.snapshot(operations.page);
+    if (_readingTally) await operations.cancelRead();
+    if (_disposed) return null;
     final result =
         initial ?? await operations.readInteraction(refresh: refresh);
-    if (_disposed) return;
-    status = result.status;
+    if (_disposed) return null;
+    if (!quiet) status = result.status;
     if (result.value case final value?) {
-      state = value;
+      _observed = value;
+      final next = VideoVoteTallyUpdates.reconcile(
+        operations.page,
+        value,
+        previous,
+      );
+      state = quiet
+          ? next.copyWith(
+              liked: next.liked ?? state.liked,
+              disliked: next.disliked ?? state.disliked,
+              positiveVotes: next.positiveVotes ?? state.positiveVotes,
+              negativeVotes: next.negativeVotes ?? state.negativeVotes,
+              totalVotes: next.totalVotes ?? state.totalVotes,
+            )
+          : next;
       if (refresh &&
-          ((unconfirmedAction == VideoSiteAction.like && value.liked != null) ||
-              (unconfirmedAction == VideoSiteAction.dislike &&
-                  value.disliked != null) ||
-              (unconfirmedAction == VideoSiteAction.follow &&
-                  value.following != null))) {
+          unconfirmedAction == VideoSiteAction.follow &&
+          value.following != null) {
         unconfirmedAction = null;
       }
       if (refresh && unconfirmedAction == VideoSiteAction.watchLater) {
         final checked = await operations.readWatchLater();
-        if (_disposed) return;
+        if (_disposed) return null;
         if (checked.status == VideoSiteStatus.ok &&
             checked.value?.watchLater != null) {
           state = state.copyWith(watchLater: checked.value!.watchLater);
@@ -89,53 +110,176 @@ class VideoEngagementController extends ChangeNotifier {
           status = checked.status;
         }
       }
-      error = _stateMessage;
-    } else {
+      if (!quiet) error = _stateMessage;
+    } else if (!quiet) {
       error = videoOperationMessage(result.status.name);
     }
     busy = false;
     _changed();
+    return result.status;
   }
 
-  Future<bool> _ensureReady(VideoSiteAction action) async {
+  Future<bool> _ensureReady(
+    VideoSiteAction action, {
+    required bool voting,
+  }) async {
     if (busy || held || unconfirmedAction != null || _disposed) return false;
     var capability = state.capability(action);
     if (capability == VideoActionCapability.login) {
-      onLogin();
+      if (!voting) onLogin();
       return false;
     }
-    if (capability != VideoActionCapability.ready) {
-      await load(refresh: true);
-      if (_disposed) return false;
+    final recheckVote = voting && _voteNeedsRefresh;
+    if (capability != VideoActionCapability.ready || recheckVote) {
+      final refreshed = await load(refresh: true, quiet: voting);
+      if (_disposed || (voting && refreshed != VideoSiteStatus.ok))
+        return false;
       capability = state.capability(action);
       if (capability == VideoActionCapability.login) {
-        onLogin();
+        if (!voting) onLogin();
         return false;
+      }
+      if (recheckVote) {
+        final selected = action == VideoSiteAction.like
+            ? _observed?.liked
+            : _observed?.disliked;
+        if (selected == null) return false;
+        _voteNeedsRefresh = false;
       }
     }
     if (capability != VideoActionCapability.ready) {
-      error ??= t.videoCommunity.actionsUnreadable;
-      _changed();
+      if (!voting) {
+        error ??= t.videoCommunity.actionsUnreadable;
+        _changed();
+      }
       return false;
     }
     return true;
   }
 
-  Future<void> set(VideoSiteAction action, bool enabled) async {
+  Future<void> set(
+    VideoSiteAction action,
+    bool enabled, {
+    VideoPublicMetadata? displayedMetadata,
+  }) async {
     if (working || _disposed) return;
     final token = Object();
     _intent = token;
+    final voting =
+        action == VideoSiteAction.like || action == VideoSiteAction.dislike;
+    _voting = voting;
+    final displayed = state.copyWith(
+      positiveVotes: state.positiveVotes ?? displayedMetadata?.positiveVotes,
+      negativeVotes: state.negativeVotes ?? displayedMetadata?.negativeVotes,
+      totalVotes: state.totalVotes ?? displayedMetadata?.totalVotes,
+    );
+    final rechecking = voting && _voteNeedsRefresh;
+    if (voting) {
+      _tallyReadback?.cancel();
+    }
     try {
-      if (!await _ensureReady(action) || _disposed) return;
-      busy = true;
-      if (action == VideoSiteAction.like || action == VideoSiteAction.dislike) {
-        pendingVote = action;
+      if (_readingTally) await operations.cancelRead();
+      if (!await _ensureReady(action, voting: voting) || _disposed) return;
+      final before = voting
+          ? state.copyWith(
+              positiveVotes: displayed.positiveVotes ?? state.positiveVotes,
+              negativeVotes: displayed.negativeVotes ?? state.negativeVotes,
+              totalVotes: displayed.totalVotes ?? state.totalVotes,
+            )
+          : state;
+      final previousTally = VideoVoteTallyUpdates.snapshot(operations.page);
+      final observedBefore = _observed ?? state;
+      if (rechecking &&
+          (action == VideoSiteAction.like ? before.liked : before.disliked) ==
+              enabled) {
+        return;
       }
-      error = null;
+      var previewed = false;
+      busy = true;
+      if (!voting) error = null;
       _changed();
+      VideoInteractionState reconcileProjection(VideoInteractionState value) {
+        int delta(bool? previous, bool? current) =>
+            previous == null || current == null || previous == current
+            ? 0
+            : current
+            ? 1
+            : -1;
+        var projected = value.voteCountEstimated;
+        int? count(int? shown, int? read, int? observed, int change) {
+          final cameFromOlderCount =
+              value.voteCountEstimated &&
+              observed != null &&
+              read == observed + change;
+          if (shown != null &&
+              change != 0 &&
+              (read == null || read == shown || cameFromOlderCount)) {
+            final adjusted = shown + change;
+            if (adjusted >= 0 && adjusted <= 9007199254740991) {
+              projected = true;
+              return adjusted;
+            }
+          }
+          return read ?? shown;
+        }
+
+        // Read back each affected count independently. Some pages confirm
+        // the like without exposing the account's dislike field.
+        final positive = count(
+          before.positiveVotes,
+          value.positiveVotes,
+          observedBefore.positiveVotes,
+          delta(before.liked, value.liked),
+        );
+        final negative = count(
+          before.negativeVotes,
+          value.negativeVotes,
+          observedBefore.negativeVotes,
+          delta(before.disliked, value.disliked),
+        );
+        final total = positive == null || negative == null
+            ? null
+            : positive + negative;
+        return value.copyWith(
+          positiveVotes: positive,
+          negativeVotes: negative,
+          totalVotes: total != null && total <= 9007199254740991
+              ? total
+              : value.totalVotes ?? before.totalVotes,
+          ratingPercentRaw: projected ? null : value.ratingPercentRaw,
+          voteCountEstimated: projected,
+        );
+      }
+
+      void previewVote(VideoInteractionState value) {
+        if (_disposed || !identical(_intent, token)) return;
+        final accepted = reconcileProjection(value);
+        state = before.copyWith(
+          liked: accepted.liked,
+          disliked: accepted.disliked,
+          positiveVotes: accepted.positiveVotes ?? before.positiveVotes,
+          negativeVotes: accepted.negativeVotes ?? before.negativeVotes,
+          totalVotes: accepted.totalVotes ?? before.totalVotes,
+          ratingPercentRaw: accepted.ratingPercentRaw,
+          voteCountEstimated: accepted.voteCountEstimated,
+        );
+        previewed = VideoVoteTallyUpdates.observe(
+          operations.page,
+          state,
+          baseline: before,
+        );
+        _changed();
+      }
+
       final result = switch (action) {
-        VideoSiteAction.like => await operations.setLiked(enabled),
-        VideoSiteAction.dislike => await operations.setDisliked(enabled),
+        VideoSiteAction.like => await operations.setLiked(
+          enabled,
+          onAccepted: previewVote,
+        ),
+        VideoSiteAction.dislike => await operations.setDisliked(
+          enabled,
+          onAccepted: previewVote,
+        ),
         VideoSiteAction.follow => await operations.setFollowing(enabled),
         VideoSiteAction.watchLater => await operations.setWatchLater(enabled),
         _ => (
@@ -144,12 +288,43 @@ class VideoEngagementController extends ChangeNotifier {
           writeUnconfirmed: false,
         ),
       };
+      final value = result.status == VideoSiteStatus.ok ? result.value : null;
+      final next = value == null
+          ? null
+          : voting
+          ? reconcileProjection(value)
+          : VideoVoteTallyUpdates.reconcile(
+              operations.page,
+              value,
+              previousTally,
+            );
+      if (voting && next != null) {
+        VideoVoteTallyUpdates.observe(operations.page, next, baseline: before);
+      } else if (previewed) {
+        if (previousTally != null ||
+            !VideoVoteTallyUpdates.observe(operations.page, before)) {
+          VideoVoteTallyUpdates.restore(operations.page, previousTally);
+        }
+      }
       if (_disposed) return;
-      status = result.status;
-      if (result.value case final value?
-          when result.status == VideoSiteStatus.ok) {
-        state = value;
-        error = _stateMessage;
+      if (!voting) status = result.status;
+      if (next != null) {
+        _observed = value;
+        state = next;
+        if (voting && next.voteCountEstimated) {
+          final receipt = VideoVoteTallyUpdates.snapshot(operations.page);
+          _tallyReadback = Timer(
+            const Duration(seconds: 2),
+            () => unawaited(_refreshVoteTally(receipt)),
+          );
+        }
+        if (!voting) error = _stateMessage;
+      } else if (voting) {
+        state = before;
+        _voteNeedsRefresh =
+            result.writeUnconfirmed ||
+            result.status == VideoSiteStatus.unconfirmed ||
+            result.status == VideoSiteStatus.login;
       } else {
         if (result.writeUnconfirmed) unconfirmedAction = action;
         error = videoOperationMessage(result.status.name);
@@ -158,15 +333,41 @@ class VideoEngagementController extends ChangeNotifier {
       if (!_disposed && identical(_intent, token)) {
         _intent = null;
         busy = false;
-        pendingVote = null;
+        _voting = false;
         _changed();
       }
+    }
+  }
+
+  Future<void> _refreshVoteTally(VideoVoteTallyUpdate? receipt) async {
+    final page = operations.page;
+    bool ownsReceipt() =>
+        !_disposed &&
+        !working &&
+        identical(receipt, VideoVoteTallyUpdates.snapshot(page));
+    if (!ownsReceipt()) return;
+    _readingTally = true;
+    try {
+      final result = await operations.readInteraction(refresh: true);
+      if (!ownsReceipt() || result.status != VideoSiteStatus.ok) return;
+      final value = result.value;
+      if (value == null ||
+          value.liked != state.liked ||
+          value.disliked != state.disliked) {
+        return;
+      }
+      _observed = value;
+      state = VideoVoteTallyUpdates.reconcile(page, value, receipt);
+      _changed();
+    } finally {
+      _readingTally = false;
     }
   }
 
   @override
   void dispose() {
     _disposed = true;
+    _tallyReadback?.cancel();
     super.dispose();
   }
 }
@@ -219,7 +420,7 @@ class VideoFollowButton extends StatelessWidget {
             : () => controller.set(VideoSiteAction.follow, !following),
         icon: SizedBox.square(
           dimension: 18,
-          child: controller.busy
+          child: controller._showProgress
               ? const CircularProgressIndicator(strokeWidth: 2)
               : Icon(
                   following ? Icons.check_rounded : Icons.add_rounded,
@@ -262,22 +463,18 @@ class VideoEngagement extends StatelessWidget {
       final disliked = controller.state.disliked == true;
       final favorited = controller.favorite == true;
       final voteBlocked =
-          controller.working || controller.unconfirmedAction != null;
+          (controller.working && !controller._voting) ||
+          controller.unconfirmedAction != null;
       final labels = [
         t.videoCommunity.favorite,
         if (onDownload != null) t.videoDownload.title,
         t.videoCommunity.share,
       ];
-      final positive =
-          (controller.state.positiveVotes ?? publicMetadata.positiveVotes)
-              ?.toString();
-      final negative =
-          (controller.state.negativeVotes ?? publicMetadata.negativeVotes)
-              ?.toString();
-      final likeLabel = liked ? t.videoCommunity.liked : t.videoCommunity.like;
-      final dislikeLabel = disliked
-          ? t.videoCommunity.disliked
-          : t.videoCommunity.dislike;
+      final state = controller.state;
+      final positive = (state.positiveVotes ?? publicMetadata.positiveVotes)
+          ?.toString();
+      final negative = (state.negativeVotes ?? publicMetadata.negativeVotes)
+          ?.toString();
       final actions = <Widget>[
         DecoratedBox(
           key: const ValueKey('video-vote-actions'),
@@ -297,11 +494,14 @@ class VideoEngagement extends StatelessWidget {
                   caption: positive,
                   selected: liked,
                   icon: liked ? Icons.thumb_up : Icons.thumb_up_outlined,
-                  text: likeLabel,
-                  busy: controller.pendingVote == VideoSiteAction.like,
+                  text: t.videoCommunity.like,
                   onTap: voteBlocked
                       ? null
-                      : () => controller.set(VideoSiteAction.like, !liked),
+                      : () => controller.set(
+                          VideoSiteAction.like,
+                          !liked,
+                          displayedMetadata: publicMetadata,
+                        ),
                 ),
               ),
               Expanded(
@@ -311,12 +511,14 @@ class VideoEngagement extends StatelessWidget {
                   caption: negative,
                   selected: disliked,
                   icon: disliked ? Icons.thumb_down : Icons.thumb_down_outlined,
-                  text: dislikeLabel,
-                  busy: controller.pendingVote == VideoSiteAction.dislike,
+                  text: t.videoCommunity.dislike,
                   onTap: voteBlocked
                       ? null
-                      : () =>
-                            controller.set(VideoSiteAction.dislike, !disliked),
+                      : () => controller.set(
+                          VideoSiteAction.dislike,
+                          !disliked,
+                          displayedMetadata: publicMetadata,
+                        ),
                 ),
               ),
             ],
@@ -452,7 +654,6 @@ class VideoEngagement extends StatelessWidget {
     required bool selected,
     String? caption,
     bool mirrored = false,
-    bool busy = false,
     VoidCallback? onTap,
   }) => VideoDetailAction(
     buttonKey: ValueKey(key),
@@ -462,7 +663,6 @@ class VideoEngagement extends StatelessWidget {
     selected: selected,
     icon: icon,
     mirrored: mirrored,
-    busy: busy,
     onPressed: onTap,
   );
 }
@@ -496,8 +696,10 @@ class VideoVoteSummary extends StatelessWidget {
             state!.negativeVotes != null &&
                 metadata.negativeVotes != null &&
                 state!.negativeVotes != metadata.negativeVotes);
+    final estimated = state?.voteCountEstimated ?? false;
     final items = <String>[
-      if (state?.ratingPercentRaw ?? (changed ? null : metadata.ratingLabel)
+      if (state?.ratingPercentRaw ??
+              (changed || estimated ? null : metadata.ratingLabel)
           case final rating?)
         t.videoMetadata.rating(value: rating),
       if (total != null) t.videoMetadata.totalVotes(count: total),
@@ -540,7 +742,8 @@ class VideoEngagementStatus extends StatelessWidget {
     builder: (_, _) => Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (controller.busy) const LinearProgressIndicator(minHeight: 2),
+        if (controller._showProgress)
+          const LinearProgressIndicator(minHeight: 2),
         if (controller.error case final error?) ...[
           const SizedBox(height: 8),
           Semantics(
@@ -557,7 +760,7 @@ class VideoEngagementStatus extends StatelessWidget {
                 child: Text(t.common.retry),
               ),
               if (controller.status == VideoSiteStatus.login ||
-                  controller.state.actor == VideoSiteActor.signedOut)
+                  error == t.videoCommunity.loginRequired)
                 TextButton(
                   onPressed: controller.working ? null : controller.onLogin,
                   child: Text(t.videoCommunity.login),

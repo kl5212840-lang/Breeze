@@ -1,13 +1,17 @@
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/bookshelf/cubit/bookshelf_search_cubit.dart';
 import 'package:zephyr/page/bookshelf/models/shelf_page_mode.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_scope_controls.dart';
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/plugin/plugin_display_name.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_control_colors.dart';
+import 'package:zephyr/widgets/breeze_theme_colors.dart';
 
 import '../test_helper.dart';
 
@@ -133,6 +137,90 @@ void main() {
     }
   }
 
+  testWidgets('selected source animates mouse and keyboard feedback in place', (
+    tester,
+  ) async {
+    final appearance = ValueNotifier('breeze');
+    final reduceMotion = ValueNotifier(false);
+    addTearDown(appearance.dispose);
+    addTearDown(reduceMotion.dispose);
+    await tester.pumpWidget(
+      AppInterfaceStyleScope(
+        style: appearance,
+        child: MaterialApp(
+          builder: (context, child) => ValueListenableBuilder(
+            valueListenable: reduceMotion,
+            builder: (context, reduced, _) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(disableAnimations: reduced),
+              child: child!,
+            ),
+          ),
+          home: Scaffold(
+            body: BookshelfSourceNavigation(
+              sources: const {'a': 'Fixture source'},
+              selected: const [],
+              classicChips: true,
+              scrollSafeChips: true,
+              showManage: false,
+              onChanged: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    final all = find.byKey(const ValueKey('bookshelf.source.'));
+    final rect = tester.getRect(all);
+    final effect = find.descendant(
+      of: all,
+      matching: find.byType(TweenAnimationBuilder<double>),
+    );
+    final paint = find.descendant(
+      of: effect,
+      matching: find.byType(CustomPaint),
+    );
+    List<Rect> paths() {
+      final paths = <Rect>[];
+      expect(
+        tester.renderObject(paint),
+        paints..everything((name, args) {
+          if (name == #drawPath) paths.add((args.first as Path).getBounds());
+          return true;
+        }),
+      );
+      return paths;
+    }
+
+    expect(paths(), isEmpty);
+    expect(
+      tester.widget<TweenAnimationBuilder<double>>(effect).duration,
+      const Duration(milliseconds: 200),
+    );
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: rect.bottomRight + const Offset(2, 2));
+    await mouse.moveTo(rect.center);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 80));
+    final moving = paths();
+    expect(moving, hasLength(5));
+    await tester.pumpAndSettle();
+    expect(paths(), hasLength(5));
+    expect(tester.getRect(all), rect);
+    await mouse.removePointer();
+    await tester.pumpAndSettle();
+    expect(paths(), isEmpty);
+
+    reduceMotion.value = true;
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+    await tester.pump();
+    expect(
+      tester.widget<TweenAnimationBuilder<double>>(effect).duration,
+      Duration.zero,
+    );
+    expect(paths(), hasLength(5));
+    expect(tester.getRect(all), rect);
+  });
+
   for (final direction in TextDirection.values) {
     testWidgets(
       'classic Breeze selection follows actual buttons in $direction',
@@ -200,15 +288,16 @@ void main() {
         List<Rect> paintedPlates() {
           final bounds = <Rect>[];
           final origin = tester.getTopLeft(track);
-          final fill = BreezeControlColors.sectionSelection(
-            Theme.of(tester.element(track)),
-            highContrast: true,
-          ).fill;
+          final backdrop = Theme.of(
+            tester.element(track),
+          ).scaffoldBackgroundColor;
           expect(
             tester.renderObject(track),
             paints..everything((name, arguments) {
-              if (name == #drawRRect &&
-                  (arguments[1] as Paint).color.toARGB32() == fill.toARGB32()) {
+              if (name != #drawRRect) return true;
+              final fill = (arguments[1] as Paint).color;
+              if (fill.a == 1 &&
+                  BreezeThemeColors.contrast(fill, backdrop) >= 3.05) {
                 bounds.add((arguments[0] as RRect).outerRect.shift(origin));
               }
               return true;
@@ -376,6 +465,141 @@ void main() {
         expect(tester.takeException(), isNull);
       },
     );
+  }
+
+  for (final style in ['system', 'breeze']) {
+    for (final brightness in Brightness.values) {
+      for (final highContrast in [false, true]) {
+        testWidgets(
+          'scroll-safe $style $brightness source selection, high contrast $highContrast',
+          (tester) async {
+            final appearance = ValueNotifier(style);
+            final selected = ValueNotifier<List<String>>([]);
+            addTearDown(appearance.dispose);
+            addTearDown(selected.dispose);
+            final colors = BreezeThemeColors.fromSeed(Colors.pink, brightness);
+            final backdrop = brightness == Brightness.light
+                ? const Color(0xfffdf3f4)
+                : colors.surface;
+            var manageCalls = 0;
+            await tester.pumpWidget(
+              AppInterfaceStyleScope(
+                style: appearance,
+                child: MaterialApp(
+                  theme: ThemeData(
+                    colorScheme: colors,
+                    scaffoldBackgroundColor: backdrop,
+                  ),
+                  builder: (context, child) => MediaQuery(
+                    data: MediaQuery.of(context).copyWith(
+                      highContrast: highContrast,
+                      textScaler: const TextScaler.linear(1.5),
+                    ),
+                    child: child!,
+                  ),
+                  home: Scaffold(
+                    body: ValueListenableBuilder(
+                      valueListenable: selected,
+                      builder: (context, value, _) => BookshelfSourceNavigation(
+                        sources: const {'a': 'Fixture source'},
+                        classicChips: true,
+                        scrollSafeChips: true,
+                        selected: value,
+                        onChanged: (value) => selected.value = value,
+                        onManage: () => manageCalls++,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+            final source = find.byKey(const ValueKey('bookshelf.source.a'));
+            final label = find.text('Fixture source');
+            final manage = find.byKey(
+              const ValueKey('bookshelf.sources.manage'),
+            );
+            final track = find.byKey(
+              const ValueKey('bookshelf.sources.selection-track'),
+            );
+            final originalSource = tester.getRect(source);
+            final originalManage = tester.getRect(manage);
+            double baseline() {
+              final paragraph = tester.renderObject<RenderParagraph>(label);
+              final painter = TextPainter(
+                text: paragraph.text,
+                textScaler: paragraph.textScaler,
+                textDirection: paragraph.textDirection,
+                maxLines: 1,
+              )..layout(maxWidth: paragraph.size.width);
+              final value =
+                  tester.getTopLeft(label).dy +
+                  painter.computeDistanceToActualBaseline(
+                    TextBaseline.alphabetic,
+                  );
+              painter.dispose();
+              return value;
+            }
+
+            final originalBaseline = baseline();
+            expect(
+              tester.widget<Text>(label).style!.fontWeight,
+              FontWeight.w500,
+            );
+            expect(tester.widget<SourceChromeIconButton>(manage).bare, isTrue);
+            expect(originalManage.width, greaterThanOrEqualTo(44));
+            expect(originalManage.height, greaterThanOrEqualTo(44));
+            await tester.tap(source);
+            await tester.pumpAndSettle();
+            expect(selected.value, ['a']);
+            expect(
+              tester.widget<Text>(label).style!.fontWeight,
+              FontWeight.w600,
+            );
+            expect(tester.getRect(source), originalSource);
+            expect(tester.getRect(manage), originalManage);
+            expect(baseline(), closeTo(originalBaseline, .1));
+            Color? fill;
+            var decorativePaths = 0;
+            expect(
+              tester.renderObject(track),
+              paints..everything((name, arguments) {
+                if (name == #drawRRect && fill == null) {
+                  fill = (arguments[1] as Paint).color;
+                }
+                if (name == #drawPath) {
+                  final paint = arguments[1] as Paint;
+                  if (paint.maskFilter != null ||
+                      paint.style == PaintingStyle.stroke) {
+                    decorativePaths++;
+                  }
+                }
+                return true;
+              }),
+            );
+            if (style == 'system' && !highContrast) {
+              expect(decorativePaths, greaterThan(0));
+            }
+            final plateContrast = BreezeThemeColors.contrast(fill!, backdrop);
+            expect(
+              plateContrast,
+              greaterThanOrEqualTo(highContrast ? 3.05 : 1.03),
+            );
+            if (!highContrast && brightness == Brightness.light) {
+              expect(plateContrast, lessThan(1.13));
+            }
+            expect(
+              BreezeThemeColors.contrast(
+                tester.widget<Text>(label).style!.color!,
+                fill!,
+              ),
+              greaterThanOrEqualTo(4.5),
+            );
+            await tester.tap(manage);
+            expect(manageCalls, 1);
+          },
+        );
+      }
+    }
   }
 
   testWidgets(
@@ -546,6 +770,74 @@ void main() {
       } else {
         expect(classicManage.left, standardManage.left);
       }
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final platform in [TargetPlatform.iOS, TargetPlatform.android]) {
+    testWidgets('scroll-safe sources and management share the $platform axis', (
+      tester,
+    ) async {
+      final extent = platform == TargetPlatform.android ? 48.0 : 44.0;
+      var managed = false;
+      List<String>? selected;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(
+            platform: platform,
+            visualDensity: VisualDensity.compact,
+          ),
+          home: Scaffold(
+            body: SizedBox(
+              width: 240,
+              child: BookshelfSourceNavigation(
+                classicChips: true,
+                scrollSafeChips: true,
+                sources: const {
+                  'a': 'bkcomic+',
+                  'b': 'Another very long source',
+                  'c': 'Last source',
+                },
+                selected: const [],
+                onChanged: (value) => selected = value,
+                onManage: () => managed = true,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      final all = find.byKey(const ValueKey('bookshelf.source.'));
+      final tag = find.byKey(const ValueKey('bookshelf.sources.manage'));
+      final rail = find.byKey(const ValueKey('bookshelf.sources.scroll'));
+      final tagFrame = tester.getRect(tag);
+      expect(tester.getSize(all).height, extent);
+      expect(tester.getSize(all).width, greaterThanOrEqualTo(extent));
+      expect(tagFrame.size, Size.square(extent));
+      expect(tester.getCenter(all).dy, tagFrame.center.dy);
+
+      final last = find.byKey(const ValueKey('bookshelf.source.c'));
+      final position = tester
+          .state<ScrollableState>(
+            find.descendant(of: rail, matching: find.byType(Scrollable)),
+          )
+          .position;
+      expect(last.hitTestable(), findsNothing);
+      final viewport = tester.getRect(rail);
+      while (last.hitTestable().evaluate().isEmpty) {
+        final before = position.pixels;
+        await tester.dragFrom(
+          Offset(viewport.right - 8, viewport.center.dy),
+          Offset(16 - viewport.width, 0),
+        );
+        await tester.pumpAndSettle();
+        expect(position.pixels, greaterThan(before));
+        expect(tester.getRect(tag), tagFrame);
+      }
+      await tester.tap(last);
+      expect(selected, ['c']);
+      await tester.tap(tag);
+      expect(managed, isTrue);
       expect(tester.takeException(), isNull);
     });
   }

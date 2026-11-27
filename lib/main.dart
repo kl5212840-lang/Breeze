@@ -1,6 +1,7 @@
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_control_colors.dart';
 import 'package:zephyr/widgets/breeze_theme_colors.dart';
+import 'package:zephyr/widgets/breeze_overlay_theme.dart';
 import 'package:zephyr/widgets/system_accent_availability.dart';
 import 'package:zephyr/widgets/touch_hover_intent.dart';
 import 'package:zephyr/widgets/native_view_occlusion.dart';
@@ -227,7 +228,7 @@ Future<void> main(List<String> args) async {
       // 2. 执行业务初始化
       final (globalSettingCubit, pluginRegistryCubit) = await _initServices();
 
-      final comicFollowCubit = ComicFollowCubit();
+      final comicFollowCubit = await ComicFollowCubit.open();
       final comicReadPreferenceCubit = ComicReadPreferenceCubit();
 
       runApp(
@@ -285,7 +286,7 @@ Future<void> main(List<String> args) async {
     appRunner: () async {
       try {
         final (globalSettingCubit, pluginRegistryCubit) = await _initServices();
-        final comicFollowCubit = ComicFollowCubit();
+        final comicFollowCubit = await ComicFollowCubit.open();
         final comicReadPreferenceCubit = ComicReadPreferenceCubit();
 
         await addArchitectureTagsToSentry();
@@ -1050,56 +1051,58 @@ class _MyAppState extends State<MyApp>
                 themeMode: globalSettingState.themeMode,
                 supportedLocales: AppLocaleUtils.supportedLocales,
                 localizationsDelegates: GlobalMaterialLocalizations.delegates,
-                theme: ThemeData.light().copyWith(
-                  pageTransitionsTheme:
-                      globalSettingState.eInkSetting.shouldRemoveRouteTransition
-                      ? einkPageTransitionsTheme
-                      : null,
-                  // 墨水屏：水波纹是一圈纯装饰动画，在 EPD 上只会糊成残影。
-                  // 传 null 走 copyWith 的保留语义，非墨水屏时不改默认 SplashFactory。
-                  splashFactory: globalSettingState.eInkSetting.enabled
-                      ? NoSplash.splashFactory
-                      : null,
-                  primaryColor: lightColorScheme.primary,
-                  colorScheme: lightColorScheme,
-                  scaffoldBackgroundColor: lightColorScheme.surface,
-                  cardColor: lightColorScheme.surfaceContainerLow,
-                  chipTheme: ChipThemeData(
-                    backgroundColor: lightColorScheme.surface,
-                  ),
-                  canvasColor: lightColorScheme.surfaceContainer,
-                  dialogTheme: DialogThemeData(
-                    backgroundColor: lightColorScheme.surfaceBright,
-                  ),
-                  textTheme: withConfiguredFonts(ThemeData.light().textTheme),
-                  primaryTextTheme: withConfiguredFonts(
-                    ThemeData.light().primaryTextTheme,
+                theme: BreezeOverlayTheme.apply(
+                  ThemeData.light().copyWith(
+                    pageTransitionsTheme:
+                        globalSettingState
+                            .eInkSetting
+                            .shouldRemoveRouteTransition
+                        ? einkPageTransitionsTheme
+                        : null,
+                    // 墨水屏：水波纹是一圈纯装饰动画，在 EPD 上只会糊成残影。
+                    // 传 null 走 copyWith 的保留语义，非墨水屏时不改默认 SplashFactory。
+                    splashFactory: globalSettingState.eInkSetting.enabled
+                        ? NoSplash.splashFactory
+                        : null,
+                    primaryColor: lightColorScheme.primary,
+                    colorScheme: lightColorScheme,
+                    scaffoldBackgroundColor: lightColorScheme.surface,
+                    cardColor: lightColorScheme.surfaceContainerLow,
+                    chipTheme: ChipThemeData(
+                      backgroundColor: lightColorScheme.surface,
+                    ),
+                    canvasColor: lightColorScheme.surfaceContainer,
+                    textTheme: withConfiguredFonts(ThemeData.light().textTheme),
+                    primaryTextTheme: withConfiguredFonts(
+                      ThemeData.light().primaryTextTheme,
+                    ),
                   ),
                 ),
-                darkTheme: ThemeData.dark().copyWith(
-                  pageTransitionsTheme:
-                      globalSettingState.eInkSetting.shouldRemoveRouteTransition
-                      ? einkPageTransitionsTheme
-                      : null,
-                  splashFactory: globalSettingState.eInkSetting.enabled
-                      ? NoSplash.splashFactory
-                      : null,
-                  scaffoldBackgroundColor: globalSettingState.isAMOLED
-                      ? Colors.black
-                      : darkColorScheme.surface,
-                  primaryColor: darkColorScheme.primary,
-                  cardColor: darkColorScheme.surfaceContainerLow,
-                  canvasColor: darkColorScheme.surfaceContainer,
-                  dialogTheme: DialogThemeData(
-                    backgroundColor: darkColorScheme.surfaceBright,
-                  ),
-                  tabBarTheme: const TabBarThemeData(
-                    dividerColor: Colors.transparent,
-                  ),
-                  colorScheme: darkColorScheme,
-                  textTheme: withConfiguredFonts(ThemeData.dark().textTheme),
-                  primaryTextTheme: withConfiguredFonts(
-                    ThemeData.dark().primaryTextTheme,
+                darkTheme: BreezeOverlayTheme.apply(
+                  ThemeData.dark().copyWith(
+                    pageTransitionsTheme:
+                        globalSettingState
+                            .eInkSetting
+                            .shouldRemoveRouteTransition
+                        ? einkPageTransitionsTheme
+                        : null,
+                    splashFactory: globalSettingState.eInkSetting.enabled
+                        ? NoSplash.splashFactory
+                        : null,
+                    scaffoldBackgroundColor: globalSettingState.isAMOLED
+                        ? Colors.black
+                        : darkColorScheme.surface,
+                    primaryColor: darkColorScheme.primary,
+                    cardColor: darkColorScheme.surfaceContainerLow,
+                    canvasColor: darkColorScheme.surfaceContainer,
+                    tabBarTheme: const TabBarThemeData(
+                      dividerColor: Colors.transparent,
+                    ),
+                    colorScheme: darkColorScheme,
+                    textTheme: withConfiguredFonts(ThemeData.dark().textTheme),
+                    primaryTextTheme: withConfiguredFonts(
+                      ThemeData.dark().primaryTextTheme,
+                    ),
                   ),
                 ),
               );

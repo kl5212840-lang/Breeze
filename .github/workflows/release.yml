@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "发布版本号 (例如: v2.12.6)"
+        description: "发布标签（vX.Y.Z），须与 pubspec.yaml 的版本一致"
         required: true
-        default: "v2.12.6"
+        type: string
 
 permissions:
   contents: write
@@ -17,14 +17,63 @@ env:
     secrets.BREEZE_PLUGIN_GITHUB_TOKEN || github.token }}
 
 jobs:
+  validate-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.validate.outputs.commit }}
+      tag: ${{ steps.validate.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: 验证发布版本和标签
+        id: validate
+        env:
+          REQUESTED_TAG: ${{ inputs.version }}
+        shell: bash
+        run: |
+          if ! version=$(awk '/^version:([[:blank:]]|$)/ {
+            count++
+            sub(/^version:[[:blank:]]*/, "")
+            sub(/[[:blank:]]+#.*/, "")
+            sub(/[[:space:]]+$/, "")
+            print
+          } END { if (count != 1) exit 1 }' pubspec.yaml) ||
+            [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\+[0-9]+$ ]]; then
+            echo "::error::pubspec.yaml 必须声明唯一的 X.Y.Z+N 版本。"
+            exit 1
+          fi
+          tag="v${version%+*}"
+          if [[ "$REQUESTED_TAG" != "$tag" ]]; then
+            echo "::error::发布标签须为 ${tag}，与 pubspec.yaml 的 $version 一致。"
+            exit 1
+          fi
+
+          commit=$(git rev-parse --verify HEAD)
+          ref="refs/tags/$tag"
+          if git show-ref --verify --quiet "$ref"; then
+            tagged_commit=$(git rev-parse --verify "$ref^{commit}")
+            if [[ "$tagged_commit" != "$commit" ]]; then
+              echo "::error::标签 $tag 已指向其他提交。"
+              exit 1
+            fi
+          fi
+          printf 'commit=%s\ntag=%s\n' "$commit" "$tag" >> "$GITHUB_OUTPUT"
+
   # ══════════════════════════════════════════
   # 1. Android 构建 (含 git-crypt & Sentry)
   # ══════════════════════════════════════════
   build-android:
+    needs: validate-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ needs.validate-release.outputs.commit }}
           fetch-depth: 0
 
       # - name: 克隆 rquickjs_playground
@@ -176,10 +225,12 @@ jobs:
   # 2. Linux 构建 (Sentry Plugin 上传 + Flatpak + DEB)
   # ══════════════════════════════════════════
   build-linux:
+    needs: validate-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ needs.validate-release.outputs.commit }}
           fetch-depth: 0
 
       # - name: 克隆 rquickjs_playground
@@ -251,12 +302,14 @@ jobs:
   # 3. Windows 构建 (Sentry Plugin 上传)
   # ══════════════════════════════════════════
   build-windows:
+    needs: validate-release
     runs-on: windows-2025-vs2026
     steps:
       - name: 关闭 Git CRLF 转换
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v5
         with:
+          ref: ${{ needs.validate-release.outputs.commit }}
           fetch-depth: 0
 
       # - name: 克隆 rquickjs_playground
@@ -329,6 +382,7 @@ jobs:
   # 4. macOS 构建 (Sentry Plugin 上传)
   # ══════════════════════════════════════════
   build-macos:
+    needs: validate-release
     runs-on: macos-latest
     env:
       CARGO_HOME: ${{ github.workspace }}/.cargo
@@ -336,6 +390,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ needs.validate-release.outputs.commit }}
           fetch-depth: 0
 
       - name: Set up Xcode
@@ -454,6 +509,7 @@ jobs:
   # 5. iOS 构建 (免签 + Sentry Plugin 上传)
   # ══════════════════════════════════════════
   build-ios:
+    needs: validate-release
     runs-on: macos-latest
     env:
       CARGO_HOME: ${{ github.workspace }}/.cargo
@@ -461,6 +517,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ needs.validate-release.outputs.commit }}
           fetch-depth: 0
 
       - name: Set up Xcode
@@ -576,11 +633,17 @@ jobs:
   # 6. 汇总发布至 GitHub Release
   # ══════════════════════════════════════════
   publish:
-    needs: [ build-android, build-linux, build-windows, build-macos, build-ios ]
+    needs: [ validate-release, build-android, build-linux, build-windows, build-macos, build-ios ]
+    concurrency:
+      group: release-${{ needs.validate-release.outputs.tag }}
+      cancel-in-progress: false
+    env:
+      VERSION: ${{ needs.validate-release.outputs.tag }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ needs.validate-release.outputs.commit }}
           fetch-depth: 0
 
       - name: 下载所有构建产物
@@ -590,7 +653,6 @@ jobs:
 
       - name: 重命名产物文件（追加版本后缀）
         run: |
-          VERSION="${{ github.event.inputs.version }}"
           find release-assets -type f | while IFS= read -r file; do
             dir="$(dirname "$file")"
             name="$(basename "$file")"
@@ -604,7 +666,6 @@ jobs:
       - name: 提取日志并准备 Release 内容
         id: prepare
         run: |
-          VERSION="${{ github.event.inputs.version }}"
           REPO="${{ github.repository }}"
 
           awk -v ver="$VERSION" '
@@ -632,11 +693,29 @@ jobs:
           echo "| **Linux (DEB)** | [$DEB_FILE_NAME](https://github.com/$REPO/releases/download/$VERSION/$DEB_FILE_NAME) |" >> release_body.md
           echo -e "\n> 💡 **不知道该下载哪个文件？**\n> 请查看 [详细安装指南](https://github.com/$REPO#-%E5%A6%82%E4%BD%95%E5%AE%89%E8%A3%85)。" >> release_body.md
 
+      - name: 发布前重新检查远端标签
+        shell: bash
+        env:
+          RELEASE_COMMIT: ${{ needs.validate-release.outputs.commit }}
+        run: |
+          ref="refs/tags/$VERSION"
+          refs=$(git ls-remote origin "$ref" "$ref^{}")
+          tagged_commit=$(awk -v ref="$ref" '
+            $2 == ref { tag = $1 }
+            $2 == ref "^{}" { peeled = $1 }
+            END { print (peeled != "" ? peeled : tag) }
+          ' <<< "$refs")
+          if [[ -n "$tagged_commit" && "$tagged_commit" != "$RELEASE_COMMIT" ]]; then
+            echo "::error::远端标签 $VERSION 已指向其他提交。"
+            exit 1
+          fi
+
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v3.0.0
         with:
-          tag_name: ${{ github.event.inputs.version }}
-          name: Breeze ${{ github.event.inputs.version }}
+          tag_name: ${{ needs.validate-release.outputs.tag }}
+          target_commitish: ${{ needs.validate-release.outputs.commit }}
+          name: Breeze ${{ needs.validate-release.outputs.tag }}
           body_path: release_body.md
           files: |
             release-assets/android-apks/**/*.apk
@@ -651,7 +730,6 @@ jobs:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           REPO: ${{ github.repository }}
-          VERSION: ${{ github.event.inputs.version }}
         run: |
           if [ -z "$BOT_TOKEN" ] || [ -z "$CHAT_ID" ]; then
             echo "未配置 TELEGRAM_BOT_TOKEN 或 TELEGRAM_CHAT_ID，跳过 Telegram 通知。"
@@ -691,8 +769,10 @@ jobs:
   # 7. 自动更新 Homebrew Tap (仅限 macOS Cask)
   # ══════════════════════════════════════════
   update-homebrew:
-    needs: [ publish ]
+    needs: [ validate-release, publish ]
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.validate-release.outputs.tag }}
     steps:
       - name: 检出 Homebrew Tap 仓库
         uses: actions/checkout@v5
@@ -704,7 +784,6 @@ jobs:
       - name: 下载 macOS 产物并计算 SHA256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ github.event.inputs.version }}
         run: |
           CLEAN_VERSION="${VERSION#v}"
           echo "CLEAN_VERSION=$CLEAN_VERSION" >> $GITHUB_ENV
@@ -747,5 +826,5 @@ jobs:
             echo "没有需要提交的变更，跳过推送。"
             exit 0
           fi
-          git commit -m "Update macOS Cask to ${{ github.event.inputs.version }} and clean up placeholders"
+          git commit -m "Update macOS Cask to $VERSION and clean up placeholders"
           git push

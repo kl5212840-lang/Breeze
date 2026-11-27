@@ -7,6 +7,38 @@ import 'package:zephyr/page/video/video_episode_sequence.dart';
 import 'package:zephyr/page/video/video_episode_picker.dart';
 
 void main() {
+  testWidgets('opens the active episode into view within its range', (
+    tester,
+  ) async {
+    final queue = VideoEpisodeSequence([
+      for (var n = 1; n <= 80; n++)
+        NativeVideoCard(
+          title: '第$n集',
+          watchUrl: Uri.parse('https://fixture.test/watch?v=$n'),
+          coverUrl: null,
+        ),
+    ]);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            height: 420,
+            child: VideoEpisodePicker(
+              sequence: queue,
+              current: queue.items[72].watchUrl,
+              onChanged: (_) {},
+              onSelected: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final current = find.widgetWithText(ListTile, '第73集').hitTestable();
+    expect(current, findsOneWidget);
+    expect(tester.widget<ListTile>(current).selected, isTrue);
+  });
+
   testWidgets('descending reverses each fixed range and resets scroll', (
     tester,
   ) async {

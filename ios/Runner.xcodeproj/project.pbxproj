@@ -26,6 +26,7 @@
 		F632A651FBA89D139F0C7AAD /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FD7E07F8E848DE3C78F165F9 /* Pods_Runner.framework */; };
 		B138A47E0000000000000003 /* VideoDownloadPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B138A47E0000000000000004 /* VideoDownloadPresenter.swift */; };
 		B138A47E0000000000000023 /* VideoExportFilename.swift in Sources */ = {isa = PBXBuildFile; fileRef = B138A47E0000000000000024 /* VideoExportFilename.swift */; };
+		A537BD4E0000000000000001 /* MP4DownloadSpool.swift in Sources */ = {isa = PBXBuildFile; fileRef = A537BD4E0000000000000002 /* MP4DownloadSpool.swift */; };
 		B138A47E0000000000000010 /* HlsAssetDownloadPresenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B138A47E0000000000000011 /* HlsAssetDownloadPresenter.swift */; };
 		B138A47E0000000000000012 /* HlsAssetStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B138A47E0000000000000013 /* HlsAssetStore.swift */; };
 		B138A47E0000000000000050 /* BackgroundFileTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B138A47E0000000000000051 /* BackgroundFileTransfer.swift */; };
@@ -89,6 +90,7 @@
 		FD7E07F8E848DE3C78F165F9 /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		B138A47E0000000000000004 /* VideoDownloadPresenter.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VideoDownloadPresenter.swift; sourceTree = "<group>"; };
 		B138A47E0000000000000024 /* VideoExportFilename.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VideoExportFilename.swift; sourceTree = "<group>"; };
+		A537BD4E0000000000000002 /* MP4DownloadSpool.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = MP4DownloadSpool.swift; sourceTree = "<group>"; };
 		B138A47E0000000000000011 /* HlsAssetDownloadPresenter.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HlsAssetDownloadPresenter.swift; sourceTree = "<group>"; };
 		B138A47E0000000000000013 /* HlsAssetStore.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = HlsAssetStore.swift; sourceTree = "<group>"; };
 		B138A47E0000000000000051 /* BackgroundFileTransfer.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = BackgroundFileTransfer.swift; sourceTree = "<group>"; };
@@ -197,6 +199,7 @@
 				B138A47E0000000000000022 /* VideoSiteAccountCookiePolicy.swift */,
 				B138A47E0000000000000004 /* VideoDownloadPresenter.swift */,
 				B138A47E0000000000000024 /* VideoExportFilename.swift */,
+				A537BD4E0000000000000002 /* MP4DownloadSpool.swift */,
 				B138A47E0000000000000011 /* HlsAssetDownloadPresenter.swift */,
 				B138A47E0000000000000013 /* HlsAssetStore.swift */,
 				B138A47E0000000000000051 /* BackgroundFileTransfer.swift */,
@@ -433,6 +436,7 @@
 				B138A47E0000000000000021 /* VideoSiteAccountCookiePolicy.swift in Sources */,
 				B138A47E0000000000000003 /* VideoDownloadPresenter.swift in Sources */,
 				B138A47E0000000000000023 /* VideoExportFilename.swift in Sources */,
+				A537BD4E0000000000000001 /* MP4DownloadSpool.swift in Sources */,
 				B138A47E0000000000000010 /* HlsAssetDownloadPresenter.swift in Sources */,
 				B138A47E0000000000000012 /* HlsAssetStore.swift in Sources */,
 				B138A47E0000000000000050 /* BackgroundFileTransfer.swift in Sources */,

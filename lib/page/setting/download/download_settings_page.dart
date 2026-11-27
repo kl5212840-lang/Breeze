@@ -38,7 +38,6 @@ class DownloadSettingsPage extends StatelessWidget {
                       fallback: Icons.collections_outlined,
                     ),
                     title: t.download.concurrentComicImages,
-                    description: t.download.concurrentComicImagesHint,
                     value: normalizeComicDownloadConcurrency(
                       state.comicDownloadConcurrency,
                     ),
@@ -94,9 +93,6 @@ class DownloadSettingsPage extends StatelessWidget {
                       fallback: Icons.download_outlined,
                     ),
                     title: Text(t.settings.retryDownloadUntilSuccess),
-                    subtitle: Text(
-                      t.settings.retryDownloadUntilSuccessSubtitle,
-                    ),
                     value: state.retryDownloadUntilSuccess,
                     onChanged: (value) => cubit.updateState(
                       (current) =>
@@ -137,14 +133,12 @@ class _DownloadSwitchRow extends StatelessWidget {
     required this.controlKey,
     required this.secondary,
     required this.title,
-    this.subtitle,
     required this.value,
     required this.onChanged,
   });
 
   final Widget secondary, title;
   final Key controlKey;
-  final Widget? subtitle;
   final bool value;
   final ValueChanged<bool> onChanged;
 
@@ -157,7 +151,6 @@ class _DownloadSwitchRow extends StatelessWidget {
         hoverColor: hover.hoverColor(),
         secondary: secondary,
         title: title,
-        subtitle: subtitle,
         thumbIcon: settingSwitchThumbIcon(context),
         value: value,
         onChanged: onChanged,

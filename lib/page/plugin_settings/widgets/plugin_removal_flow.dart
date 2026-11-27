@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 /// Only three outcomes: keep data, delete local, delete local plus Breeze cloud.
 class PluginRemovalScope {
@@ -88,8 +89,7 @@ Future<bool> confirmPluginRemoval(
     await showDialog<bool>(
       context: context,
       useRootNavigator: false,
-      builder: (dialog) => AlertDialog(
-        scrollable: true,
+      builder: (dialog) => ShortAlert(
         title: Text(t.pluginLifecycle.deleteConfirmTitle(name: pluginName)),
         content: Text(
           scope.cloud
@@ -99,16 +99,14 @@ Future<bool> confirmPluginRemoval(
               : t.pluginLifecycle.removeConfirm,
         ),
         actions: [
-          TextButton(
+          ShortAlertAction(
             onPressed: () => Navigator.pop(dialog, false),
             child: Text(t.common.cancel),
           ),
-          FilledButton(
+          ShortAlertAction(
             key: const ValueKey('plugin-remove-confirm'),
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(dialog).colorScheme.error,
-              foregroundColor: Theme.of(dialog).colorScheme.onError,
-            ),
+            destructive: true,
+            filled: true,
             onPressed: () => Navigator.pop(dialog, true),
             child: Text(t.common.delete),
           ),

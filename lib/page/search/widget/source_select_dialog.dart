@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/widgets/breeze_overlay_theme.dart';
 import 'package:zephyr/widgets/breeze_switch.dart';
 
 Future<Map<String, bool>?> showSourceSelectDialog(
@@ -15,6 +16,11 @@ Future<Map<String, bool>?> showSourceSelectDialog(
         builder: (context, setState) {
           return AlertDialog(
             title: Text(t.search.selectSource),
+            // Retain the established native search composition underneath.
+            backgroundColor: BreezeOverlayTheme.taskSurface(
+              Theme.of(context).colorScheme,
+            ),
+            surfaceTintColor: Colors.transparent,
             contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
             content: SizedBox(
               width: 320,

@@ -40,6 +40,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(SearchQueryField), findsNothing);
     expect(find.text('短篇'), findsOneWidget);
+    expect(
+      tester.widget<SearchResultQueryTitle>(
+        find.byKey(const ValueKey('search-result.query-title')),
+      ).onEdit,
+      isNull,
+    );
     await tester.pumpWidget(const SizedBox.shrink());
     await cubit.close();
   });
@@ -86,7 +92,16 @@ void main() {
         }
         router.pushPath('/results');
         await tester.pumpAndSettle();
-        tester.widget<SearchQueryField>(find.byType(SearchQueryField)).onTap!();
+        final title = find.byKey(const ValueKey('search-result.query-title'));
+        expect(title, findsOneWidget);
+        expect(find.text('kept query'), findsOneWidget);
+        expect(find.byType(SearchQueryField), findsNothing);
+        final editQuery = find.descendant(
+          of: title,
+          matching: find.byType(InkWell),
+        );
+        expect(editQuery, findsOneWidget);
+        await tester.tap(editQuery);
         await tester.pumpAndSettle();
         expect(router.stack.last.name, SearchRoute.name);
         expect(

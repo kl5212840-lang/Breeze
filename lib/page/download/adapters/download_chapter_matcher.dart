@@ -37,6 +37,24 @@ class DownloadChapterMatcher {
     return null;
   }
 
+  /// An explicit canonical ID outranks any request alias. Shared request
+  /// aliases cannot identify one chapter by themselves.
+  DownloadChapter? findByIdentity(
+    List<DownloadChapter> chapters,
+    String target,
+  ) {
+    final key = target.trim();
+    if (key.isEmpty) return null;
+    final canonical = chapters.where((chapter) => chapter.id == key);
+    if (canonical.isNotEmpty) {
+      return canonical.length == 1 ? canonical.single : null;
+    }
+    final aliases = chapters.where(
+      (chapter) => chapter.effectiveRequestId == key,
+    );
+    return aliases.length == 1 ? aliases.single : null;
+  }
+
   /// 按 order 查找章节。
   DownloadChapter? findByOrder(List<DownloadChapter> chapters, int order) {
     for (final chapter in chapters) {

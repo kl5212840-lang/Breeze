@@ -13,8 +13,10 @@ class HistoryWidget extends StatelessWidget {
     this.aggregateMode = true,
     this.source,
     this.embedded = false,
+    this.showScopeLabel = true,
   });
   final bool aggregateMode, embedded;
+  final bool showScopeLabel;
   final String? source;
   @override
   Widget build(BuildContext context) {
@@ -31,11 +33,21 @@ class HistoryWidget extends StatelessWidget {
       key: ValueKey('comic-history.$scope'),
       words: visible,
       compact: !aggregateMode,
-      scopeLabel: aggregateMode
+      scopeLabel: !showScopeLabel
+          ? ''
+          : aggregateMode
           ? t.search.aggregateHistory
           : t.search.currentSourceHistory,
-      onSubmit: (keyword) =>
-          onSearch(context, keyword, aggregateMode: aggregateMode),
+      onSubmit: (keyword) => onSearch(
+        context,
+        keyword,
+        aggregateMode: aggregateMode,
+        historyScope: SearchHistoryEntries.keywordScopeFor(
+          entries,
+          keyword,
+          scope: !aggregateMode && scope.isEmpty ? '__unknown_source__' : scope,
+        ),
+      ),
       onRemove: (selected) async {
         context.read<GlobalSettingCubit>().updateState(
           (current) => current.copyWith(

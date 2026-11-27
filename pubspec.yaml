@@ -1,7 +1,7 @@
 name: zephyr
 description: "使用Flutter开发的漫画阅读应用，使用插件提供漫画源支持。"
 publish_to: none
-version: 3.0.39+2514
+version: 3.0.39+2582
 
 environment:
   sdk: ^3.12.0
@@ -170,6 +170,7 @@ flutter:
     - asset/image/bika_experience/icon_exclamation_error.png
     - asset/image/bika_experience/icon_empty.png
     - asset/image/assets/default_cover.png
+    - asset/image/source-page-divider-heart.png
     - asset/image/switch_style/
 objectbox:
   # Writes objectbox-model.json and objectbox.g.dart to lib/custom (and test/custom).

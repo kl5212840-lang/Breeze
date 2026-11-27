@@ -26,7 +26,7 @@ import 'package:zephyr/page/login_page.dart';
 import 'package:zephyr/page/plugin_function/view/plugin_function_page.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
-import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
+import 'package:zephyr/page/search/method/on_search.dart';
 import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/page/source_shell/models/source_shell_section.dart';
@@ -35,13 +35,11 @@ import 'package:zephyr/page/source_shell/view/jm_collection_toolbar.dart';
 import 'package:zephyr/page/source_shell/view/source_video_content.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
-import 'package:zephyr/page/plugin_settings/widgets/plugin_settings_content.dart';
-import 'package:zephyr/page/plugin_settings/view/plugin_settings_page.dart';
-import 'package:zephyr/page/setting/common/setting_page_route.dart';
 import 'package:zephyr/widgets/collection_cover_privacy.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/page/source_shell/source_return_preferences.dart';
 import 'package:zephyr/page/video/video_native_navigation.dart';
+import 'package:zephyr/widgets/breeze_scroll_navigation.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/plugin/plugin_login_capability.dart';
 import 'package:zephyr/util/event/event.dart';
@@ -99,7 +97,7 @@ class _SourceShellPageState extends State<_SourceShellBody>
     with WidgetsBindingObserver {
   late List<SourceShellSection> _sections;
   String _bikaInfoKey = '';
-  KeywordSearchScope _fallbackSearchScope = KeywordSearchScope.all;
+  int _searchSubmission = 0;
   int _selectedIndex = 0;
   final List<int> _tabHistory = [];
   final _tabReselect = <String, TabReselectController>{};
@@ -196,7 +194,7 @@ class _SourceShellPageState extends State<_SourceShellBody>
   void didUpdateWidget(covariant _SourceShellBody oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.source != widget.source) {
-      _fallbackSearchScope = KeywordSearchScope.all;
+      _searchSubmission++;
       _sections = List.of(widget.sections);
       _bikaInfoKey = '';
       _selectedIndex = 0;
@@ -423,24 +421,10 @@ class _SourceShellPageState extends State<_SourceShellBody>
   }
 
   // Extra Bika schema options are a child of its formal settings tab.
-  Future<void> _openPluginPreferencesPage() => openSettingPage(
+  Future<void> _openPluginPreferencesPage() => openSourcePreferences(
     context,
-    route: app_routes.PluginSettingsRoute(
-      from: widget.source,
-      pluginUuid: widget.source,
-      pluginRuntimeName: widget.source,
-      pluginDisplayName: _sourceName,
-      insideSource: true,
-      scope: PluginSettingsScope.preferences,
-    ),
-    builder: (_) => PluginSettingsPage(
-      from: widget.source,
-      pluginUuid: widget.source,
-      pluginRuntimeName: widget.source,
-      pluginDisplayName: _sourceName,
-      insideSource: true,
-      scope: PluginSettingsScope.preferences,
-    ),
+    source: widget.source,
+    sourceName: _sourceName,
   );
 
   Future<void> _refreshSourceName() async {
@@ -473,13 +457,25 @@ class _SourceShellPageState extends State<_SourceShellBody>
     );
   }
 
-  void _searchThisSource(String keyword) {
+  Future<void> _searchThisSource(String keyword) async {
     final trimmed = keyword.trim();
     if (trimmed.isEmpty) return;
+    FocusScope.of(context).unfocus();
+    final source = widget.source;
+    final route = ModalRoute.of(context);
+    final submission = ++_searchSubmission;
+    final scope = await readKeywordSearchDefault(source: source);
+    if (!mounted ||
+        route?.isCurrent == false ||
+        _searchSubmission != submission ||
+        _sections.isNotEmpty ||
+        _loginRequiredIndexes.contains(0)) {
+      return;
+    }
     final searchState = SearchStates.initial().copyWith(
-      from: widget.source,
+      from: source,
       searchKeyword: trimmed,
-      pluginExtern: changeKeywordSearchScope({}, _fallbackSearchScope),
+      pluginExtern: changeKeywordSearchScope({}, scope),
     );
     context.pushRoute(
       app_routes.SearchResultRoute(
@@ -625,7 +621,22 @@ class _SourceShellPageState extends State<_SourceShellBody>
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => BreezeScrollNavigation(
+    ownsNavigation: _sections.length > 1,
+    content: (
+      _sections.elementAtOrNull(_selectedIndex)?.id,
+      _tabRevisions[_selectedIndex],
+      _profileBackController.title,
+      _loginRequiredIndexes.contains(_selectedIndex),
+    ),
+    acceptsScroll: !_jmSearching,
+    builder: _buildWithNavigation,
+  );
+
+  Widget _buildWithNavigation(
+    BuildContext context,
+    BreezeScrollNavigationState navigation,
+  ) {
     final sections = _sections;
     final section = sections.isEmpty ? null : sections[_selectedIndex];
     final showingProfile = section?.profile == true;
@@ -672,7 +683,7 @@ class _SourceShellPageState extends State<_SourceShellBody>
         _goBack();
       },
       child: Scaffold(
-        extendBody: usesNativeSourceChrome(context),
+        extendBody: navigation.automatic || usesSystemSourceChrome(context),
         appBar: showingVideo
             ? null
             : SearchToolbarScope.appBar(
@@ -760,7 +771,7 @@ class _SourceShellPageState extends State<_SourceShellBody>
                               tooltip: t.sourceShell.search,
                               icon: Icons.search_rounded,
                               symbol: 'magnifyingglass',
-                              bare: true,
+                              bare: !usesSystemSourceChrome(context),
                               onPressed: _openSearch,
                             ),
                           if (!showingProfile &&
@@ -776,9 +787,7 @@ class _SourceShellPageState extends State<_SourceShellBody>
                             SourceMoreButton(
                               source: widget.source,
                               showCoverSettings: showingProfile,
-                              showSettings: !sections.any(
-                                (section) => section.sourceSettings,
-                              ),
+                              showSettings: !showingSettings,
                               onOpenSettings: () =>
                                   unawaited(_openPluginPreferences()),
                             ),
@@ -896,6 +905,10 @@ class _SourceShellPageState extends State<_SourceShellBody>
                               sections[index].profileAvatarFunction,
                           bioUpdateFunction: sections[index].profileBioFunction,
                           profileKind: sections[index].profileKind,
+                          jmAccountCollections:
+                              sections[index].jmAccountCollections,
+                          jmSiteWatchHistory:
+                              sections[index].jmSiteWatchHistory,
                           checkinFunction:
                               sections[index].profileCheckinFunction,
                           notificationsFunction:
@@ -924,40 +937,50 @@ class _SourceShellPageState extends State<_SourceShellBody>
                           }),
                         )
                       else
-                        _buildMoreActions(sections[index].actions)
+                        _buildMoreActions(
+                          sections[index].actions,
+                          reserveNavigation:
+                              navigation.automatic ||
+                              AppInterfaceStyleScope.usesAndroidSystem(context),
+                        )
                     else
                       const SizedBox.shrink(),
                 ],
               ),
         bottomNavigationBar: sections.length <= 1
             ? null
-            : usesNativeSourceChrome(context) ||
-                  AppInterfaceStyleScope.usesAndroidSystem(context) ||
-                  !AppInterfaceStyleScope.usesSystem(context)
-            ? VideoNativeNavigation(
-                items: [
-                  for (final section in sections)
-                    BottomNavigationBarItem(
-                      icon: Icon(_sectionIcon(section)),
-                      label: _sectionTitle(section),
-                    ),
-                ],
-                symbols: [for (final section in sections) _symbol(section)],
-                currentIndex: _selectedIndex,
-                onTap: _onDestinationSelected,
-              )
-            : NavigationBar(
-                selectedIndex: _selectedIndex,
-                labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-                onDestinationSelected: _onDestinationSelected,
-                destinations: [
-                  for (final section in sections)
-                    NavigationDestination(
-                      icon: Icon(_sectionIcon(section)),
-                      label: _sectionTitle(section),
-                      tooltip: _sectionTitle(section),
-                    ),
-                ],
+            : navigation.bar(
+                usesNativeSourceChrome(context) ||
+                        AppInterfaceStyleScope.usesAndroidSystem(context) ||
+                        !AppInterfaceStyleScope.usesSystem(context)
+                    ? VideoNativeNavigation(
+                        items: [
+                          for (final section in sections)
+                            BottomNavigationBarItem(
+                              icon: Icon(_sectionIcon(section)),
+                              label: _sectionTitle(section),
+                            ),
+                        ],
+                        symbols: [
+                          for (final section in sections) _symbol(section),
+                        ],
+                        currentIndex: _selectedIndex,
+                        onTap: _onDestinationSelected,
+                      )
+                    : NavigationBar(
+                        selectedIndex: _selectedIndex,
+                        labelBehavior:
+                            NavigationDestinationLabelBehavior.alwaysShow,
+                        onDestinationSelected: _onDestinationSelected,
+                        destinations: [
+                          for (final section in sections)
+                            NavigationDestination(
+                              icon: Icon(_sectionIcon(section)),
+                              label: _sectionTitle(section),
+                              tooltip: _sectionTitle(section),
+                            ),
+                        ],
+                      ),
               ),
       ),
     );
@@ -1008,9 +1031,16 @@ class _SourceShellPageState extends State<_SourceShellBody>
     _ => 'list.bullet',
   };
 
-  Widget _buildMoreActions(List<SourceShellAction> actions) {
-    return ListView.separated(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+  Widget _buildMoreActions(
+    List<SourceShellAction> actions, {
+    required bool reserveNavigation,
+  }) => Builder(
+    builder: (context) => ListView.separated(
+      padding: EdgeInsets.only(
+        top: 8,
+        bottom:
+            8 + (reserveNavigation ? MediaQuery.paddingOf(context).bottom : 0),
+      ),
       itemCount: actions.length,
       separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (context, index) {
@@ -1029,8 +1059,8 @@ class _SourceShellPageState extends State<_SourceShellBody>
           ),
         );
       },
-    );
-  }
+    ),
+  );
 
   Widget _buildSearchOnly() {
     final colors = Theme.of(context).colorScheme;
@@ -1052,26 +1082,13 @@ class _SourceShellPageState extends State<_SourceShellBody>
               const SizedBox(height: 24),
               SearchToolbarScope(
                 extent: SearchToolbarScope.fieldExtent(context),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: SearchQueryField(
-                        query: '',
-                        inline: true,
-                        hintText: t.sourceShell.search,
-                        onSubmitted: _searchThisSource,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    KeywordScopeMenu(
-                      compact: true,
-                      scope: _fallbackSearchScope,
-                      scopes: sourceKeywordSearchScopes(widget.source),
-                      copyTopics: widget.source == copyComicSourceId,
-                      onChanged: (scope) =>
-                          setState(() => _fallbackSearchScope = scope),
-                    ),
-                  ],
+                child: SearchQueryField(
+                  query: '',
+                  inline: true,
+                  showSubmit: true,
+                  dismissKeyboardOnTapOutside: true,
+                  hintText: t.sourceShell.search,
+                  onSubmitted: _searchThisSource,
                 ),
               ),
             ],

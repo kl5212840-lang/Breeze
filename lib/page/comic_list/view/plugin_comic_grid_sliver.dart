@@ -25,6 +25,7 @@ class PluginComicGridSliver extends StatelessWidget {
     this.physics,
     this.shrinkWrap = false,
     this.collectionLayout = false,
+    this.gridHorizontalInset = 10,
     this.quietPaging = false,
     this.onEntryTap,
     this.onEntryLongPress,
@@ -33,9 +34,12 @@ class PluginComicGridSliver extends StatelessWidget {
     this.selectionMode = false,
     this.collectionTargetId,
     this.collectionTargetName,
+    this.itemsSliverKey,
   });
 
   final List<ComicSimplifyEntryInfo> entries;
+
+  final Key? itemsSliverKey;
   final ComicEntryType type;
   final VoidCallback? refresh;
   final ValueChanged<String>? onDeleteSuccess;
@@ -47,6 +51,7 @@ class PluginComicGridSliver extends StatelessWidget {
   final ScrollController? controller;
   final ScrollPhysics? physics;
   final bool shrinkWrap, collectionLayout, quietPaging;
+  final double gridHorizontalInset;
   final ValueChanged<ComicSimplifyEntryInfo>? onEntryTap;
   final void Function(
     ComicSimplifyEntryInfo info,
@@ -72,6 +77,7 @@ class PluginComicGridSliver extends StatelessWidget {
             builder: (context, constraints) => SliverPadding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
               sliver: SliverGrid(
+                key: itemsSliverKey,
                 gridDelegate: BookshelfContentLayout.gridDelegate(
                   context,
                   constraints.crossAxisExtent,
@@ -87,6 +93,10 @@ class PluginComicGridSliver extends StatelessWidget {
                       subtitle: convertChineseForDisplay(info.detailMetadata),
                     ),
                     onTapOverride: onEntryTap,
+                    onLongPressOverride: onEntryLongPress,
+                    onSecondaryTapDown: onEntrySecondaryTapDown,
+                    selectionMode: selectionMode,
+                    isSelected: isEntrySelected?.call(info) ?? false,
                     refresh: refresh,
                     collectionTargetId: collectionTargetId,
                     collectionTargetName: collectionTargetName,
@@ -97,6 +107,11 @@ class PluginComicGridSliver extends StatelessWidget {
           )
         else
           BaseComicGridSliver(
+            itemsSliverKey: itemsSliverKey,
+            padding: EdgeInsets.symmetric(
+              horizontal: gridHorizontalInset,
+              vertical: 10,
+            ),
             entries: entries,
             type: type,
             refresh: refresh,
@@ -138,6 +153,7 @@ class PluginComicGridSliver extends StatelessWidget {
             ),
           ),
         if (!collectionLayout &&
+            !quietPaging &&
             !hasReachedMax &&
             !isLoadingMore &&
             !loadMoreFailed)

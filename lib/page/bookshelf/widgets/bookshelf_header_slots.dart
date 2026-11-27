@@ -1,4 +1,7 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/page/bookshelf/models/shelf_page_mode.dart';
+
+typedef BookshelfHeaderPane = (bool, ShelfPageMode);
 
 class BookshelfHeaderSlots {
   const BookshelfHeaderSlots({
@@ -22,23 +25,39 @@ class BookshelfHeaderController extends ChangeNotifier {
   bool _disposed = false;
   Object? _owner;
   BookshelfHeaderSlots? _slots;
+  final _subtitles = <BookshelfHeaderPane, (Object?, String)>{};
+  int? _slotsGeneration;
 
   int get generation => _generation;
   BookshelfHeaderSlots? get slots => _slots;
+  int? get slotsGeneration => _slotsGeneration;
+  bool get hasCurrentSlots => _slotsGeneration == _generation;
+
+  String subtitleFor(BookshelfHeaderPane pane, Object query) {
+    final entry = _subtitles[pane];
+    return entry != null && entry.$1 == query ? entry.$2 : '';
+  }
 
   // The host calls this as part of its own state update before rebuilding.
   void changePane() {
     _generation++;
     _owner = null;
-    _slots = null;
   }
 
   bool isCurrent(int generation) => !_disposed && generation == _generation;
 
-  void _publish(int generation, Object owner, BookshelfHeaderSlots slots) {
+  void _publish(
+    int generation,
+    Object owner,
+    BookshelfHeaderPane pane,
+    Object? query,
+    BookshelfHeaderSlots slots,
+  ) {
     if (!isCurrent(generation)) return;
     _owner = owner;
     _slots = slots;
+    _slotsGeneration = generation;
+    _subtitles[pane] = (query, slots.subtitle);
     notifyListeners();
   }
 
@@ -46,6 +65,7 @@ class BookshelfHeaderController extends ChangeNotifier {
     if (!isCurrent(generation) || _owner != owner) return;
     _owner = null;
     _slots = null;
+    _slotsGeneration = null;
     notifyListeners();
   }
 
@@ -61,12 +81,16 @@ class BookshelfHeaderPublisher extends StatefulWidget {
     super.key,
     required this.controller,
     required this.generation,
+    required this.pane,
+    required this.query,
     required this.slots,
     required this.child,
   });
 
   final BookshelfHeaderController controller;
   final int generation;
+  final BookshelfHeaderPane pane;
+  final Object? query;
   final BookshelfHeaderSlots slots;
   final Widget child;
 
@@ -92,7 +116,13 @@ class _BookshelfHeaderPublisherState extends State<BookshelfHeaderPublisher> {
   void _publishAfterBuild() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        widget.controller._publish(widget.generation, this, widget.slots);
+        widget.controller._publish(
+          widget.generation,
+          this,
+          widget.pane,
+          widget.query,
+          widget.slots,
+        );
       }
     });
   }

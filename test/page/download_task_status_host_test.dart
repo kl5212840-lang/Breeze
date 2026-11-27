@@ -41,7 +41,9 @@ import 'package:zephyr/page/donwload_task/service/download_completion_notice.dar
 import 'package:zephyr/page/video/video_local_resources.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/navigation_bar.dart' as app;
+import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_theme_colors.dart';
 import 'package:zephyr/widgets/native_view_occlusion.dart';
@@ -347,10 +349,41 @@ void main() {
         await runHost(tester, () async {
           final messenger =
               TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-          messenger.setMockMethodCallHandler(
-            SystemChannels.platform_views,
-            (_) async => null,
-          );
+          int? nativeBackId;
+          messenger.setMockMethodCallHandler(SystemChannels.platform_views, (
+            call,
+          ) async {
+            if (call.method == 'create') {
+              final args = call.arguments as Map;
+              if (args['viewType'] != 'breeze.video.control') return null;
+              if (args['params'] case final Uint8List params) {
+                final config =
+                    const StandardMessageCodec().decodeMessage(
+                          ByteData.sublistView(params),
+                        )
+                        as Map;
+                if (config['symbol'] == 'chevron.left') {
+                  nativeBackId = args['id'] as int;
+                }
+              }
+            }
+            return null;
+          });
+          Future<void> pressBack() async {
+            if (style == 'breeze') {
+              await tester.tap(find.byType(BackButton).hitTestable());
+              return;
+            }
+            expect(nativeBackId, isNotNull);
+            await messenger.handlePlatformMessage(
+              'breeze.video.control.$nativeBackId',
+              const StandardMethodCodec().encodeMethodCall(
+                const MethodCall('press'),
+              ),
+              (_) {},
+            );
+          }
+
           addTearDown(() {
             messenger.setMockMethodCallHandler(
               SystemChannels.platform_views,
@@ -643,7 +676,7 @@ void main() {
 
           // Exit management and the work page using Back. Returning to the
           // same work reads the paused state and the partial data again.
-          await tester.pageBack();
+          await pressBack();
           await settleHost(tester);
           expect(list, findsOneWidget);
           await expectVisibleStatus(1, t.download.paused);
@@ -651,7 +684,7 @@ void main() {
           final delayedNotice = _DelayedDownloadNoticeStore(previous);
           SharedPreferencesStorePlatform.instance = delayedNotice;
           try {
-            await tester.pageBack();
+            await pressBack();
             await settleHost(tester);
             expect(delayedNotice.started.isCompleted, isTrue);
             await tap(work);
@@ -1840,6 +1873,10 @@ void main() {
             await tester.pumpAndSettle();
             expect(find.byType(AlertDialog), findsOneWidget);
             expect(find.textContaining(t.download.helpHls), findsOneWidget);
+            expect(
+              find.textContaining(t.download.helpContinue),
+              findsOneWidget,
+            );
             await tester.tap(find.text(t.common.gotIt));
             await tester.pumpAndSettle();
             await tester.tap(find.byKey(const ValueKey('download-filter')));
@@ -2037,8 +2074,12 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.text(t.download.exportComicMissing(pages: 1, chapters: 0)),
+        find.text(t.download.exportComicMissingPages(pages: 1)),
         findsOneWidget,
+      );
+      expect(
+        find.text(t.download.exportComicUnavailableChapters(chapters: 0)),
+        findsNothing,
       );
       expect(presented, 0);
       await tester.tap(find.text(t.common.cancel));
@@ -2059,7 +2100,10 @@ void main() {
       expect(objectbox.unifiedDownloadBox.count(), 1);
       expect(tester.takeException(), isNull);
     }),
-    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    variant: TargetPlatformVariant({
+      TargetPlatform.iOS,
+      TargetPlatform.android,
+    }),
   );
 
   testWidgets(
@@ -2496,7 +2540,7 @@ void main() {
   }
 
   testWidgets(
-    'storage shows saved bytes and changes only the current list order',
+    'storage shows saved bytes and sorts pinned downloads within their group',
     (tester) => runHost(tester, () async {
       final small = _task('最近保存的下载', 'completed');
       final large = _task('占用最大的下载', 'completed');
@@ -2511,6 +2555,17 @@ void main() {
           large,
           bytes: 8192,
           downloadedAt: DateTime.utc(2026, 11, 9),
+        );
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(
+          DownloadWorkPins.storageKey,
+          jsonEncode({
+            'version': 1,
+            'pins': {
+              'comic:offline-download-fixture:${large.comicId}': 1,
+              'comic:offline-download-fixture:${small.comicId}': 2,
+            },
+          }),
         );
       });
       final messenger =
@@ -2544,6 +2599,7 @@ void main() {
       }
 
       expect(position(small.comicName), lessThan(position(large.comicName)));
+      expect(find.byType(DownloadCardPin), findsNWidgets(2));
       final footer = find.byKey(const ValueKey('download-storage-footer'));
       await until(
         () =>
@@ -2732,6 +2788,208 @@ void main() {
       expect(queue().map((row) => row.$2), everyElement('paused'));
     }),
   );
+
+  testWidgets(
+    'standalone downloads returns on the first tap with row actions revealed',
+    (tester) => runHost(tester, () async {
+      final task = _task('可返回的下载', 'failed');
+      objectbox.downloadTaskBox.put(task);
+      const entry = 'Open downloads';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const DownloadTaskPage(),
+                  ),
+                ),
+                child: const Text(entry),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text(entry));
+      await settleHost(tester);
+      final row = find.text(task.comicName);
+      await tester.ensureVisible(row);
+      await tester.drag(row, const Offset(-160, 0));
+      await settleHost(tester);
+      final tray = find.byWidgetPredicate(
+        (widget) =>
+            widget.key is ValueKey<String> &&
+            (widget.key! as ValueKey<String>).value.startsWith(
+              'download-swipe-tray.',
+            ),
+      );
+      expect(tray, findsOneWidget);
+      await tester.tap(find.byType(SourceBackButton));
+      await settleHost(tester);
+      expect(find.byType(DownloadTaskPage), findsNothing);
+      expect(find.text(entry), findsOneWidget);
+      expect(objectbox.downloadTaskBox.count(), 1);
+    }),
+  );
+
+  for (final shell in ['wide', 'breeze', 'native', 'android']) {
+    testWidgets(
+      'downloads $shell navigation leaves on the first tap and reopens closed',
+      (tester) => runHost(tester, () async {
+        tester.view.physicalSize = shell == 'wide'
+            ? const Size(1024, 740)
+            : const Size(390, 844);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final task = _task('主导航下载', 'failed');
+        objectbox.downloadTaskBox.put(task);
+        final controller = PersistentTabController();
+        final openSwipe = ValueNotifier<String?>(null);
+        final style = ValueNotifier(shell == 'breeze' ? 'breeze' : 'system');
+        addTearDown(controller.dispose);
+        addTearDown(openSwipe.dispose);
+        addTearDown(style.dispose);
+
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        int? nativeNavigationId;
+        MethodChannel? nativeNavigationChannel;
+        final nativeDecisions = <String>[];
+        messenger.setMockMethodCallHandler(SystemChannels.platform_views, (
+          call,
+        ) async {
+          if (call.arguments is! Map) return null;
+          final arguments = call.arguments as Map;
+          if (call.method == 'create' &&
+              arguments['viewType'] == 'breeze.video.navigation') {
+            nativeNavigationId = arguments['id'] as int;
+            nativeNavigationChannel = MethodChannel(
+              'breeze.video.navigation.$nativeNavigationId',
+            );
+            messenger.setMockMethodCallHandler(
+              nativeNavigationChannel!,
+              (_) async => null,
+            );
+          }
+          if (arguments['id'] == nativeNavigationId &&
+              call.method.endsWith('Gesture')) {
+            nativeDecisions.add(call.method);
+          }
+          return null;
+        });
+        addTearDown(() {
+          messenger.setMockMethodCallHandler(
+            SystemChannels.platform_views,
+            null,
+          );
+          if (nativeNavigationChannel case final channel?) {
+            messenger.setMockMethodCallHandler(channel, null);
+          }
+        });
+
+        const otherPage = 'Outside downloads';
+        final screens = [
+          DownloadTaskPage(embedded: true, openSwipe: openSwipe),
+          const Scaffold(body: Text(otherPage)),
+        ];
+        const tabIcons = [Icons.download, Icons.home];
+        final tabs = [
+          BottomNavigationBarItem(icon: Icon(tabIcons[0]), label: 'Downloads'),
+          BottomNavigationBarItem(icon: Icon(tabIcons[1]), label: 'Home'),
+        ];
+        await tester.pumpWidget(
+          AppInterfaceStyleScope(
+            style: style,
+            child: MaterialApp(
+              home: StatefulBuilder(
+                builder: (context, setState) {
+                  final index = controller.index;
+                  final navigationGroup = index == 0 ? openSwipe : null;
+                  void select(int next) {
+                    openSwipe.value = null;
+                    if (next != controller.index) {
+                      setState(() => controller.jumpToTab(next));
+                    }
+                  }
+
+                  if (shell == 'wide') {
+                    return app.MainWideTabHost(
+                      screens: screens,
+                      destinations: [
+                        for (final tab in tabs)
+                          NavigationRailDestination(
+                            icon: tab.icon,
+                            label: Text(tab.label!),
+                          ),
+                      ],
+                      selectedIndex: index,
+                      onSelected: select,
+                      onSearch: () {},
+                      navigationTapRegionGroup: navigationGroup,
+                    );
+                  }
+                  return app.MainNativeTabHost(
+                    controller: controller,
+                    screens: screens,
+                    floatingNavigation: shell == 'native',
+                    navBarHeight: 64,
+                    navigationTapRegionGroup: navigationGroup,
+                    navigation: VideoNativeNavigation(
+                      items: tabs,
+                      symbols: const ['arrow.down', 'house'],
+                      currentIndex: index,
+                      onTap: select,
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+        await settleHost(tester);
+        await tester.drag(find.text(task.comicName), const Offset(-160, 0));
+        await settleHost(tester);
+        expect(openSwipe.value, isNotNull);
+
+        Future<void> tapTab(int index) async {
+          if (shell == 'native') {
+            nativeDecisions.clear();
+            final nav = find.byWidgetPredicate(
+              (widget) =>
+                  widget is UiKitView &&
+                  widget.viewType == 'breeze.video.navigation',
+            );
+            await tester.tap(nav);
+            await tester.pump();
+            expect(nativeDecisions, ['acceptGesture']);
+            await messenger.handlePlatformMessage(
+              nativeNavigationChannel!.name,
+              const StandardMethodCodec().encodeMethodCall(
+                MethodCall('select', index),
+              ),
+              (_) {},
+            );
+          } else {
+            await tester.tap(find.byIcon(tabIcons[index]));
+          }
+          await settleHost(tester);
+        }
+
+        await tapTab(1);
+        expect(find.text(otherPage), findsOneWidget);
+        expect(openSwipe.value, isNull);
+        await tapTab(0);
+        expect(find.text(task.comicName), findsOneWidget);
+        expect(openSwipe.value, isNull);
+        expect(tester.takeException(), isNull);
+      }),
+      variant: TargetPlatformVariant.only(
+        shell == 'android' ? TargetPlatform.android : TargetPlatform.iOS,
+      ),
+    );
+  }
 
   testWidgets(
     'stopped rows offer details and deletion while retry stays at the failure',
@@ -3446,7 +3704,9 @@ void main() {
       await tester.drag(chapter, const Offset(-190, 0));
       await settleHost(tester);
       expect(tray.hitTestable(), findsOneWidget);
-      await tester.tap(find.byType(BackButton).hitTestable());
+      final back = find.byType(SourceBackButton).hitTestable();
+      expect(back, findsOneWidget);
+      await tester.tap(back);
       await settleHost(tester);
       expect(chapter, findsNothing);
       await tester.tap(find.text(title));
@@ -4067,17 +4327,28 @@ void main() {
                 (
                   'source',
                   sourcePlate,
-                  Offset(sourcePlate.left - 2, sourcePlate.center.dy),
+                  Offset(sourcePlate.left - 8, sourcePlate.center.dy),
                 ),
               ])
                 (
                   name: name,
                   backdropContrast: BreezeThemeColors.contrast(
-                    pixel(Offset(plate.center.dx, plate.top + 4)),
+                    pixel(Offset(plate.center.dx, plate.top + 6)),
                     pixel(background),
                   ),
                   edge: pixel(Offset(plate.center.dx, plate.top + .65)),
-                  fill: pixel(Offset(plate.center.dx, plate.top + 4)),
+                  fill: pixel(Offset(plate.center.dx, plate.top + 6)),
+                  upperInset: pixel(Offset(plate.center.dx, plate.top + 2.25)),
+                  lowerInset: pixel(
+                    Offset(plate.center.dx, plate.bottom - 2.25),
+                  ),
+                  backdrop: pixel(background),
+                  upperOutside: pixel(
+                    Offset(plate.center.dx, plate.top - 1.25),
+                  ),
+                  lowerOutside: pixel(
+                    Offset(plate.center.dx, plate.bottom + 1.25),
+                  ),
                 ),
             ];
           } finally {
@@ -4091,10 +4362,43 @@ void main() {
         );
         for (final sample in contrasts!) {
           final reason = '${brightness.name} ${sample.name}';
-          expect(sample.edge, sample.fill, reason: '$reason has no border');
+          if (sample.name == 'source') {
+            expect(
+              sample.upperInset.computeLuminance(),
+              lessThan(sample.fill.computeLuminance()),
+              reason: '$reason upper edge is inset',
+            );
+            expect(
+              sample.lowerInset.computeLuminance(),
+              greaterThan(sample.fill.computeLuminance()),
+              reason: '$reason lower edge catches light',
+            );
+            expect(
+              sample.edge,
+              isNot(sample.upperInset),
+              reason: '$reason rim is distinct',
+            );
+            expect(
+              sample.upperOutside.computeLuminance(),
+              greaterThan(sample.backdrop.computeLuminance()),
+              reason: '$reason reflects light above the rim',
+            );
+            expect(
+              sample.lowerOutside.computeLuminance(),
+              lessThan(sample.backdrop.computeLuminance()),
+              reason: '$reason casts a shadow below the rim',
+            );
+          } else {
+            expect(sample.edge, sample.fill, reason: '$reason has no border');
+          }
           expect(
             sample.backdropContrast,
-            inInclusiveRange(sample.name == 'segment' ? 1.10 : 1.06, 1.6),
+            inInclusiveRange(
+              sample.name == 'segment' ? 1.10 : 1.03,
+              sample.name == 'source' && brightness == Brightness.light
+                  ? 1.13
+                  : 1.6,
+            ),
             reason: '$reason fill separates from its painted backdrop',
           );
         }

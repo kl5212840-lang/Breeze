@@ -170,7 +170,6 @@ void main() {
         'disableBika',
         'updateAccelerate',
         'retryDownloadUntilSuccess',
-        'comicDownloadConcurrency',
         'videoDownloadConcurrency',
         'downloadWifiOnly',
         'downloadCompletionNotice',
@@ -187,7 +186,6 @@ void main() {
       });
       expect(global['switchStyle'], 'spark');
       expect(global['retryDownloadUntilSuccess'], isFalse);
-      expect(global['comicDownloadConcurrency'], 4);
       expect(global['videoDownloadConcurrency'], 2);
       expect(global['downloadWifiOnly'], isTrue);
       expect(global['downloadCompletionNotice'], 'chapter');
@@ -226,6 +224,189 @@ void main() {
       expect(objectbox.pluginConfigBox.getAll().single.config, account);
     },
   );
+
+  for (final custom in [false, true]) {
+    test(
+      'settings writers omit fields unknown to published 3.0.38 (custom=$custom)',
+      () async {
+        final state = custom
+            ? enabled.copyWith(
+                comicDownloadConcurrency: 7,
+                readSetting: enabled.readSetting.copyWith(
+                  showSystemStatusBar: true,
+                ),
+              )
+            : enabled;
+        final user = objectbox.userSettingBox.get(1)!;
+        user.globalSetting = state;
+        objectbox.userSettingBox.put(user);
+        final remote = CompatibilityRemote();
+        await uploadSettingsData(
+          remote,
+          state: state,
+          codec: compatibilitySettingsCodec,
+          includeAll: true,
+        );
+        for (final payload in [
+          remote.settings,
+          await captureFullCloudSettings(state),
+        ]) {
+          // f3ca37ff rejects unknown keys in both wire representations.
+          final blocks = payload['blocks'] as Map;
+          final global = payload['globalSetting'] as Map;
+          expect(
+            (blocks['library'] as Map)['data'],
+            isNot(contains('comicDownloadConcurrency')),
+          );
+          expect(
+            (blocks['reader'] as Map)['data'],
+            isNot(contains('showSystemStatusBar')),
+          );
+          expect(global, isNot(contains('comicDownloadConcurrency')));
+          expect(global['readSetting'], isNot(contains('showSystemStatusBar')));
+          expect(global, containsPair('videoDownloadConcurrency', 1));
+          expect(
+            global['readSetting'],
+            containsPair('pageInfoTopInStatusBar', false),
+          );
+        }
+      },
+    );
+  }
+
+  for (final legacyGlobalOnly in [false, true]) {
+    test(
+      'restores prerelease settings without importing device preferences (legacy=$legacyGlobalOnly)',
+      () async {
+        final state = enabled.copyWith(
+          comicDownloadConcurrency: 7,
+          readSetting: enabled.readSetting.copyWith(showSystemStatusBar: true),
+        );
+        final user = objectbox.userSettingBox.get(1)!;
+        user.globalSetting = state;
+        objectbox.userSettingBox.put(user);
+        final remote = CompatibilityRemote()
+          ..payload('settings', {
+            'version': 'v1',
+            'schemaVersion': 'v2',
+            'syncTime': 20,
+            'globalSetting': {
+              'comicDownloadConcurrency': 2,
+              'videoDownloadConcurrency': 3,
+              'readSetting': {
+                'showSystemStatusBar': false,
+                'pageInfoTopInStatusBar': true,
+              },
+            },
+            if (!legacyGlobalOnly)
+              'blocks': {
+                'library': {
+                  'updatedAt': 20,
+                  'data': {
+                    'comicDownloadConcurrency': 2,
+                    'videoDownloadConcurrency': 3,
+                  },
+                },
+                'reader': {
+                  'updatedAt': 20,
+                  'data': {
+                    'showSystemStatusBar': false,
+                    'pageInfoTopInStatusBar': true,
+                  },
+                },
+              },
+          });
+        await downloadSettingsData(
+          remote,
+          state: state,
+          codec: compatibilitySettingsCodec,
+        );
+        final restored = objectbox.userSettingBox.get(1)!.globalSetting;
+        expect(restored.comicDownloadConcurrency, 7);
+        expect(restored.videoDownloadConcurrency, 3);
+        expect(restored.readSetting.showSystemStatusBar, isTrue);
+        expect(restored.readSetting.pageInfoTopInStatusBar, isTrue);
+      },
+    );
+  }
+
+  test('recognizes prerelease hashes without advancing the local library or reader clocks', () async {
+    final state = enabled.copyWith(
+      comicDownloadConcurrency: 7,
+      readSetting: enabled.readSetting.copyWith(showSystemStatusBar: true),
+    );
+    final user = objectbox.userSettingBox.get(1)!;
+    user.globalSetting = state;
+    objectbox.userSettingBox.put(user);
+    final before = await captureFullCloudSettings(state);
+    final blocks = before['blocks'] as Map;
+    Map<String, Object?> prereleaseBlock(
+      String block,
+      String precedingKey,
+      String field,
+      Object value,
+    ) => {
+      for (final entry in ((blocks[block] as Map)['data'] as Map).entries) ...{
+        entry.key as String: entry.value,
+        if (entry.key == precedingKey) field: value,
+      },
+    };
+
+    final prefs = await SharedPreferences.getInstance();
+    final olderBlocks = {
+      'library': prereleaseBlock(
+        'library',
+        'retryDownloadUntilSuccess',
+        'comicDownloadConcurrency',
+        5,
+      ),
+      'reader': prereleaseBlock(
+        'reader',
+        'pageInfoTopInStatusBar',
+        'showSystemStatusBar',
+        false,
+      ),
+    };
+    await prefs.setString(
+      'sync.settings.block.meta.v3',
+      jsonEncode({
+        for (final entry in olderBlocks.entries)
+          entry.key: {
+            'hash': ComicSyncCore.calculateMd5(
+              utf8.encode(jsonEncode(entry.value)),
+            ),
+            'updatedAt': 10,
+          },
+      }),
+    );
+    final remote = CompatibilityRemote()
+      ..payload('settings', {
+        'version': 'v1',
+        'schemaVersion': 'v2',
+        'syncTime': 20,
+        'globalSetting': {},
+        'blocks': {
+          'library': {
+            'updatedAt': 20,
+            'data': {...olderBlocks['library']!, 'videoDownloadConcurrency': 3},
+          },
+          'reader': {
+            'updatedAt': 20,
+            'data': {...olderBlocks['reader']!, 'pageInfoTopInStatusBar': true},
+          },
+        },
+      });
+    await runSettingsSync(
+      remote,
+      currentGlobalSetting: state,
+      codec: compatibilitySettingsCodec,
+    );
+    final restored = objectbox.userSettingBox.get(1)!.globalSetting;
+    expect(restored.videoDownloadConcurrency, 3);
+    expect(restored.readSetting.pageInfoTopInStatusBar, isTrue);
+    expect(restored.comicDownloadConcurrency, 7);
+    expect(restored.readSetting.showSystemStatusBar, isTrue);
+  });
 
   for (final change in ['version', 'schema', 'block', 'field', 'video']) {
     test(

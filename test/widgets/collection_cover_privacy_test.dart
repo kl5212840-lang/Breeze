@@ -214,22 +214,30 @@ void main() {
   );
 
   testWidgets(
-    'one button exposes a 44pt toggle and persists the requested switch',
+    'one button uses platform touch sizes and persists the requested switch',
     (tester) async {
       controller.state.value = const CollectionCoverPrivacySettings(
         enabled: true,
         ready: true,
       );
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: Scaffold(body: Center(child: CollectionCoverPrivacyButton())),
-        ),
-      );
-      expect(
-        tester.getSize(find.byType(CollectionCoverPrivacyButton)),
-        const Size(44, 44),
-      );
-      await tester.tap(find.byType(CollectionCoverPrivacyButton));
+      final toggle = find.byType(CollectionCoverPrivacyButton);
+      for (final (platform, extent) in [
+        (TargetPlatform.iOS, 44.0),
+        (TargetPlatform.android, 48.0),
+      ]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData(platform: platform),
+            home: const Scaffold(
+              body: Center(child: CollectionCoverPrivacyButton()),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(toggle, findsOneWidget);
+        expect(tester.getSize(toggle), Size.square(extent), reason: platform.name);
+      }
+      await tester.tap(toggle);
       await tester.pumpAndSettle();
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 20)),

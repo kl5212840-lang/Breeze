@@ -38,6 +38,9 @@ const _cdnMirrors = [
 const _catalogCacheKey = 'plugin_store.catalog.sources.v1';
 const _legacyCatalogCacheKey = 'plugin_store.catalog.v2';
 const _bundledCatalog = 'asset/plugins/personal_catalog.json';
+const _releaseIndexTimeout = Duration(seconds: 8);
+const _releaseIndexMirrorTimeout = Duration(seconds: 4);
+const _releaseAttachmentTimeout = Duration(seconds: 60);
 
 Future<CloudPluginCatalogSnapshot> _readCloudPluginCatalogSnapshot() async {
   String? legacy;
@@ -81,7 +84,8 @@ Future<CloudPluginCatalogSnapshot> fetchCloudPluginListWithCdnFallback() =>
 Future<CloudPluginCatalogSnapshot> _refreshCloudPluginCatalog() async {
   final snapshot = await loadCloudPluginCatalog(
     official: _fetchOfficialCloudPluginList,
-    personal: () => _fetchPersonalPluginList(_personalPluginListUrl),
+    personal: () =>
+        _fetchPersonalPluginList(_personalPluginListUrl, allowEmpty: true),
     legacyPersonal: () =>
         _fetchPersonalPluginList(_legacyPersonalPluginListUrl),
     fallback: await _readCloudPluginCatalogSnapshot(),
@@ -95,16 +99,29 @@ Future<CloudPluginCatalogSnapshot> _refreshCloudPluginCatalog() async {
   return snapshot;
 }
 
-Future<String?> _fetchPersonalPluginList(String sourceUrl) async {
+Future<String?> _fetchPersonalPluginList(
+  String sourceUrl, {
+  bool allowEmpty = false,
+}) async {
   try {
-    return (await _fetchFirstPartyPluginMetadata(sourceUrl)).text.trim();
+    return await _fetchFirstPartyPluginMetadata(sourceUrl, (response) {
+      final payload = response.text.trim();
+      if (decodeCloudPluginCatalog(payload, allowEmpty: allowEmpty) == null) {
+        throw StateError('个人插件目录格式错误');
+      }
+      return payload;
+    });
   } catch (e, stackTrace) {
     logger.w('个人插件目录不可用', error: e, stackTrace: stackTrace);
     return null;
   }
 }
 
-Future<FetchResponse> _fetchFirstPartyPluginMetadata(String sourceUrl) async {
+Future<T> _fetchFirstPartyPluginMetadata<T>(
+  String sourceUrl,
+  T Function(FetchResponse) parse, {
+  bool verifyAgainstLiveCatalog = false,
+}) async {
   final raw = Uri.parse(sourceUrl);
   // Both endpoints serve the same repository path on main. Use the GitHub
   // Contents API as a second HTTPS origin when the raw origin is unavailable.
@@ -114,35 +131,97 @@ Future<FetchResponse> _fetchFirstPartyPluginMetadata(String sourceUrl) async {
     '/repos/$personalPluginCatalogRepository/contents/$path',
     {'ref': 'main'},
   );
-  final client = WindHttp(
-    connectTimeout: const Duration(seconds: 3),
-    receiveTimeout: const Duration(seconds: 3),
+  final trustedRoutes = [
+    (sourceUrl, 'application/json'),
+    (api.toString(), 'application/vnd.github.raw+json'),
+  ];
+  final isReleaseIndex = requiresFormalPluginRelease(sourceUrl);
+  final timeout = isReleaseIndex
+      ? _releaseIndexTimeout
+      : const Duration(seconds: 3);
+  WindHttp clientFor(Duration timeout) => WindHttp(
+    connectTimeout: _shorterTimeout(const Duration(seconds: 5), timeout),
+    receiveTimeout: timeout,
     dangerAcceptInvalidCerts: false,
     followRedirects: false,
   );
+  Future<T> read(WindHttp client, String url, String accept) async {
+    final response = await client.fetch(
+      url,
+      headers: {'Accept': accept, 'User-Agent': 'Breeze'},
+    );
+    if (!response.ok ||
+        response.url != url ||
+        response.redirected ||
+        response.body.isEmpty) {
+      throw StateError('无效的插件元数据响应（HTTP ${response.status}）');
+    }
+    return parse(response);
+  }
+
+  final client = clientFor(timeout);
   Object? lastError;
-  for (final (url, accept) in [
-    (sourceUrl, 'application/json'),
-    (api.toString(), 'application/vnd.github.raw+json'),
-  ]) {
+  if (isReleaseIndex) {
     try {
-      final response = await client.fetch(
-        url,
-        headers: {'Accept': accept, 'User-Agent': 'Breeze'},
-      );
-      if (response.ok &&
-          response.url == url &&
-          !response.redirected &&
-          response.body.isNotEmpty) {
-        return response;
+      return await _firstSuccessfulPluginRequest([
+        for (final (url, accept) in trustedRoutes) read(client, url, accept),
+      ], timeout);
+    } catch (error) {
+      lastError = error;
+    }
+  } else {
+    for (final (url, accept) in trustedRoutes) {
+      try {
+        return await read(client, url, accept);
+      } catch (error) {
+        lastError = error;
       }
-      lastError = StateError('HTTP ${response.status}');
+    }
+  }
+  // A mirror may supply the index only when its identity and digest can be
+  // checked against the live catalog.
+  if (verifyAgainstLiveCatalog) {
+    final mirrorClient = clientFor(_releaseIndexMirrorTimeout);
+    try {
+      return await _firstSuccessfulPluginRequest([
+        for (final mirror in mirrorBaseUrls)
+          read(mirrorClient, '$mirror$sourceUrl', 'application/json'),
+      ], _releaseIndexMirrorTimeout);
     } catch (error) {
       lastError = error;
     }
   }
   throw StateError('GitHub 插件元数据暂不可用: $lastError');
 }
+
+Future<T> _firstSuccessfulPluginRequest<T>(
+  List<Future<T>> requests,
+  Duration timeout,
+) {
+  if (requests.isEmpty) {
+    return Future.error(StateError('没有可用的插件下载通道'));
+  }
+  final result = Completer<T>();
+  var pending = requests.length;
+  for (final request in requests) {
+    unawaited(
+      request.then<void>(
+        (value) {
+          if (!result.isCompleted) result.complete(value);
+        },
+        onError: (Object error, StackTrace stack) {
+          if (--pending == 0 && !result.isCompleted) {
+            result.completeError(error, stack);
+          }
+        },
+      ),
+    );
+  }
+  return result.future.timeout(timeout);
+}
+
+Duration _shorterTimeout(Duration first, Duration second) =>
+    first < second ? first : second;
 
 Future<String> _fetchOfficialCloudPluginList() async {
   final client = WindHttp.distribution(
@@ -300,10 +379,13 @@ Future<String> downloadFromJsdelivrOrGitHub({
 Future<Map<String, dynamic>> fetchPluginReleaseIndex(String updateUrl) async {
   if (!requiresFormalPluginRelease(updateUrl))
     return fetchReleaseData(updateUrl);
-  final response = await _fetchFirstPartyPluginMetadata(updateUrl.trim());
-  final index = response.json;
-  if (index is! Map) throw StateError('插件更新索引格式错误');
-  return asJsonMap(index);
+  return _fetchFirstPartyPluginMetadata(updateUrl.trim(), (response) {
+    final index = asJsonMap(response.json);
+    final tag = index['tag_name']?.toString().trim() ?? '';
+    final name = index['name']?.toString().trim() ?? '';
+    if (tag.isEmpty && name.isEmpty) throw StateError('插件更新索引格式错误');
+    return index;
+  });
 }
 
 Future<String> downloadFormalPluginMigration(
@@ -315,14 +397,43 @@ Future<String> downloadFormalPluginRelease(
   PluginReleaseMigration? migration,
 }) async {
   final indexUrl = release.updateUrl;
-  final response = await _fetchFirstPartyPluginMetadata(indexUrl);
-  final index = asJsonMap(response.json);
-  if (!(migration?.isConfirmedBy(index) ?? release.isConfirmedBy(index))) {
-    throw StateError('插件更新索引与商店清单不一致，请刷新插件商店后重试');
+  final urls = await _fetchFirstPartyPluginMetadata(indexUrl, (response) {
+    final index = asJsonMap(response.json);
+    if (!(migration?.isConfirmedBy(index) ?? release.isConfirmedBy(index))) {
+      throw StateError('插件更新索引与商店清单不一致，请刷新插件商店后重试');
+    }
+    final urls = _preferredPluginAssets(
+      asJsonList(index['assets']),
+    ).map(_firstPartyReleaseAssetUrl).whereType<String>().toSet().toList();
+    if (urls.isEmpty) {
+      throw StateError('插件发布附件与更新索引不一致，请刷新插件商店后重试');
+    }
+    return urls;
+  }, verifyAgainstLiveCatalog: true);
+  final timer = Stopwatch()..start();
+  Object? lastError;
+  for (var i = 0; i < urls.length; i++) {
+    final timeout =
+        (_releaseAttachmentTimeout - timer.elapsed) ~/ (urls.length - i);
+    if (timeout <= Duration.zero) break;
+    final url = urls[i];
+    try {
+      return await _downloadPublishedPluginScript(
+        url,
+        release.scriptSha256,
+        timeout: timeout,
+      );
+    } catch (error) {
+      lastError = error;
+      logger.w('插件发布附件无法验证或下载: $url', error: error);
+    }
   }
-  final asset = pickPreferredPluginAsset(asJsonList(index['assets']));
-  final name = asset?['name']?.toString() ?? '';
-  final url = asset?['browser_download_url']?.toString() ?? '';
+  throw StateError('插件发布附件下载失败: $lastError');
+}
+
+String? _firstPartyReleaseAssetUrl(Map<String, dynamic> asset) {
+  final name = asset['name']?.toString() ?? '';
+  final url = asset['browser_download_url']?.toString() ?? '';
   final uri = Uri.tryParse(url);
   final path = uri?.pathSegments ?? const <String>[];
   if (uri == null ||
@@ -338,41 +449,85 @@ Future<String> downloadFormalPluginRelease(
       path[4].isEmpty ||
       path.last != name ||
       !url.endsWith('/$name')) {
-    throw StateError('插件发布附件与更新索引不一致，请刷新插件商店后重试');
+    return null;
   }
-  return _downloadPublishedPluginScript(url, release.scriptSha256);
+  return url;
 }
 
 bool _isFirstPartyRelease(String url) => url.startsWith(
   'https://github.com/$personalPluginCatalogRepository/releases/download/',
 );
 
-Future<String> _downloadPublishedPluginScript(String url, String digest) async {
-  if (Platform.isAndroid &&
-      _isFirstPartyRelease(url) &&
-      parsePublishedPluginSha256(digest) != null &&
-      !globalSetting.blockRustHttpRequests) {
+Future<String> _downloadPublishedPluginScript(
+  String url,
+  String digest, {
+  Duration timeout = _releaseAttachmentTimeout,
+}) async {
+  Future<String> decodeAndVerify(FetchResponse response) async {
+    final script = await decodeDownloadedPluginScript(
+      response: response,
+      resolvedUrl: url,
+    );
+    verifyPublishedPluginScript(script, digest);
+    return script;
+  }
+
+  if (!_isFirstPartyRelease(url) ||
+      parsePublishedPluginSha256(digest) == null) {
+    return decodeAndVerify(await downloadPluginAssetWithFallback(url));
+  }
+
+  final timer = Stopwatch()..start();
+  // Leave part of the window for mirrors even if GitHub does not respond.
+  final directTimeout = _shorterTimeout(
+    const Duration(seconds: 20),
+    timeout ~/ 2,
+  );
+  if (Platform.isAndroid && !globalSetting.blockRustHttpRequests) {
     try {
-      final script = await _fetchAndroidReleaseScript(Uri.parse(url));
+      final script = await _fetchAndroidReleaseScript(
+        Uri.parse(url),
+        _shorterTimeout(const Duration(seconds: 8), directTimeout ~/ 2),
+      );
       verifyPublishedPluginScript(script, digest);
       return script;
     } catch (error) {
       logger.w('Android GitHub 附件下载失败，尝试现有下载通道', error: error);
     }
   }
-  final response = await downloadPluginAssetWithFallback(url);
-  final script = await decodeDownloadedPluginScript(
-    response: response,
-    resolvedUrl: url,
+
+  final client = WindHttp.distribution(
+    connectTimeout: const Duration(seconds: 12),
+    receiveTimeout: timeout,
   );
-  verifyPublishedPluginScript(script, digest);
-  return script;
+  Future<String> read(String route, Duration remaining) async {
+    if (remaining <= Duration.zero) {
+      throw TimeoutException('插件发布附件下载超时');
+    }
+    final response = await _fetchPluginAsset(client, route, timeout: remaining);
+    return decodeAndVerify(response);
+  }
+
+  try {
+    final remaining = directTimeout - timer.elapsed;
+    return await read(url, remaining).timeout(remaining);
+  } catch (error) {
+    logger.w('GitHub 插件附件不可用，尝试镜像', error: error);
+  }
+  final remaining = timeout - timer.elapsed;
+  return _firstSuccessfulPluginRequest([
+    for (final route in buildCloudRequestCandidates(url))
+      if (route != url) read(route, remaining),
+  ], remaining);
 }
 
-Future<String> _fetchAndroidReleaseScript(Uri original) async {
+Future<String> _fetchAndroidReleaseScript(
+  Uri original,
+  Duration timeout,
+) async {
   const maxBytes = 8 * 1024 * 1024;
   final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
-  try {
+  Future<String> download() async {
     var uri = original;
     for (var redirects = 0; redirects <= 3; redirects++) {
       final request = await client.getUrl(uri);
@@ -413,9 +568,36 @@ Future<String> _fetchAndroidReleaseScript(Uri original) async {
       );
     }
     throw StateError('插件附件重定向过多');
+  }
+
+  try {
+    return await download().timeout(timeout);
   } finally {
     client.close(force: true);
   }
+}
+
+Future<FetchResponse> _fetchPluginAsset(
+  WindHttp client,
+  String requestUrl, {
+  Duration? timeout,
+}) async {
+  final response = await client.fetch(
+    requestUrl,
+    headers: {'Accept': '*/*'},
+    timeout: timeout,
+  );
+  if (!response.ok) {
+    throw StateError('HTTP ${response.status}: $requestUrl');
+  }
+  if (response.body.isEmpty) {
+    throw StateError('空响应: $requestUrl');
+  }
+  final htmlReason = _detectHtmlPluginResponse(response);
+  if (htmlReason != null) {
+    throw StateError('$htmlReason: $requestUrl');
+  }
+  return response;
 }
 
 Future<FetchResponse> downloadPluginAssetWithFallback(String sourceUrl) async {
@@ -431,26 +613,7 @@ Future<FetchResponse> downloadPluginAssetWithFallback(String sourceUrl) async {
   Object? lastError;
   for (final requestUrl in requestUrls) {
     try {
-      final response = await client.fetch(
-        requestUrl,
-        headers: {'Accept': '*/*'},
-      );
-      if (!response.ok) {
-        lastError = StateError('HTTP ${response.status}: $requestUrl');
-        logger.w('插件资源下载通道 HTTP 异常: $requestUrl status=${response.status}');
-        continue;
-      }
-      if (response.body.isEmpty) {
-        lastError = StateError('空响应: $requestUrl');
-        continue;
-      }
-      final htmlReason = _detectHtmlPluginResponse(response);
-      if (htmlReason != null) {
-        lastError = StateError('$htmlReason: $requestUrl');
-        logger.w('插件资源下载通道返回网页: $requestUrl ($htmlReason)');
-        continue;
-      }
-      return response;
+      return await _fetchPluginAsset(client, requestUrl);
     } catch (e, stackTrace) {
       lastError = e;
       logger.w('插件资源下载通道失败: $requestUrl', error: e, stackTrace: stackTrace);
@@ -502,7 +665,12 @@ Future<String> decodePluginScriptFromBytes({
   }
 }
 
-Map<String, dynamic>? pickPreferredPluginAsset(List<dynamic> rawAssets) {
+Map<String, dynamic>? pickPreferredPluginAsset(List<dynamic> rawAssets) =>
+    _preferredPluginAssets(rawAssets).firstOrNull;
+
+Iterable<Map<String, dynamic>> _preferredPluginAssets(
+  List<dynamic> rawAssets,
+) sync* {
   final assets = rawAssets
       .map((item) => asJsonMap(item))
       .where(
@@ -512,21 +680,12 @@ Map<String, dynamic>? pickPreferredPluginAsset(List<dynamic> rawAssets) {
             (item['name']?.toString().trim().isNotEmpty ?? false),
       )
       .toList();
-  if (assets.isEmpty) {
-    return null;
+  for (final extension in ['.cjs.br', '.cjs']) {
+    yield* assets.where(
+      (asset) =>
+          asset['name'].toString().trim().toLowerCase().endsWith(extension),
+    );
   }
-
-  Map<String, dynamic>? findByExt(String ext) {
-    for (final asset in assets) {
-      final name = asset['name']?.toString().toLowerCase().trim() ?? '';
-      if (name.endsWith(ext)) {
-        return asset;
-      }
-    }
-    return null;
-  }
-
-  return findByExt('.cjs.br') ?? findByExt('.cjs');
 }
 
 Future<Map<String, dynamic>> callGetInfoByGlobalQjs(String bundleJs) async {
@@ -711,14 +870,6 @@ String _rawPluginErrorText(Object error) {
   return result;
 }
 
-String _truncateErrorDetail(String text) {
-  final singleLine = text.replaceAll(RegExp(r'\s+'), ' ').trim();
-  if (singleLine.length <= 240) {
-    return singleLine;
-  }
-  return '${singleLine.substring(0, 240)}…';
-}
-
 /// 将插件下载/安装异常转换为面向用户的友好提示。
 ///
 /// 仅在 UI 展示层调用；重试判定仍应使用原始异常（见
@@ -749,12 +900,12 @@ String normalizePluginInstallErrorMessage(Object error) {
       return t.plugin.remoteAssetNotFound;
     }
     if (httpStatus == 401 || httpStatus == 403) {
-      return t.plugin.remoteAccessDenied(status: httpStatus);
+      return t.plugin.remoteAccessDenied;
     }
     if (httpStatus >= 500 && httpStatus < 600) {
-      return t.plugin.remoteServerError(status: httpStatus);
+      return t.plugin.remoteServerError;
     }
-    return t.plugin.remoteHttpError(status: httpStatus);
+    return t.plugin.remoteHttpError;
   }
   if (raw.contains('空响应') || lower.contains('脚本为空') || lower.contains('内容为空')) {
     return t.plugin.remoteEmptyResponse;
@@ -778,8 +929,9 @@ String normalizePluginInstallErrorMessage(Object error) {
   if (lower.contains('getinfo') || lower.contains('缺少 uuid')) {
     return t.plugin.downloadedScriptInvalid;
   }
+  if (lower.contains('uuid 不匹配')) return t.plugin.uuidMismatch;
   if (isNetworkRetryableError(error)) {
     return t.plugin.networkUnstableRetry;
   }
-  return _truncateErrorDetail(raw);
+  return t.error.operationFailed;
 }

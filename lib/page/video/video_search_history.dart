@@ -1,6 +1,10 @@
 import 'dart:async';
 
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
+import 'package:zephyr/page/search/method/search_history_entries.dart';
+
+typedef VideoSearchHistoryEntry = ({String query, KeywordSearchScope? scope});
 
 /// Per-source search words, included in portable application data.
 /// They are never sent to a site except by an explicit search.
@@ -22,30 +26,65 @@ abstract final class VideoSearchHistory {
     return text.substring(0, text.length.clamp(0, 300));
   }
 
-  static List<String> _words(SharedPreferences prefs, String key) =>
-      (prefs.getStringList(key) ?? const [])
-          .map(clean)
-          .where((word) => word.isNotEmpty)
-          .toSet()
-          .take(limit)
-          .toList();
+  static VideoSearchHistoryEntry? decode(String raw) {
+    final saved = SearchHistoryEntries.decode(raw);
+    final isVideoEntry = saved?.scope == 'video';
+    final query = clean(isVideoEntry ? saved!.query : raw);
+    if (query.isEmpty) return null;
+    return (
+      query: query,
+      scope: isVideoEntry
+          ? parseKeywordSearchScope(saved!.keywordScope?.name)
+          : null,
+    );
+  }
 
-  static Future<List<String>> read(String source) async {
+  static List<VideoSearchHistoryEntry> _entries(
+    SharedPreferences prefs,
+    String key,
+  ) {
+    final seen = <String>{};
+    return (prefs.getStringList(key) ?? const [])
+        .map(decode)
+        .nonNulls
+        .where((entry) => seen.add(entry.query))
+        .take(limit)
+        .toList();
+  }
+
+  static Future<List<VideoSearchHistoryEntry>> readEntries(
+    String source,
+  ) async {
     final pending = _pending;
     if (pending != null) await pending.catchError((Object _) {});
-    return _words(await SharedPreferences.getInstance(), _key(source));
+    return _entries(await SharedPreferences.getInstance(), _key(source));
   }
+
+  static Future<List<String>> read(String source) async =>
+      (await readEntries(source)).map((entry) => entry.query).toList();
 
   static Future<void> _change(
     String source,
-    List<String> Function(List<String>) change,
+    List<VideoSearchHistoryEntry> Function(List<VideoSearchHistoryEntry>)
+    change,
   ) {
     final key = _key(source);
     final job = (_pending ?? Future<void>.value())
         .catchError((Object _) {})
         .then((_) async {
           final prefs = await SharedPreferences.getInstance();
-          if (!await prefs.setStringList(key, change(_words(prefs, key)))) {
+          final entries = change(_entries(prefs, key));
+          if (!await prefs.setStringList(key, [
+            for (final entry in entries)
+              entry.scope == null
+                  ? entry.query
+                  : SearchHistoryEntries.add(
+                      const [],
+                      entry.query,
+                      scope: 'video',
+                      keywordScope: entry.scope,
+                    ).single,
+          ])) {
             throw StateError('Local search history not saved');
           }
         });
@@ -63,21 +102,30 @@ abstract final class VideoSearchHistory {
     return job;
   }
 
-  static Future<void> add(String source, String query) =>
-      _change(source, (words) {
-        final word = clean(query);
-        return [
-          if (word.isNotEmpty) word,
-          ...words.where((old) => old != word),
-        ].take(limit).toList();
-      });
+  static Future<void> add(
+    String source,
+    String query, {
+    KeywordSearchScope? scope,
+  }) => _change(source, (entries) {
+    final word = clean(query);
+    if (word.isEmpty) return entries;
+    final existing = entries.where((entry) => entry.query == word).firstOrNull;
+    return [
+      (
+        query: word,
+        scope: parseKeywordSearchScope(scope?.name) ?? existing?.scope,
+      ),
+      ...entries.where((entry) => entry.query != word),
+    ].take(limit).toList();
+  });
 
   static Future<void> remove(String source, String word) =>
-      _change(source, (words) => words.where((old) => old != word).toList());
+      removeMany(source, {word});
   static Future<void> removeMany(String source, Set<String> selected) =>
       _change(
         source,
-        (words) => words.where((old) => !selected.contains(old)).toList(),
+        (entries) =>
+            entries.where((entry) => !selected.contains(entry.query)).toList(),
       );
   static Future<void> clear(String source) => _change(source, (_) => []);
 }

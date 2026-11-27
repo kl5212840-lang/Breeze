@@ -7,11 +7,13 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/page/video/omofun_site_client.dart';
+import 'package:zephyr/page/account/plugin_account_avatar_frame.dart';
 import 'package:zephyr/page/setting/common/plugin_account_avatar.dart';
 import 'package:zephyr/page/video/omo_network.dart';
 import 'package:zephyr/service/local_appearance_images.dart';
 import 'package:zephyr/widgets/local_appearance_image_picker.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 /// Native account tasks never select the website implicitly. Only the explicitly
 /// labelled website action below can invoke [onWebsite]. The source's unverified
@@ -125,22 +127,12 @@ class _OmoAccountDetailsPageState extends State<OmoAccountDetailsPage> {
   Future<void> _signOut() async {
     final identity = widget.client.account?.id,
         revision = widget.client.revision;
-    final yes = await showDialog<bool>(
+    final yes = await confirmShortAlert(
       context: context,
-      builder: (dialog) => AlertDialog(
-        title: Text(t.videoSource.logout),
-        content: Text(t.videoSource.logoutHint),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialog, false),
-            child: Text(t.common.cancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialog, true),
-            child: Text(t.videoSource.logout),
-          ),
-        ],
-      ),
+      title: Text(t.videoSource.logout),
+      content: Text(t.videoSource.logoutHint),
+      confirmLabel: t.videoSource.logout,
+      destructive: true,
     );
     if (yes != true || !mounted) return;
     if (widget.client.account?.id != identity ||
@@ -227,11 +219,14 @@ class _OmoAccountDetailsPageState extends State<OmoAccountDetailsPage> {
                       padding: const EdgeInsets.all(16),
                       child: Row(
                         children: [
-                          OmoAccountAvatar(
-                            client: widget.client,
-                            source: widget.source,
-                            revision: _avatarRevision,
+                          PluginAccountAvatarFrame(
                             size: 64,
+                            child: OmoAccountAvatar(
+                              client: widget.client,
+                              source: widget.source,
+                              revision: _avatarRevision,
+                              size: 64,
+                            ),
                           ),
                           const SizedBox(width: 16),
                           Expanded(

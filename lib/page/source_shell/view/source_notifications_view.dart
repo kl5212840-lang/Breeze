@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/widgets/breeze_control_colors.dart';
 
 class SourceNotice {
   const SourceNotice({
@@ -249,6 +250,12 @@ class _SourceNotificationsViewState extends State<SourceNotificationsView> {
                             minWidth: 44,
                           ),
                           child: ChoiceChip(
+                            color: BreezeControlColors.contentSelectionColor(
+                              context,
+                            ),
+                            side: BreezeControlColors.contentSelectionSide(
+                              context,
+                            ),
                             label: Text(label),
                             selected: _filter == filter,
                             materialTapTargetSize: MaterialTapTargetSize.padded,

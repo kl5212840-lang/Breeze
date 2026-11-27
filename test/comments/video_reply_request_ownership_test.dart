@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/video/video_community_page.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/video/video_site_action_models.dart';
 import 'package:zephyr/page/video/video_site_operations.dart';
 
 class _Operations extends VideoSiteOperations {
@@ -29,6 +30,7 @@ class _Operations extends VideoSiteOperations {
   Future<Map<String, dynamic>> run(
     String operation, [
     Map<String, dynamic> payload = const {},
+    void Function(VideoInteractionState)? onVoteAccepted,
   ]) async {
     if (operation == 'comments') {
       return {

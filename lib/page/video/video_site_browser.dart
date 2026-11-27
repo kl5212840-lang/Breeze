@@ -14,15 +14,16 @@ import 'dart:convert';
 /// Native iOS must use the cookie store of this exact source-scoped WKWebView.
 /// Never fall back to the Flutter plugin's unrelated default store on iOS.
 VideoAccountCookies? videoSiteAccountCookies(
-  InAppWebViewController controller,
-) {
+  InAppWebViewController controller, {
+  String? source,
+}) {
   final platform = controller.platform;
   if (platform is VideoSiteBrowserController) {
     return platform.hasAccountCookieContext
         ? platform.newAccountCookieLease()
         : null;
   }
-  return Platform.isIOS ? null : PlatformVideoAccountCookies();
+  return Platform.isIOS ? null : PlatformVideoAccountCookies(source: source);
 }
 
 /// No localized error descriptions or failing URLs enter a diagnostic label.
@@ -596,7 +597,22 @@ class _NativeVideoAccountCookies
     }
   }
 
-  Future<String> _bind() => _binding ??= () async {
+  Future<String> _bind() {
+    if (_binding case final existing?) return existing;
+    final binding = _openNativeBinding();
+    _binding = binding;
+    unawaited(
+      binding.then<void>(
+        (_) {},
+        onError: (Object _, StackTrace _) {
+          if (identical(_binding, binding)) _binding = null;
+        },
+      ),
+    );
+    return binding;
+  }
+
+  Future<String> _openNativeBinding() async {
     final value = await _owner.channel
         .invokeMethod<Object?>('accountCookieContext', {
           'source': _owner._accountSource,
@@ -622,7 +638,8 @@ class _NativeVideoAccountCookies
       throw StateError('Source account cookie context is unavailable');
     }
     return leaseToken;
-  }();
+  }
+
   Future<Object?> _request(
     String method,
     Uri origin, [

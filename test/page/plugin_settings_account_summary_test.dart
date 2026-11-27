@@ -5,6 +5,7 @@ import 'package:zephyr/service/plugin_account_authentication.dart';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/util/event/event.dart';
@@ -20,8 +21,10 @@ import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/plugin_settings/view/plugin_settings_page.dart';
 import 'package:zephyr/page/login_page.dart';
 import 'package:zephyr/page/account/plugin_saved_accounts_page.dart';
+import 'package:zephyr/page/account/plugin_account_avatar_frame.dart';
 import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/page/plugin_settings/widgets/plugin_settings_content.dart';
+import 'package:zephyr/page/plugin_settings/widgets/plugin_settings_sections.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/page/setting/common/plugin_user_info_card.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
@@ -52,6 +55,7 @@ class _SummaryApi extends RustLibApi {
   Future<void> Function()? jmMeasurement;
   bool? jmEffectiveRouteChanged;
   Map<String, dynamic>? jmMeasurementData;
+  Map<String, dynamic>? copyMeasurementData;
   Future<Map<String, dynamic>> Function(String, String, Map<String, dynamic>)?
   copyNetwork;
   @override
@@ -125,7 +129,9 @@ class _SummaryApi extends RustLibApi {
             'data': {
               'ok': true,
               'anyAvailable': true,
-              if (fnPath == 'measureEndpointSpeeds') ...?jmMeasurementData,
+              ...?(fnPath == 'measureEndpointSpeeds'
+                  ? jmMeasurementData
+                  : copyMeasurementData),
               if (fnPath == 'measureEndpointSpeeds' &&
                   jmEffectiveRouteChanged != null)
                 'effectiveRouteChanged': jmEffectiveRouteChanged,
@@ -187,6 +193,9 @@ void main() {
   var version = 0;
   var pluginId = 0;
   final channels = <MethodChannel>[];
+  const connectivityChannel = MethodChannel(
+    'dev.fluttercommunity.plus/connectivity',
+  );
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   setUpAll(() async {
@@ -206,6 +215,8 @@ void main() {
     api.jmNetworkChange = null;
     api.jmMeasurement = null;
     api.jmEffectiveRouteChanged = null;
+    api.jmMeasurementData = null;
+    api.copyMeasurementData = null;
     api.copyNetwork = null;
     api.actions = [];
     api.sections = [];
@@ -232,6 +243,10 @@ void main() {
         },
       },
     };
+    messenger.setMockMethodCallHandler(
+      connectivityChannel,
+      (_) async => ['wifi'],
+    );
     messenger.setMockMethodCallHandler(SystemChannels.platform_views, (
       call,
     ) async {
@@ -245,6 +260,7 @@ void main() {
     });
   });
   tearDown(() {
+    messenger.setMockMethodCallHandler(connectivityChannel, null);
     messenger.setMockMethodCallHandler(SystemChannels.platform_views, null);
     for (final channel in channels) {
       messenger.setMockMethodCallHandler(channel, null);
@@ -372,7 +388,35 @@ void main() {
             of: card,
             matching: find.byType(CircleAvatar),
           );
-          expect(tester.getSize(avatar), const Size(64, 64));
+          final frame = find.descendant(
+            of: card,
+            matching: find.byType(PluginAccountAvatarFrame),
+          );
+          final glass = find.descendant(
+            of: frame,
+            matching: find.byType(UiKitView),
+          );
+          expect(tester.getSize(frame), const Size.square(64));
+          expect(tester.getCenter(avatar), tester.getCenter(frame));
+          if (style == 'system') {
+            expect(tester.getSize(avatar), const Size.square(58));
+            final view = tester.widget<UiKitView>(glass);
+            expect(view.viewType, 'breeze.search.surface');
+            expect((view.creationParams as Map)['panelRadius'], 32);
+            var ancestor = tester.renderObject(glass).parent;
+            while (ancestor != null) {
+              if (ancestor is RenderClipOval) {
+                expect(ancestor.clipBehavior, Clip.none);
+              }
+              if (ancestor is RenderClipRRect) {
+                expect(ancestor.clipBehavior, Clip.none);
+              }
+              ancestor = ancestor.parent;
+            }
+          } else {
+            expect(tester.getSize(avatar), const Size.square(64));
+            expect(glass, findsNothing);
+          }
           expect(find.text(t.plugin.switchAccount), findsOneWidget);
           expect(tester.takeException(), isNull);
         },
@@ -664,6 +708,27 @@ void main() {
     expect(find.byType(PluginUserInfoCard), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+  testWidgets(
+    'legacy account status envelopes show recovery instead of rendering wire errors',
+    (tester) async {
+      api.canShowUserInfo = true;
+      api.summary = {
+        'title': '登录已失效',
+        'avatar': {'id': '', 'url': ''},
+        'lines': [
+          '{"type":"unauthorized","message":"legacy-private-error"}',
+          '插件版本：0.1.4',
+        ],
+      };
+      await mount(tester, style: 'breeze', profile: false, declared: false);
+      expect(
+        find.byKey(const ValueKey('plugin-settings-direct-login')),
+        findsOneWidget,
+      );
+      expect(find.byType(PluginUserInfoCard), findsNothing);
+      expect(find.textContaining('legacy-private-error'), findsNothing);
+    },
+  );
   test(
     'technical ID is removed only when it exactly repeats a confirmed identity',
     () {
@@ -1218,6 +1283,11 @@ void main() {
       'JM $mode checks the saved session after an effective API change: $changed',
       (tester) async {
         const source = PluginAccountAuthenticationService.jm;
+        final profileRefreshes = <String>[];
+        final endpointSubscription = pluginEndpointChanges.listen(
+          profileRefreshes.add,
+        );
+        addTearDown(endpointSubscription.cancel);
         const oldApi = 'https://old-api.invalid';
         const newApi = 'https://new-api.invalid';
         const imageKey = 'network.imageBase';
@@ -1310,6 +1380,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(isPluginEndpointUpdating(source), isFalse);
         expect(reads, changed ? [oldApi, oldApi, newApi] : [oldApi]);
+        expect(profileRefreshes, changed ? [source] : isEmpty);
         if (changed) {
           oldRequest.completeError(
             AnyhowException(
@@ -1430,6 +1501,14 @@ void main() {
                 'options': [
                   {'value': automatic, 'label': 'Automatic'},
                   {
+                    'value': 'unavailable',
+                    'label': 'Unavailable full option',
+                    'routeOption': {
+                      'title': 'Offline · HTTP 521 / 仅阅读',
+                      'inUse': true,
+                    },
+                  },
+                  {
                     'value': target,
                     'label': 'Legacy route with full domain',
                     'routeOption': {
@@ -1439,6 +1518,15 @@ void main() {
                     },
                   },
                   {'value': 'legacy', 'label': 'Legacy option'},
+                  {
+                    'value': 'outdated',
+                    'label': 'Outdated · 20 ms · 旧 · old.invalid',
+                  },
+                  {
+                    'value': 'unknown',
+                    'label': 'Unchecked verbose option',
+                    'routeOption': {'title': 'Unchecked', 'status': 'unknown'},
+                  },
                 ],
               },
             ],
@@ -1450,24 +1538,226 @@ void main() {
         final menu = tester.widget<NativeVideoMenu>(
           find.descendant(of: field, matching: find.byType(NativeVideoMenu)),
         );
-        expect(menu.selected, pinned ? '1' : '0');
-        expect(menu.label, pinned ? 'Compact' : 'Automatic');
+        expect(menu.selected, pinned ? '2' : '0');
         expect(
-          menu.options['1'],
+          menu.label,
+          pinned
+              ? 'Compact'
+              : (supported ? t.plugin.routeAutomatic : 'Automatic'),
+        );
+        expect(
+          menu.options['2'],
           supported ? 'Compact' : 'Legacy route with full domain',
         );
-        expect(menu.options['2'], 'Legacy option');
-        expect(menu.optionDetails, supported ? {'1': '42 ms'} : isEmpty);
-        expect(menu.optionCopyText, supported ? {'1': domain} : isEmpty);
+        expect(menu.options['3'], 'Legacy option');
+        expect(
+          menu.options['4'],
+          supported ? 'Outdated' : 'Outdated · 20 ms · 旧 · old.invalid',
+        );
+        expect(
+          menu.optionDetails,
+          supported
+              ? {
+                  '1':
+                      '${t.plugin.routeUnavailable} · ${t.plugin.routeReadOnly}',
+                  '2': '42 ms',
+                  '4': t.plugin.routeUnknown,
+                  '5': t.plugin.routeUnknown,
+                }
+              : isEmpty,
+        );
+        expect(menu.optionCopyText, supported ? {'2': domain} : isEmpty);
         expect(
           menu.optionBadges,
-          supported && !pinned ? {'1': t.plugin.routeOptionInUse} : isEmpty,
+          supported && !pinned ? {'2': t.plugin.routeOptionInUse} : isEmpty,
         );
       },
     );
   }
 
+  for (final (source, key, available) in [
+    (PluginAccountAuthenticationService.copy, 'api.domain', 'auto'),
+    (PluginAccountAuthenticationService.jm, 'network.apiBase', ''),
+    (PluginAccountAuthenticationService.jm, 'network.imageBase', ''),
+  ]) {
+    testWidgets('automatic route modes remain distinct for $key', (
+      tester,
+    ) async {
+      const active = 'https://speed-fixture.invalid';
+      api.settingsValues = {key: 'auto-speed'};
+      api.sections = [
+        {
+          'id': 'network',
+          'title': '网络',
+          'fields': [
+            {
+              'key': key,
+              'kind': 'select',
+              'label': '线路',
+              'options': [
+                {'value': available, 'label': 'Availability'},
+                {'value': 'auto-speed', 'label': 'Speed'},
+                {
+                  'value': active,
+                  'label': 'Verified endpoint',
+                  'routeOption': {
+                    if (source == PluginAccountAuthenticationService.copy) ...{
+                      'title': 'Checked',
+                      'status': 'available',
+                      'latencyMs': 50,
+                    } else
+                      'title': 'Checked · 50 ms',
+                    'inUse': true,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ];
+      await mount(tester, style: 'breeze', source: source, profile: false);
+      final options = tester.widget<NativeVideoMenu>(
+        find.descendant(
+          of: find.byKey(ValueKey('plugin-field-key:$key')),
+          matching: find.byType(NativeVideoMenu),
+        ),
+      );
+      expect(options.options['0'], t.plugin.routeAutomaticAvailable);
+      expect(options.label, t.plugin.routeAutomaticSpeed);
+      expect(options.selected, '1');
+      expect(options.optionDetails, {'1': 'Checked', '2': '50 ms'});
+      expect(options.optionBadges, {'2': t.plugin.routeOptionInUse});
+    });
+  }
+
+  for (final (mode, onlyReading, applied) in [
+    ('auto', true, false),
+    ('auto', true, true),
+    ('auto', false, true),
+    ('auto-speed', true, true),
+  ]) {
+    testWidgets(
+      'Copy $mode shows the result before offscreen routes ($onlyReading, $applied)',
+      (tester) async {
+        const key = 'api.domain';
+        const workingLine = '测试可用线路';
+        api.settingsValues = {key: mode};
+        api.sections = [
+          {
+            'id': 'network',
+            'title': '网络',
+            'fields': [
+              {
+                'key': key,
+                'kind': 'select',
+                'label': '访问线路',
+                'options': [
+                  {'value': 'auto', 'label': 'Availability'},
+                  {'value': 'auto-speed', 'label': 'Speed'},
+                  for (var i = 0; i < 9; i++)
+                    {
+                      'value': 'fixture-$i',
+                      'label': '测试线路 $i',
+                      'routeOption': {'status': 'unavailable'},
+                    },
+                  {
+                    'value': 'working-line',
+                    'label': workingLine,
+                    'routeOption': {
+                      'status': 'available',
+                      'latencyMs': 533,
+                      'readOnly': onlyReading,
+                      'inUse': applied,
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ];
+        await mount(
+          tester,
+          style: 'breeze',
+          source: PluginAccountAuthenticationService.copy,
+          profile: false,
+        );
+        final finder = find.descendant(
+          of: find.byKey(const ValueKey('plugin-field-key:$key')),
+          matching: find.byType(NativeVideoMenu),
+        );
+        final menu = tester.widget<NativeVideoMenu>(finder);
+        final onlyReadingAvailable = mode == 'auto' && onlyReading && !applied;
+        final detail = onlyReadingAvailable
+            ? t.plugin.copyOnlyReadOnlyRoutesAvailable
+            : workingLine;
+        expect(menu.optionDetails[menu.selected], detail);
+        expect(
+          menu.optionBadges,
+          onlyReadingAvailable ? isEmpty : {'11': t.plugin.routeOptionInUse},
+        );
+        await tester.ensureVisible(finder);
+        await tester.tap(finder);
+        await tester.pumpAndSettle();
+        expect(find.text(detail).hitTestable(), findsWidgets);
+      },
+    );
+  }
+
   for (final style in ['breeze', 'system']) {
+    testWidgets(
+      'Copy measurement reports the number of working lines: $style',
+      (tester) async {
+        const source = PluginAccountAuthenticationService.copy;
+        const action = {
+          'key': 'line-speed',
+          'fnPath': 'testLineSpeeds',
+          'title': '测速',
+        };
+        api.actions = [action];
+        api.settingsValues = {'api.domain': 'auto'};
+        api.sections = [
+          {
+            'id': 'network',
+            'title': '网络',
+            'headerAction': action,
+            'fields': [
+              {
+                'key': 'api.domain',
+                'kind': 'select',
+                'label': '访问线路',
+                'options': [
+                  {'value': 'auto', 'label': '自动'},
+                ],
+              },
+            ],
+          },
+        ];
+        final notices = <ToastEvent>[];
+        final listener = eventBus.on<ToastEvent>().listen(notices.add);
+        addTearDown(listener.cancel);
+        await mount(tester, style: style, source: source, profile: false);
+        final button = find.byKey(
+          const ValueKey('plugin-section-action.testLineSpeeds'),
+        );
+        for (final (results, severity, message) in [
+          ([false, false], ToastType.error, t.plugin.lineTestFailure),
+          ([true, false], ToastType.warning, t.plugin.lineTestPartial),
+          ([true, true], ToastType.success, t.plugin.lineTestSuccess),
+        ]) {
+          api.copyMeasurementData = {
+            'anyAvailable': results.any((ok) => ok),
+            'results': [
+              for (final ok in results) {'ok': ok},
+            ],
+          };
+          await tester.ensureVisible(button);
+          await tester.tap(button);
+          await tester.pumpAndSettle();
+          expect(notices.last.type, severity);
+          expect(notices.last.message, message);
+        }
+      },
+    );
     for (final scale in [1.0, 2.0]) {
       testWidgets(
         'Copy network header speed action refreshes public labels and preserves portrait: $style/$scale',
@@ -1513,6 +1803,7 @@ void main() {
                   'key': 'api.platform',
                   'kind': 'select',
                   'label': '请求标识',
+                  'description': '基于线路自动匹配请求标识。',
                   'fnPath': 'saveSettings',
                   'options': [
                     {'value': 'iphone', 'label': 'iPhone'},
@@ -1543,6 +1834,10 @@ void main() {
           expect(action, findsOneWidget);
           expect(find.text('Measure source lines'), findsNothing);
           expect(find.text(t.plugin.operations), findsNothing);
+          expect(
+            find.byKey(const ValueKey('settings-details-网络')),
+            findsNothing,
+          );
           await tester.scrollUntilVisible(
             action,
             300,
@@ -1561,24 +1856,19 @@ void main() {
             matching: find.byType(NativeVideoMenu),
           );
           final route = menu('api.domain');
-          final request = menu('api.platform');
           final routeBefore = tester.getRect(route);
-          final requestBefore = tester.getRect(request);
           if (scale == 1) {
             expect(
               routeBefore.center.dy,
               closeTo(tester.getCenter(find.text('访问线路')).dy, 1),
             );
-            expect(
-              requestBefore.center.dy,
-              closeTo(tester.getCenter(find.text('请求标识')).dy, 1),
-            );
           }
           await tester.tap(action);
           await tester.pumpAndSettle();
           expect(tester.getRect(route), routeBefore);
-          expect(tester.getRect(request), requestBefore);
-          expect(tester.widget<NativeVideoMenu>(route).label, longLabel);
+          final routeMenu = tester.widget<NativeVideoMenu>(route);
+          expect(routeMenu.label, '大陆3');
+          expect(routeMenu.optionDetails, {'0': t.plugin.routeUnknown});
           expect(api.calls.skip(before).where((fn) => fn != 'init'), [
             'testLineSpeeds',
             'getSettingsBundle',
@@ -1592,6 +1882,18 @@ void main() {
             PluginAccountIdentities.current(source)?.serverIdentity,
             'copy-speed',
           );
+          final networkSection = find.ancestor(
+            of: action,
+            matching: find.byType(PluginSettingsSectionCard),
+          );
+          expect(
+            find.descendant(of: networkSection, matching: menu('api.platform')),
+            findsOneWidget,
+          );
+          expect(
+            tester.widget<NativeVideoMenu>(menu('api.platform')).label,
+            'iPhone',
+          );
           expect(tester.takeException(), isNull);
         },
         variant: TargetPlatformVariant({
@@ -1604,103 +1906,117 @@ void main() {
 
   for (final style in ['breeze', 'system']) {
     for (final outcome in ['success', 'partial', 'failure', 'missing']) {
-    testWidgets('legacy JM network uses the section speed action: $style/$outcome', (
-      tester,
-    ) async {
-      const source = PluginAccountAuthenticationService.jm;
-      tester.view.physicalSize = const Size(320, 900);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      List<Map<String, dynamic>> network(String heading) => [
-        {
-          'id': 'network',
-          'title': heading,
-          'fields': [
-            for (final (key, title) in [
-              ('network.imageBase', '图片线路'),
-              ('network.apiBase', '接口线路'),
-            ])
-              {
-                'key': key,
-                'label': title,
-                'kind': 'choice',
-                'fnPath': 'onNetworkChanged',
-                'options': [
-                  {'value': '', 'label': '默认'},
-                ],
-              },
-          ],
+      testWidgets(
+        'legacy JM network uses the section speed action: $style/$outcome',
+        (tester) async {
+          const source = PluginAccountAuthenticationService.jm;
+          tester.view.physicalSize = const Size(320, 900);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          List<Map<String, dynamic>> network(String heading) => [
+            {
+              'id': 'network',
+              'title': heading,
+              'fields': [
+                for (final (key, title) in [
+                  ('network.imageBase', '图片线路'),
+                  ('network.apiBase', '接口线路'),
+                ])
+                  {
+                    'key': key,
+                    'label': title,
+                    'kind': 'choice',
+                    'fnPath': 'onNetworkChanged',
+                    'options': [
+                      {'value': '', 'label': '默认'},
+                    ],
+                  },
+              ],
+            },
+          ];
+          api.jmMeasurementData = outcome == 'missing'
+              ? {}
+              : {
+                  'api': [
+                    {'ok': outcome != 'failure'},
+                  ],
+                  'image': outcome == 'failure'
+                      ? []
+                      : [
+                          {'ok': outcome == 'success'},
+                        ],
+                };
+          final notices = <ToastEvent>[];
+          final listener = eventBus.on<ToastEvent>().listen(notices.add);
+          addTearDown(listener.cancel);
+          api.sections = network('网络线路（未测速，可在下方操作区测试）');
+          api.measuredSections = network('网络线路（测于 14:30）');
+          api.actions = [
+            {
+              'key': 'speedtest',
+              'title': '测试所有线路速度',
+              'fnPath': 'measureEndpointSpeeds',
+            },
+          ];
+          api.settingsValues = {'network.imageBase': '', 'network.apiBase': ''};
+          await mount(
+            tester,
+            style: style,
+            source: source,
+            scope: PluginSettingsScope.all,
+            textScale: 2,
+          );
+          final header = find.text('网络线路');
+          final button = find.byKey(
+            const ValueKey('plugin-section-action.measureEndpointSpeeds'),
+          );
+          final scroll = find
+              .descendant(
+                of: find.byKey(const ValueKey('plugin-settings-sections')),
+                matching: find.byType(Scrollable),
+              )
+              .first;
+          await tester.scrollUntilVisible(button, 250, scrollable: scroll);
+          expect(find.text('测试所有线路速度'), findsNothing);
+          expect(find.text('测速'), findsOneWidget);
+          expect(
+            find.byKey(const ValueKey('settings-details-网络线路')),
+            findsNothing,
+          );
+          expect(
+            tester.getCenter(header).dy,
+            closeTo(tester.getCenter(button).dy, 1),
+          );
+          expect(tester.getSize(button).height, greaterThanOrEqualTo(44));
+          expect(find.text('图片线路'), findsOneWidget);
+          expect(find.text('接口线路'), findsOneWidget);
+          final before = api.calls.length;
+          await tester.tap(button);
+          await tester.pumpAndSettle();
+          expect(api.calls.skip(before).where((fn) => fn != 'init'), [
+            'measureEndpointSpeeds',
+            'getSettingsBundle',
+            'getCapabilitiesBundle',
+          ]);
+          expect(find.text('上次测速 14:30'), findsOneWidget);
+          final notice = notices.last;
+          expect(notice.type, switch (outcome) {
+            'success' => ToastType.success,
+            'partial' => ToastType.warning,
+            _ => ToastType.error,
+          });
+          expect(notice.message, switch (outcome) {
+            'success' => t.plugin.lineTestSuccess,
+            'partial' => t.plugin.lineTestPartial,
+            _ => t.plugin.lineTestFailure,
+          });
+          expect(find.text('图片线路'), findsOneWidget);
+          expect(find.text('接口线路'), findsOneWidget);
+          expect(tester.takeException(), isNull);
         },
-      ];
-      api.jmMeasurementData = outcome == 'missing' ? {} : {
-        'api': [{'ok': outcome != 'failure'}],
-        'image': outcome == 'failure' ? [] : [{'ok': outcome == 'success'}],
-      };
-      final notices = <ToastEvent>[];
-      final listener = eventBus.on<ToastEvent>().listen(notices.add);
-      addTearDown(listener.cancel);
-      api.sections = network('网络线路（未测速，可在下方操作区测试）');
-      api.measuredSections = network('网络线路（测于 14:30）');
-      api.actions = [
-        {
-          'key': 'speedtest',
-          'title': '测试所有线路速度',
-          'fnPath': 'measureEndpointSpeeds',
-        },
-      ];
-      api.settingsValues = {'network.imageBase': '', 'network.apiBase': ''};
-      await mount(
-        tester,
-        style: style,
-        source: source,
-        scope: PluginSettingsScope.all,
-        textScale: 2,
+        variant: TargetPlatformVariant.only(TargetPlatform.iOS),
       );
-      final header = find.text('网络线路');
-      final button = find.byKey(
-        const ValueKey('plugin-section-action.measureEndpointSpeeds'),
-      );
-      final scroll = find
-          .descendant(
-            of: find.byKey(const ValueKey('plugin-settings-sections')),
-            matching: find.byType(Scrollable),
-          )
-          .first;
-      await tester.scrollUntilVisible(button, 250, scrollable: scroll);
-      expect(find.text('测试所有线路速度'), findsNothing);
-      expect(find.text('测速'), findsOneWidget);
-      expect(
-        tester.getCenter(header).dy,
-        closeTo(tester.getCenter(button).dy, 1),
-      );
-      expect(tester.getSize(button).height, greaterThanOrEqualTo(44));
-      expect(find.text('图片线路'), findsOneWidget);
-      expect(find.text('接口线路'), findsOneWidget);
-      final before = api.calls.length;
-      await tester.tap(button);
-      await tester.pumpAndSettle();
-      expect(api.calls.skip(before).where((fn) => fn != 'init'), [
-        'measureEndpointSpeeds',
-        'getSettingsBundle',
-        'getCapabilitiesBundle',
-      ]);
-      expect(find.text('上次测速 14:30'), findsOneWidget);
-      final notice = notices.last;
-      expect(notice.type, switch (outcome) {
-        'success' => ToastType.success,
-        'partial' => ToastType.warning,
-        _ => ToastType.error,
-      });
-      expect(notice.message, switch (outcome) {
-        'success' => t.plugin.lineTestSuccess,
-        'partial' => t.plugin.lineTestPartial,
-        _ => t.plugin.lineTestFailure,
-      });
-      expect(find.text('图片线路'), findsOneWidget);
-      expect(find.text('接口线路'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
     }
   }
 }

@@ -10,6 +10,7 @@ import 'package:zephyr/page/donwload_task/service/download_interaction_trace.dar
 import 'package:zephyr/page/video/video_interaction.dart';
 import 'package:zephyr/widgets/breeze_theme_colors.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
+import 'package:zephyr/widgets/swipe_row_tap_region.dart';
 
 typedef DownloadSwipeAction = ({
   String id,
@@ -170,9 +171,6 @@ class _DownloadSwipeActionsState extends State<DownloadSwipeActions>
   static const _labelSize = 12.0;
   static const _rowRadius = BorderRadius.all(Radius.circular(12));
   late final _slide = AnimationController(vsync: this);
-  late final _outsideTap = _DownloadDismissTap()
-    ..onTap = _dismiss
-    ..onSecondaryTap = _dismiss;
   bool _dragging = false;
   bool _wasOpen = false;
   bool _dispatching = false;
@@ -262,7 +260,6 @@ class _DownloadSwipeActionsState extends State<DownloadSwipeActions>
   @override
   void dispose() {
     widget.openRow.removeListener(_sync);
-    _outsideTap.dispose();
     _slide.dispose();
     super.dispose();
   }
@@ -583,106 +580,92 @@ class _DownloadSwipeActionsState extends State<DownloadSwipeActions>
         );
       }
 
-      // Outside taps close the revealed row. Drags still reach the scroll view.
-      return TapRegion(
-        groupId: widget.openRow,
+      return SwipeRowTapRegion(
+        group: widget.openRow,
         enabled: width > 0 && _open,
-        onTapOutside: (event) {
-          if (!_open) return;
-          if (event.pointer != 0) {
-            _outsideTap.addPointer(event);
-          } else {
-            _dismiss();
-          }
-        },
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: width > 0 && _open ? _dismiss : null,
-          child: ClipRect(
-            clipBehavior: revealed ? Clip.hardEdge : Clip.none,
-            child: Stack(
-              children: [
-                if (revealed) ...[
-                  Positioned.fill(child: IgnorePointer(child: actionWell())),
-                  PositionedDirectional(
-                    top: 0,
-                    bottom: 0,
-                    end: 0,
-                    width: width,
-                    child: tray(),
-                  ),
-                ],
-                Transform.translate(
-                  offset: Offset(-reveal * direction, 0),
-                  child: RawGestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    excludeFromSemantics: true,
-                    gestures: {
-                      if (width > 0)
-                        _DownloadRowDrag:
-                            GestureRecognizerFactoryWithHandlers<
-                              _DownloadRowDrag
-                            >(_DownloadRowDrag.new, (gesture) {
-                              final screen = MediaQuery.sizeOf(context).width;
-                              gesture.canStart = (point) =>
-                                  !_dispatching &&
-                                  (direction == 1
-                                      ? point.dx >= _backGestureEdge
-                                      : point.dx <= screen - _backGestureEdge);
-                              gesture
-                                ..onStart = _start
-                                ..onUpdate = (details) {
-                                  _update(details, width);
-                                }
-                                ..onEnd = (details) {
-                                  _end(details, width);
-                                }
-                                ..onCancel = _cancel;
-                            }),
-                    },
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onSecondaryTap: !widget.exposeActions || suspended
-                          ? null
-                          : width > 0
-                          ? _reveal
-                          : flat && hasActions
-                          ? _openMore
-                          : null,
-                      child: Semantics(
-                        customSemanticsActions:
-                            widget.exposeActions &&
-                                !flat &&
-                                !suspended &&
-                                shortcut != null
-                            ? {
-                                CustomSemanticsAction(
-                                  label: shortcut.label,
-                                ): () =>
-                                    _perform(shortcut.id, epoch),
+        onDismiss: _dismiss,
+        child: ClipRect(
+          clipBehavior: revealed ? Clip.hardEdge : Clip.none,
+          child: Stack(
+            children: [
+              if (revealed) ...[
+                Positioned.fill(child: IgnorePointer(child: actionWell())),
+                PositionedDirectional(
+                  top: 0,
+                  bottom: 0,
+                  end: 0,
+                  width: width,
+                  child: tray(),
+                ),
+              ],
+              Transform.translate(
+                offset: Offset(-reveal * direction, 0),
+                child: RawGestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  excludeFromSemantics: true,
+                  gestures: {
+                    if (width > 0)
+                      _DownloadRowDrag:
+                          GestureRecognizerFactoryWithHandlers<
+                            _DownloadRowDrag
+                          >(_DownloadRowDrag.new, (gesture) {
+                            final screen = MediaQuery.sizeOf(context).width;
+                            gesture.canStart = (point) =>
+                                !_dispatching &&
+                                (direction == 1
+                                    ? point.dx >= _backGestureEdge
+                                    : point.dx <= screen - _backGestureEdge);
+                            gesture
+                              ..onStart = _start
+                              ..onUpdate = (details) {
+                                _update(details, width);
                               }
-                            : null,
-                        child: AbsorbPointer(
-                          absorbing: !flat && suspended,
-                          child: ExcludeSemantics(
+                              ..onEnd = (details) {
+                                _end(details, width);
+                              }
+                              ..onCancel = _cancel;
+                          }),
+                  },
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onSecondaryTap: !widget.exposeActions || suspended
+                        ? null
+                        : width > 0
+                        ? _reveal
+                        : flat && hasActions
+                        ? _openMore
+                        : null,
+                    child: Semantics(
+                      customSemanticsActions:
+                          widget.exposeActions &&
+                              !flat &&
+                              !suspended &&
+                              shortcut != null
+                          ? {
+                              CustomSemanticsAction(
+                                label: shortcut.label,
+                              ): () =>
+                                  _perform(shortcut.id, epoch),
+                            }
+                          : null,
+                      child: AbsorbPointer(
+                        absorbing: !flat && suspended,
+                        child: ExcludeSemantics(
+                          excluding: !flat && suspended,
+                          child: ExcludeFocus(
                             excluding: !flat && suspended,
-                            child: ExcludeFocus(
-                              excluding: !flat && suspended,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: revealed
-                                      ? surface
-                                      : Colors.transparent,
-                                  borderRadius: _rowRadius,
-                                ),
-                                child: _DownloadMoreScope(
-                                  rowKey: widget.rowKey,
-                                  onPressed: flat && hasActions
-                                      ? _openMore
-                                      : null,
-                                  bodyEnabled: !suspended,
-                                  child: child!,
-                                ),
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: revealed ? surface : Colors.transparent,
+                                borderRadius: _rowRadius,
+                              ),
+                              child: _DownloadMoreScope(
+                                rowKey: widget.rowKey,
+                                onPressed: flat && hasActions
+                                    ? _openMore
+                                    : null,
+                                bodyEnabled: !suspended,
+                                child: child!,
                               ),
                             ),
                           ),
@@ -691,8 +674,8 @@ class _DownloadSwipeActionsState extends State<DownloadSwipeActions>
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       );
@@ -885,12 +868,4 @@ class _DownloadRowDrag extends HorizontalDragGestureRecognizer {
   @override
   bool isPointerAllowed(PointerEvent event) =>
       (canStart?.call(event.position) ?? true) && super.isPointerAllowed(event);
-}
-
-class _DownloadDismissTap extends TapGestureRecognizer {
-  @override
-  void handlePrimaryPointer(PointerEvent event) {
-    if (event is PointerUpEvent) resolve(GestureDisposition.accepted);
-    super.handlePrimaryPointer(event);
-  }
 }

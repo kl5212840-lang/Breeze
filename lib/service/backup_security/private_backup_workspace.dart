@@ -18,6 +18,18 @@ Future<void> cleanupInterruptedPrivateBackupWork() async {
       await directory.delete(recursive: true);
     }
   }
+
+  final legacyExports = Directory(p.join(cache, 'breeze_backup'));
+  if (await FileSystemEntity.type(legacyExports.path, followLinks: false) !=
+      FileSystemEntityType.directory) {
+    return;
+  }
+  final timestamp = RegExp(r'^\d{13}$');
+  await for (final entry in legacyExports.list(followLinks: false)) {
+    if (entry is Directory && timestamp.hasMatch(p.basename(entry.path))) {
+      await entry.delete(recursive: true);
+    }
+  }
 }
 
 Future<Directory> createPrivateBackupWorkspace() async {
@@ -28,4 +40,19 @@ Future<Directory> createPrivateBackupWorkspace() async {
     throw const FileSystemException('Backup workspace unavailable');
   }
   return root.createTemp('export-');
+}
+
+Future<T> withPrivateBackupWorkspace<T>(
+  Future<T> Function(Directory workspace) action,
+) async {
+  final workspace = await createPrivateBackupWorkspace();
+  try {
+    return await action(workspace);
+  } finally {
+    try {
+      await workspace.delete(recursive: true);
+    } on FileSystemException {
+      // Interrupted or unavailable cache entries are swept on startup.
+    }
+  }
 }

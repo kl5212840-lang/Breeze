@@ -2,10 +2,12 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart';
 import 'package:zephyr/page/comic_info/widgets/all_chip.dart';
+import 'package:zephyr/page/comic_info/widgets/comic_description.dart';
 import 'package:zephyr/page/comic_info/widgets/eps.dart';
 import 'package:zephyr/page/comic_info/widgets/episode_download_controller.dart';
 import 'package:zephyr/page/download/adapters/download_chapter_adapter.dart';
@@ -23,6 +25,57 @@ void main() {
   setUp(() {
     objectbox.downloadTaskBox.removeAll();
     objectbox.unifiedDownloadBox.removeAll();
+  });
+
+  testWidgets('short multiline descriptions can still be expanded in full', (
+    tester,
+  ) async {
+    const description = '第一行\n第二行\n第三行';
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(body: ComicDescription(description: description)),
+      ),
+    );
+    final expand = find.text(t.comicInfo.expandFullText);
+    expect(expand, findsOneWidget);
+    await tester.tap(expand);
+    await tester.pumpAndSettle();
+    final text = tester.widget<SelectableText>(find.byType(SelectableText));
+    expect(text.data, description);
+    expect(text.maxLines, isNull);
+  });
+
+  testWidgets('wide metadata labels wrap and keep the values visible', (
+    tester,
+  ) async {
+    const label = '需要完整展示的很长的分组标题和它的分类意义';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: MediaQuery(
+            data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: 256,
+                child: AllChipWidget(
+                  comicId: 'fixture',
+                  from: 'fixture-source',
+                  metadata: const ComicInfoMetadata(
+                    type: 'tags',
+                    name: label,
+                    value: [ComicInfoActionItem(name: '冒险')],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.text(label), findsOneWidget);
+    expect(find.text('冒险'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   for (final style in ['system', 'breeze']) {
@@ -272,7 +325,7 @@ void main() {
                 ]);
           objectbox.unifiedDownloadBox.put(saved);
           await _flushDatabase(tester);
-          expect(tester.widget<LinearProgressIndicator>(progress).value, 1);
+          expect(progress, findsNothing);
           expect(find.byIcon(Icons.check_circle), findsOneWidget);
           expect(tester.getRect(find.byType(EpButtonWidget)), row);
           expect(tester.getTopLeft(find.text('next chapter')), next);

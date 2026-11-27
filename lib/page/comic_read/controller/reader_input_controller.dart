@@ -53,8 +53,13 @@ class ReaderInputController {
   final FocusNode focusNode = FocusNode();
   final Set<int> _activeTouchPointers = <int>{};
   final AnimationController _zoomAnimation;
+  final _viewerKey = GlobalKey();
   ({Matrix4Tween tween, int slot})? _zoom;
   bool _applyingZoomFrame = false;
+  ({double focalY, double translationY})? _columnPan;
+  Drag? _columnScrollDrag;
+  ScrollHoldController? _columnScrollHold;
+  bool _columnDragMovedList = false;
 
   static const _menuTapTravel = 8.0;
   _ReaderMenuTouch? _menuTouch;
@@ -62,6 +67,8 @@ class ReaderInputController {
   TapDownDetails? _tapDownDetails;
   TapDownDetails? _doubleTapDownDetails;
   bool _isCtrlPressed = false;
+  bool _readerIsScrolling = false;
+  int _scrollNotificationEpoch = 0;
 
   bool get _isDesktopPlatform =>
       !kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS);
@@ -76,6 +83,8 @@ class ReaderInputController {
   }
 
   void dispose() {
+    _columnScrollHold?.cancel();
+    _cancelColumnPan();
     transformationController.removeListener(_onTransformationChanged);
     _zoomAnimation.dispose();
     focusNode.dispose();
@@ -108,24 +117,28 @@ class ReaderInputController {
           onDoubleTapCancel: isDoubleTapActionEnabled
               ? () => _doubleTapDownDetails = null
               : null,
-          child: InteractiveViewer(
-            transformationController: transformationController,
-            boundaryMargin: EdgeInsets.zero,
-            minScale: kMinReaderScale,
-            maxScale: kMaxReaderScale,
-            scaleEnabled:
-                !_isDesktopPlatform ||
-                _isCtrlPressed ||
-                _activeTouchPointers.length >= 2 ||
-                transformationController.value.getMaxScaleOnAxis() >
-                    kScaleLockThreshold,
-            interactionEndFrictionCoefficient: kReaderPanFriction,
-            onInteractionStart: (_) => stopZoomAnimation(),
-            onInteractionUpdate: (_) => _updateMultiTouchScrollLock(),
-            onInteractionEnd: (_) => _updateMultiTouchScrollLock(),
-            child: isColumnReadMode(readSetting.readMode)
-                ? buildColumnMode(readSetting.doublePageMode)
-                : buildRowMode(),
+          child: NotificationListener<ScrollNotification>(
+            onNotification: _onReaderScroll,
+            child: InteractiveViewer(
+              key: _viewerKey,
+              transformationController: transformationController,
+              boundaryMargin: EdgeInsets.zero,
+              minScale: kMinReaderScale,
+              maxScale: kMaxReaderScale,
+              scaleEnabled:
+                  !_isDesktopPlatform ||
+                  _isCtrlPressed ||
+                  _activeTouchPointers.length >= 2 ||
+                  transformationController.value.getMaxScaleOnAxis() >
+                      kScaleLockThreshold,
+              interactionEndFrictionCoefficient: kReaderPanFriction,
+              onInteractionStart: _onViewerInteractionStart,
+              onInteractionUpdate: _onViewerInteractionUpdate,
+              onInteractionEnd: _onViewerInteractionEnd,
+              child: isColumnReadMode(readSetting.readMode)
+                  ? buildColumnMode(readSetting.doublePageMode)
+                  : buildRowMode(),
+            ),
           ),
         ),
       ),
@@ -150,8 +163,7 @@ class ReaderInputController {
   Future<void> _onTap() async {
     final details = _tapDownDetails;
     _tapDownDetails = null;
-    if (details == null) return;
-    final canToggleMenu = _isStillMenuTap(details);
+    if (details == null || !_isStillMenuTap(details)) return;
 
     // 保留单击和双击之间的调度顺序，点按数据在等待前已取出。
     await Future.delayed(Duration.zero);
@@ -160,11 +172,9 @@ class ReaderInputController {
     final readSetting = context.readEffectiveReadSetting();
     ReaderGestureLogic.handleTap(
       actionController: actionController,
-      controller: pageController,
       context: context,
       details: details,
       onToggleMenu: () {
-        if (!canToggleMenu) return;
         if (readSetting.doubleTapOpenMenu && !readerCubit.state.isMenuVisible) {
           return;
         }
@@ -185,10 +195,25 @@ class ReaderInputController {
     final details = _doubleTapDownDetails;
     _doubleTapDownDetails = null;
     if (!readSetting.doubleTapOpenMenu || details == null) return;
-    if (!_isStillMenuTap(details)) return;
-    if (_isTouchPointer(details.kind) &&
-        _previousMenuTouch?.isStillTap != true) {
+    if (!_isStillMenuTap(details) ||
+        !ReaderGestureLogic.isToolbarTap(
+          context,
+          details.globalPosition,
+          readSetting,
+        )) {
       return;
+    }
+    if (_isTouchPointer(details.kind)) {
+      final firstTap = _previousMenuTouch;
+      if (firstTap == null ||
+          !firstTap.isStillTap ||
+          !ReaderGestureLogic.isToolbarTap(
+            context,
+            firstTap.origin,
+            readSetting,
+          )) {
+        return;
+      }
     }
     onToggleMenu();
   }
@@ -224,19 +249,23 @@ class ReaderInputController {
       return;
     }
 
-    final renderObject = context.findRenderObject();
+    final renderObject = _viewerKey.currentContext?.findRenderObject();
     if (renderObject is! RenderBox || !renderObject.hasSize) return;
 
     // 以双击点为锚点放大，手感更自然。
     final localPosition = renderObject.globalToLocal(details.globalPosition);
     const targetScale = kDoubleTapZoomScale;
+    final size = renderObject.size;
+    final anchor =
+        Offset(size.width / 2, size.height / 2) - localPosition * targetScale;
+    final translation = isColumnReadMode(setting.readMode)
+        ? Offset(
+            anchor.dx.clamp(size.width * (1 - targetScale), 0.0),
+            anchor.dy.clamp(size.height * (1 - targetScale), 0.0),
+          )
+        : anchor;
     final matrix = Matrix4.identity()
-      ..translateByDouble(
-        renderObject.size.width / 2 - localPosition.dx * targetScale,
-        renderObject.size.height / 2 - localPosition.dy * targetScale,
-        0,
-        1,
-      )
+      ..translateByDouble(translation.dx, translation.dy, 0, 1)
       ..scaleByDouble(targetScale, targetScale, 1, 1);
 
     if (animate) {
@@ -288,14 +317,121 @@ class ReaderInputController {
     _updateMultiTouchScrollLock();
   }
 
+  void cancelViewerInteraction() {
+    stopZoomAnimation();
+    _columnScrollHold?.cancel();
+    _cancelColumnPan();
+  }
+
+  void _onViewerInteractionStart(ScaleStartDetails details) {
+    stopZoomAnimation();
+    _cancelColumnPan();
+    if (details.pointerCount == 1 &&
+        _isTouchPointer(details.kind) &&
+        isColumnReadMode(context.readEffectiveReadMode()) &&
+        transformationController.value.getMaxScaleOnAxis() >
+            kScaleLockThreshold) {
+      _columnPan = (
+        focalY: details.localFocalPoint.dy,
+        translationY: transformationController.value.storage[13],
+      );
+    }
+  }
+
+  void _onViewerInteractionUpdate(ScaleUpdateDetails details) {
+    _updateMultiTouchScrollLock();
+    final previous = _columnPan;
+    if (previous == null || details.pointerCount != 1) return;
+
+    final matrix = transformationController.value;
+    final focalY = details.localFocalPoint.dy;
+    final translationY = matrix.storage[13];
+    _columnPan = (focalY: focalY, translationY: translationY);
+
+    // InteractiveViewer has already applied the part of this update that fits
+    // inside its zoomed viewport. Continue the same drag in the underlying list.
+    final fingerDelta = focalY - previous.focalY;
+    final remainder = fingerDelta - (translationY - previous.translationY);
+    final scroll = actionController.scrollController;
+    _columnDragMovedList =
+        remainder.abs() > precisionErrorTolerance &&
+        remainder.sign == fingerDelta.sign &&
+        scroll.hasClients;
+    if (!_columnDragMovedList) return;
+
+    // The scale recognizer already crossed its movement threshold, so the
+    // forwarded drag starts immediately, without a second scroll threshold.
+    _columnScrollDrag ??= scroll.position.drag(
+      DragStartDetails(globalPosition: details.focalPoint),
+      () => _columnScrollDrag = null,
+    );
+    final delta = remainder / matrix.getMaxScaleOnAxis();
+    _columnScrollDrag?.update(
+      DragUpdateDetails(
+        delta: Offset(0, delta),
+        primaryDelta: delta,
+        globalPosition: details.focalPoint,
+      ),
+    );
+  }
+
+  void _onViewerInteractionEnd(ScaleEndDetails details) {
+    if (details.pointerCount == 0 && _columnDragMovedList) {
+      final velocity =
+          details.velocity.pixelsPerSecond.dy /
+          transformationController.value.getMaxScaleOnAxis();
+      _columnScrollDrag?.end(
+        DragEndDetails(
+          velocity: Velocity(pixelsPerSecond: Offset(0, velocity)),
+          primaryVelocity: velocity,
+        ),
+      );
+    }
+    _cancelColumnPan();
+    _updateMultiTouchScrollLock();
+  }
+
+  void _cancelColumnPan() {
+    _columnScrollDrag?.cancel();
+    _columnScrollDrag = null;
+    _columnPan = null;
+    _columnDragMovedList = false;
+  }
+
+  bool _onReaderScroll(ScrollNotification notification) {
+    if (notification.depth != 0) return false;
+    if (notification is ScrollStartNotification) {
+      _scrollNotificationEpoch++;
+      _readerIsScrolling = true;
+    } else if (notification is ScrollEndNotification) {
+      final epoch = ++_scrollNotificationEpoch;
+      // A tap can stop a fling in the inner Scrollable before this Listener
+      // receives the same pointer down. Retain the scroll state for that event.
+      scheduleMicrotask(() {
+        if (epoch == _scrollNotificationEpoch) _readerIsScrolling = false;
+      });
+    }
+    return false;
+  }
+
   void _onPointerDown(PointerDownEvent event) {
     if (!_isTouchPointer(event.kind)) return;
     _activeTouchPointers.add(event.pointer);
     _previousMenuTouch = _menuTouch;
-    _menuTouch = _ReaderMenuTouch(event.pointer, event.position);
+    _menuTouch = _ReaderMenuTouch(event.pointer, event.position)
+      ..isStillTap = !_readerIsScrolling;
     if (_activeTouchPointers.length > 1) {
       _previousMenuTouch?.isStillTap = false;
       _menuTouch?.isStillTap = false;
+    } else if (isColumnReadMode(context.readEffectiveReadMode()) &&
+        transformationController.value.getMaxScaleOnAxis() >
+            kScaleLockThreshold) {
+      final scroll = actionController.scrollController;
+      if (scroll.hasClients && scroll.position.isScrollingNotifier.value) {
+        _columnScrollHold = scroll.position.hold(
+          () => _columnScrollHold = null,
+        );
+      }
     }
     _updateMultiTouchScrollLock();
   }
@@ -305,7 +441,9 @@ class ReaderInputController {
   void _onPointerUpOrCancel(PointerEvent event) {
     if (!_isTouchPointer(event.kind)) return;
     _trackMenuTouch(event);
+    if (event is PointerCancelEvent) _cancelColumnPan();
     _activeTouchPointers.remove(event.pointer);
+    if (_activeTouchPointers.isEmpty) _columnScrollHold?.cancel();
     _updateMultiTouchScrollLock();
   }
 
@@ -384,7 +522,7 @@ class ReaderInputController {
   /// 翻页前统一归位缩放与位移，避免跨页后仍停留在局部放大状态。
   bool resetViewerTransformIfNeeded() {
     final wasAnimating = _zoom != null;
-    stopZoomAnimation();
+    cancelViewerInteraction();
     if (!wasAnimating && !_viewerIsTransformed) return false;
 
     transformationController.value = Matrix4.identity();

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/network/source_network_policy.dart';
 import 'package:zephyr/service/image_recovery.dart';
@@ -93,7 +94,21 @@ void main() {
     }
   });
 
-  testWidgets('a second page cannot shorten a source rate limit', (
+  test('transport evidence takes priority over numbers in request URLs', () {
+    const url = 'https://source.invalid/404/chapter';
+    for (final error in [
+      TimeoutException('Timed out fetching $url'),
+      AnyhowException('Error: 请求超时'),
+      AnyhowException('Error: 请求超时 $url'),
+    ]) {
+      expect(readFailureIsTransient(error), isTrue, reason: '$error');
+    }
+    expect(readFailureIsTransient(Exception('HTTP 404 $url')), isFalse);
+    expect(readFailureIsTransient(Exception('server rejected $url')), isFalse);
+    expect(readFailureIsTransient(Exception('HTTP 503 $url')), isTrue);
+  });
+
+  testWidgets('a second page cannot shorten a source Retry-After', (
     tester,
   ) async {
     final hub = ImageRecoveryHub(listenToPlatform: false);
@@ -116,7 +131,7 @@ void main() {
     });
 
     try {
-      first.failed(Exception('HTTP 429 Retry-After: 120'));
+      first.failed(Exception('HTTP 503 Retry-After: 120'));
       second.failed(Exception('HTTP 429 Retry-After: 0'));
       second.trigger();
       await tester.pump(Duration.zero);

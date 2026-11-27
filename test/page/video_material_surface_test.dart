@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/page/video/video_interaction.dart';
 import 'package:zephyr/page/video/video_selection_panel.dart';
+import 'package:zephyr/widgets/android_glass_plate.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/native_material_surface.dart';
 
@@ -72,6 +73,48 @@ void main() {
       await tester.pumpWidget(view(highContrast: true));
       expect(find.byType(BackdropFilter), findsNothing);
       expect(tester.takeException(), isNull);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  test('Android navigation honors the full transparency setting', () {
+    expect(AndroidGlassPlate.navigationOpacity(-1), .98);
+    expect(AndroidGlassPlate.navigationOpacity(6), .94);
+    expect(AndroidGlassPlate.navigationOpacity(30), .70);
+    expect(AndroidGlassPlate.navigationOpacity(50), .50);
+    expect(AndroidGlassPlate.navigationOpacity(99), .50);
+  });
+
+  testWidgets(
+    'Android navigation applies transparency without a backdrop filter',
+    (tester) async {
+      Future<void> showNavigation({bool highContrast = false}) =>
+          tester.pumpWidget(
+            MaterialApp(
+              home: MediaQuery(
+                data: MediaQueryData(highContrast: highContrast),
+                child: const Scaffold(
+                  body: NativeMaterialSurface(
+                    systemStyle: true,
+                    androidGlass: true,
+                    androidBackdrop: false,
+                    androidNavigationTransparency: 50,
+                    child: SizedBox(width: 200, height: 64),
+                  ),
+                ),
+              ),
+            ),
+          );
+      await showNavigation();
+      final plate = tester.widget<AndroidGlassPlate>(
+        find.byType(AndroidGlassPlate),
+      );
+      expect(plate.role, AndroidGlassRole.navigation);
+      expect(plate.androidNavigationTransparency, 50);
+      expect(find.byType(BackdropFilter), findsNothing);
+      await showNavigation(highContrast: true);
+      expect(find.byType(AndroidGlassPlate), findsNothing);
+      expect(find.byType(BackdropFilter), findsNothing);
     },
     variant: TargetPlatformVariant.only(TargetPlatform.android),
   );

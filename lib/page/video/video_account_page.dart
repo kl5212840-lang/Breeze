@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_account_backup.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 class VideoAccountPage extends StatefulWidget {
   const VideoAccountPage({
@@ -67,28 +68,19 @@ class _VideoAccountPageState extends State<VideoAccountPage> {
   Future<void> _run(
     String prompt,
     Future<void> Function() action,
-    String done,
-  ) async {
+    String done, {
+    bool destructive = false,
+  }) async {
     if (_busy || _reading) return;
     setState(() => _busy = true);
     try {
-      final confirmed = await showAdaptiveDialog<bool>(
+      final confirmed = await confirmShortAlert(
         context: context,
-        builder: (context) => AlertDialog.adaptive(
-          title: Text(t.videoAccount.title),
-          scrollable: true,
-          content: Text(prompt),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text(t.common.cancel),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text(t.common.confirm),
-            ),
-          ],
-        ),
+        title: Text(t.videoAccount.title),
+        content: Text(prompt),
+        confirmLabel: t.common.confirm,
+        destructive: destructive,
+        adaptiveRoute: true,
       );
       if (!mounted || confirmed != true) return;
       await action();
@@ -224,6 +216,7 @@ class _VideoAccountPageState extends State<VideoAccountPage> {
                               t.videoAccount.forgetPrompt,
                               widget.service.forget,
                               t.videoAccount.forgotten,
+                              destructive: true,
                             ),
                     ),
                   ],

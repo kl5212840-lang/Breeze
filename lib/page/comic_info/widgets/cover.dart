@@ -46,20 +46,21 @@ class Cover extends StatelessWidget {
               bloc: context.read<PictureBloc>(),
               child: Builder(
                 builder: (context) {
+                  final colors = context.theme.colorScheme;
+                  final placeholderDecoration = BoxDecoration(
+                    borderRadius: radius,
+                    color: colors.surfaceContainerHigh,
+                    border: Border.all(
+                      color: colors.outlineVariant.withValues(alpha: 0.35),
+                    ),
+                  );
                   switch (state.status) {
                     case PictureLoadStatus.initial:
                       return DecoratedBox(
-                        decoration: BoxDecoration(
-                          borderRadius: radius,
-                          color: context.theme.colorScheme.surfaceContainerHigh,
-                          border: Border.all(
-                            color: context.theme.colorScheme.outlineVariant
-                                .withValues(alpha: 0.35),
-                          ),
-                        ),
+                        decoration: placeholderDecoration,
                         child: Center(
                           child: LoadingAnimationWidget.waveDots(
-                            color: context.theme.colorScheme.primary,
+                            color: colors.primary,
                             size: 40,
                           ),
                         ),
@@ -99,33 +100,16 @@ class Cover extends StatelessWidget {
                         ),
                       );
                     case PictureLoadStatus.failure:
-                      if (context.read<PictureBloc>().pictureNotFound) {
-                        return ClipRRect(
-                          borderRadius: radius,
-                          child: Image.asset(
-                            'asset/image/error_image/404.png',
-                            fit: BoxFit.cover,
+                      return DecoratedBox(
+                        decoration: placeholderDecoration,
+                        child: Center(
+                          child: Icon(
+                            Icons.image,
+                            color: colors.onSurfaceVariant,
+                            size: 30,
                           ),
-                        );
-                      } else {
-                        return InkWell(
-                          onTap: () {
-                            context.read<PictureBloc>().add(
-                              GetPicture(pictureInfo),
-                            );
-                          },
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              borderRadius: radius,
-                              color: context
-                                  .theme
-                                  .colorScheme
-                                  .surfaceContainerHighest,
-                            ),
-                            child: const Center(child: Icon(Icons.refresh)),
-                          ),
-                        );
-                      }
+                        ),
+                      );
                   }
                 },
               ),

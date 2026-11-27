@@ -71,4 +71,18 @@ void main() {
     await expectLater(coordinator.activateProfile('web-fixture',_target),throwsA(isA<PluginSessionChanged>()));
     expect(newCookies.values.single['value'],'synthetic-D');
   });
+
+  test('a verified web account without saved credentials can reauthenticate without losing the old session', () async {
+    final cookies = _Cookies();
+    final coordinator = PluginAccountSyncCoordinator.forTesting(readConfiguration: (_) => {});
+    await _register(coordinator, cookies, () async => const PluginAccountAuthentication(serverIdentity: 'server-A'));
+    var opened = false;
+    await expectLater(coordinator.activateCredentials('web-fixture', _target, login: () async {
+      opened = true;
+      expect(cookies.values, isEmpty);
+      throw const PluginAccountLoginCancelled();
+    }), throwsA(isA<PluginAccountLoginCancelled>()));
+    expect(opened, isTrue);
+    expect(cookies.values.single['value'], 'synthetic-A');
+  });
 }

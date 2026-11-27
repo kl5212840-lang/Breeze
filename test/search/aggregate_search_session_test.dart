@@ -24,7 +24,7 @@ void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   testWidgets(
-    'aggregate selection and queries stay in the same search session',
+    'aggregate history and new queries use the current enabled plugins',
     (tester) async {
       final registry = _TestPluginRegistry();
       final settings = GlobalSettingCubit();
@@ -54,7 +54,10 @@ void main() {
                     create: (_) {
                       final search = AggregateSearchCubit(
                         args.searchEvent,
-                        initialSelectedSources: args.selectedSources,
+                        initialSelectedSources: {
+                          for (final plugin in registry.state.values)
+                            if (plugin.isActive) plugin.uuid: true,
+                        },
                         sourceSearch: (id, event) {
                           final keyword = event.searchStates.searchKeyword;
                           calls.add((id, keyword));
@@ -88,9 +91,19 @@ void main() {
           child: MaterialApp.router(routerConfig: router.config()),
         ),
       );
-      router.push(SearchRoute(searchState: const SearchStates()));
+      router.push(
+        SearchRoute(
+          searchState: SearchStates.fromJson({
+            'aggregateSources': {'fast': false, 'new': true, 'removed': true},
+          }),
+        ),
+      );
       await tester.pumpAndSettle();
       final field = find.byType(TextField);
+      expect(
+        find.byKey(const ValueKey('comic-search.options-row')),
+        findsNothing,
+      );
       await tester.enterText(field, '水原');
       await tester.testTextInput.receiveAction(TextInputAction.search);
       await tester.pump();
@@ -99,39 +112,20 @@ void main() {
       expect(firstSearch.state.pendingSources, {'slow'});
       expect(calls, containsAll([('slow', '水原'), ('fast', '水原')]));
 
-      final select = find.descendant(
-        of: find.byType(SearchAggregateResultPage),
-        matching: find.byTooltip(t.search.selectSourceTooltip),
+      expect(find.byTooltip(t.search.selectSourceTooltip), findsNothing);
+      expect(firstSearch.state.selectedSources, {'fast': true, 'slow': true});
+      final resultFilter = find.widgetWithText(FilterChip, t.search.hasResults);
+      final resultScaffold = find.ancestor(
+        of: resultFilter,
+        matching: find.byType(Scaffold),
       );
-      expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('aggregate.result-tools')),
-          matching: select,
-        ),
-        findsOneWidget,
-      );
-      await tester.tap(select);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(firstSearch.state.pendingSources, {'slow'});
-      await tester.tap(find.text(t.common.cancel));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(firstSearch.state.pendingSources, {'slow'});
-      expect(calls, hasLength(2));
-
-      await tester.tap(select);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 200));
-      await tester.tap(find.byKey(const ValueKey('search-source.fast')));
-      await tester.tap(find.text(t.common.apply));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(firstSearch.state.pendingSources, {'slow'});
-      expect(firstSearch.state.selectedSources, {'fast': false, 'slow': true});
-      expect(calls, hasLength(2));
+      double filterLeadingInset() =>
+          tester.getTopLeft(resultFilter).dx -
+          tester.getTopLeft(resultScaffold).dx;
+      final filterLeftWhileLoading = filterLeadingInset();
       slow.complete([]);
       await tester.pumpAndSettle();
+      expect(filterLeadingInset(), closeTo(filterLeftWhileLoading, .01));
 
       final resultTitle = find.byKey(const ValueKey('aggregate.query-title'));
       expect(find.byType(TextField), findsNothing);
@@ -149,6 +143,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 120));
       expect(tester.widget<TextField>(field).controller!.value, composition);
       expect(submissions.single.searchCubit!.state.searchKeyword, '水原');
+      registry.setEnabled('fast', false);
+      registry.setEnabled('new', true);
+      calls.clear();
       await tester.tap(
         find.descendant(
           of: find.byType(HistoryWidget),
@@ -156,7 +153,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      expect(submissions.last.selectedSources['fast'], isFalse);
+      expect(calls, unorderedEquals([('slow', '水原'), ('new', '水原')]));
       await tester.tap(
         find.descendant(of: resultTitle, matching: find.text('水原')),
       );
@@ -167,21 +164,20 @@ void main() {
       await tester.testTextInput.receiveAction(TextInputAction.search);
       await tester.pumpAndSettle();
       expect(submissions.last.searchEvent.searchStates.searchKeyword, '新查询');
-      expect(calls.where((call) => call.$2 == '新查询'), [('slow', '新查询')]);
+      expect(
+        calls.where((call) => call.$2 == '新查询'),
+        unorderedEquals([('slow', '新查询'), ('new', '新查询')]),
+      );
 
       router.popUntilRoot();
       await tester.pumpAndSettle();
-      const directState = SearchStates(
-        searchKeyword: '直接结果',
-        aggregateSources: {'fast': false, 'slow': true},
-      );
+      const directState = SearchStates(searchKeyword: '直接结果');
       final directSession = SearchCubit(directState);
       addTearDown(directSession.close);
       router.push(
         SearchAggregateResultRoute(
           searchEvent: const SearchEvent(searchStates: directState),
           searchCubit: directSession,
-          selectedSources: directState.aggregateSources,
         ),
       );
       await tester.pumpAndSettle();
@@ -201,7 +197,7 @@ void main() {
       );
       expect(searches.last, same(directResults));
       expect(submissions, hasLength(submittedCount));
-      expect(directResults.state.selectedSources['fast'], isFalse);
+      expect(directResults.state.selectedSources, {'slow': true, 'new': true});
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     },
@@ -211,13 +207,13 @@ void main() {
 class _TestPluginRegistry extends PluginRegistryCubit {
   _TestPluginRegistry() {
     emit({
-      for (final id in ['fast', 'slow'])
+      for (final id in ['fast', 'slow', 'new', 'removed'])
         id: PluginRuntimeState(
           uuid: id,
           version: '1',
           originScript: '',
-          isEnabled: true,
-          isDeleted: false,
+          isEnabled: id != 'new',
+          isDeleted: id == 'removed',
           debug: false,
           debugUrl: null,
           lastLoadSuccess: true,
@@ -228,5 +224,9 @@ class _TestPluginRegistry extends PluginRegistryCubit {
           deletedAt: null,
         ),
     });
+  }
+
+  void setEnabled(String id, bool enabled) {
+    emit({...state, id: state[id]!.copyWith(isEnabled: enabled)});
   }
 }

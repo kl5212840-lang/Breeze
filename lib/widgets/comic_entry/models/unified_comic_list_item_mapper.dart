@@ -1,4 +1,5 @@
 import 'package:zephyr/object_box/model.dart';
+import 'package:zephyr/page/comic_info/models/comic_metric_availability.dart';
 import 'package:zephyr/page/search_result/models/unified_plugin_search.dart';
 import 'package:zephyr/util/json/json_sanitize.dart';
 import 'package:zephyr/util/json/json_value.dart';
@@ -29,6 +30,7 @@ UnifiedComicListItem unifiedComicFromPluginListMap(
 UnifiedComicListItem unifiedComicFromUnifiedFavorite(
   UnifiedComicFavorite comic,
 ) {
+  final views = _viewCountFromTitleMeta(comic.titleMeta);
   return UnifiedComicListItem(
     source: comic.source,
     id: comic.comicId,
@@ -36,16 +38,19 @@ UnifiedComicListItem unifiedComicFromUnifiedFavorite(
     subtitle: '',
     finished: false,
     likesCount: 0,
-    viewsCount: _viewCountFromTitleMeta(comic.titleMeta),
+    viewsCount: views ?? 0,
     updatedAt: comic.updatedAt.toIso8601String(),
     cover: _coverFromStored(comic.source, comic.comicId, comic.cover),
     metadata: _metadataFromString(comic.metadata),
     raw: _buildFavoriteRaw(comic),
-    extern: const <String, dynamic>{},
+    extern: {
+      if (views != null) comicMetricAvailabilityKey: {'totalViews': true},
+    },
   );
 }
 
 UnifiedComicListItem unifiedComicFromUnifiedHistory(UnifiedComicHistory comic) {
+  final views = _viewCountFromTitleMeta(comic.titleMeta);
   return UnifiedComicListItem(
     source: comic.source,
     id: comic.comicId,
@@ -53,12 +58,14 @@ UnifiedComicListItem unifiedComicFromUnifiedHistory(UnifiedComicHistory comic) {
     subtitle: comic.chapterTitle,
     finished: false,
     likesCount: 0,
-    viewsCount: _viewCountFromTitleMeta(comic.titleMeta),
+    viewsCount: views ?? 0,
     updatedAt: comic.updatedAt.toIso8601String(),
     cover: _coverFromStored(comic.source, comic.comicId, comic.cover),
     metadata: _metadataFromString(comic.metadata),
     raw: _buildHistoryRaw(comic),
-    extern: const <String, dynamic>{},
+    extern: {
+      if (views != null) comicMetricAvailabilityKey: {'totalViews': true},
+    },
   );
 }
 
@@ -227,14 +234,15 @@ List<Map<String, dynamic>> _decodeMetadataString(String metadataJson) {
   return decodeJsonListOfMaps(metadataJson);
 }
 
-int _viewCountFromTitleMeta(String titleMetaJson) {
+int? _viewCountFromTitleMeta(String titleMetaJson) {
   for (final item in decodeJsonListOfMaps(titleMetaJson)) {
-    final name = item['name']?.toString() ?? '';
-    if (name.startsWith('浏览：')) {
-      return int.tryParse(name.substring(3)) ?? 0;
+    final name = item['name'];
+    if (name is String && name.startsWith('浏览：')) {
+      final count = parsePublicComicCount(name.substring(3));
+      if (count != null) return count;
     }
   }
-  return 0;
+  return null;
 }
 
 UnifiedComicListItem _requireUnifiedPluginItem(

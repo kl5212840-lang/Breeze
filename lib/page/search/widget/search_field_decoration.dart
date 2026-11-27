@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show ValueListenable;
+import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/search/widget/search_field_surface.dart';
@@ -16,7 +18,9 @@ InputDecoration searchFieldDecoration(
   bool variableSuffixWidth = false,
 }) {
   final colors = Theme.of(context).colorScheme;
-  final system = usesSystemSearchSurface(context);
+  final native = usesSystemSearchSurface(context);
+  final android = usesAndroidSearchSurface(context);
+  final highContrast = MediaQuery.highContrastOf(context);
   final touch = CollectionToolbarMetrics.actionExtentOf(context);
   final inSearchToolbar = SearchToolbarScope.of(context) != null;
   final shape = OutlineInputBorder(
@@ -31,9 +35,11 @@ InputDecoration searchFieldDecoration(
     enabledBorder: shape,
     disabledBorder: shape,
     focusedBorder: shape.copyWith(
-      borderSide: system && !MediaQuery.highContrastOf(context)
-          ? BorderSide.none
-          : BorderSide(color: colors.primary),
+      borderSide: highContrast || (!native && !android)
+          ? BorderSide(color: colors.primary)
+          : android
+          ? BorderSide(color: colors.primary.withValues(alpha: .74))
+          : BorderSide.none,
     ),
     errorBorder: shape.copyWith(borderSide: BorderSide(color: colors.error)),
     focusedErrorBorder: shape.copyWith(
@@ -60,5 +66,29 @@ InputDecoration searchFieldDecoration(
     suffixIcon: variableSuffixWidth
         ? suffixIcon
         : SizedBox(width: touch, child: suffixIcon),
+  );
+}
+
+/// The leading action in a dedicated query field.
+class SearchFieldSubmitButton extends StatelessWidget {
+  const SearchFieldSubmitButton({
+    super.key,
+    required this.query,
+    required this.onSubmitted,
+  });
+
+  final ValueListenable<TextEditingValue> query;
+  final ValueChanged<String>? onSubmitted;
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder(
+    valueListenable: query,
+    builder: (context, value, _) => IconButton(
+      tooltip: t.common.search,
+      icon: const SearchToolGlyph(SearchTool.search, size: 22),
+      onPressed: value.text.trim().isEmpty || onSubmitted == null
+          ? null
+          : () => onSubmitted!(value.text),
+    ),
   );
 }

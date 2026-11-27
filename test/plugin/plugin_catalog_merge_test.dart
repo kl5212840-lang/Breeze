@@ -86,6 +86,61 @@ void main() {
     expect((merged.single as Map)['manifest']['version'], '1');
   });
 
+  for (final (key, uuid) in [
+    ('modu', 'b27083a4-a643-462a-8204-e6f42c19a5b9'),
+    ('omofun', 'ccc2fe17-c0a8-4fd8-a596-835772686404'),
+  ]) {
+    test('$key uses live proof for same-version migration only', () async {
+      final oldHash = 'a' * 64;
+      final entry = {
+        'repo': personalPluginCatalogRepository,
+        'manifest': {
+          'uuid': uuid,
+          'version': '0.1.2',
+          'updateUrl':
+              'https://raw.githubusercontent.com/$personalPluginCatalogRepository/main/updates/v1/$key.json',
+          'releaseSeries': 1,
+          'scriptSha256': 'b' * 64,
+          'migrationFrom': [
+            {'version': '0.1.2', 'scriptSha256': oldHash},
+          ],
+        },
+      };
+      final live = await loadCloudPluginCatalog(
+        official: () async => null,
+        personal: () async => jsonEncode([entry]),
+        fallback: const CloudPluginCatalogSnapshot(),
+      );
+      final release = live.entries.single.formalRelease!;
+      expect(
+        release.migrationFor(
+          installedUuid: uuid,
+          installedVersion: '0.1.2',
+          scriptFingerprint: () => oldHash,
+        ),
+        isNotNull,
+      );
+      expect(
+        release.migrationFor(
+          installedUuid: uuid,
+          installedVersion: '0.1.2',
+          scriptFingerprint: () => 'c' * 64,
+        ),
+        isNull,
+      );
+      final upstream = {
+        'manifest': {'uuid': uuid, 'version': '0.3.0'},
+      };
+      final overlap = await loadCloudPluginCatalog(
+        official: () async => jsonEncode([upstream]),
+        personal: () async => jsonEncode([entry]),
+        fallback: const CloudPluginCatalogSnapshot(),
+      );
+      expect(overlap.entries.single.json, upstream);
+      expect(overlap.entries.single.formalRelease, isNull);
+    });
+  }
+
   test(
     'personal 禁漫 update replaces only its matching original catalog entry',
     () {

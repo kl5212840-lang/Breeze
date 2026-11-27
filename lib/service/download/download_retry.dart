@@ -8,6 +8,7 @@ import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/service/download/download_cancel_signal.dart';
 import 'package:zephyr/service/image_recovery.dart'
     show ImageFailureEvidence, imageFailureHttpStatus;
+import 'package:zephyr/service/read_recovery.dart' show readRetryAfterDelay;
 import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/service/local_plugin_installation_state.dart';
 
@@ -26,15 +27,24 @@ enum ComicDownloadRetryReason {
 }
 
 class ComicDownloadRetryDeferred implements Exception {
-  const ComicDownloadRetryDeferred(this.reason);
+  const ComicDownloadRetryDeferred(this.reason, {this.serverDelay});
   final ComicDownloadRetryReason reason;
+  final Duration? serverDelay;
 
   Duration delayFor(int consecutiveRounds) {
     final step = (consecutiveRounds - 1).clamp(0, 5).toInt();
     final seconds =
         (reason == ComicDownloadRetryReason.rateLimited ? 30 : 5) * (1 << step);
-    return Duration(seconds: seconds.clamp(0, 300).toInt());
+    final delay = Duration(seconds: seconds.clamp(0, 300).toInt());
+    final requested = serverDelay;
+    return requested != null && requested > delay ? requested : delay;
   }
+}
+
+Duration? comicDownloadRetryAfter(Object? error) {
+  if (error == null) return null;
+  final delay = readRetryAfterDelay(error, fallback: Duration.zero);
+  return delay > Duration.zero ? delay : null;
 }
 
 ComicDownloadRetryReason? comicDownloadHttpRetryReason(int? status) =>
@@ -109,6 +119,9 @@ Future<T> retryDownloadOperation<T>({
     } catch (error, stackTrace) {
       if (isNonRetryableDownloadFailure(error) ||
           _isDownloadCancellation(error) ||
+          comicDownloadRetryReason(error) ==
+              ComicDownloadRetryReason.rateLimited ||
+          comicDownloadRetryAfter(error) != null ||
           shouldRetry?.call(error) == false) {
         Error.throwWithStackTrace(error, stackTrace);
       }

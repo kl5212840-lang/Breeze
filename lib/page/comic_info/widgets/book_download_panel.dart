@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:objectbox/objectbox.dart';
+import 'package:zephyr/widgets/task_bottom_sheet.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/object_box/model.dart';
@@ -90,7 +91,7 @@ class BookDownloadPanelController {
     if (_open || !context.mounted) return;
     _open = true;
     try {
-      final record = await showModalBottomSheet<UnifiedComicDownload>(
+      final record = await showReadableTaskBottomSheet<UnifiedComicDownload>(
         context: context,
         useRootNavigator: false,
         isScrollControlled: true,

@@ -1,5 +1,6 @@
 import 'package:zephyr/page/donwload_task/service/download_work_pin_removal.dart';
 import 'package:zephyr/page/donwload_task/service/download_interaction_trace.dart';
+import 'package:zephyr/page/video/video_download.dart';
 import 'package:zephyr/page/video/video_export_records.dart';
 import 'package:zephyr/page/video/video_local_resources.dart';
 import 'package:zephyr/service/download/download_resource_lifecycle.dart';
@@ -103,6 +104,18 @@ class VideoDownloadRemoval {
     }
     if (expected != null && expected._resource == null) {
       await VideoExportRecords.removeBoundDownloadRecords(expected._records);
+      if (format == 'mp4' &&
+          expected._records.hasTransferRecords &&
+          !(await VideoExportRecords.readTaskSnapshot()).any(
+            (row) =>
+                row['source'] == source &&
+                row['url'] ==
+                    VideoLocalResources.resourcePage(page).toString() &&
+                row['quality'] == quality &&
+                (row['format'] ?? 'mp4') == 'mp4',
+          )) {
+        await VideoSystemDownload.discardIosPartial(identity);
+      }
       await afterVideoRemoval(identity);
       return;
     }
@@ -127,6 +140,9 @@ class VideoDownloadRemoval {
           await removeResource(lease);
         }
         await VideoExportRecords.removeBoundDownloadRecords(bound);
+        if (format == 'mp4') {
+          await VideoSystemDownload.discardIosPartial(identity);
+        }
       });
       await afterVideoRemoval(identity);
     } finally {

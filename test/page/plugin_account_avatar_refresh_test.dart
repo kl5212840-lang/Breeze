@@ -470,6 +470,42 @@ void main() {
     }
   });
 
+  testWidgets('the saved portrait works without a temporary signed URL', (tester) async {
+    const origin = 'https://fixture.test';
+    const source = 'signed-web-portrait-fixture';
+    await tester.runAsync(() async {
+      await loadPluginAccountAvatar(
+        source: source,
+        identity: 'known-account',
+        origin: origin,
+        url: 'https://cdn.example/avatar.jpg?signature=short-lived',
+        path: '',
+        download: (_, _) async => _blue,
+      );
+      expect(
+        await loadPluginAccountAvatar(
+          source: source,
+          identity: 'known-account',
+          origin: origin,
+          url: '',
+          path: '',
+          download: (_, _) async => throw StateError('empty address reached transport'),
+        ),
+        _blue,
+      );
+      await expectLater(
+        loadPluginAccountAvatar(
+          source: source,
+          identity: 'another-account',
+          origin: origin,
+          url: '',
+          path: '',
+        ),
+        throwsStateError,
+      );
+    });
+  });
+
   testWidgets('same-URL refresh survives hiding, supersession and a 503', (
     tester,
   ) async {

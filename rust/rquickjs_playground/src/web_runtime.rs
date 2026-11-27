@@ -34,7 +34,7 @@ use reqwest::multipart::{Form as MultipartForm, Part as MultipartPart};
 use reqwest::{Client, Method, Proxy};
 use rquickjs::{
     Ctx, Function, IntoJs, Promise, Value as QjsValue,
-    function::{Func, Opt},
+    function::{Func, Rest},
 };
 use subtle::ConstantTimeEq;
 use tokio::net::lookup_host;
@@ -62,9 +62,10 @@ pub use self::bridge::{
     register_bridge_route_sync_handler, unregister_bridge_route_handler,
 };
 pub use self::http::{
-    BuildHttpClientOptions, HttpClientConfig, build_http_client, build_http_client_ex,
-    configure_http_client, current_http_client_config, http_promise_cancel_senders_len,
-    http_request_cancel, is_http_requests_blocked, set_http_requests_blocked, wrap_http_client,
+    BuildHttpClientOptions, HttpClientConfig, HttpReadScope, build_http_client,
+    build_http_client_ex, cancel_http_read_group, configure_http_client,
+    current_http_client_config, http_promise_cancel_senders_len, http_request_cancel,
+    is_http_requests_blocked, set_http_requests_blocked, wrap_http_client,
 };
 pub use self::native_buffer::{
     native_buffer_clone_raw, native_buffer_clone_typed, native_buffer_free, native_buffer_put,
@@ -87,7 +88,7 @@ use self::fs_ops::{
 pub(crate) use self::http::RuntimeHttpClient;
 use self::http::{
     HttpClientState, cleanup_stale_pending, cleanup_stale_pending_abort, http_io_sem,
-    http_request_promise,
+    http_read_scope_active, http_request_promise,
 };
 use self::native_buffer::{
     NATIVE_BUF_ID, native_buffer_put_bytes, native_pool, start_native_buffer_gc_loop,
@@ -224,7 +225,10 @@ pub(crate) fn install_host_bindings_with_http<'js>(
                   headers: String,
                   body: Option<String>,
                   body_buffer: Option<u64>,
-                  redirect: Opt<String>| {
+                  options: Rest<QjsValue<'js>>| {
+                let redirect = options.0.first().map(QjsValue::get::<String>).transpose()?;
+                let timeout_ms = options.0.get(1).map(QjsValue::get::<f64>).transpose()?;
+                let read_scope = options.0.get(2).map(QjsValue::get::<String>).transpose()?;
                 http_request_promise(
                     ctx,
                     method,
@@ -232,13 +236,19 @@ pub(crate) fn install_host_bindings_with_http<'js>(
                     headers,
                     body,
                     body_buffer,
-                    redirect.0,
+                    redirect,
+                    timeout_ms,
+                    read_scope,
                     Arc::clone(&http),
                 )
             },
         )?,
     )?;
     globals.set("__http_request_cancel", Func::from(http_request_cancel))?;
+    globals.set(
+        "__http_read_scope_active",
+        Func::from(http_read_scope_active),
+    )?;
     globals.set("__urlsp_rewrite", Func::from(urlsp_rewrite))?;
     globals.set("__urlsp_query", Func::from(urlsp_query))?;
     globals.set("__headers_rewrite", Func::from(headers_rewrite))?;

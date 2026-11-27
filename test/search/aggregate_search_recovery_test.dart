@@ -9,6 +9,17 @@ import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('search does not mistake a timeout URL for rate limiting', () {
+    const url = 'https://source.invalid/429/search';
+    expect(
+      aggregateSearchFailure(TimeoutException('Timed out $url')),
+      'timeout',
+    );
+    expect(aggregateSearchFailure(Exception('请求超时 $url')), 'timeout');
+    expect(aggregateSearchFailure(Exception('HTTP 429 $url')), 'rateLimited');
+    expect(aggregateSearchFailure(Exception('HTTP 503 $url')), 'server');
+  });
+
   test('a source network change keeps the other source result', () async {
     SharedPreferences.setMockInitialValues({});
     const changed = '00000000-0000-4000-8000-000000000001';
@@ -80,7 +91,7 @@ void main() {
     expect(active, 0);
     await c.close();
   });
-  test('selection changes query only newly enabled source', () async {
+  test('availability changes query only newly enabled sources', () async {
     final calls = <String, int>{};
     final c = AggregateSearchCubit(
       const SearchEvent(),
@@ -91,9 +102,9 @@ void main() {
       },
     );
     await c.search();
-    await c.toggleSource('a', false);
+    await c.updateAvailableSources({'b'});
     expect(c.state.results['b'], ['b']);
-    await c.toggleSource('a', true);
+    await c.updateAvailableSources({'a', 'b'});
     expect(calls, {'a': 2, 'b': 1});
     await c.close();
   });
@@ -127,7 +138,7 @@ void main() {
         sourceSearch: (_, __) => pending.future,
       );
       final first = c.search();
-      await c.toggleSource('a', false);
+      await c.updateAvailableSources({});
       pending.complete(['late']);
       await first;
       await Future<void>.delayed(Duration.zero);
@@ -136,6 +147,22 @@ void main() {
       await c.close();
     },
   );
+  test('aggregate deadline visibly retires an unfinished source', () async {
+    final pending = Completer<List<dynamic>>();
+    final cubit = AggregateSearchCubit(
+      const SearchEvent(),
+      initialSelectedSources: {'a': true},
+      sourceTimeout: const Duration(milliseconds: 30),
+      sourceSearch: (_, _) => pending.future,
+    );
+    addTearDown(cubit.close);
+    await cubit.search().timeout(const Duration(seconds: 2));
+    expect(cubit.state.pendingSources, isEmpty);
+    expect(cubit.state.errors['a'], 'timeout');
+    pending.complete(['late']);
+    await Future<void>.delayed(Duration.zero);
+    expect(cubit.state.results, isEmpty);
+  });
   test('disabled or removed sources never enter execution', () async {
     var calls = 0;
     final c = AggregateSearchCubit(
@@ -235,9 +262,13 @@ void main() {
         },
       );
       final old = c.search();
-      c.updateSourceDefinitions({'a': 'new-script'});
+      final replacement = c.updateAvailableSources(
+        {'a'},
+        definitions: {'a': 'new-script'},
+      );
       expect(reads.length, 2);
       reads.last.complete(['new']);
+      await replacement;
       await Future<void>.delayed(Duration.zero);
       reads.first.complete(['old']);
       await old;

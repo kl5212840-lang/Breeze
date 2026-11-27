@@ -455,6 +455,7 @@ class VideoLibraryStore extends ChangeNotifier {
   Future<void> restoreSnapshotIfCurrent(String? expected, String? before) =>
       _queueWrite(() async {
         final prefs = await SharedPreferences.getInstance();
+        await prefs.reload();
         if (prefs.getString(storageKey) != expected || before == expected) {
           return;
         }

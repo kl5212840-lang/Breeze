@@ -45,17 +45,36 @@ void main() {
           },
           home: ApiVideoDetailPage(repository: repository, initialItem: item),
         )));
-        for (var i = 0; i < 50 && !calls.contains('play'); i++) {
+        final details = find.byWidgetPredicate((widget) {
+          final key = widget.key;
+          return widget is ListView &&
+              key is PageStorageKey<Object?> &&
+              key.value == 'api-detail.${item.id}';
+        });
+        for (
+          var i = 0;
+          i < 50 && (!calls.contains('play') || details.evaluate().isEmpty);
+          i++
+        ) {
           await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 5)));
           await tester.pump(const Duration(milliseconds: 16));
         }
         expect(calls, containsAllInOrder(['detail', 'play']), reason: 'Real validated episodes reach the pending resolver before checking the preparation shell');
+        expect(details, findsOneWidget, reason: 'The detail viewport has mounted');
         final surface = find.byKey(const ValueKey('api-initial.gesture-surface'));
         final back = find.byKey(const ValueKey('api-initial.back'));
         final episodes = find.byKey(const ValueKey('api-initial.episodes'));
         final videoRect = tester.getRect(surface);
         expect(videoRect, const Rect.fromLTWH(44, 24, 868, 237));
-        await tester.ensureVisible(episodes); await tester.pump();
+        await tester.scrollUntilVisible(
+          episodes,
+          40,
+          scrollable: find.descendant(
+            of: details,
+            matching: find.byType(Scrollable),
+          ).first,
+        );
+        await tester.pump();
         expect(tester.getRect(episodes).top, greaterThanOrEqualTo(videoRect.bottom));
         expect(tester.getRect(episodes).bottom, lessThanOrEqualTo(419));
         expect(episodes.hitTestable(), findsOneWidget);

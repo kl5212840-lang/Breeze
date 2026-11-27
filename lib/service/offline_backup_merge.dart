@@ -457,6 +457,7 @@ Future<Map<String, dynamic>> captureOfflineSettingsPayload() async =>
       null,
       state: objectbox.userSettingBox.get(1)!.globalSetting,
       includeAll: true,
+      localBackup: true,
     )).compatibilityPayload;
 
 class _SettingsInput implements ComicSyncRemoteAdapter {
@@ -516,6 +517,7 @@ Future<SettingsArchiveData?> _readSettings(
   }
   return readSettingsArchiveData(
     _SettingsInput(utf8.encode(jsonEncode(payload))),
+    localBackup: true,
     codec: SettingsSyncCodec(
       encode: (bytes) async => bytes,
       decode: (bytes) async => bytes,
@@ -586,6 +588,7 @@ Future<OfflineBackupMergePlan> prepareOfflineBackupMerge(
     protectVersionedLocalFields: true,
     importSettings: options?.importSettings,
     importPlugins: options?.importPlugins,
+    localBackup: true,
   );
   final portable = await _readPortable(incoming);
   final localPreferences = await PortablePreferences.capture(persist: false);

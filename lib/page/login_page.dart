@@ -1,5 +1,7 @@
 import 'package:zephyr/service/plugin_account_authentication.dart';
 import 'package:zephyr/service/plugin_account_profiles.dart';
+import 'package:zephyr/service/plugin_account_response.dart';
+import 'package:zephyr/service/local_plugin_installation_state.dart';
 import 'package:zephyr/page/source_shell/source_loading_indicator.dart';
 import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
@@ -14,6 +16,7 @@ import 'package:zephyr/network/http/plugin/unified_plugin_envelope.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/network/http/plugin/qjs_network_route.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/login/registration_link.dart';
 import 'package:zephyr/page/login/login_error_message.dart';
@@ -35,28 +38,33 @@ class PluginAccountLoginSeed extends InheritedWidget {
     required super.child,
     this.values = const {},
     this.recoveryGeneration,
+    this.savedAccount,
   });
   final Map<String, String> values;
   final int? recoveryGeneration;
+  final ({String id, int revision})? savedAccount;
   static PluginAccountLoginSeed? maybeOf(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<PluginAccountLoginSeed>();
   @override
   bool updateShouldNotify(PluginAccountLoginSeed oldWidget) =>
       values != oldWidget.values ||
-      recoveryGeneration != oldWidget.recoveryGeneration;
+      recoveryGeneration != oldWidget.recoveryGeneration ||
+      savedAccount != oldWidget.savedAccount;
 }
 
 /// Used by explicit account actions. Keep the seed in the route's widget tree.
-Future<void> openPluginAccountLoginForm(
+Future<bool> openPluginAccountLoginForm(
   BuildContext context, {
   required String source,
   String? username,
   int? recoveryGeneration,
+  ({String id, int revision})? savedAccount,
 }) async {
-  final route = videoPageRoute<void>(
+  final route = videoPageRoute<bool>(
     settings: const RouteSettings(name: LoginRoute.name),
     builder: (_) => PluginAccountLoginSeed(
       recoveryGeneration: recoveryGeneration,
+      savedAccount: savedAccount,
       values: {
         if (username != null && username.isNotEmpty) ...{
           'account': username,
@@ -67,9 +75,9 @@ Future<void> openPluginAccountLoginForm(
       child: LoginPage(from: source),
     ),
   );
-  final completion = Navigator.of(context).push<void>(route);
+  final completion = Navigator.of(context).push<bool>(route);
   NativeCompositionObserver.observeSharedDestination(context, route);
-  await completion;
+  return await completion == true;
 }
 
 @RoutePage()
@@ -151,6 +159,10 @@ class _LoginPageState extends State<_SourceLoginBody> {
   Uri? _registrationUri;
   bool _loadingScheme = true;
   bool _submitting = false;
+  String? _loginIdentityField;
+  bool _canRememberLogin = false;
+  bool _rememberLogin = false;
+  ({int installation, int endpoint})? _formScope;
   String? _schemeError;
   String? _submitError;
 
@@ -180,13 +192,26 @@ class _LoginPageState extends State<_SourceLoginBody> {
     }
 
     try {
+      final source = canonicalQjsSource(from);
+      final installation = LocalPluginInstallationState.instance;
+      final scope = (
+        installation: installation.installationEpoch(source),
+        endpoint: pluginEndpointRevision(source),
+      );
       final response = await callUnifiedComicPlugin(
         from: from,
         fnPath: 'getLoginBundle',
+        notifyUnauthorized: false,
         core: const <String, dynamic>{},
         extern: const <String, dynamic>{},
       );
       if (!mounted) return;
+      requirePluginAccountResponseSource(source, response);
+      _formScope = scope;
+      if (scope.installation != installation.installationEpoch(source) ||
+          scope.endpoint != pluginEndpointRevision(source) ||
+          isPluginEndpointUpdating(source))
+        throw const PluginSessionChanged();
       final failure = loginResponseFailure(response);
       if (failure != null) {
         if (mounted) {
@@ -206,7 +231,9 @@ class _LoginPageState extends State<_SourceLoginBody> {
             raw.contains('function path not found') ||
             raw.contains('target is not function');
         setState(() {
-          _schemeError = missingBundle
+          _schemeError = e is PluginSessionChanged
+              ? e.toString()
+              : missingBundle
               ? t.login.loginNotSupported
               : t.login.loadConfigFailed(error: userFacingLoginErrorMessage(e));
           _loadingScheme = false;
@@ -281,6 +308,17 @@ class _LoginPageState extends State<_SourceLoginBody> {
         : null;
     final recoveryGeneration = seed?.recoveryGeneration;
     final savedAccount = accountField == null ? null : values[accountField];
+    final selection = seed?.savedAccount;
+    final selected = selection == null
+        ? null
+        : PluginAccountProfiles.savedNativeLogin(
+            source,
+            selection.id,
+            selection.revision,
+          );
+    final selectedPassword = selected == null
+        ? null
+        : PluginAccountProfiles.savedNativePassword(selected);
     final prefillPassword =
         recoveryGeneration != null &&
         !pluginSessionWriteFence.isChanging(source) &&
@@ -290,9 +328,11 @@ class _LoginPageState extends State<_SourceLoginBody> {
         seed?.values[accountField] == savedAccount;
     _prefillGeneration = prefillPassword ? recoveryGeneration : null;
     for (final spec in specs) {
-      final saved = values[spec.key];
+      final saved = selected != null && spec.key == 'password'
+          ? selectedPassword
+          : values[spec.key];
       final useSavedPassword =
-          prefillPassword &&
+          (prefillPassword || selected != null && accountField != null) &&
           spec.obscure &&
           spec.key == 'password' &&
           saved is String &&
@@ -300,6 +340,8 @@ class _LoginPageState extends State<_SourceLoginBody> {
       if (useSavedPassword) _prefilledPasswords.add(spec.key);
       final initialValue = seed == null || useSavedPassword
           ? saved?.toString() ?? ''
+          : selected != null && spec.key == accountField
+          ? selected.identity
           : spec.obscure
           ? ''
           : seed.values[spec.key] ?? '';
@@ -311,6 +353,16 @@ class _LoginPageState extends State<_SourceLoginBody> {
         title = scheme['title']?.toString().trim() ?? '';
         _fields = specs;
         _submitFnPath = submitFnPath;
+        _loginIdentityField = accountField;
+        _canRememberLogin =
+            !PluginAccountAuthenticationService(from).hasApiVerification &&
+            accountField != null &&
+            specs.length == 2 &&
+            specs.any((spec) => spec.key == 'password' && spec.obscure);
+        _rememberLogin =
+            _canRememberLogin &&
+            selectedPassword != null &&
+            selected?.bundle.containsKey(hostRememberedPluginLoginKey) == true;
         _submitLabel =
             (action['submitText'] ?? action['label'] ?? scheme['submitText'])
                 ?.toString()
@@ -397,14 +449,6 @@ class _LoginPageState extends State<_SourceLoginBody> {
   }
 
   /// 登录提交返回值约定：`message?: string | null`，缺省/空白时用默认文案。
-  String _resolveLoginSuccessMessage(Map<String, dynamic> result) {
-    final message = result['message']?.toString().trim();
-    if (message?.isNotEmpty == true) return message!;
-    final dataMessage = asJsonMap(result['data'])['message']?.toString().trim();
-    if (dataMessage?.isNotEmpty == true) return dataMessage!;
-    return t.login.loginSuccess;
-  }
-
   void _clearPrefilledPasswords() {
     for (final key in _prefilledPasswords) {
       _controllers[key]?.clear();
@@ -422,7 +466,9 @@ class _LoginPageState extends State<_SourceLoginBody> {
       return;
     }
     final source = canonicalQjsSource(from);
+    final saved = PluginAccountLoginSeed.maybeOf(context)?.savedAccount;
     if (_prefilledPasswords.isNotEmpty &&
+        saved == null &&
         (pluginSessionWriteFence.isChanging(source) ||
             pluginSessionWriteFence.generation(source) != _prefillGeneration)) {
       setState(_clearPrefilledPasswords);
@@ -445,32 +491,94 @@ class _LoginPageState extends State<_SourceLoginBody> {
 
     try {
       final authentication = PluginAccountAuthenticationService(from);
-      final result = await PluginAccountProfiles.submitLogin(
-        from,
-        submit: () async {
-          final result = await callUnifiedComicPlugin(
-            from: from,
-            fnPath: _submitFnPath,
-            sessionChange: true,
-            core: {...values, 'values': values},
-            extern: const <String, dynamic>{},
+      final account = values[_loginIdentityField]?.toString().trim() ?? '';
+      final remember = _canRememberLogin && account.isNotEmpty
+          ? (
+              account: account,
+              password: _rememberLogin ? values['password'] as String? : null,
+            )
+          : null;
+      late Map<String, dynamic> response;
+      String? previousSession;
+      Future<Map<String, dynamic>> submit() async {
+        final installation = LocalPluginInstallationState.instance;
+        if (_formScope?.installation !=
+                installation.installationEpoch(source) ||
+            _formScope?.endpoint != pluginEndpointRevision(source) ||
+            isPluginEndpointUpdating(source) ||
+            installation.isInstalling(source) ||
+            installation.isRemoved(source))
+          throw const PluginSessionChanged();
+        final endpoint = pluginEndpointRevision(source);
+        previousSession = authentication.hasApiVerification
+            ? null
+            : authentication.legacySession();
+        response = await callUnifiedComicPlugin(
+          from: from,
+          fnPath: _submitFnPath,
+          sessionChange: true,
+          notifyUnauthorized: false,
+          core: {...values, 'values': values},
+          extern: const <String, dynamic>{},
+        );
+        if (endpoint != pluginEndpointRevision(source)) {
+          throw const PluginSessionChanged();
+        }
+        final failure = loginResponseFailureKind(response);
+        if (failure != null) throw _LoginEnvelopeRejected(failure);
+        readPluginAccountData(source, response);
+        return response;
+      }
+
+      Future<PluginAccountAuthentication> verify() =>
+          authentication.verifyNativeLogin(
+            response,
+            account: account,
+            previousSession: previousSession,
           );
-          final failure = loginResponseFailureKind(result);
-          if (failure != null) throw _LoginEnvelopeRejected(failure);
-          return result;
-        },
-        verify: authentication.hasApiVerification
-            ? authentication.verify
-            : null,
-      );
-      showSuccessToast(_resolveLoginSuccessMessage(result));
+      if (saved == null) {
+        await PluginAccountProfiles.submitLogin(
+          from,
+          submit: submit,
+          rememberLogin: remember,
+          verify: () async {
+            if (authentication.hasApiVerification) return verify();
+            if (account.isEmpty || authentication.legacySession() == null) {
+              return null;
+            }
+            try {
+              return await verify();
+            } on PluginAccountNeedsLogin {
+              if (_rememberLogin) rethrow;
+              return null;
+            }
+          },
+        );
+      } else {
+        await PluginAccountProfiles.switchTo(
+          from,
+          saved.id,
+          expectedRevision: saved.revision,
+          rememberLogin: remember,
+          authenticate: (target) async {
+            if (_loginIdentityField != null && account != target.identity) {
+              throw const PluginAccountSwitchFailed();
+            }
+            await submit();
+            return verify();
+          },
+        );
+      }
+      showSuccessToast(t.login.loginSuccess);
       eventBus.fire(PluginLoginSucceeded(from));
 
       if (!mounted) return;
-      context.maybePop();
+      await Navigator.of(context).maybePop(true);
     } catch (e) {
       final message = e is _LoginEnvelopeRejected
           ? userFacingLoginFailureMessage(e.kind)
+          : e is PluginSessionChanged
+          ? e.toString()
           : userFacingLoginErrorMessage(e);
       if (mounted) setState(() => _submitError = message);
       // 失败自动刷新：验证码一次一码，旧码提交后即作废；
@@ -599,6 +707,18 @@ class _LoginPageState extends State<_SourceLoginBody> {
                   if (i > 0) const SizedBox(height: 20),
                   _buildField(_fields[i]),
                 ],
+                if (_canRememberLogin)
+                  CheckboxListTile(
+                    key: const ValueKey('login.remember'),
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    title: Text(t.videoCommunity.rememberCredentials),
+                    value: _rememberLogin,
+                    onChanged: _submitting
+                        ? null
+                        : (value) =>
+                              setState(() => _rememberLogin = value == true),
+                  ),
                 if (_submitError != null) ...[
                   const SizedBox(height: 12),
                   Semantics(
@@ -663,6 +783,9 @@ class _LoginPageState extends State<_SourceLoginBody> {
       children: [
         TextField(
           controller: controller,
+          readOnly:
+              spec.key == _loginIdentityField &&
+              PluginAccountLoginSeed.maybeOf(context)?.savedAccount != null,
           onChanged: _loginIdentityFields.contains(spec.key)
               ? (_) {
                   if (_prefilledPasswords.isNotEmpty) {

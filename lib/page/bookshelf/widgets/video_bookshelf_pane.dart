@@ -9,6 +9,7 @@ import 'package:zephyr/page/bookshelf/widgets/bookshelf_content_toolbar.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_actions_scope.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_help.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_return_to_top.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_source_scroll.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_folder_card.dart';
 import 'package:zephyr/widgets/folder_cover_menu.dart';
 import 'package:zephyr/service/folder_cover_service.dart';
@@ -42,6 +43,7 @@ import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/util/text/public_search_text.dart';
 import 'package:zephyr/page/video/video_library_folder_picker.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 /// Injectable boundary for tests; production reads the original video stores.
 class VideoBookshelfPaneDataSource {
@@ -54,6 +56,7 @@ class VideoBookshelfPaneDataSource {
     required this.store,
     required this.changes,
     this.readPane,
+    this.projectSourceFilter = false,
   });
   final Future<List<VideoBookshelfRow>> Function(
     ShelfPageMode,
@@ -71,6 +74,7 @@ class VideoBookshelfPaneDataSource {
     SearchStatusState,
   )?
   readPane;
+  final bool projectSourceFilter;
   static final live = VideoBookshelfPaneDataSource(
     load: VideoBookshelfIndex.load,
     sourceNames: VideoBookshelfIndex.sourceNames,
@@ -80,6 +84,7 @@ class VideoBookshelfPaneDataSource {
     store: VideoBookshelfIndex.store,
     changes: VideoBookshelfIndex.changes,
     readPane: VideoBookshelfIndex.readPane,
+    projectSourceFilter: true,
   );
 }
 
@@ -95,6 +100,7 @@ class VideoBookshelfPane extends StatefulWidget {
     this.allowTabReselect = false,
     this.onSelectionChanged,
     this.dataSource,
+    this.collectionPageTitle,
   });
   final ShelfPageMode mode;
   final SearchStatusState search;
@@ -105,6 +111,7 @@ class VideoBookshelfPane extends StatefulWidget {
   final bool allowTabReselect;
   final ValueChanged<bool>? onSelectionChanged;
   final VideoBookshelfPaneDataSource? dataSource;
+  final String? collectionPageTitle;
   @override
   State<VideoBookshelfPane> createState() => _VideoBookshelfPaneState();
 }
@@ -114,9 +121,11 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
   @override
   bool get wantKeepAlive => true;
 
+  final _scroll = BookshelfSourceScroll();
+
   VideoBookshelfPaneDataSource get _data =>
       widget.dataSource ?? VideoBookshelfPaneDataSource.live;
-  List<VideoBookshelfRow>? _rows;
+  List<VideoBookshelfRow>? _rows, _sourceInventory;
   Map<String, int> _folderWorkCounts = const {};
   Map<String, ShelfFacetEntry>? _entriesByKey;
   Map<String, String> _names = {};
@@ -191,31 +200,50 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
           .removeListener(_changed);
       _data.changes.addListener(_changed);
     }
-    final scopeChanged =
+    final sourcesChanged = !listEquals(
+      oldWidget.search.sources,
+      widget.search.sources,
+    );
+    final readScopeChanged =
         oldWidget.mode != widget.mode ||
-        oldWidget.search != widget.search ||
+        oldWidget.search.keyword != widget.search.keyword ||
+        oldWidget.search.sort != widget.search.sort ||
         widget.search.keyword.trim().isNotEmpty &&
-            oldWidget.keywordScope != widget.keywordScope;
-    if (scopeChanged ||
+            oldWidget.keywordScope != widget.keywordScope ||
+        sourcesChanged && !_data.projectSourceFilter;
+    if (readScopeChanged ||
+        sourcesChanged ||
         dataSourceChanged ||
         oldWidget.isActive != widget.isActive) {
       _filterScopeEpoch++;
     }
-    if (scopeChanged) {
-      _rows = null;
-      _entriesByKey = null;
-      _notice = null;
-      _failed = false;
-    }
-    if (scopeChanged || dataSourceChanged) {
-      _invalidateRead();
-    }
-    if (!listEquals(oldWidget.search.sources, widget.search.sources) ||
-        oldWidget.mode != widget.mode) {
+    if (sourcesChanged || oldWidget.mode != widget.mode) {
       _folder = null;
       _filter = const ShelfFacetSelection();
     }
-    if (scopeChanged || !widget.isActive) _setSelecting(false);
+    if (readScopeChanged || dataSourceChanged) {
+      _rows = null;
+      _sourceInventory = null;
+      _entriesByKey = null;
+      _notice = null;
+      _failed = false;
+      _invalidateRead();
+    } else if (sourcesChanged) {
+      _pullScope = null;
+      _failedPullScope = null;
+      _notice = null;
+      if (_sourceInventory case final inventory?) {
+        _applyRows(inventory, widget.search);
+      } else if (_readTask == null) {
+        _pendingDataChange = true;
+      }
+    }
+    if (readScopeChanged ||
+        sourcesChanged ||
+        dataSourceChanged ||
+        !widget.isActive) {
+      _setSelecting(false);
+    }
     if (oldWidget.refreshSignal != widget.refreshSignal) {
       _pendingDataChange = true;
     }
@@ -239,6 +267,7 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
   @override
   void dispose() {
     _viewEpoch++;
+    _scroll.dispose();
     CollectionViewPreferences.changes.removeListener(_restoreView);
     _epoch++;
     _data.changes.removeListener(_changed);
@@ -367,7 +396,10 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
   Future<void> _loadNow() async {
     if (!widget.isActive) return;
     final epoch = ++_epoch;
-    final mode = widget.mode, search = widget.search;
+    final mode = widget.mode;
+    final search = _data.projectSourceFilter
+        ? widget.search.copyWith(sources: const [])
+        : widget.search;
     final titleQuery = widget.keywordScope == KeywordSearchScope.title
         ? normalizePublicSearchText(search.keyword)
         : '';
@@ -382,32 +414,18 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
               _readDataSource(mode, search));
       if (!mounted || !widget.isActive || epoch != _epoch) return;
       setState(() {
-        _rows = snapshot.rows
-            .where(
-              (row) =>
-                  (search.sources.isEmpty ||
-                      search.sources.contains(row.source)) &&
-                  (titleQuery.isEmpty ||
-                      [row.item.title, row.item.alternateTitle].any(
-                        (title) => normalizePublicSearchText(
-                          title,
-                        ).contains(titleQuery),
-                      )),
-            )
-            .toList();
-        _entriesByKey = null;
-        final worksByFolder = <String, Set<String>>{};
-        if (mode == ShelfPageMode.favorite && search.keyword.isEmpty) {
-          for (final row in _rows!) {
-            for (final id in row.folderIds) {
-              worksByFolder.putIfAbsent(id, () => {}).add(row.key);
-            }
-          }
-        }
-        _folderWorkCounts = {
-          for (final entry in worksByFolder.entries)
-            entry.key: entry.value.length,
-        };
+        final rows = titleQuery.isEmpty
+            ? snapshot.rows
+            : snapshot.rows
+                  .where(
+                    (row) => [row.item.title, row.item.alternateTitle].any(
+                      (title) =>
+                          normalizePublicSearchText(title).contains(titleQuery),
+                    ),
+                  )
+                  .toList();
+        if (_data.projectSourceFilter) _sourceInventory = rows;
+        _applyRows(rows, widget.search);
         _names = snapshot.names;
         _snapshot = snapshot.library;
         if (_folder != null &&
@@ -432,6 +450,24 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
         });
       }
     }
+  }
+
+  void _applyRows(List<VideoBookshelfRow> rows, SearchStatusState search) {
+    _rows = search.sources.isEmpty
+        ? rows
+        : rows.where((row) => search.sources.contains(row.source)).toList();
+    _entriesByKey = null;
+    final worksByFolder = <String, Set<String>>{};
+    if (widget.mode == ShelfPageMode.favorite && search.keyword.isEmpty) {
+      for (final row in _rows!) {
+        for (final id in row.folderIds) {
+          worksByFolder.putIfAbsent(id, () => {}).add(row.key);
+        }
+      }
+    }
+    _folderWorkCounts = {
+      for (final entry in worksByFolder.entries) entry.key: entry.value.length,
+    };
   }
 
   Future<VideoBookshelfSnapshot> _readDataSource(
@@ -568,7 +604,10 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
         conditions.add('$field=${values.map(Uri.encodeComponent).join(',')}');
       }
     }
-    return 'bookshelf.video.${widget.mode.name}.${widget.search.sources.join('|')}.$_folder.${widget.search.keyword}.${widget.search.sort}.${conditions.join(';')}';
+    final sources = _data.projectSourceFilter
+        ? ''
+        : widget.search.sources.join('|');
+    return 'bookshelf.video.${widget.mode.name}.$sources.$_folder.${widget.search.keyword}.${widget.search.sort}.${conditions.join(';')}';
   }
 
   ApiVideoItem _display(VideoBookshelfRow row, [ApiVideoItem? item]) {
@@ -625,8 +664,7 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
     final confirmed = await showDialog<bool>(
       context: context,
       useRootNavigator: true,
-      builder: (dialog) => AlertDialog(
-        scrollable: true,
+      builder: (dialog) => ShortAlert(
         title: Text(t.bookshelf.deleteSelected),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -657,11 +695,12 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
           ],
         ),
         actions: [
-          TextButton(
+          ShortAlertAction(
             onPressed: () => Navigator.pop(dialog, false),
             child: Text(t.common.cancel),
           ),
-          TextButton(
+          ShortAlertAction(
+            destructive: true,
             onPressed: () => Navigator.pop(dialog, true),
             child: Text(t.common.delete),
           ),
@@ -854,22 +893,12 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
   Future<void> _deleteFolder() async {
     final folder = _folder, epoch = _epoch;
     if (folder == null || !_folders.containsKey(folder) || _working) return;
-    final confirmed = await showDialog<bool>(
+    final confirmed = await confirmShortAlert(
       context: context,
-      builder: (dialog) => AlertDialog(
-        title: Text(t.videoLibrary.deleteFolder),
-        content: Text(t.videoLibrary.folderDeleteHint),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialog, false),
-            child: Text(t.common.cancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialog, true),
-            child: Text(t.common.delete),
-          ),
-        ],
-      ),
+      title: Text(t.videoLibrary.deleteFolder),
+      content: Text(t.videoLibrary.folderDeleteHint),
+      confirmLabel: t.common.delete,
+      destructive: true,
     );
     if (confirmed != true ||
         !mounted ||
@@ -952,6 +981,7 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
                 )
               : null,
           keyPrefix: 'video-shelf',
+          collectionPageTitle: widget.collectionPageTitle,
           headerIdentity: (actionScope, actionEpoch),
           canRun: () =>
               mounted &&
@@ -1145,6 +1175,9 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
     final storageKey = _rows == null
         ? '$_collectionKey.pending'
         : _collectionKey;
+    if (_rows != null) {
+      _scroll.scope = (storageKey, widget.search);
+    }
     return CollectionCoverFitScope(
       child: CollectionCoverPrivacyScope(
         child: PopScope(
@@ -1182,6 +1215,7 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
                       child: LayoutBuilder(
                         builder: (context, constraints) => ApiVideoCollection(
                           imageRefreshToken: _imageRefreshToken,
+                          preserveItemElements: _data.projectSourceFilter,
                           retryMissingCoverDetailsOnRefresh: false,
                           key: ValueKey(storageKey),
                           gridColumns: BookshelfContentLayout.columns(
@@ -1192,15 +1226,9 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
                             constraints.maxWidth,
                           ),
                           gridMainAxisSpacing: BookshelfContentLayout.spacing,
-                          listItemExtent:
-                              BookshelfDetailedContent.contentHeight(context) +
-                              BookshelfContentLayout.spacing,
                           listSeparatorHeight: BookshelfContentLayout.spacing,
                           listTileBuilder: (context, item) {
                             final row = byKey[item.id];
-                            final views = item.sourceViews;
-                            final rating = item.sourceRating;
-                            final votes = item.sourceRatingDisplayCount;
                             final time =
                                 row == null ||
                                     row.updatedAt.millisecondsSinceEpoch <= 0
@@ -1213,6 +1241,7 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
                                 bottom: BookshelfContentLayout.spacing,
                               ),
                               child: BookshelfDetailedContent(
+                                showMetadata: !_selecting,
                                 cover: ClipRRect(
                                   borderRadius: BorderRadius.circular(
                                     kComicCardBorderRadius,
@@ -1246,25 +1275,10 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
                                     _names[row?.source] ?? row?.source ?? '',
                                 metadata: item.summary.join(' · '),
                                 description: item.description,
-                                statistics: [
-                                  if (views != null)
-                                    item.sourceViewsAreClicks
-                                        ? t.videoLibrary.sourceClicks(
-                                            count: views,
-                                          )
-                                        : t.videoLibrary.sourceViews(
-                                            count: views,
-                                          ),
-                                  if (rating != null)
-                                    votes == null
-                                        ? t.videoLibrary.sourceRatingOnly(
-                                            score: rating,
-                                          )
-                                        : t.videoLibrary.sourceRating(
-                                            score: rating,
-                                            count: votes,
-                                          ),
-                                ].join(' · '),
+                                details: apiVideoListDetails(item),
+                                statistics: apiVideoListStatistics(
+                                  item,
+                                ).join(' · '),
                                 progress: row == null || row.progress.isEmpty
                                     ? ''
                                     : t.bookshelf.watchTo(
@@ -1293,6 +1307,9 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
                           leadingItems: [
                             for (final folder in _visibleFolders.entries)
                               Padding(
+                                key: ValueKey(
+                                  'video-shelf.folder-slot.${folder.key}',
+                                ),
                                 padding: _view == ApiVideoView.list
                                     ? const EdgeInsets.only(bottom: 12)
                                     : EdgeInsets.zero,
@@ -1347,6 +1364,7 @@ class _VideoBookshelfPaneState extends State<VideoBookshelfPane>
                           items: [for (final row in rows) _display(row)],
                           mode: _view,
                           storageKey: storageKey,
+                          scrollController: _rows == null ? null : _scroll,
                           emptyState: _empty(),
                           contentBottomPadding:
                               NativeNavigationInset.of(context) +

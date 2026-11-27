@@ -1,3 +1,5 @@
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/video/video_page_route.dart';
 import 'dart:async';
 import 'dart:collection';
@@ -51,7 +53,10 @@ class _WebViewPageState extends State<WebViewPage> {
   bool _canGoForward = false;
   bool _isFullscreen = false;
   bool _exitRequested = false;
-  bool _startingNativePlayback = false;
+  int _documentGeneration = 0;
+  int? _nativePlaybackGeneration;
+  bool get _startingNativePlayback =>
+      _nativePlaybackGeneration == _documentGeneration;
 
   WebNavigationConfig? get _navigation =>
       WebNavigationConfig.fromRouteInfo(widget.info);
@@ -186,11 +191,20 @@ class _WebViewPageState extends State<WebViewPage> {
   Future<void> _tryNativePlayback(
     WebPlaybackConfig playback,
     Uri watchUrl, {
-    bool fromWebsitePlay = false,
+    num? triggerDocumentOrigin,
   }) async {
     final controller = _controller;
     if (controller == null || _startingNativePlayback) return;
-    setState(() => _startingNativePlayback = true);
+    final generation = _documentGeneration;
+    bool current() =>
+        mounted &&
+        !_exitRequested &&
+        ModalRoute.of(context)?.isCurrent == true &&
+        identical(_controller, controller) &&
+        _documentGeneration == generation &&
+        Uri.tryParse(_currentUrl ?? _url) == watchUrl;
+    if (!current()) return;
+    setState(() => _nativePlaybackGeneration = generation);
     try {
       // Read only the standard video element. The site-specific selector and
       // source normalization belong to the plugin, not the host player.
@@ -200,8 +214,12 @@ class _WebViewPageState extends State<WebViewPage> {
             '''
           (() => {
             const video = document.querySelector($selector);
-            if (!video) return JSON.stringify({title: document.title, video: null});
+            const documentUrl = location.href;
+            const documentOrigin = performance.timeOrigin;
+            if (!video) return JSON.stringify({documentUrl, documentOrigin, title: document.title, video: null});
             return JSON.stringify({
+              documentUrl,
+              documentOrigin,
               title: document.title,
               description: document.querySelector('.video-description-panel .video-caption-text')?.textContent?.trim() || '',
               tags: Array.from(document.querySelectorAll('.video-tags-wrapper .single-video-tag a'))
@@ -219,47 +237,69 @@ class _WebViewPageState extends State<WebViewPage> {
           })()
         ''',
       );
+      if (!current()) return;
       final decoded = raw is String ? jsonDecode(raw) : raw;
       if (decoded is! Map) throw const FormatException('Video not found');
       final snapshot = Map<String, dynamic>.from(decoded);
+      final documentOrigin = snapshot.remove('documentOrigin');
+      final documentUrl = snapshot.remove('documentUrl');
+      if (Uri.tryParse(documentUrl?.toString() ?? '') != watchUrl ||
+          documentOrigin is! num ||
+          (triggerDocumentOrigin != null &&
+              triggerDocumentOrigin != documentOrigin)) {
+        return;
+      }
       final result = await callUnifiedComicPlugin(
         from: playback.source,
         fnPath: playback.fnPath,
         core: {'watchUrl': watchUrl.toString(), 'snapshot': snapshot},
       );
+      if (!current()) return;
+      final sameDocument = await controller.evaluateJavascript(
+        source:
+            'location.href === ${jsonEncode(watchUrl.toString())} && '
+            'performance.timeOrigin === ${jsonEncode(documentOrigin)};',
+      );
+      if (!mounted || !current() || sameDocument != true) return;
       final session = NativePlaybackSession.fromPluginResponse(
         result,
         watchUrl: watchUrl,
       );
-      if (!mounted) return;
       final useWebsite = await Navigator.of(context).push<bool>(
         videoPageRoute(
           builder: (_) =>
               NativeVideoPage(session: session, source: playback.source),
         ),
       );
-      if (useWebsite == true) {
-        await _allowWebsitePlayback(watchUrl);
+      if (useWebsite == true && current()) {
+        await _allowWebsitePlayback(watchUrl, documentOrigin);
       }
     } catch (_) {
-      if (fromWebsitePlay) await _allowWebsitePlayback(watchUrl);
-      if (mounted) {
+      if (!current()) return;
+      if (triggerDocumentOrigin != null) {
+        await _allowWebsitePlayback(watchUrl, triggerDocumentOrigin);
+      }
+      if (mounted && current()) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(t.webview.nativePlaybackUnavailable)),
         );
       }
     } finally {
-      if (mounted) setState(() => _startingNativePlayback = false);
+      if (mounted && _nativePlaybackGeneration == generation) {
+        setState(() => _nativePlaybackGeneration = null);
+      }
     }
   }
 
-  Future<void> _allowWebsitePlayback(Uri watchUrl) async {
+  Future<void> _allowWebsitePlayback(Uri watchUrl, num documentOrigin) async {
     final controller = _controller;
     if (controller == null) return;
     try {
       await controller.evaluateJavascript(
         source:
-            'window.__breezeNativePlaybackDisabledFor = ${jsonEncode(watchUrl.toString())};',
+            'if (location.href === ${jsonEncode(watchUrl.toString())} && '
+            'performance.timeOrigin === ${jsonEncode(documentOrigin)}) '
+            'window.__breezeNativePlaybackDisabledFor = location.href;',
       );
     } catch (_) {
       // The web page may have navigated while the native player was open.
@@ -286,7 +326,7 @@ class _WebViewPageState extends State<WebViewPage> {
           if (!window.flutter_inappwebview?.callHandler) return;
           event.preventDefault();
           event.stopImmediatePropagation();
-          window.flutter_inappwebview.callHandler('$_nativePlaybackHandler');
+          window.flutter_inappwebview.callHandler('$_nativePlaybackHandler', location.href, performance.timeOrigin);
         }, true);
       })()
     ''';
@@ -666,15 +706,25 @@ class _WebViewPageState extends State<WebViewPage> {
           ),
           onWebViewCreated: (controller) {
             _controller = controller;
+            _documentGeneration++;
             final playback = _navigation?.playback;
             if (playback != null && playback.playTriggerSelector.isNotEmpty) {
               controller.addJavaScriptHandler(
                 handlerName: _nativePlaybackHandler,
-                callback: (_) {
-                  final uri = Uri.tryParse(_currentUrl ?? _url);
-                  if (playback.matches(uri) && uri != null) {
+                callback: (arguments) {
+                  final uri = Uri.tryParse(
+                    arguments.firstOrNull?.toString() ?? '',
+                  );
+                  final documentOrigin = arguments.elementAtOrNull(1);
+                  if (playback.matches(uri) &&
+                      uri != null &&
+                      documentOrigin is num) {
                     unawaited(
-                      _tryNativePlayback(playback, uri, fromWebsitePlay: true),
+                      _tryNativePlayback(
+                        playback,
+                        uri,
+                        triggerDocumentOrigin: documentOrigin,
+                      ),
                     );
                   }
                   return null;
@@ -692,6 +742,7 @@ class _WebViewPageState extends State<WebViewPage> {
             if (mounted) {
               setState(() {
                 _mainFrameError = null;
+                _documentGeneration++;
                 _currentUrl = url?.toString();
               });
             }
@@ -714,7 +765,12 @@ class _WebViewPageState extends State<WebViewPage> {
             );
           },
           onUpdateVisitedHistory: (controller, url, _) {
-            _currentUrl = url?.toString();
+            if (mounted && _currentUrl != url?.toString()) {
+              setState(() {
+                _documentGeneration++;
+                _currentUrl = url?.toString();
+              });
+            }
             unawaited(_updateHistory(controller));
             unawaited(
               _reportUrlChangeAndCookies(
@@ -807,9 +863,10 @@ class _WebViewPageState extends State<WebViewPage> {
       appBar: AppBar(
         title: Text(_title),
         leading: navigation == null
-            ? null
-            : IconButton(
-                icon: const Icon(Icons.close_rounded),
+            ? SourceBackButton.nativeLeading(context)
+            : SourceChromeIconButton(
+                icon: Icons.close_rounded,
+                symbol: 'xmark',
                 tooltip: t.webview.closeWebpage,
                 onPressed: _closeWebPage,
               ),
@@ -826,8 +883,9 @@ class _WebViewPageState extends State<WebViewPage> {
                       ),
                     ),
                   )
-                : IconButton(
-                    icon: const Icon(Icons.play_circle_outline_rounded),
+                : SourceChromeIconButton(
+                    icon: Icons.play_circle_outline_rounded,
+                    symbol: 'play.circle',
                     tooltip: t.webview.nativePlaybackTrial,
                     onPressed: () =>
                         unawaited(_tryNativePlayback(playback, uri!)),
@@ -844,8 +902,10 @@ class _WebViewPageState extends State<WebViewPage> {
               },
             ),
           if (uri != null)
-            IconButton(
-              icon: const Icon(Icons.open_in_browser),
+            SourceChromeIconButton(
+              icon: Icons.open_in_browser,
+              symbol: 'arrow.up.right.square',
+              tooltip: t.webview.openInExternalBrowser,
               onPressed: () => _openExternal(uri),
             ),
         ],

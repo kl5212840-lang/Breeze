@@ -4,19 +4,24 @@ import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/login_page.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/page/setting/common/plugin_account_avatar.dart';
 import 'package:zephyr/page/donwload_task/view/download_swipe_actions.dart';
 import 'package:zephyr/network/http/plugin/qjs_network_route.dart';
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 import 'package:zephyr/page/video/omo_network.dart' show omoNetworkSource;
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
 import 'package:zephyr/page/video/video_page_route.dart';
 import 'package:zephyr/service/plugin_account_authentication.dart';
 import 'package:zephyr/service/plugin_account_profiles.dart';
 import 'package:zephyr/service/plugin_account_sync_coordinator.dart';
+import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/widgets/native_view_occlusion.dart';
 import 'package:zephyr/widgets/plugin_icon.dart';
 import 'package:zephyr/widgets/work_list_divider.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 const pluginSavedAccountsRouteName = 'breeze.source.saved-accounts';
 
@@ -31,15 +36,19 @@ Future<bool> openPluginSavedAccounts(
   BuildContext context, {
   required String source,
   required Future<void> Function() onAddAccount,
+  bool nativeLoginSupported = false,
   Future<void> Function(PluginAccountAddition)? onAddAccountWithSession,
+  Future<void> Function(PluginAccountProfile)? onRecoverAccount,
   Future<void> Function()? prepareSession,
 }) async {
   final route = videoPageRoute<bool>(
     settings: const RouteSettings(name: pluginSavedAccountsRouteName),
     builder: (_) => PluginSavedAccountsPage(
       source: source,
+      nativeLoginSupported: nativeLoginSupported,
       onAddAccount: onAddAccount,
       onAddAccountWithSession: onAddAccountWithSession,
+      onRecoverAccount: onRecoverAccount,
       prepareSession: prepareSession,
     ),
   );
@@ -53,13 +62,17 @@ class PluginSavedAccountsPage extends StatefulWidget {
     super.key,
     required this.source,
     required this.onAddAccount,
+    this.nativeLoginSupported = false,
     this.onAddAccountWithSession,
+    this.onRecoverAccount,
     this.prepareSession,
     this.authentication,
   });
   final String source;
+  final bool nativeLoginSupported;
   final Future<void> Function() onAddAccount;
   final Future<void> Function(PluginAccountAddition)? onAddAccountWithSession;
+  final Future<void> Function(PluginAccountProfile)? onRecoverAccount;
 
   /// Reconnect the source's own live store after a login window has closed.
   /// A retained identity receipt alone cannot capture or switch that store.
@@ -72,9 +85,11 @@ class PluginSavedAccountsPage extends StatefulWidget {
 
 class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
   List<PluginAccountProfile> _profiles = const [];
-  String? _selected, _busy, _error, _unverified, _copyLoginRequired;
-  Future<void> Function()? _retry;
-  bool get _isCopy => widget.source == PluginAccountAuthenticationService.copy;
+  String? _selected, _busy, _error, _unverified, _loginRequired;
+  Future<void> Function()? _retry, _continueLogin;
+  bool get _hasNativeLogin =>
+      widget.nativeLoginSupported || _authentication.hasApiVerification;
+  bool get _offerRetry => _retry != null || _continueLogin == null;
   bool _loading = true;
   bool _confirmingRemoval = false;
   final _openSwipe = ValueNotifier<String?>(null);
@@ -95,22 +110,14 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
       ).profiles.values.where((p) => !p.deleted).toList();
       final matching = proof == null
           ? const <PluginAccountProfile>[]
-          : rows
-                .where(
-                  (p) =>
-                      p.serverIdentity == proof.serverIdentity &&
-                      (p.kind != 'web' ||
-                          proof.origin.isEmpty ||
-                          p.origin == proof.origin),
-                )
-                .toList();
+          : rows.where(proof.matchesProfile).toList();
       setState(() {
         _profiles = rows;
         if (proof == null) _unverified = _selected ?? _unverified;
         _selected = matching.length == 1 ? matching.single.id : null;
         if (proof != null) {
           _unverified = null;
-          if (_copyLoginRequired == _selected) _copyLoginRequired = null;
+          if (_loginRequired == _selected) _loginRequired = null;
         }
       });
     });
@@ -132,11 +139,12 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
         _loading = true;
         _error = null;
         _retry = null;
-        _copyLoginRequired = null;
+        _continueLogin = null;
+        _loginRequired = null;
       });
     try {
-      // Read compatibility data without replacing it. A fresh, explicit adapter
-      // can label the live account; cached summaries never select an account.
+      // A fresh receipt can label the live account; cached summaries never
+      // change the active selection.
       PluginAccountProfiles.read(widget.source);
       if (verifyApi) await widget.prepareSession?.call();
       if (!mounted || epoch != _epoch) return;
@@ -144,29 +152,32 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
       var proof = PluginAccountIdentities.current(widget.source);
       final generation = pluginSessionWriteFence.generation(widget.source);
       var loginRequired = false;
-      if (auth.hasApiVerification && verifyApi) {
+      if (_hasNativeLogin && verifyApi) {
         try {
-          final confirmedProof = proof ?? await auth.verify();
+          final isJm = widget.source == PluginAccountAuthenticationService.jm;
+          final confirmedProof = auth.hasApiVerification
+              ? proof != null && (!isJm || proof.requestAvatarUrl.isNotEmpty)
+                    ? proof
+                    : await auth.verify(includeSummary: isJm)
+              : proof ?? await auth.verifyPreviouslySelectedLegacy();
           proof = confirmedProof;
           if (!mounted || epoch != _epoch) return;
-          await PluginAccountProfiles.rememberCurrent(
-            widget.source,
-            label: confirmedProof.label,
-            serverIdentity: confirmedProof.serverIdentity,
-            avatarUrl: confirmedProof.avatarUrl,
-            select: true,
-          );
-          PluginAccountIdentities.confirm(
-            widget.source,
-            confirmedProof,
-            generation: generation,
-          );
+          if (confirmedProof != null) {
+            await PluginAccountProfiles.rememberVerifiedCurrent(
+              widget.source,
+              confirmedProof,
+            );
+          } else {
+            await PluginAccountProfiles.rememberCurrent(widget.source);
+          }
+        } on PluginSessionChanged {
+          proof = PluginAccountIdentities.current(widget.source);
         } catch (error) {
-          loginRequired = _isCopy && _copyNeedsLogin(error);
+          loginRequired = _needsLogin(error);
           proof = PluginAccountIdentities.current(widget.source);
           await PluginAccountProfiles.rememberCurrent(widget.source);
         }
-      } else if (!auth.hasApiVerification &&
+      } else if (verifyApi &&
           PluginAccountSyncCoordinator.instance.hasProfileAccess(
             widget.source,
           )) {
@@ -175,13 +186,15 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
           proof ??= await coordinator.refreshCurrentIdentity(widget.source);
         } catch (_) {}
         if (!mounted || epoch != _epoch) return;
-        try {
-          await coordinator.captureAuthenticated(widget.source);
-        } catch (_) {
-          /* Backup does not undo identity. */
+        if (proof != null) {
+          try {
+            await coordinator.captureAuthenticated(widget.source);
+          } catch (_) {
+            /* Backup does not undo identity. */
+          }
         }
         proof = PluginAccountIdentities.current(widget.source);
-      } else if (!auth.hasApiVerification) {
+      } else if (verifyApi && !auth.hasApiVerification) {
         await PluginAccountProfiles.rememberCurrent(widget.source);
       }
       final data = PluginAccountProfiles.read(widget.source);
@@ -191,14 +204,7 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
           pluginSessionWriteFence.generation(widget.source) == generation;
       final matches = confirmed
           ? data.profiles.values
-                .where(
-                  (p) =>
-                      !p.deleted &&
-                      p.serverIdentity == proof!.serverIdentity &&
-                      (p.kind != 'web' ||
-                          proof.origin.isEmpty ||
-                          p.origin == proof.origin),
-                )
+                .where((p) => !p.deleted && proof!.matchesProfile(p))
                 .toList()
           : const <PluginAccountProfile>[];
       final actual = matches.any((profile) => profile.id == selected)
@@ -211,9 +217,7 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
       final removed =
           confirmed &&
           data.profiles.values.any(
-            (profile) =>
-                profile.deleted &&
-                profile.serverIdentity == proof!.serverIdentity,
+            (profile) => profile.deleted && proof!.matchesProfile(profile),
           );
       final rows = data.profiles.values.where((p) => !p.deleted).toList()
         ..sort(
@@ -230,7 +234,7 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
         _profiles = rows;
         _selected = actual;
         _unverified = confirmed ? null : selected;
-        _copyLoginRequired = loginRequired && !confirmed ? selected : null;
+        _loginRequired = loginRequired && !confirmed ? selected : null;
         _loading = false;
         if (confirmed && actual == null && !removed)
           _error = t.plugin.userInfoLoadFailed;
@@ -244,10 +248,11 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
     }
   }
 
-  bool _copyNeedsLogin(Object error) =>
+  bool _needsLogin(Object error) =>
       error is PluginAccountNeedsLogin ||
+      error is PluginAccountAuthenticationRejected ||
       error is PluginLoginRequiredException &&
-          error.payload.pluginId == widget.source;
+          error.payload.appliesTo(widget.source);
 
   Future<void> _run(
     String id,
@@ -256,6 +261,7 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
   }) async {
     if (_busy != null) return;
     _openSwipe.value = null;
+    final previousError = _error;
     setState(() {
       _busy = id;
       _error = null;
@@ -265,18 +271,42 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
       if (mounted) await _load();
     } catch (error) {
       if (mounted) {
-        final copySwitch = _isCopy && switching;
-        await _load(verifyApi: !copySwitch);
-        if (mounted && error is! PluginAccountLoginCancelled) {
+        if (error is PluginAccountLoginCancelled) {
+          if (_loading) {
+            // Adding an account can invalidate the first list load.
+            await _load();
+          } else {
+            setState(() => _error = previousError);
+          }
+          return;
+        }
+        await _load(verifyApi: !switching);
+        if (mounted) {
           setState(() {
-            if (copySwitch) _retry = () => _run(id, action, switching: true);
-            if (copySwitch && _copyNeedsLogin(error)) {
-              _copyLoginRequired = id;
+            final nativeSwitch = switching && _hasNativeLogin;
+            final customRecovery = switching ? widget.onRecoverAccount : null;
+            final networkFailure = isTransientNetworkError(error);
+            final needsLogin = nativeSwitch && _needsLogin(error);
+            if ((nativeSwitch || customRecovery != null) && !needsLogin) {
+              _retry = () => _run(id, action, switching: true);
+            }
+            if (customRecovery != null || nativeSwitch && !networkFailure) {
+              final target = _profiles.where((p) => p.id == id).firstOrNull;
+              final recover =
+                  customRecovery ??
+                  (nativeSwitch ? _recoverNativeAccount : null);
+              if (target != null && recover != null) {
+                _continueLogin = () =>
+                    _run(id, () => recover(target), switching: true);
+              }
+            }
+            if (needsLogin) {
+              _loginRequired = id;
               _error = t.navigation.needLoginTitle;
-            } else if (copySwitch && isTransientNetworkError(error)) {
+            } else if (switching && networkFailure) {
               _error = t.login.networkUnavailable;
             } else {
-              _error = copySwitch
+              _error = nativeSwitch && _continueLogin == null
                   ? t.plugin.userInfoLoadFailed
                   : t.accountProfiles.switchFailed;
             }
@@ -288,6 +318,17 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
     }
   }
 
+  Future<void> _recoverNativeAccount(PluginAccountProfile profile) async {
+    if (!await openPluginAccountLoginForm(
+      context,
+      source: widget.source,
+      username: profile.identity,
+      savedAccount: (id: profile.id, revision: profile.revision),
+    )) {
+      throw const PluginAccountLoginCancelled();
+    }
+  }
+
   Future<void> _switch(PluginAccountProfile profile) async {
     try {
       await _authentication.switchTo(profile.id);
@@ -295,21 +336,34 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
       if (error is! PluginAccountNeedsLogin &&
           error is! PluginAccountAuthenticationRejected)
         rethrow;
-      if (_authentication.hasApiVerification || !mounted) rethrow;
-      final epoch = _epoch;
-      await _authentication.switchToWithLogin(
-        profile.id,
-        canContinue: () => mounted && _epoch == epoch,
-        login: () async {
-          try {
-            await widget.onAddAccount();
-          } finally {
-            if (mounted && _epoch == epoch) await widget.prepareSession?.call();
-          }
-          if (!mounted || _epoch != epoch) throw const PluginSessionChanged();
-        },
-      );
+      if (_hasNativeLogin || !mounted) rethrow;
+      await _switchWithLogin(profile.id);
     }
+  }
+
+  Future<void> _switchWithLogin(String id) {
+    final epoch = _epoch;
+    bool current() => mounted && _epoch == epoch;
+    return _authentication.switchToWithLogin(
+      id,
+      canContinue: current,
+      login: () async {
+        try {
+          final recover = widget.onRecoverAccount;
+          final target = _profiles
+              .where((profile) => profile.id == id)
+              .firstOrNull;
+          if (recover != null && target != null) {
+            await recover(target);
+          } else {
+            await widget.onAddAccount();
+          }
+        } finally {
+          if (current()) await widget.prepareSession?.call();
+        }
+        if (!current()) throw const PluginSessionChanged();
+      },
+    );
   }
 
   Future<void> _add() async {
@@ -319,7 +373,10 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
       Navigator.of(context).pop(true);
       return;
     }
-    if (widget.source != omoNetworkSource) {
+    final hanime =
+        widget.source == hanimeSourceId &&
+        widget.onAddAccountWithSession != null;
+    if (widget.source != omoNetworkSource && !hanime) {
       await _run('add', widget.onAddAccount);
       return;
     }
@@ -332,11 +389,28 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
       if (!coordinator.hasProfileAccess(source)) {
         await widget.prepareSession?.call();
       }
-      await coordinator.addAccount(
-        source,
-        login: login,
-        canContinue: canContinue,
-      );
+      var opened = false;
+      try {
+        await coordinator.addAccount(
+          source,
+          login: () {
+            opened = true;
+            return login();
+          },
+          reconnect: hanime ? widget.prepareSession : null,
+          canContinue: canContinue,
+        );
+      } catch (error) {
+        if (!hanime ||
+            opened ||
+            !canContinue() ||
+            (error is! PluginAccountNeedsLogin &&
+                error is! PluginAccountIdentityUnavailable))
+          rethrow;
+        // A background reader may be unavailable while the user can still
+        // complete the site's login or verification in a visible browser.
+        await login();
+      }
     }
 
     await _run('add', () {
@@ -350,14 +424,12 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
     final source = canonicalQjsSource(widget.source);
     final generation = pluginSessionWriteFence.generation(source);
     final current = PluginAccountProfiles.isCurrent(source, profile.id);
-    final colors = Theme.of(context).colorScheme;
     _confirmingRemoval = true;
     try {
       final confirmed = await showDialog<bool>(
         context: context,
-        builder: (context) => AlertDialog(
+        builder: (context) => ShortAlert(
           title: Text(t.accountProfiles.removeTitle),
-          scrollable: true,
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -375,12 +447,12 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
             ],
           ),
           actions: [
-            TextButton(
+            ShortAlertAction(
               onPressed: () => Navigator.pop(context, false),
               child: Text(t.common.cancel),
             ),
-            TextButton(
-              style: TextButton.styleFrom(foregroundColor: colors.error),
+            ShortAlertAction(
+              destructive: true,
               onPressed: () => Navigator.pop(context, true),
               child: Text(t.common.delete),
             ),
@@ -415,6 +487,15 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
     source: widget.source,
     builder: (context) => SettingPageShell(
       title: t.accountProfiles.title,
+      leading: TapRegion(
+        groupId: _openSwipe,
+        child: SourceBackButton(
+          onPressed: () {
+            _openSwipe.value = null;
+            unawaited(Navigator.of(context).maybePop());
+          },
+        ),
+      ),
       child: Stack(
         children: [
           ListView(
@@ -474,14 +555,17 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
                           color: Theme.of(context).colorScheme.error,
                         ),
                       ),
-                      TextButton(
-                        key: const ValueKey('saved-account-retry'),
-                        onPressed: _busy == null ? _retry ?? _load : null,
-                        child: Text(t.common.retry),
-                      ),
-                      if (_retry == null || _copyLoginRequired != null)
+                      if (_offerRetry)
                         TextButton(
-                          onPressed: _busy == null ? _add : null,
+                          key: const ValueKey('saved-account-retry'),
+                          onPressed: _busy == null ? _retry ?? _load : null,
+                          child: Text(t.common.retry),
+                        ),
+                      if (_continueLogin != null || _retry == null)
+                        TextButton(
+                          onPressed: _busy == null
+                              ? _continueLogin ?? _add
+                              : null,
                           child: Text(t.accountProfiles.continueLogin),
                         ),
                     ],
@@ -511,6 +595,14 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
     final colors = theme.colorScheme;
     final selected = profile.id == _selected;
     final label = _accountLabel(profile);
+    final isJm = widget.source == PluginAccountAuthenticationService.jm;
+    final webPortrait =
+        profile.kind == 'web' || widget.source == omoNetworkSource;
+    final current = selected
+        ? PluginAccountIdentities.current(widget.source)
+        : null;
+    final receipt = current?.matchesProfile(profile) == true ? current : null;
+    final requestAvatar = receipt?.requestAvatarUrl ?? '';
     return WorkListRow(
       divided: !selected,
       startInset: 68,
@@ -540,14 +632,24 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
             minTileHeight: 68,
             contentPadding: const EdgeInsets.symmetric(horizontal: 12),
             key: ValueKey('saved-account-${profile.id}'),
-            leading: profile.kind == 'web' || widget.source == omoNetworkSource
+            leading:
+                isJm ||
+                    webPortrait ||
+                    requestAvatar.isNotEmpty ||
+                    profile.avatarUrl.isNotEmpty
                 ? PluginAccountAvatar(
                     source: widget.source,
                     identity: profile.serverIdentity.isNotEmpty
                         ? profile.serverIdentity
                         : profile.identity,
-                    url: profile.avatarUrl,
-                    path: '',
+                    url: requestAvatar.isEmpty
+                        ? profile.avatarUrl
+                        : requestAvatar,
+                    path:
+                        asJsonMap(
+                          receipt?.publicSummary['avatar'],
+                        )['path']?.toString() ??
+                        '',
                     origin: profile.origin,
                     size: 40,
                   )
@@ -570,7 +672,7 @@ class _PluginSavedAccountsPageState extends State<PluginSavedAccountsPage> {
                   ? PluginAccountProfiles.requiresWebLogin(profile)
                         ? t.accountProfiles.currentNeedsLogin
                         : t.accountProfiles.current
-                  : profile.id == _copyLoginRequired
+                  : profile.id == _loginRequired
                   ? t.accountProfiles.savedSignInRequired
                   : profile.serverIdentity.isEmpty ||
                         profile.id == _unverified ||

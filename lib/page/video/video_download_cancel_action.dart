@@ -3,6 +3,7 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_download.dart';
 import 'package:zephyr/page/video/video_export_records.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 Future<bool> confirmVideoDownloadCancellation(
   BuildContext context,
@@ -11,24 +12,14 @@ Future<bool> confirmVideoDownloadCancellation(
 }) async {
   final key = row['key'] as String;
   final attempt = row['attempt'];
-  final accepted = await showDialog<bool>(
+  final accepted = await confirmShortAlert(
     context: context,
-    builder: (dialog) => AlertDialog(
-      title: Text(t.download.cancelTask),
-      content: Text(
-        t.download.cancelTaskConfirm(comicName: row['title'] as String),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialog, false),
-          child: Text(t.common.cancel),
-        ),
-        TextButton(
-          onPressed: () => Navigator.pop(dialog, true),
-          child: Text(t.common.ok),
-        ),
-      ],
+    title: Text(t.download.cancelTask),
+    content: Text(
+      t.download.cancelTaskConfirm(comicName: row['title'] as String),
     ),
+    confirmLabel: t.common.ok,
+    destructive: true,
   );
   // A confirmation belongs to its original transfer. It cannot cancel a
   // replacement started while this dialog was open.

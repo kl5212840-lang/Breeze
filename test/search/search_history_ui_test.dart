@@ -1,9 +1,11 @@
+import 'package:flutter/foundation.dart' show TargetPlatform;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search/method/search_history_entries.dart';
 import 'package:zephyr/page/search/widget/history.dart';
 import 'package:zephyr/page/search/widget/search_history_section.dart';
@@ -99,6 +101,46 @@ void main() {
       ]);
     },
   );
+
+  test('history preserves keyword scope alongside old words and v2 rows', () {
+    const legacy = [
+      '旧综合搜索',
+      'breeze.search.v2:{"scope":"source","query":"旧来源搜索"}',
+    ];
+    var history = SearchHistoryEntries.add(
+      legacy,
+      '作者',
+      scope: 'source',
+      keywordScope: KeywordSearchScope.author,
+    );
+    history = SearchHistoryEntries.add(
+      history,
+      '标题',
+      scope: '',
+      keywordScope: KeywordSearchScope.title,
+    );
+    expect(SearchHistoryEntries.words(history, scope: 'source'), [
+      '作者',
+      '旧来源搜索',
+    ]);
+    expect(SearchHistoryEntries.words(history, scope: ''), ['标题', '旧综合搜索']);
+    expect(
+      SearchHistoryEntries.keywordScopeFor(history, '作者', scope: 'source'),
+      KeywordSearchScope.author,
+    );
+    expect(
+      SearchHistoryEntries.keywordScopeFor(history, '标题', scope: ''),
+      KeywordSearchScope.title,
+    );
+    expect(
+      SearchHistoryEntries.keywordScopeFor(history, '旧来源搜索', scope: 'source'),
+      KeywordSearchScope.all,
+    );
+    expect(
+      SearchHistoryEntries.keywordScopeFor(history, '旧综合搜索', scope: ''),
+      KeywordSearchScope.all,
+    );
+  });
 
   testWidgets('short history words stay compact with full touch targets', (
     tester,
@@ -361,11 +403,15 @@ void main() {
       expect(field.decoration?.filled, isFalse);
       expect(field.decoration?.enabledBorder, isA<OutlineInputBorder>());
       expect(field.decoration?.focusedBorder, isA<OutlineInputBorder>());
-      expect(field.decoration?.focusedBorder?.borderSide.color, colors.primary);
+      expect(
+        field.decoration?.focusedBorder?.borderSide,
+        BorderSide(color: colors.primary.withValues(alpha: .74)),
+      );
       await tester.tap(find.byTooltip(t.search.title));
       await tester.pumpAndSettle();
       expect(submitted, '关键词');
       expect(tester.takeException(), isNull);
     },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
   );
 }

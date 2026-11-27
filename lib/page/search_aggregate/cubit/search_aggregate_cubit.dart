@@ -1,3 +1,10 @@
+import 'package:flutter/foundation.dart';
+import 'package:zephyr/object_box/model.dart';
+import 'package:zephyr/object_box/objectbox.g.dart';
+import 'package:zephyr/page/source_shell/bika_content_block_rules.dart';
+import 'package:zephyr/page/source_shell/source_category_settings_scope.dart';
+import 'package:zephyr/page/source_shell/source_experience_preferences.dart';
+import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:collection/collection.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:worker_manager/worker_manager.dart';
@@ -21,6 +28,7 @@ import 'package:zephyr/page/search_aggregate/aggregate_search_matching.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search/method/copy_search_topic.dart';
 import 'package:zephyr/page/search_result/view/source_list_categories.dart';
+import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/util/rust_loader.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
@@ -120,6 +128,7 @@ class AggregateSearchCubit extends Cubit<AggregateSearchState> {
     this.sourceSearch,
     this.comicSearch = _readAggregateComics,
     this.copyTopicLookup = resolveCopySearchTopic,
+    this.sourceTimeout = const Duration(seconds: 40),
     Set<String>? availableSources,
     Map<String, Object> sourceDefinitions = const {},
   }) : _baseEvent = baseEvent,
@@ -144,12 +153,16 @@ class AggregateSearchCubit extends Cubit<AggregateSearchState> {
   SearchEvent get baseEvent => _baseEvent;
   final AggregateVideoSearch _videoSearch;
   final Future<List<dynamic>> Function(String, SearchEvent)? sourceSearch;
+  final Duration sourceTimeout;
   final Future<AggregateComicPage> Function(SearchEvent, String) comicSearch;
   final Future<CopySearchTopic?> Function(String, {String? taskGroupKey})
   copyTopicLookup;
   late final ReadRecoveryController _recovery;
   late final StreamSubscription<PluginSessionBoundary> _session;
   late final StreamSubscription<String> _networkChanges;
+  StreamSubscription<List<Type>>? _bikaBlockChanges;
+  var _bikaContentBlocks = const BikaContentBlockRules.empty();
+  Set<String> _bikaCategoryBlocks = const {};
   Set<String>? _available;
   final _jobs = <String, _AggregateJob>{};
   final _queue = <_AggregateJob>[];
@@ -267,7 +280,7 @@ class AggregateSearchCubit extends Cubit<AggregateSearchState> {
                     (_) => throw _AggregateCancelled(),
                   ),
                 ]))
-          .timeout(const Duration(seconds: 40));
+          .timeout(sourceTimeout);
       if (_current(job)) _retryAt.remove(job.source);
     } on AggregateSourceEntryRequired catch (entry) {
       if (_current(job))
@@ -283,7 +296,7 @@ class AggregateSearchCubit extends Cubit<AggregateSearchState> {
         if (failure == 'rateLimited') {
           _retryAt[job.source] = DateTime.now().add(readRetryAfterDelay(error));
         }
-        if (!job.previewPublished) {
+        if (!job.previewPublished || error is TimeoutException) {
           _emit(
             state.copyWith(
               errors: {...state.errors, job.source: failure},
@@ -294,13 +307,18 @@ class AggregateSearchCubit extends Cubit<AggregateSearchState> {
       }
       if (error is TimeoutException) {
         job.expired = true;
+        _finish(job);
         if (sourceSearch == null) {
-          await _cancelNative(job).catchError((Object _) {});
+          await _cancelNative(
+            job,
+          ).timeout(const Duration(seconds: 2)).catchError((Object _) {});
         }
       }
     } finally {
       // Admission follows physical completion, not merely timeout/UI retirement.
-      if (work != null) await work.then<void>((_) {}, onError: (Object _) {});
+      if (work != null && (!job.expired || sourceSearch != null)) {
+        await work.then<void>((_) {}, onError: (Object _) {});
+      }
       releaseQjsTaskGroupNetwork(job.source, job.group);
       clearDownloadCancelSignal(job.group);
       _running--;
@@ -336,14 +354,8 @@ class AggregateSearchCubit extends Cubit<AggregateSearchState> {
 
   Future<void> _cancelNative(_AggregateJob job) async {
     triggerDownloadCancelSignal(job.group);
-    try {
-      await cancelTrackedQjsTasks(
-        pluginId: job.source,
-        taskGroupKey: job.group,
-      );
-    } finally {
-      if (!job.cancelledSignal.isCompleted) job.cancelledSignal.complete();
-    }
+    if (!job.cancelledSignal.isCompleted) job.cancelledSignal.complete();
+    await cancelTrackedQjsTasks(pluginId: job.source, taskGroupKey: job.group);
   }
 
   void _finish(_AggregateJob job) {
@@ -377,49 +389,40 @@ class AggregateSearchCubit extends Cubit<AggregateSearchState> {
     _publishPending();
   }
 
-  Future<void> toggleSource(String source, bool enabled) =>
-      applySelectedSources({...state.selectedSources, source: enabled});
-  Future<void> applySelectedSources(Map<String, bool> selected) async {
+  Future<void> updateAvailableSources(
+    Set<String> available, {
+    Map<String, Object>? definitions,
+  }) async {
     final previous = state.selectedSources;
-    _emit(state.copyWith(selectedSources: Map<String, bool>.from(selected)));
-    for (final id in previous.keys)
-      if (!(selected[id] ?? false)) _retireSource(id, clear: true);
-    await Future.wait([
-      for (final e in selected.entries)
-        if (e.value && !(previous[e.key] ?? false)) _enqueue(e.key),
-    ]);
-    _updateRecovery();
-  }
-
-  void updateAvailableSources(Set<String> available) {
-    _available = Set.of(available);
-    _emit(
-      state.copyWith(
-        selectedSources: {
-          ...state.selectedSources,
-          for (final id in available)
-            if (!state.selectedSources.containsKey(id)) id: false,
-        },
-      ),
-    );
-    for (final id in state.selectedSources.keys) {
-      if (!available.contains(id)) _retireSource(id, clear: true);
+    final selected = {for (final id in available) id: true};
+    final replaced = {
+      if (definitions != null)
+        for (final id in available)
+          if (_sourceDefinitions.containsKey(id) &&
+              _sourceDefinitions[id] != definitions[id])
+            id,
+    };
+    // The registry publishes a replacement after its runtime is settled.
+    if (definitions != null) {
+      _sourceDefinitions
+        ..clear()
+        ..addAll(definitions);
     }
-  }
-
-  // Installation publishes only after its runtime is settled. The earlier
-  // session boundary alone cannot prove that the replacement is ready.
-  void updateSourceDefinitions(Map<String, Object> definitions) {
-    for (final entry in definitions.entries) {
-      final previous = _sourceDefinitions[entry.key];
-      if (previous != null && previous != entry.value) {
-        _retireSource(entry.key, clear: true);
-        if (_active) unawaited(_enqueue(entry.key));
+    _available = Set.of(available);
+    if (!mapEquals(selected, previous)) {
+      _emit(state.copyWith(selectedSources: selected));
+    }
+    for (final id in previous.keys) {
+      if (!available.contains(id) || replaced.contains(id)) {
+        _retireSource(id, clear: true);
       }
     }
-    _sourceDefinitions
-      ..clear()
-      ..addAll(definitions);
+    _updateRecovery();
+    if (!_active) return;
+    await Future.wait([
+      for (final id in available)
+        if (previous[id] != true || replaced.contains(id)) _enqueue(id),
+    ]);
   }
 
   Future<void> refreshSource(String id) async {
@@ -500,9 +503,40 @@ class AggregateSearchCubit extends Cubit<AggregateSearchState> {
     _instances.remove(this);
     _recovery.dispose();
     await _networkChanges.cancel();
+    await _bikaBlockChanges?.cancel();
     await _session.cancel();
     for (final id in _jobs.keys.toList()) _retireSource(id);
     return super.close();
+  }
+
+  void _watchBikaBlocks() {
+    if (_bikaBlockChanges != null) return;
+    void readBlocks({required bool refresh}) {
+      final config = readHostPluginConfiguration(bikaPlusSourceId);
+      final nextRules = BikaContentBlockRules.fromConfig(config);
+      final nextCategories = blockedCategoryNames(
+        config[bikaSearchBlockedCategoriesKey],
+      );
+      if (nextRules.sameAs(_bikaContentBlocks) &&
+          setEquals(nextCategories, _bikaCategoryBlocks)) {
+        return;
+      }
+      _bikaContentBlocks = nextRules;
+      _bikaCategoryBlocks = nextCategories;
+      if (!refresh || isClosed) return;
+      for (final source in state.selectedSources.keys.where(
+        isBikaExperienceSource,
+      )) {
+        if (state.selectedSources[source] != true) continue;
+        _retireSource(source, clear: true);
+        if (_active) unawaited(_enqueue(source));
+      }
+    }
+
+    readBlocks(refresh: false);
+    _bikaBlockChanges = objectbox.store.entityChanges.listen((types) {
+      if (types.contains(PluginConfig)) readBlocks(refresh: true);
+    });
   }
 
   Future<void> _searchSingleSource(
@@ -512,6 +546,12 @@ class AggregateSearchCubit extends Cubit<AggregateSearchState> {
   }) async {
     final search = searchEvent.searchStates;
     final extern = aggregateComicSearchExtern(search, pluginId);
+    final bika = isBikaExperienceSource(pluginId);
+    if (bika) {
+      await migrateBikaSearchBlocks(pluginId);
+      if (!_current(job)) throw _AggregateCancelled();
+      _watchBikaBlocks();
+    }
     final titleOnly =
         explicitKeywordSearchScope(extern) == KeywordSearchScope.title;
     String? category;
@@ -532,7 +572,15 @@ class AggregateSearchCubit extends Cubit<AggregateSearchState> {
           options: asJsonList(
             experience['searchQuickCategories'],
           ).whereType<String>(),
-          extern: extern,
+          extern: bika
+              ? {
+                  ...extern,
+                  'settingsBlockedCategories': [
+                    ...aggregateBlockedCategories(extern),
+                    ..._bikaCategoryBlocks,
+                  ],
+                }
+              : extern,
         );
       },
     );
@@ -603,8 +651,6 @@ class AggregateSearchCubit extends Cubit<AggregateSearchState> {
       }
       cursor = result.nextCursor;
       if (cursor?.isEmpty == true) cursor = null;
-      // The source page uses pageCount as its terminal signal. A cursor can
-      // drive pagination when there is no known page count.
       if (result.pageCount > 0 ? page >= result.pageCount : cursor == null) {
         break;
       }
@@ -628,7 +674,14 @@ class AggregateSearchCubit extends Cubit<AggregateSearchState> {
   }) async {
     final search = event.searchStates;
     final extern = search.pluginExtern;
-    final blocked = aggregateBlockedCategories(extern);
+    final bika = isBikaExperienceSource(search.from);
+    final blocked = {
+      ...aggregateBlockedCategories(extern),
+      if (bika) ..._bikaCategoryBlocks,
+    };
+    final contentBlocks = bika
+        ? _bikaContentBlocks
+        : const BikaContentBlockRules.empty();
     final masked = _maskedKeywords();
     final matchesTitle = needsLoadedTitleMatch(search.from, extern)
         ? keywordTitleMatcher(search.searchKeyword)
@@ -659,7 +712,12 @@ class AggregateSearchCubit extends Cubit<AggregateSearchState> {
       final candidates = matchesTitle == null
           ? items
           : items.where((item) => matchesTitle([item.title])).toList();
-      final matches = await _visibleComics(candidates, blocked, masked);
+      final matches = await _visibleComics(
+        candidates,
+        blocked,
+        contentBlocks,
+        masked,
+      );
       if (!_current(job)) throw _AggregateCancelled();
       filteredCount += items.length - matches.length;
       if (matches.isNotEmpty) {
@@ -704,7 +762,12 @@ class AggregateSearchCubit extends Cubit<AggregateSearchState> {
                 final fresh = topicResult.items
                     .where((item) => seenIds.add(item.id))
                     .toList();
-                final matches = await _visibleComics(fresh, blocked, masked);
+                final matches = await _visibleComics(
+                  fresh,
+                  blocked,
+                  contentBlocks,
+                  masked,
+                );
                 filteredCount += fresh.length - matches.length;
                 topicItems = matches.take(remaining).toList();
               }
@@ -727,41 +790,53 @@ class AggregateSearchCubit extends Cubit<AggregateSearchState> {
       // Give that single preview read room within the same per-source budget.
       if (next.page == 1 && category != null) {
         requests++;
-        final categoryResult = await comicSearch(
-          event.copyWith(
-            searchStates: aggregateCategorySearch(
-              search,
-              search.from,
-              category,
+        AggregateComicPage? categoryResult;
+        try {
+          categoryResult = await comicSearch(
+            event.copyWith(
+              searchStates: aggregateCategorySearch(
+                search,
+                search.from,
+                category,
+              ),
             ),
-          ),
-          job.group,
-        );
-        if (!_current(job)) throw _AggregateCancelled();
-        if (categoryResult.paging?.reportedPage case final reported?
-            when reported != 1) {
-          throw const FormatException('Wrong result page');
-        }
-        final categoryItems = categoryResult.items
-            .where(
-              (item) =>
-                  aggregateComicHasCategory(item, category) &&
-                  seenIds.add(item.id),
-            )
-            .toList();
-        final matches = await _visibleComics(categoryItems, blocked, masked);
-        if (!_current(job)) throw _AggregateCancelled();
-        filteredCount += categoryItems.length - matches.length;
-        if (matches.isNotEmpty) {
-          categoryPreview = (
-            category: category,
-            topic: null,
-            items: matches
-                .take(aggregateSearchPreviewLimit - visible.length)
-                .toList(),
+            job.group,
           );
+        } catch (_) {
+          if (visible.isEmpty || !_current(job)) rethrow;
         }
-        if (getPreviewCount() > 0) publish();
+        if (!_current(job)) throw _AggregateCancelled();
+        if (categoryResult != null) {
+          if (categoryResult.paging?.reportedPage case final reported?
+              when reported != 1) {
+            throw const FormatException('Wrong result page');
+          }
+          final categoryItems = categoryResult.items
+              .where(
+                (item) =>
+                    aggregateComicHasCategory(item, category) &&
+                    seenIds.add(item.id),
+              )
+              .toList();
+          final matches = await _visibleComics(
+            categoryItems,
+            blocked,
+            contentBlocks,
+            masked,
+          );
+          if (!_current(job)) throw _AggregateCancelled();
+          filteredCount += categoryItems.length - matches.length;
+          if (matches.isNotEmpty) {
+            categoryPreview = (
+              category: category,
+              topic: null,
+              items: matches
+                  .take(aggregateSearchPreviewLimit - visible.length)
+                  .toList(),
+            );
+          }
+          if (getPreviewCount() > 0) publish();
+        }
       }
 
       if (getPreviewCount() >= aggregateSearchPreviewLimit ||
@@ -791,9 +866,15 @@ class AggregateSearchCubit extends Cubit<AggregateSearchState> {
   Future<List<UnifiedComicListItem>> _visibleComics(
     List<UnifiedComicListItem> candidates,
     Set<String> blocked,
+    BikaContentBlockRules contentBlocks,
     List<String> normalizedMaskedKeywords,
   ) async {
-    final comics = filterEntriesByBlockedCategories(candidates, blocked);
+    final comics = filterEntriesByBlockedCategories(
+      contentBlocks.isEmpty
+          ? candidates
+          : candidates.where((comic) => !contentBlocks.blocks(comic)),
+      blocked,
+    );
     if (comics.isEmpty || normalizedMaskedKeywords.isEmpty) return comics;
 
     final payload = <String, dynamic>{
@@ -924,23 +1005,20 @@ String _normalizeMaskedTextF(String text) {
 String aggregateSearchFailure(Object error) {
   final text = error.toString().toLowerCase();
   if (error is PluginLoginRequiredException) return 'login';
+  if (error is TimeoutException) return 'timeout';
+  if (error is FormatException) return 'format';
+  if (error is SocketException || error is HandshakeException) return 'network';
   if (text.contains('login required') ||
       text.contains('unauthorized') ||
       text.contains('需要登录') ||
       text.contains('未登录') ||
       text.contains('登录已过期'))
     return 'login';
-  if (error is FormatException) return 'format';
-  if (text.contains('429')) return 'rateLimited';
-  if (RegExp(r'http[^0-9]*5[0-9]{2}').hasMatch(text)) return 'server';
-  if (error is SocketException ||
-      readFailureIsTransient(error) && error is! TimeoutException)
-    return 'network';
-  if (error is TimeoutException ||
-      text.contains('timeout') ||
-      text.contains('timed out')) {
-    return 'timeout';
-  }
+  final status = reportedHttpStatus(error);
+  if (status == 429) return 'rateLimited';
+  if (status != null && status >= 500) return 'server';
+  if (status == null && isRequestTimeout(error)) return 'timeout';
+  if (readFailureIsTransient(error)) return 'network';
   if (text.contains('verification') ||
       text.contains('captcha') ||
       text.contains('challenge') ||

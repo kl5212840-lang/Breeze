@@ -2,6 +2,7 @@ import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/page/source_shell/view/source_jm_account_collections.dart';
 import 'package:zephyr/page/source_shell/widgets/bika_connection_notice.dart';
 import 'dart:async';
 import 'dart:io';
@@ -24,8 +25,11 @@ import 'package:zephyr/page/bookshelf/service/comic_folder_service.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_folder_picker.dart';
 import 'package:zephyr/page/comic_info/comic_info.dart';
 import 'package:zephyr/page/comic_info/models/comic_detail_presentation.dart';
+import 'package:zephyr/page/comic_info/models/comic_like.dart'
+    show isJmComicLikeSource;
 import 'package:zephyr/page/comic_info/models/plugin_action_login.dart';
 import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
+import 'package:zephyr/page/comic_info/widgets/comic_description.dart';
 import 'package:zephyr/page/comic_info/widgets/comic_detail_partial_notice.dart';
 import 'package:zephyr/page/comic_info/widgets/book_download_panel.dart';
 import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart';
@@ -48,6 +52,7 @@ import 'package:zephyr/widgets/error_view.dart';
 import 'package:zephyr/widgets/image_recovery_region.dart';
 import 'package:zephyr/widgets/scroll_return_to_top.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 @RoutePage()
 class ComicInfoPage extends StatelessWidget {
@@ -276,6 +281,10 @@ class _ComicInfoState extends State<_ComicInfo>
       (GetComicInfoBloc bloc) =>
           bloc.state.status == GetComicInfoStatus.success,
     );
+    final accountCollectionInfo = context.select((GetComicInfoBloc bloc) {
+      final info = bloc.state.allInfo;
+      return info?.extern['jmAccountCollections'] == true ? info : null;
+    });
     final scaffold = Scaffold(
       appBar: sourceSecondaryAppBar(
         context,
@@ -285,6 +294,27 @@ class _ComicInfoState extends State<_ComicInfo>
           SourceMoreButton(
             source: widget.from,
             actions: [
+              if (detailReady && accountCollectionInfo != null)
+                SourceMenuAction(
+                  id: 'jm-account-collections',
+                  label: convertChineseForDisplay(
+                    JmAccountCollection.comic.title,
+                  ),
+                  icon: JmAccountCollection.comic.icon,
+                  symbol: 'bookmark',
+                  onSelected: () => openJmAccountCollection(
+                    context,
+                    source: widget.from,
+                    collection: JmAccountCollection.comic,
+                    comicId: _comicId,
+                    comicTags: [
+                      for (final group
+                          in accountCollectionInfo.comicInfo.metadata)
+                        if (group.type == 'tags')
+                          for (final tag in group.value) tag.name,
+                    ],
+                  ),
+                ),
               if (_type == ComicEntryType.download)
                 SourceMenuAction(
                   id: 'export',
@@ -476,7 +506,10 @@ class _ComicInfoState extends State<_ComicInfo>
   }
 
   Widget _infoView(NormalComicAllInfo normalComicAllInfo) {
-    final comicInfo = comicInfoForDetailPresentation(normalComicAllInfo);
+    final comicInfo = comicInfoForDetailPresentation(
+      normalComicAllInfo,
+      showReadOnlyLikes: isJmComicLikeSource(widget.from),
+    );
     _title = comicInfo.title;
     final clickCoverToStartReading = context
         .watch<GlobalSettingCubit>()
@@ -633,7 +666,8 @@ class _ComicInfoState extends State<_ComicInfo>
                         if (comicInfo.description.trim().isNotEmpty) ...[
                           _buildDivider(context),
                           _SectionCard(
-                            child: _DescriptionCard(
+                            child: ComicDescription(
+                              key: ValueKey(comicKey),
                               description: comicInfo.description.let(
                                 convertChineseForDisplay,
                               ),
@@ -1144,15 +1178,16 @@ class _ComicInfoState extends State<_ComicInfo>
   Future<void> _confirmAndRemoveFollow(String title) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => ShortAlert(
         title: Text(t.comicInfo.confirmUnfollowTitle),
         content: Text(t.comicInfo.confirmUnfollowContent(title: title)),
         actions: [
-          TextButton(
+          ShortAlertAction(
             onPressed: () => dialogContext.pop(false),
             child: Text(t.common.cancel),
           ),
-          TextButton(
+          ShortAlertAction(
+            destructive: true,
             onPressed: () => dialogContext.pop(true),
             child: Text(t.common.ok),
           ),
@@ -1328,15 +1363,17 @@ class _ComicInfoState extends State<_ComicInfo>
     final result = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
+        return ShortAlert(
           title: Text(t.comicInfo.confirmUncollectTitle),
           content: Text(t.comicInfo.confirmUncollectContent),
           actions: [
-            TextButton(
+            ShortAlertAction(
               onPressed: () => Navigator.of(dialogContext).pop(false),
               child: Text(t.common.cancel),
             ),
-            FilledButton(
+            ShortAlertAction(
+              destructive: true,
+              filled: true,
               onPressed: () => Navigator.of(dialogContext).pop(true),
               child: Text(t.common.confirm),
             ),
@@ -1944,65 +1981,6 @@ class _EpisodeHeaderBadge extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _DescriptionCard extends StatefulWidget {
-  const _DescriptionCard({required this.description});
-
-  final String description;
-
-  @override
-  State<_DescriptionCard> createState() => _DescriptionCardState();
-}
-
-class _DescriptionCardState extends State<_DescriptionCard> {
-  bool _expanded = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final descriptionStyle = context.theme.textTheme.bodyMedium?.copyWith(
-      height: 1.65,
-      color: context.textColor.withValues(alpha: 0.9),
-    );
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.only(top: 8, bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            t.comicInfo.description,
-            style: context.theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 10),
-          SelectableText(
-            widget.description,
-            style: descriptionStyle,
-            maxLines: _expanded ? null : 2,
-          ),
-          if (widget.description.length > 45) ...[
-            const SizedBox(height: 2),
-            TextButton.icon(
-              style: TextButton.styleFrom(
-                alignment: Alignment.centerLeft,
-                padding: const EdgeInsets.symmetric(horizontal: 4),
-                minimumSize: const Size(0, 40),
-                visualDensity: VisualDensity.compact,
-              ),
-              onPressed: () => setState(() => _expanded = !_expanded),
-              icon: Icon(_expanded ? Icons.expand_less : Icons.expand_more),
-              label: Text(
-                _expanded ? t.comicInfo.collapse : t.comicInfo.expandFullText,
-              ),
-            ),
-          ],
-        ],
       ),
     );
   }

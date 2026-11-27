@@ -18,6 +18,7 @@ import 'package:zephyr/util/text/chinese_convert.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/cover.dart';
 import 'package:zephyr/widgets/touch_hover_intent.dart';
 import 'package:zephyr/page/video/video_native_navigation.dart';
+import 'package:zephyr/service/page_read_tasks.dart';
 
 typedef BikaGameLoader =
     Future<Map<String, dynamic>> Function(
@@ -29,14 +30,16 @@ typedef BikaGameLoader =
 Future<Map<String, dynamic>> loadBikaGameData(
   String source,
   String function,
-  Map<String, dynamic> core,
-) => callUnifiedComicPlugin(
+  Map<String, dynamic> core, {
+  String? taskGroupKey,
+}) => callUnifiedComicPlugin(
   from: source,
   fnPath: function,
   core: core,
   // This destination presents the same login action locally. A details route
   // must not replace the retained source tab underneath it with another page.
   notifyUnauthorized: false,
+  taskGroupKey: taskGroupKey,
 );
 
 /// Independent game data, never comic records, chapter downloads or a WebView.
@@ -59,10 +62,12 @@ class BikaGamesContent extends StatefulWidget {
 
 class _BikaGamesContentState extends State<BikaGamesContent> {
   final _scroll = ScrollController();
+  final _reads = PageReadTasks();
   final _items = <Map<String, dynamic>>[];
   bool _loading = true, _busy = false, _hasMore = false;
   bool _loginRequired = false, _loadMoreFailed = false;
   bool _retryReset = true, _openingDetail = false;
+  bool _resetInProgress = false;
   String _error = '';
   int _page = 0, _epoch = 0;
 
@@ -79,6 +84,7 @@ class _BikaGamesContentState extends State<BikaGamesContent> {
     if (oldWidget.source != widget.source ||
         oldWidget.listFunction != widget.listFunction) {
       _epoch++;
+      unawaited(_reads.cancel());
       _busy = false;
       _items.clear();
       _page = 0;
@@ -96,20 +102,32 @@ class _BikaGamesContentState extends State<BikaGamesContent> {
   }
 
   Future<void> _read({bool reset = false}) async {
-    if (_busy) return;
+    if (_busy && (!reset || _resetInProgress)) return;
+    if (_busy) unawaited(_reads.cancel());
     final epoch = ++_epoch;
     final source = widget.source;
     final requestedPage = reset ? 1 : _page + 1;
     setState(() {
       _busy = true;
+      _resetInProgress = reset;
       _loading = _items.isEmpty;
       _error = '';
       _loginRequired = false;
     });
     try {
-      final response = await widget.load(source, widget.listFunction, {
-        'page': requestedPage,
-      });
+      final core = <String, dynamic>{'page': requestedPage};
+      final read = widget.load == loadBikaGameData
+          ? _reads.run(
+              source,
+              (group) => loadBikaGameData(
+                source,
+                widget.listFunction,
+                core,
+                taskGroupKey: group,
+              ),
+            )
+          : widget.load(source, widget.listFunction, core);
+      final response = await read.timeout(const Duration(seconds: 22));
       if (!mounted || epoch != _epoch || source != widget.source) return;
       final data = asJsonMap(response['data']);
       if (response['source'] != source ||
@@ -125,16 +143,25 @@ class _BikaGamesContentState extends State<BikaGamesContent> {
                 _gameText(item, 'id').isNotEmpty &&
                 _gameText(item, 'title').isNotEmpty,
           );
+      final ids = {
+        if (!reset)
+          for (final item in _items) item['id'],
+      };
+      final appended = next.where((item) => ids.add(item['id'])).toList();
+      if (appended.isEmpty &&
+          (asJsonList(data['items']).isNotEmpty || data['hasMore'] == true)) {
+        throw FormatException(t.sourceShell.gameListInvalid);
+      }
       setState(() {
         if (reset) _items.clear();
-        final ids = _items.map((item) => item['id']).toSet();
-        _items.addAll(next.where((item) => ids.add(item['id'])));
+        _items.addAll(appended);
         _page = requestedPage;
         _hasMore = data['hasMore'] == true;
         _loadMoreFailed = false;
       });
     } catch (error) {
       if (!mounted || epoch != _epoch || source != widget.source) return;
+      if (error is TimeoutException) unawaited(_reads.cancel());
       setState(() {
         _loginRequired = pluginFunctionNeedsLogin(error);
         _error = pluginFunctionErrorMessage(error);
@@ -150,6 +177,7 @@ class _BikaGamesContentState extends State<BikaGamesContent> {
       if (mounted && epoch == _epoch) {
         setState(() {
           _busy = false;
+          _resetInProgress = false;
           _loading = false;
         });
       }
@@ -183,6 +211,7 @@ class _BikaGamesContentState extends State<BikaGamesContent> {
   @override
   void dispose() {
     _epoch++;
+    unawaited(_reads.cancel());
     _scroll.dispose();
     super.dispose();
   }

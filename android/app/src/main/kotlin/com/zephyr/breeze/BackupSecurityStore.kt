@@ -33,8 +33,8 @@ class BackupSecurityStore(private val activity: Activity, messenger: BinaryMesse
             if (call.method == "supported") { result.success(true); return@setMethodCallHandler }
             val routing = call.method == "exportRoutingFile"
             if (call.method == "exportFile" || routing) {
+                if (export != null) { result.success("busy"); return@setMethodCallHandler }
                 try {
-                    check(export == null)
                     val path = call.argument<String>("path") ?: error("invalid")
                     val file = File(path).canonicalFile
                     require(file.isFile && file.path.startsWith(activity.cacheDir.canonicalPath + File.separator))

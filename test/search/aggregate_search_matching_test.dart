@@ -1,3 +1,5 @@
+import 'package:zephyr/page/source_shell/bika_content_block_rules.dart';
+import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -43,7 +45,9 @@ UnifiedComicListItem _comic(
     if (type != null)
       {
         'type': type,
-        'value': [label],
+        'value': [
+          {'name': label, 'onTap': null, 'extern': <String, dynamic>{}},
+        ],
       },
   ],
   'raw': {
@@ -77,6 +81,92 @@ void main() {
     RustLib.initMock(api: _TextApi());
   });
   tearDownAll(TestObjectBoxHelper.tearDownTestObjectBox);
+
+  test('Bika content rules compare the declared fields independently', () {
+    const titleKey = 'breeze.search.blockedTitles';
+    const tagKey = 'breeze.search.blockedTags';
+    const authorKey = 'breeze.search.blockedAuthors';
+    final rules = BikaContentBlockRules.fromConfig({
+      titleKey: ['雜 A', '', false],
+      tagKey: ['Blue', ' BLUE ', ''],
+      authorKey: ['Alice'],
+    });
+    final titleHit = _comic('title', 'Has 杂 a in title');
+    final tagHit = _comic('tag', 'Unrelated', type: 'tags', label: ' blue ');
+    final authorHit = _comic(
+      'author',
+      'Unrelated',
+      type: 'author',
+      label: 'ALICE',
+    );
+    expect(rules.blocks(titleHit), isTrue);
+    expect(rules.blocks(tagHit), isTrue);
+    expect(rules.blocks(authorHit), isTrue);
+    expect(rules.blocks(titleHit.copyWith(source: 'other')), isFalse);
+    expect(rules.blocks(_comic('title-only', 'Alice in Blue')), isFalse);
+    expect(
+      rules.blocks(
+        _comic('partial', 'Unrelated', type: 'tag', label: 'blueberry'),
+      ),
+      isFalse,
+    );
+    expect(
+      rules.blocks(
+        _comic('partial', 'Unrelated', type: 'author', label: 'Alicette'),
+      ),
+      isFalse,
+    );
+    expect(
+      rules.blocks(_comic('cross', 'Unrelated', type: 'author', label: 'Blue')),
+      isFalse,
+    );
+    expect(rules.blocks(_comic('no-metadata', 'Other')), isFalse);
+  });
+
+  test('aggregate reapplies Bika rules to a loaded preview on save', () async {
+    final key = BikaContentBlockField.tag.configKey;
+    final hidden = _comic(
+      'hidden',
+      'Different title',
+      type: 'tags',
+      label: 'Blue',
+    );
+    final kept = _comic('kept', 'Another title');
+    final cubit = AggregateSearchCubit(
+      _event('anything'),
+      initialSelectedSources: const {bikaPlusSourceId: true},
+      videoSearch: _comicAdapter(),
+      comicSearch: (_, _) async => AggregateComicPage([kept, hidden]),
+    );
+    addTearDown(() async {
+      await cubit.close();
+      await savePluginConfigValue(bikaPlusSourceId, key, []);
+    });
+    await cubit.search();
+    expect(cubit.state.results[bikaPlusSourceId], [kept, hidden]);
+
+    final updated = cubit.stream.firstWhere(
+      (state) => state.filteredCounts[bikaPlusSourceId] == 1,
+    );
+    await savePluginConfigValue(bikaPlusSourceId, key, [' blue ']);
+    expect(
+      (await updated.timeout(
+        const Duration(seconds: 3),
+      )).results[bikaPlusSourceId],
+      [kept],
+    );
+
+    final restored = cubit.stream.firstWhere(
+      (state) => state.results[bikaPlusSourceId]?.contains(hidden) == true,
+    );
+    await savePluginConfigValue(bikaPlusSourceId, key, []);
+    expect(
+      (await restored.timeout(
+        const Duration(seconds: 3),
+      )).results[bikaPlusSourceId],
+      [kept, hidden],
+    );
+  });
 
   test(
     'aggregate scope changes match metadata only in All for selected sources',
@@ -137,6 +227,7 @@ void main() {
           'q_type': 'author',
           'categories': ['已选分类'],
           'blockedCategories': ['私有分类条件'],
+          'settingsBlockedCategories': ['旧配置快照'],
         },
       ).searchStates;
       expect(aggregateComicSearchExtern(search, 'other-source'), isEmpty);

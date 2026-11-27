@@ -273,9 +273,6 @@ void main() {
               final check = find.byKey(
                 const ValueKey('follow-check-privacy:1'),
               );
-              final times = find.byKey(
-                const ValueKey('follow-times-privacy:1'),
-              );
               expect(
                 find.descendant(
                   of: reading,
@@ -284,7 +281,7 @@ void main() {
                 findsOneWidget,
               );
               final readTime = find.descendant(
-                of: times,
+                of: check,
                 matching: find.byWidgetPredicate(
                   (w) =>
                       w is Text &&
@@ -299,9 +296,9 @@ void main() {
                   t.comicFollow.checkTime(time: ''),
                 ),
               );
-              expect(checkTime, findsOneWidget);
+              expect(checkTime, findsNothing);
               expect(
-                tester.widget<Text>(checkTime).style!.fontSize,
+                tester.widget<Text>(readTime).style!.fontSize,
                 lessThan(
                   tester
                       .widget<Text>(find.text('保持清晰的追更长标题与章节状态信息'))
@@ -446,7 +443,7 @@ void main() {
                   await tester.pumpAndSettle();
                   final image = tester.getRect(cover);
                   final card = tester.getRect(
-                    find.byKey(const ValueKey('dismiss-privacy:1')),
+                    find.byKey(const ValueKey('privacy:1')),
                   );
                   final identity = tester.getRect(
                     find.byKey(const ValueKey('follow-identity-privacy:1')),
@@ -454,7 +451,7 @@ void main() {
                   final chapters = tester.getRect(
                     find.byKey(const ValueKey('follow-chapters-privacy:1')),
                   );
-                  final footer = tester.getRect(times);
+                  final footer = tester.getRect(check);
                   final expectedWidth = ((card.width - 20) / 4).clamp(
                     80.0,
                     96.0,
@@ -480,7 +477,7 @@ void main() {
                   }
                   expect(
                     footer.top,
-                    greaterThanOrEqualTo(tester.getRect(reading).bottom + 7.9),
+                    greaterThanOrEqualTo(tester.getRect(reading).bottom),
                   );
                   expect(footer.left, closeTo(chapters.left, .1));
                   expect(footer.right, lessThanOrEqualTo(chapters.right + .1));
@@ -488,20 +485,6 @@ void main() {
                     footer.bottom,
                     lessThanOrEqualTo(chapters.bottom + .1),
                   );
-                  final readBounds = tester.getRect(readTime);
-                  final checkBounds = tester.getRect(checkTime);
-                  if ((readBounds.top - checkBounds.top).abs() < 1) {
-                    expect(
-                      checkBounds.left - readBounds.right,
-                      closeTo(12, .1),
-                    );
-                  } else {
-                    expect(
-                      checkBounds.top,
-                      greaterThanOrEqualTo(readBounds.bottom),
-                    );
-                    expect(checkBounds.left, closeTo(readBounds.left, .1));
-                  }
                   expect(card.right, greaterThanOrEqualTo(identity.right));
                   expect(
                     tester.element(pictureBuilder).read<PictureBloc>(),
@@ -524,14 +507,21 @@ void main() {
               await tester.pumpAndSettle();
               expect(readTime, findsNothing);
               expect(
-                tester.getRect(checkTime).left,
-                closeTo(tester.getRect(reading).left, .01),
-                reason:
-                    'the check timestamp starts the row without reading history',
+                find.descendant(of: check, matching: find.byType(Text)),
+                findsNothing,
               );
               repository.hasHistory = true;
               await cubit.refreshHistories();
               await tester.pumpAndSettle();
+              final card = find.byKey(const ValueKey('privacy:1'));
+              const layouts = [(430.0, 1.0), (320.0, 2.0)];
+              final normalHeights = <(double, double), double>{};
+              for (final (width, scale) in layouts) {
+                tester.view.physicalSize = Size(width, 932);
+                textScale.value = scale;
+                await tester.pumpAndSettle();
+                normalHeights[(width, scale)] = tester.getSize(card).height;
+              }
               repository.detection = const ComicFollowDetection.failed(
                 ComicFollowCheckFailure.network,
               );
@@ -543,13 +533,7 @@ void main() {
               final retryCheck = find.byKey(
                 const ValueKey('follow-retry-privacy:1'),
               );
-              final attemptedTime = find.descendant(
-                of: times,
-                matching: find.textContaining(
-                  t.comicFollow.lastCheckAttempt(time: ''),
-                ),
-              );
-              for (final (width, scale) in [(430.0, 1.0), (320.0, 2.0)]) {
+              for (final (width, scale) in layouts) {
                 tester.view.physicalSize = Size(width, 932);
                 textScale.value = scale;
                 await tester.pumpAndSettle();
@@ -558,19 +542,12 @@ void main() {
                   tester.getRect(failedCheck).left,
                   closeTo(tester.getRect(reading).left, 1),
                 );
-                final activity = tester.getRect(check);
-                final readBounds = tester.getRect(readTime);
-                final attemptBounds = tester.getRect(attemptedTime);
-                if (readBounds.width + attemptBounds.width + 12 >
-                    activity.width) {
-                  expect(
-                    attemptBounds.top,
-                    greaterThanOrEqualTo(readBounds.bottom),
-                  );
-                  expect(attemptBounds.left, closeTo(readBounds.left, 1));
-                } else {
-                  expect(attemptBounds.top, closeTo(readBounds.top, 1));
-                }
+                expect(readTime, findsNothing);
+                expect(
+                  tester.getSize(card).height,
+                  normalHeights[(width, scale)],
+                  reason: 'a retry reuses the same footer slot',
+                );
                 expect(
                   tester.getSize(retryCheck).height,
                   greaterThanOrEqualTo(44),
@@ -600,29 +577,21 @@ void main() {
                 of: cover,
                 matching: find.byIcon(Icons.refresh),
               );
-              final notFound = find.descendant(
+              final placeholder = find.descendant(
                 of: cover,
-                matching: find.byWidgetPredicate(
-                  (widget) =>
-                      widget is Image &&
-                      widget.image is AssetImage &&
-                      (widget.image as AssetImage).assetName ==
-                          'asset/image/error_image/404.png',
-                ),
+                matching: find.byIcon(Icons.image),
               );
               await _until(
                 tester,
                 () =>
                     bloc.state.status == PictureLoadStatus.failure &&
-                    (bloc.pictureNotFound ? notFound : retry)
-                        .evaluate()
-                        .isNotEmpty,
-                'failure swaps the original image for the matching cover fallback',
+                    placeholder.evaluate().isNotEmpty,
+                'failure keeps a themed placeholder without a cover action',
               );
               expect(originalImage, findsNothing);
               expect(tester.widget<ImageFiltered>(filters).enabled, isTrue);
-              expect(bloc.pictureNotFound ? notFound : retry, findsOneWidget);
-              expect(bloc.pictureNotFound ? retry : notFound, findsNothing);
+              expect(placeholder, findsOneWidget);
+              expect(retry, findsNothing);
               expect(
                 tester.element(pictureBuilder).read<PictureBloc>(),
                 same(bloc),

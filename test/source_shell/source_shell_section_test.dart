@@ -43,12 +43,14 @@ void main() {
             'profileTab': true,
             'videoBrowseOnly': ?declaration,
             'profileVideoRecords': ?declaration,
+            'jmSiteWatchHistory': ?declaration,
           },
         }, 'fixture-retired-independent-source');
         final video = sections.singleWhere((value) => value.videoGroup);
         final profile = sections.singleWhere((value) => value.profile);
         expect(video.videoBrowseOnly, declaration is bool ? declaration : null);
         expect(profile.profileVideoRecords, declaration == true);
+        expect(profile.jmSiteWatchHistory, declaration == true);
         expect(profile.legacySources, isEmpty);
       }
     },

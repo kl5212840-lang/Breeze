@@ -1,7 +1,12 @@
+import 'dart:async';
+
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_management_island.dart';
+
 import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/page/source_shell/source_settings_destination.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/widgets/collection_cover_privacy.dart';
@@ -62,16 +67,21 @@ class JmCollectionNavigationActions extends StatelessWidget {
     this.keyPrefix = 'jm-collection',
     this.showSearch = true,
     this.inlineSearch = false,
+    this.source = '',
   });
   final VoidCallback? onSearch;
   final Map<String, String> options;
   final List<List<String>> groups;
   final ValueChanged<String> onSelected;
   final bool searching, showSearch, inlineSearch;
-  final String keyPrefix;
+  final String keyPrefix, source;
   @override
   Widget build(BuildContext context) {
     if (inlineSearch && searching) return const SizedBox.shrink();
+    final menuOptions = {
+      ...options,
+      if (source.isNotEmpty) sourceSettingsMenuAction: t.plugin.pluginSettings,
+    };
     return Row(
       mainAxisSize: MainAxisSize.min,
       spacing: CollectionToolbarMetrics.searchControlGap,
@@ -99,13 +109,24 @@ class JmCollectionNavigationActions extends StatelessWidget {
               width: CollectionToolbarMetrics.actionExtent,
               hostPresentation: true,
               selectAfterDismissal: {
+                ...options.keys.where((key) => key.startsWith('cloud-folder.')),
                 if (options.containsKey(collectionCoverSettingsAction))
                   collectionCoverSettingsAction,
+                if (source.isNotEmpty) sourceSettingsMenuAction,
               },
-              options: options,
-              optionIcons: collectionMenuIcons(options),
-              groups: groups,
-              onSelected: onSelected,
+              options: menuOptions,
+              optionIcons: collectionMenuIcons(menuOptions),
+              groups: [
+                ...groups,
+                if (source.isNotEmpty) [sourceSettingsMenuAction],
+              ],
+              onSelected: (value) {
+                if (value == sourceSettingsMenuAction) {
+                  unawaited(openSourceSettings(context, source: source));
+                } else {
+                  onSelected(value);
+                }
+              },
             ),
           ),
         ),
@@ -132,6 +153,7 @@ class JmCollectionHeaderActions extends StatelessWidget {
             : null,
         child: JmCollectionNavigationActions(
           keyPrefix: 'jm-record',
+          source: actions?.source ?? '',
           inlineSearch: true,
           onSearch: actions?.onSearch,
           searching: actions?.searching ?? false,
@@ -150,11 +172,13 @@ class JmCollectionSortAction extends StatelessWidget {
     required this.options,
     required this.selected,
     required this.onSelected,
+    this.bare = false,
   });
 
   final Map<String, String> options;
   final String selected;
   final ValueChanged<String> onSelected;
+  final bool bare;
 
   @override
   Widget build(BuildContext context) {
@@ -172,6 +196,7 @@ class JmCollectionSortAction extends StatelessWidget {
         symbol: 'arrow.up.arrow.down',
         width: CollectionToolbarMetrics.actionExtent,
         hostPresentation: true,
+        bare: bare,
         options: options,
         optionIcons: collectionMenuIcons(options),
         onSelected: onSelected,
@@ -198,10 +223,12 @@ class JmCollectionFolderChoice extends StatelessWidget {
     required this.value,
     required this.options,
     required this.onChanged,
+    this.onRoute,
   });
   final String label, value;
   final Map<String, String> options;
   final ValueChanged<String>? onChanged;
+  final ValueChanged<ModalRoute<dynamic>?>? onRoute;
 
   @override
   Widget build(BuildContext context) {
@@ -221,11 +248,14 @@ class JmCollectionFolderChoice extends StatelessWidget {
           : () async {
               final picked = await showVideoTaskSheet<String>(
                 context: context,
-                builder: (context) => _JmFolderSelection(
-                  label: label,
-                  value: value,
-                  options: options,
-                ),
+                builder: (context) {
+                  onRoute?.call(ModalRoute.of(context));
+                  return _JmFolderSelection(
+                    label: label,
+                    value: value,
+                    options: options,
+                  );
+                },
               );
               if (context.mounted && picked != null && picked != value) {
                 onChanged?.call(picked);
@@ -240,14 +270,36 @@ class JmCollectionFolderChoice extends StatelessWidget {
   }
 }
 
+Future<String?> pickJmCloudFolder(
+  BuildContext context, {
+  required String label,
+  required Map<String, String> options,
+  required ValueChanged<ModalRoute<dynamic>?> onRoute,
+}) => showBookshelfManagementIsland<String>(
+  context: context,
+  builder: (context) {
+    onRoute(ModalRoute.of(context));
+    return _JmFolderSelection(
+      label: label,
+      value: '',
+      options: options,
+      showCreate: true,
+    );
+  },
+);
+
+const jmCreateFolderChoice = 'cloud-folder.create';
+
 class _JmFolderSelection extends StatefulWidget {
   const _JmFolderSelection({
     required this.label,
     required this.value,
     required this.options,
+    this.showCreate = false,
   });
   final String label, value;
   final Map<String, String> options;
+  final bool showCreate;
   @override
   State<_JmFolderSelection> createState() => _JmFolderSelectionState();
 }
@@ -281,107 +333,51 @@ class _JmFolderSelectionState extends State<_JmFolderSelection> {
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: SearchFieldSurface(
-            child: TextField(
-              key: const ValueKey('jm-folder.search'),
-              decoration: searchFieldDecoration(
-                context,
-                hintText: t.comicList.searchOptions,
+        if (widget.options.length > 8)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: SearchFieldSurface(
+              child: TextField(
+                key: const ValueKey('jm-folder.search'),
+                decoration: searchFieldDecoration(
+                  context,
+                  hintText: t.comicList.searchOptions,
+                ),
+                onChanged: (value) => setState(() => _query = value),
               ),
-              onChanged: (value) => setState(() => _query = value),
             ),
           ),
-        ),
+        if (widget.showCreate)
+          ListTile(
+            leading: const Icon(Icons.create_new_folder_outlined),
+            title: Text(t.bookshelf.createFolder),
+            onTap: () => Navigator.of(context).pop(jmCreateFolderChoice),
+          ),
         const SizedBox(height: 8),
-        Flexible(
-          child: rows.isEmpty
-              ? Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text(t.comicList.noMatchingOptions),
-                )
-              : ListView.builder(
-                  key: const ValueKey('jm-folder.options'),
-                  primary: false,
-                  shrinkWrap: true,
-                  padding: EdgeInsets.zero,
-                  itemCount: rows.length,
-                  itemBuilder: (context, index) => ListTile(
-                    title: Text(rows[index].value),
-                    selected: rows[index].key == widget.value,
-                    trailing: rows[index].key == widget.value
-                        ? const Icon(Icons.check_rounded)
-                        : null,
-                    onTap: () => Navigator.of(context).pop(rows[index].key),
+        if (widget.options.isNotEmpty)
+          Flexible(
+            child: rows.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(t.comicList.noMatchingOptions),
+                  )
+                : ListView.builder(
+                    key: const ValueKey('jm-folder.options'),
+                    primary: false,
+                    shrinkWrap: true,
+                    padding: EdgeInsets.zero,
+                    itemCount: rows.length,
+                    itemBuilder: (context, index) => ListTile(
+                      title: Text(rows[index].value),
+                      selected: rows[index].key == widget.value,
+                      trailing: rows[index].key == widget.value
+                          ? const Icon(Icons.check_rounded)
+                          : null,
+                      onTap: () => Navigator.of(context).pop(rows[index].key),
+                    ),
                   ),
-                ),
-        ),
+          ),
       ],
-    );
-  }
-}
-
-/// Scope and counts form the left reading group; the filter has a fixed trailing
-/// slot, regardless of a missing folder selector or a short/long folder name.
-class JmCollectionResultsRow extends StatelessWidget {
-  const JmCollectionResultsRow({
-    super.key,
-    required this.countLabel,
-    required this.filterButton,
-    this.scope,
-    this.sortAction,
-    this.viewAction,
-    this.countKey,
-  });
-  final String countLabel;
-  final Widget filterButton;
-  final Widget? scope, sortAction, viewAction;
-  final Key? countKey;
-  @override
-  Widget build(BuildContext context) {
-    final actionExtent = CollectionToolbarMetrics.actionExtentOf(context);
-    const gap = CollectionToolbarMetrics.searchControlGap;
-    final actions = [?sortAction, filterButton, ?viewAction];
-    final count = countLabel.isEmpty
-        ? null
-        : Text(
-            countLabel,
-            key: countKey,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodySmall,
-          );
-    return Padding(
-      padding: CollectionToolbarMetrics.contentPaddingOf(context),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final minimumLabels = MediaQuery.textScalerOf(context).scale(144);
-          final scopeOnOwnRow =
-              scope != null &&
-              count != null &&
-              constraints.maxWidth <
-                  actions.length * (actionExtent + gap) + minimumLabels;
-          final tools = Row(
-            spacing: gap,
-            children: [
-              if (scope != null && !scopeOnOwnRow)
-                Expanded(flex: 2, child: scope!),
-              if (count != null || scope == null || scopeOnOwnRow)
-                Expanded(child: count ?? const SizedBox.shrink()),
-              for (final action in actions)
-                SizedBox.square(dimension: actionExtent, child: action),
-            ],
-          );
-          return scopeOnOwnRow
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  spacing: 4,
-                  children: [scope!, tools],
-                )
-              : tools;
-        },
-      ),
     );
   }
 }

@@ -10,15 +10,80 @@ import 'package:zephyr/service/image_recovery.dart';
 class _ConnectivityFixture extends ConnectivityPlatform {
   final initial = Completer<List<ConnectivityResult>>();
   final changes = StreamController<List<ConnectivityResult>>(sync: true);
+  Future<List<ConnectivityResult>>? current;
 
   @override
-  Future<List<ConnectivityResult>> checkConnectivity() => initial.future;
+  Future<List<ConnectivityResult>> checkConnectivity() =>
+      current ?? initial.future;
 
   @override
   Stream<List<ConnectivityResult>> get onConnectivityChanged => changes.stream;
 }
 
 void main() {
+  testWidgets('image reconnect preserves the server Retry-After', (
+    tester,
+  ) async {
+    final hub = ImageRecoveryHub(listenToPlatform: false);
+    addTearDown(hub.dispose);
+    var attempts = 0;
+    final image = ImageRecoveryController(
+      hub: hub,
+      retry: () async => attempts++,
+    );
+    addTearDown(image.dispose);
+    image.failed(const HttpException('HTTP 429 Retry-After: 120'));
+    await tester.pump(const Duration(seconds: 3));
+    hub.updateConnectivity([ConnectivityResult.none]);
+    hub.updateConnectivity([ConnectivityResult.wifi]);
+    await tester.pump(const Duration(seconds: 3));
+    expect(attempts, 0);
+
+    image.reset();
+    image.failed(const HttpException('HTTP 429 Retry-After: 0'));
+    await tester.pump(const Duration(milliseconds: 800));
+    expect(attempts, 1);
+    image.succeeded();
+  });
+
+  testWidgets('foreground rechecks transport after a missed reconnect', (
+    tester,
+  ) async {
+    final previous = ConnectivityPlatform.instance;
+    final platform = _ConnectivityFixture();
+    ConnectivityPlatform.instance = platform;
+    final hub = ImageRecoveryHub();
+    final reasons = <String>[];
+    final listener = hub.recovered.listen(
+      (_) => reasons.add(hub.recoveryReason),
+    );
+    addTearDown(() async {
+      await listener.cancel();
+      await hub.dispose();
+      await platform.changes.close();
+      ConnectivityPlatform.instance = previous;
+    });
+    platform.initial.complete([ConnectivityResult.none]);
+    await tester.pump();
+    expect(hub.online, isFalse);
+    hub.didChangeAppLifecycleState(AppLifecycleState.paused);
+    platform.current = Future.value([ConnectivityResult.wifi]);
+    hub.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(hub.online, isTrue);
+    expect(reasons.where((reason) => reason == 'reconnect'), hasLength(1));
+
+    // A newly delivered event supersedes an in-flight foreground sample.
+    hub.didChangeAppLifecycleState(AppLifecycleState.paused);
+    final stale = Completer<List<ConnectivityResult>>();
+    platform.current = stale.future;
+    hub.didChangeAppLifecycleState(AppLifecycleState.resumed);
+    platform.changes.add([ConnectivityResult.none]);
+    stale.complete([ConnectivityResult.wifi]);
+    await tester.pump();
+    expect(hub.online, isFalse);
+  });
+
   testWidgets('initial offline sample cannot overwrite a newer network event', (
     tester,
   ) async {
@@ -73,12 +138,17 @@ void main() {
     final queue = ImageRequestQueue(concurrency: 2, maxCoverRequests: 1);
     final first = Completer<void>();
     var nextCoverStarted = false;
-    final activeCover = queue.run<void>('cover-1', () => first.future, cover: true);
+    final activeCover = queue.run<void>(
+      'cover-1',
+      () => first.future,
+      cover: true,
+    );
     final waitingCover = queue.run<void>('cover-2', () async {
       nextCoverStarted = true;
     }, cover: true);
     try {
-      final page = await queue.run<int>('chapter-page', () async => 1)
+      final page = await queue
+          .run<int>('chapter-page', () async => 1)
           .timeout(const Duration(seconds: 1));
       expect(page, 1);
       expect(nextCoverStarted, isFalse);
@@ -87,6 +157,14 @@ void main() {
       await Future.wait([activeCover, waitingCover]);
     }
     expect(nextCoverStarted, isTrue);
+  });
+
+  test('timeout URLs are independent of the image HTTP status', () {
+    const url = 'https://source.invalid/art/404/page.webp';
+    expect(imageFailureIsTransient(TimeoutException('Timed out $url')), isTrue);
+    expect(imageFailureIsTransient(Exception('请求超时 $url')), isTrue);
+    expect(imageFailureIsTransient(Exception('HTTP 404 $url')), isFalse);
+    expect(imageFailureIsTransient(Exception('HTTP 429 $url')), isTrue);
   });
 
   testWidgets('only an image from the same CDN renews its retry budget', (
@@ -107,6 +185,7 @@ void main() {
       controller.failed(const SocketException('request timeout'));
       return controller;
     }
+
     final controllers = [
       watch('images-a.example', () => matching++),
       watch('images-b.example', () => unrelated++),
@@ -196,6 +275,45 @@ void main() {
       hub.didChangeAppLifecycleState(AppLifecycleState.resumed);
       await tester.pump(const Duration(seconds: 5));
       expect(calls, 3);
+      controller.dispose();
+      await hub.dispose();
+    },
+  );
+  testWidgets(
+    'visible reader recovery continues slowly and pauses when hidden',
+    (tester) async {
+      final hub = ImageRecoveryHub(listenToPlatform: false);
+      var calls = 0;
+      final controller = ImageRecoveryController(
+        hub: hub,
+        retryIntervalAfterAttempts: const Duration(seconds: 30),
+        retry: () async {
+          calls++;
+          throw const SocketException('temporary');
+        },
+      );
+      controller.failed(const SocketException('temporary'));
+      await tester.pump(const Duration(milliseconds: 800));
+      await tester.pump(const Duration(milliseconds: 2400));
+      expect(calls, 2);
+      await tester.pump(const Duration(seconds: 29));
+      expect(calls, 2);
+      await tester.pump(const Duration(seconds: 1));
+      expect(calls, 3);
+
+      controller.setActive(false);
+      expect(controller.hasPendingRecovery, true);
+      expect(controller.recovering, false);
+      await tester.pump(const Duration(minutes: 1));
+      expect(calls, 3);
+      controller.setActive(true);
+      await tester.pump(const Duration(seconds: 30));
+      expect(calls, 4);
+
+      controller.failed(const FormatException('Invalid image data'));
+      expect(controller.hasPendingRecovery, false);
+      await tester.pump(const Duration(minutes: 1));
+      expect(calls, 4);
       controller.dispose();
       await hub.dispose();
     },

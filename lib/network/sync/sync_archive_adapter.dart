@@ -1,6 +1,33 @@
 import 'package:zephyr/network/sync/backup_protection_adapter.dart';
 import 'package:zephyr/network/sync/comic_sync_core.dart';
 import 'package:zephyr/network/sync/sync_archive_context.dart';
+import 'package:zephyr/service/backup_security/backup_security.dart';
+
+const syncArchiveWireMaxBytes =
+    BackupProtectionSession.maxBytesPayload + 65536 + 8192;
+
+abstract interface class BoundedSyncFileReader {
+  Future<List<int>> downloadBoundedFile(String path, int maxBytes);
+}
+
+class SyncRemoteFileTooLarge extends FormatException {
+  const SyncRemoteFileTooLarge() : super('Cloud snapshot too large');
+}
+
+Future<List<int>> downloadSyncFile(
+  ComicSyncRemoteAdapter transport,
+  String path,
+  int maxBytes,
+) async {
+  final bytes = transport is BoundedSyncFileReader
+      ? await (transport as BoundedSyncFileReader).downloadBoundedFile(
+          path,
+          maxBytes,
+        )
+      : await transport.downloadRemoteFile(path);
+  if (bytes.length > maxBytes) throw const SyncRemoteFileTooLarge();
+  return bytes;
+}
 
 final _managedArchiveFile = RegExp(
   r'^(?:comic\.md5|settings\.md5|comic_\d+\.bin|settings_\d+\.bin|video_library_[a-f0-9]{32}\.bin|chapter_progress_v1_[a-f0-9]{32}\.bin|appearance_[a-f0-9]{32}(?:_[a-f0-9]{64})?\.bin|appearance_resource_[a-f0-9]{64}\.bin)$',
@@ -72,7 +99,8 @@ class SyncArchiveStatus {
 
 /// Domain sync code uses one logical root. Only this boundary translates it
 /// into a physical archive, so old-root import cannot reuse a cleanup by mistake.
-class ScopedSyncArchiveAdapter implements ComicSyncRemoteAdapter {
+class ScopedSyncArchiveAdapter
+    implements ComicSyncRemoteAdapter, BoundedSyncFileReader {
   ScopedSyncArchiveAdapter(
     this.transport,
     this.context, {
@@ -150,6 +178,9 @@ class ScopedSyncArchiveAdapter implements ComicSyncRemoteAdapter {
   @override
   Future<List<int>> downloadRemoteFile(String path) =>
       transport.downloadRemoteFile(_physical(path));
+  @override
+  Future<List<int>> downloadBoundedFile(String path, int maxBytes) =>
+      downloadSyncFile(transport, _physical(path), maxBytes);
   Future<List<int>> readFreshSnapshot(String path) {
     final target = transport;
     final physical = _physical(path);

@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/task_dialog.dart';
 import 'package:zephyr/widgets/pull_refresh_feedback.dart';
 import 'package:zephyr/widgets/collection_cover_fit.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_detailed_content.dart';
@@ -7,6 +8,7 @@ import 'package:zephyr/page/bookshelf/widgets/bookshelf_content_toolbar.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_actions_scope.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_help.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_return_to_top.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_source_scroll.dart';
 import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:zephyr/page/bookshelf/models/shelf_delete_prompt.dart';
 import 'package:zephyr/widgets/action_feedback.dart';
@@ -55,6 +57,7 @@ import 'package:zephyr/service/folder_cover_service.dart';
 import 'package:zephyr/service/local_appearance_images.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_selection_toolbar.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_floating_selection_actions.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 class FolderShelfBackController extends ChangeNotifier {
   bool _isRoot = true;
@@ -172,6 +175,8 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
     with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
+
+  final _scroll = BookshelfSourceScroll();
 
   LocalHistoryEntry? _backEntry;
   bool _removingBackEntry = false;
@@ -353,6 +358,7 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
   @override
   void dispose() {
     _viewEpoch++;
+    _scroll.dispose();
     CollectionViewPreferences.changes.removeListener(_restoreView);
     _removeBackEntry();
     widget.backController?.detach();
@@ -683,7 +689,9 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
       buildWhen: _shelfStructureChanged,
       builder: (context, state) {
         final bloc = context.read<FolderShelfBloc>();
-        final rowScope = bloc.loadedScope;
+        final rowScope = bloc.loadedViewportScope;
+        final storageKey = PageStorageKey((rowScope, _view));
+        _scroll.scope = (storageKey.value, state.search);
         final filteredFolders = state.folders;
         final filteredComics = state.comics;
         final totalCount = filteredFolders.length + filteredComics.length;
@@ -740,7 +748,6 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
         String folderPathOf(ComicFolder f) =>
             ComicFolderService.folderPath(f, syncIdMap: folderSyncIdMap);
 
-        final storageKey = PageStorageKey((rowScope, _view));
         final canReturnToTop =
             widget.isActive && !state.selectionMode && !state.isLoading;
         return BookshelfReturnToTop(
@@ -757,6 +764,14 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
             children: [
               LayoutBuilder(
                 builder: (context, constraints) {
+                  final rowIndices = <Key, int>{
+                    for (final (index, folder) in filteredFolders.indexed)
+                      ValueKey('folder-${folder.uniqueKey}'): index,
+                    for (final (index, comic) in filteredComics.indexed)
+                      ValueKey('comic-${comic.from}:${comic.id}'):
+                          index + filteredFolders.length,
+                  };
+                  int? findItemIndex(Key key) => rowIndices[key];
                   Widget buildItem(BuildContext context, int index) {
                     if (index < filteredFolders.length) {
                       final folder = filteredFolders[index];
@@ -895,6 +910,7 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
                                     t.bookshelf.unknownSource,
                               ].where((value) => value.isNotEmpty).join(' · '),
                             ),
+                            showMetadata: !selection.$1,
                           ),
                           type: comicType,
                           selectionMode: selection.$1,
@@ -953,6 +969,7 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
                       ? GridView.builder(
                           physics: const AlwaysScrollableScrollPhysics(),
                           key: storageKey,
+                          controller: _scroll,
                           primary: false,
                           padding: padding,
                           gridDelegate: BookshelfContentLayout.gridDelegate(
@@ -961,14 +978,17 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
                           ),
                           itemCount: totalCount,
                           itemBuilder: buildItem,
+                          findChildIndexCallback: findItemIndex,
                         )
                       : ListView.separated(
                           physics: const AlwaysScrollableScrollPhysics(),
                           key: storageKey,
+                          controller: _scroll,
                           primary: false,
                           padding: padding,
                           itemCount: totalCount,
                           itemBuilder: buildItem,
+                          findItemIndexCallback: findItemIndex,
                           separatorBuilder: (_, _) => const WorkListDivider(
                             height: BookshelfContentLayout.spacing,
                           ),
@@ -1217,7 +1237,7 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
+        return ShortAlert(
           title: Text(t.bookshelf.confirmDeleteFolderTitle),
           content: Text(
             shelfDeletePrompt(
@@ -1226,13 +1246,14 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
               comics: 0,
             ),
           ),
-          scrollable: true,
           actions: [
-            TextButton(
+            ShortAlertAction(
               onPressed: () => Navigator.of(dialogContext).pop(false),
               child: Text(t.common.cancel),
             ),
-            FilledButton(
+            ShortAlertAction(
+              destructive: true,
+              filled: true,
               onPressed: () => Navigator.of(dialogContext).pop(true),
               child: Text(t.common.delete),
             ),
@@ -1272,8 +1293,9 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
   Widget _withHistoryTime(
     ComicSimplifyEntryInfo info,
     bool enabled,
-    Widget caption,
-  ) {
+    Widget caption, {
+    required bool showMetadata,
+  }) {
     final statistics = info.detailViewCount > 0
         ? t.comicEntry.views(count: info.detailViewCount)
         : info.detailPopularity > 0
@@ -1288,6 +1310,7 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
           metadata: info.detailMetadata,
           description: info.description,
           statistics: statistics,
+          showMetadata: showMetadata,
         );
       }
       return caption;
@@ -1314,6 +1337,7 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
           metadata: info.detailMetadata,
           description: info.description,
           statistics: statistics,
+          showMetadata: showMetadata,
         );
       }
       if (history == null) return caption;
@@ -1325,6 +1349,7 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
         metadata: info.detailMetadata,
         description: info.description,
         statistics: statistics,
+        showMetadata: showMetadata,
         progress: shelfReadingPosition(
           history.title,
           history.chapterTitle,
@@ -1400,7 +1425,7 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
+        return ShortAlert(
           title: Text(t.bookshelf.confirmRemoveComicTitle),
           content: Text(
             scope.facets.isActive ||
@@ -1409,11 +1434,12 @@ class _FolderShelfPageContentState extends State<_FolderShelfPageContent>
                 : t.bookshelf.confirmRemoveComicContent(title: info.title),
           ),
           actions: [
-            TextButton(
+            ShortAlertAction(
               onPressed: () => Navigator.of(dialogContext).pop(false),
               child: Text(t.common.cancel),
             ),
-            TextButton(
+            ShortAlertAction(
+              destructive: true,
               onPressed: () => Navigator.of(dialogContext).pop(true),
               child: Text(t.common.remove),
             ),
@@ -1511,9 +1537,8 @@ class _ShelfFolderNameDialogState extends State<_ShelfFolderNameDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(widget.title),
-    scrollable: true,
+  Widget build(BuildContext context) => TaskDialog(
+    title: widget.title,
     content: Form(
       key: _form,
       child: TextFormField(
@@ -1726,15 +1751,16 @@ Future<bool> _confirmComicImportOverwrite(
 ) async {
   final result = await showDialog<bool>(
     context: context,
-    builder: (dialogContext) => AlertDialog(
+    builder: (dialogContext) => ShortAlert(
       title: Text(t.bookshelf.comicExists),
       content: Text(t.bookshelf.confirmOverwriteImport(title: title)),
       actions: [
-        TextButton(
+        ShortAlertAction(
           onPressed: () => Navigator.of(dialogContext).pop(false),
           child: Text(t.common.cancel),
         ),
-        TextButton(
+        ShortAlertAction(
+          destructive: true,
           onPressed: () => Navigator.of(dialogContext).pop(true),
           child: Text(t.common.overwrite),
         ),
@@ -1787,7 +1813,7 @@ Future<void> _confirmDeleteSelected(BuildContext context) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) {
-      return AlertDialog(
+      return ShortAlert(
         title: Text(t.bookshelf.confirmDeleteSelectedTitle),
         content: Text(
           selection.facets.isActive
@@ -1798,13 +1824,14 @@ Future<void> _confirmDeleteSelected(BuildContext context) async {
                   comics: selection.selectedComicKeys.length,
                 ),
         ),
-        scrollable: true,
         actions: [
-          TextButton(
+          ShortAlertAction(
             onPressed: () => Navigator.of(dialogContext).pop(false),
             child: Text(t.common.cancel),
           ),
-          FilledButton(
+          ShortAlertAction(
+            destructive: true,
+            filled: true,
             onPressed: () => Navigator.of(dialogContext).pop(true),
             child: Text(t.common.delete),
           ),

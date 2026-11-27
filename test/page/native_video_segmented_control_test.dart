@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
+import 'package:zephyr/widgets/breeze_navigation_bar.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -274,16 +275,35 @@ void main() {
   }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
   testWidgets(
+    'Android system segments use a single selection plate and still select',
+    (tester) async {
+      final choices = <String>[];
+      await tester.pumpWidget(selector(scale: 2, onSelected: choices.add));
+      expect(find.byType(BreezeSectionSelector<String>), findsOneWidget);
+      expect(find.byType(SegmentedButton<String>), findsNothing);
+      expect(
+        find.byKey(const ValueKey('breeze.selection.plate')),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('站点追番'));
+      expect(choices, ['site']);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  testWidgets(
     'missing selections stay unselected and null callbacks disable interaction',
     (tester) async {
       await tester.pumpWidget(selector(system: false, selected: 'missing'));
       await tester.pumpAndSettle();
-      final fallback = tester.widget<SegmentedButton<String>>(
-        find.byType(SegmentedButton<String>),
+      expect(
+        find.byKey(const ValueKey('breeze.selection.plate')),
+        findsNothing,
       );
-      expect(fallback.selected, isEmpty);
-      expect(fallback.emptySelectionAllowed, isTrue);
-      expect(fallback.onSelectionChanged, isNull);
+      final control = tester.widget<BreezeSectionSelector<String>>(
+        find.byType(BreezeSectionSelector<String>),
+      );
+      expect(control.enabled, isFalse);
       expect(tester.takeException(), isNull);
     },
   );
@@ -313,7 +333,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(
-        tester.getSize(find.byType(SegmentedButton<String>)).height,
+        tester.getSize(find.byType(BreezeSectionSelector<String>)).height,
         inInclusiveRange(88, 400),
       );
       expect(tester.takeException(), isNull);

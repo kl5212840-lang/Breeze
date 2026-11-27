@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/search/widget/search_tool_glyph.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 /// Shared by comic and video search. Destructive actions affect only the
 /// confirmed words provided by this scope, never an implicit global history.
@@ -70,28 +71,19 @@ class _SearchHistorySectionState extends State<SearchHistorySection> {
     if (_locked || words.isEmpty) return;
     _historyFocus.requestFocus();
     setState(() => _confirming = true);
-    final confirmed = await showDialog<bool>(
+    final confirmed = await confirmShortAlert(
       context: context,
-      builder: (dialog) => AlertDialog(
-        title: Text(clearing ? t.search.clearHistory : t.common.delete),
-        content: Text(
-          clearing
-              ? t.search.clearScopedHistoryConfirm
-              : words.length == 1
-              ? t.search.deleteSingleHistoryConfirm
-              : t.search.deleteHistoryConfirm(count: words.length),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialog, false),
-            child: Text(t.common.cancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialog, true),
-            child: Text(clearing ? t.search.clearHistory : t.common.delete),
-          ),
-        ],
+      title: Text(clearing ? t.search.clearHistory : t.common.delete),
+      content: Text(
+        clearing
+            ? t.search.clearScopedHistoryConfirm
+            : words.length == 1
+            ? t.search.deleteSingleHistoryConfirm
+            : t.search.deleteHistoryConfirm(count: words.length),
       ),
+      confirmLabel: clearing ? t.search.clearHistory : t.common.delete,
+      destructive: true,
+      filled: true,
     );
     if (!mounted) return;
     setState(() => _confirming = false);
@@ -149,7 +141,10 @@ class _SearchHistorySectionState extends State<SearchHistorySection> {
                         t.search.history,
                         style: theme.textTheme.titleMedium,
                       ),
-                      if (widget.compact && widget.words.isNotEmpty) scope,
+                      if (widget.compact &&
+                          widget.words.isNotEmpty &&
+                          (_managing || widget.scopeLabel.isNotEmpty))
+                        scope,
                     ],
                   ),
                 ),

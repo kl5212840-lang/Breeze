@@ -1,5 +1,5 @@
 import 'package:zephyr/page/video/video_network_scope.dart';
-import 'package:zephyr/page/video/video_thumbnail.dart';
+import 'package:zephyr/page/setting/common/plugin_account_avatar.dart';
 import 'package:zephyr/page/video/omofun_account_details_page.dart';
 import 'package:zephyr/widgets/collection_cover_privacy.dart';
 import 'dart:convert';
@@ -43,6 +43,19 @@ class _Api extends RustLibApi {
 }
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();final api=_Api();
+
+  setUp(() {
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const connectivity = MethodChannel('dev.fluttercommunity.plus/connectivity');
+    const changes = MethodChannel('dev.fluttercommunity.plus/connectivity_status');
+    messenger.setMockMethodCallHandler(connectivity, (_) async => ['wifi']);
+    messenger.setMockMethodCallHandler(changes, (_) async => null);
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(connectivity, null);
+      messenger.setMockMethodCallHandler(changes, null);
+    });
+  });
+
   final messenger=TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger,channels=<MethodChannel>[];
   final home=Uri.parse('https://www.omofuna.com');
   setUpAll(() async {SharedPreferences.setMockInitialValues({});await TestObjectBoxHelper.setUpTestObjectBox();RustLib.initMock(api:api);});
@@ -72,13 +85,39 @@ void main() {
       await tester.pumpWidget(BlocProvider.value(value:registry,child:AppInterfaceStyleScope(style:preference,
         child:MaterialApp(home:VideoNetworkScope(source:omoNetworkSource,network:Future.value(null),
           child:Scaffold(body:OmoAccountPage(source:omoNetworkSource,client:site,active:true,onLocalHistory:(){})))))));
-      await tester.pumpAndSettle();expect(find.text('Actual member'),findsOneWidget);
+
+      // Local account previews finish metadata reads outside the fake clock.
+      await tester.pump();
+      for (var i = 0; i < 50 && tester.binding.hasScheduledFrame; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 5)));
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      await tester.pumpAndSettle();
+      expect(find.text('Actual member'),findsOneWidget);
       final avatar=find.byType(OmoAccountAvatar);
       expect(tester.widget<OmoAccountAvatar>(avatar).source,omoNetworkSource);
       expect(tester.widget<OmoAccountAvatar>(avatar).size,52);
-      expect(tester.widget<VideoThumbnail>(find.descendant(of:avatar,matching:find.byType(VideoThumbnail))).source,omoNetworkSource);
-      expect(tester.widget<CollectionCoverPrivacyScope>(find.descendant(of:avatar,matching:find.byType(CollectionCoverPrivacyScope))).enabled,isFalse,
-        reason:'a source account portrait is not a protected record cover');
+      final portrait = find.descendant(
+        of: avatar,
+        matching: find.byType(PluginAccountAvatar),
+      );
+      expect(portrait, findsOneWidget);
+      final portraitWidget = tester.widget<PluginAccountAvatar>(portrait);
+      expect(portraitWidget.source, omoNetworkSource);
+      expect(portraitWidget.identity, '42');
+      expect(portraitWidget.origin, home.origin);
+      expect(
+        find.descendant(of: portrait, matching: find.byType(CircleAvatar)),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: portrait,
+          matching: find.byType(CollectionCoverPrivacyScope),
+        ),
+        findsNothing,
+        reason: 'the account portrait renders independently of cover privacy',
+      );
 
       expect(PluginAccountIdentities.current(omoNetworkSource)?.serverIdentity,'42');
       final settings = find.widgetWithText(ListTile, t.plugin.pluginSettings);

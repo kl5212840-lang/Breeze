@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +9,9 @@ import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/cubit/plugin_registry_cubit.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart' show objectbox;
+import 'package:zephyr/page/video/api_video_collection.dart';
+import 'package:zephyr/page/video/api_video_models.dart';
+import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/object_box/model.dart' show ComicFolderType;
 import 'package:zephyr/page/bookshelf/bloc/folder_shelf_bloc.dart';
 import 'package:zephyr/page/bookshelf/cubit/bookshelf_search_cubit.dart';
@@ -21,11 +25,13 @@ import 'package:zephyr/page/bookshelf/widgets/bookshelf_scope_controls.dart';
 import 'package:zephyr/page/bookshelf/widgets/video_bookshelf_pane.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
+import 'package:zephyr/service/collection_view_preferences.dart';
 import 'package:zephyr/src/rust/frb_generated.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_navigation_bar.dart';
 import 'package:zephyr/widgets/collection_command_icons.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
+import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry.dart';
 import '../test_helper.dart';
 
 class _ShelfMotionTextApi extends RustLibApi {
@@ -50,6 +56,186 @@ void main() {
     debugShelfDbRootPath = null;
     await TestObjectBoxHelper.tearDownTestObjectBox();
   });
+  for (final (video, view) in const [
+    (false, 'grid'),
+    (false, 'list'),
+    (true, 'grid'),
+    (true, 'list'),
+  ]) {
+    final medium = video ? 'video' : 'comic';
+    testWidgets(
+      '$medium $view source chips restore the committed viewport offset',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({
+          if (video) 'breeze.bookshelf.media.v1': 'video',
+        });
+        await CollectionViewPreferences.write(
+          'public|$medium|${video ? 'favorite' : 'history'}',
+          view,
+        );
+        RustLib.initMock(api: _ShelfMotionTextApi());
+        addTearDown(RustLib.dispose);
+        const connectivity = MethodChannel(
+          'dev.fluttercommunity.plus/connectivity',
+        );
+        const connectivityChanges = MethodChannel(
+          'dev.fluttercommunity.plus/connectivity_status',
+        );
+        final messenger = tester.binding.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(connectivity, (_) async => ['none']);
+        messenger.setMockMethodCallHandler(
+          connectivityChanges,
+          (_) async => null,
+        );
+        addTearDown(() {
+          messenger.setMockMethodCallHandler(connectivity, null);
+          messenger.setMockMethodCallHandler(connectivityChanges, null);
+        });
+        tester.view.physicalSize = const Size(390, 744);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        const short = 'a', long = 'b';
+        if (video) {
+          for (final source in [short, long]) {
+            for (var i = 0; i < (source == short ? 1 : 45); i++) {
+              await VideoLibraryStore.shared.setFavorite(
+                source,
+                ApiVideoItem(
+                  id: '$i',
+                  title: '$source $i',
+                  detailUrl: Uri.parse('https://example.com/$source/$i'),
+                ),
+                true,
+              );
+            }
+          }
+        } else {
+          final ids = objectbox.unifiedHistoryBox.putMany([
+            for (final source in [short, long])
+              for (var i = 0; i < (source == short ? 1 : 45); i++)
+                createTestHistory('$source|$i')..source = source,
+          ]);
+          addTearDown(() => objectbox.unifiedHistoryBox.removeMany(ids));
+        }
+        final style = ValueNotifier('breeze');
+        addTearDown(style.dispose);
+        await tester.pumpWidget(
+          MultiBlocProvider(
+            providers: [
+              BlocProvider(create: (_) => GlobalSettingCubit()),
+              BlocProvider(create: (_) => PluginRegistryCubit()),
+            ],
+            child: MaterialApp(
+              home: AppInterfaceStyleScope(
+                style: style,
+                child: const BookshelfPage(),
+              ),
+            ),
+          ),
+        );
+
+        Finder chip(String source) =>
+            find.byKey(ValueKey('bookshelf.source.$source'));
+        final pane = video
+            ? find.byType(ApiVideoCollection).hitTestable()
+            : find.byKey(const ValueKey('comic-shelf.history')).hitTestable();
+        final scrollable = find
+            .descendant(
+              of: pane,
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is Scrollable &&
+                    widget.axisDirection == AxisDirection.down,
+              ),
+            )
+            .hitTestable();
+        ScrollableState viewport() => tester.state<ScrollableState>(scrollable);
+        bool loaded(String source, int count) {
+          if (pane.evaluate().isEmpty) return false;
+          if (video) {
+            final collection = tester.widget<ApiVideoCollection>(pane);
+            return !collection.loading && collection.items.length == count;
+          }
+          if (scrollable.evaluate().isEmpty) return false;
+          final state = tester
+              .element(scrollable)
+              .read<FolderShelfBloc>()
+              .state;
+          return !state.isLoading &&
+              state.comics.length == count &&
+              listEquals(
+                state.search?.sources ?? [],
+                source.isEmpty ? [] : [source],
+              );
+        }
+
+        Future<void> waitFor(bool Function() ready) async {
+          for (var i = 0; i < 120 && !ready(); i++) {
+            await tester.runAsync(
+              () => Future<void>.delayed(const Duration(milliseconds: 15)),
+            );
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+          expect(ready(), isTrue);
+        }
+
+        Future<void> choose(String source) async {
+          await tester.ensureVisible(chip(source));
+          await tester.tap(chip(source));
+          await tester.pump();
+        }
+
+        if (!video) {
+          final history = find.descendant(
+            of: find.byKey(const ValueKey('bookshelf.records')),
+            matching: find.text(t.bookshelf.history),
+          );
+          await waitFor(() => history.evaluate().isNotEmpty);
+          await tester.tap(history);
+          await tester.pump();
+        }
+
+        await waitFor(
+          () =>
+              chip(short).evaluate().isNotEmpty &&
+              chip(long).evaluate().isNotEmpty &&
+              loaded('', 46) &&
+              scrollable.evaluate().isNotEmpty,
+        );
+        final originalViewport = viewport();
+        viewport().position.jumpTo(900);
+        await tester.pump();
+        expect(viewport().position.pixels, 900);
+
+        await choose(short);
+        await waitFor(() => loaded(short, 1));
+        expect(viewport(), same(originalViewport));
+        expect(viewport().position.pixels, 0);
+
+        await choose(long);
+        await waitFor(() => loaded(long, 45));
+        expect(viewport(), same(originalViewport));
+        expect(viewport().position.pixels, 0);
+        viewport().position.jumpTo(470);
+        await tester.pump();
+
+        // Retarget two requests without waiting for either site's content.
+        await choose(short);
+        await choose(long);
+        await waitFor(() => loaded(long, 45));
+        expect(viewport(), same(originalViewport));
+        expect(viewport().position.pixels, 470);
+
+        await choose('');
+        await waitFor(() => loaded('', 46));
+        expect(viewport(), same(originalViewport));
+        expect(viewport().position.pixels, 900);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets(
     'Breeze bookshelf taps keep content stationary while the selected plate retargets',
     (tester) async {
@@ -82,8 +268,11 @@ void main() {
         ..source = favoriteSource;
       final history = createTestHistory('$historySource|2')
         ..source = historySource;
+      final secondHistory = createTestHistory('$historySource|3')
+        ..source = historySource;
       objectbox.unifiedFavoriteBox.put(favorite);
       objectbox.unifiedHistoryBox.put(history);
+      objectbox.unifiedHistoryBox.put(secondHistory);
       final favoriteLink = ComicLinkService.addComic(
         favorite.uniqueKey,
         null,
@@ -93,6 +282,7 @@ void main() {
         objectbox.comicLinkBox.remove(favoriteLink.id);
         objectbox.unifiedFavoriteBox.remove(favorite.id);
         objectbox.unifiedHistoryBox.remove(history.id);
+        objectbox.unifiedHistoryBox.remove(secondHistory.id);
       });
       final style = ValueNotifier('breeze');
       final reduceMotion = ValueNotifier(false);
@@ -142,6 +332,19 @@ void main() {
         matching: find.byKey(const ValueKey('breeze.selection.plate')),
       );
       final sourceRail = find.byType(BookshelfSourceNavigation);
+      final header = find.byKey(const ValueKey('bookshelf.main-header'));
+      Finder count(int value) => find.descendant(
+        of: header,
+        matching: find.text(t.videoLibrary.results(count: value)),
+      );
+      final common = [
+        find.byKey(const ValueKey('bookshelf.search')),
+        find.byKey(const ValueKey('bookshelf.cover-privacy')),
+        find.byKey(const ValueKey('comic-shelf.more')),
+        find.byKey(const ValueKey('comic-shelf.view')),
+        find.byKey(const ValueKey('comic-shelf.filter')),
+        find.byKey(const ValueKey('bookshelf.sources.manage')),
+      ];
       final viewport = find.byType(PageView).hitTestable();
       final favoriteContent = find.byKey(
         const ValueKey('comic-shelf.favorite'),
@@ -190,11 +393,50 @@ void main() {
       expect(plateProgress(), inExclusiveRange(0.0, 1.0));
       await tester.pump(const Duration(milliseconds: 135));
       await waitFor(find.text(history.title));
+      await waitFor(count(2));
+      final work = find.byWidgetPredicate(
+        (widget) =>
+            widget is ComicSimplifyEntry &&
+            widget.info.from == historySource &&
+            widget.info.id == history.comicId,
+      );
+      final coverElement = tester.element(work);
+      final historyBloc = coverElement.read<FolderShelfBloc>();
+      Future<void> selectHistorySource(String source) async {
+        final chip = find.byKey(ValueKey('bookshelf.source.$source'));
+        await tester.ensureVisible(chip);
+        await tester.tap(chip);
+        await tester.pump();
+        final wanted = source.isEmpty ? <String>[] : [source];
+        for (
+          var i = 0;
+          i < 80 &&
+              (historyBloc.state.isLoading ||
+                  !listEquals(historyBloc.state.search?.sources, wanted));
+          i++
+        ) {
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 20)),
+          );
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+        expect(historyBloc.state.search?.sources, wanted);
+        expect(historyBloc.state.isLoading, isFalse);
+      }
+
+      await selectHistorySource('');
+      expect(tester.element(work), same(coverElement));
+      await selectHistorySource(historySource);
+      expect(tester.element(work), same(coverElement));
+      final controlsInHistory = common.map(tester.getRect).toList();
 
       await tester.tap(favoriteTab);
       await tester.pump();
       expect(page(), 0);
       expect(sources(), [favoriteSource]);
+      expect(count(2), findsNothing);
+      expect(count(1), findsOneWidget);
+      expect(common.map(tester.getRect).toList(), controlsInHistory);
       await tester.pump(const Duration(milliseconds: 48));
       final reversingAt = plateProgress();
       expect(reversingAt, inExclusiveRange(0.0, 1.0));
@@ -257,6 +499,8 @@ void main() {
       await accepted.up();
       await tester.pump();
       expect(find.byType(VideoBookshelfPane).hitTestable(), findsOneWidget);
+      expect(count(2), findsNothing);
+      expect(common.map(tester.getRect).toList(), controlsInHistory);
       var previous = mediaProgress();
       for (var frame = 0; frame < 12; frame++) {
         await tester.pump(const Duration(milliseconds: 16));
@@ -270,6 +514,8 @@ void main() {
       }
       expect(previous, closeTo(1, .01));
       await tester.tap(comicTab);
+      await tester.pump();
+      expect(count(2), findsOneWidget);
       await tester.pumpAndSettle();
       expect(tester.element(historyContent), same(originalHistoryPane));
 

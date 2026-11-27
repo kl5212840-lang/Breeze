@@ -110,7 +110,18 @@ const videoSiteOperationBody = r'''
       capabilities: { like: capability(canLike), dislike: capability(canDislike), follow: capability(canFollow), createPlaylist: capability(canCreatePlaylist),
         playlists: capability(canSave), watchLater: capability(canSave), comments: 'ready' } };
   };
-  const sameVoteCounts = (a, b) => a.positiveVotes === b.positiveVotes && a.negativeVotes === b.negativeVotes;
+  const sameVoteCounts = (a, b) => a.positiveVotes === b.positiveVotes && a.negativeVotes === b.negativeVotes && a.totalVotes === b.totalVotes;
+  const hasVoteCounts = tally => tally?.positiveVotes != null && tally.negativeVotes != null && tally.totalVotes != null;
+  const projectedVoteTally = (before, after) => {
+    if (!hasVoteCounts(before) ||
+        ![before.liked, before.disliked, after.liked, after.disliked].every(value => typeof value === 'boolean') ||
+        (before.liked && before.disliked) || (after.liked && after.disliked)) return null;
+    const positiveVotes = before.positiveVotes + Number(after.liked) - Number(before.liked);
+    const negativeVotes = before.negativeVotes + Number(after.disliked) - Number(before.disliked);
+    const totalVotes = positiveVotes + negativeVotes;
+    if (positiveVotes < 0 || negativeVotes < 0 || !Number.isSafeInteger(totalVotes)) return null;
+    return { positiveVotes, negativeVotes, totalVotes, ratingPercentRaw: null, voteCountEstimated: true };
+  };
   const withRecentVoteTally = (value, doc) => {
     const receipt = state.voteTally;
     if (!receipt || receipt.page !== expected.href || Date.now() > receipt.until ||
@@ -118,7 +129,7 @@ const videoSiteOperationBody = r'''
         receipt.liked !== value.liked || receipt.disliked !== value.disliked) return value;
     if (value.positiveVotes === null || value.negativeVotes === null ||
         sameVoteCounts(value, receipt.previous) ||
-        sameVoteCounts(value, receipt.tally) && value.ratingPercentRaw === null) {
+        !receipt.tally.voteCountEstimated && sameVoteCounts(value, receipt.tally) && value.ratingPercentRaw === null) {
       return { ...value, ...receipt.tally };
     }
     state.voteTally = null;
@@ -568,8 +579,9 @@ const videoSiteOperationBody = r'''
         // toggle cannot accidentally perform the opposite of the user's intent.
         const initial = payload.enabled === undefined ? document : parse(await get(expected.href));
         if (ownProfile(initial)?.href !== ownProfile(document)?.href) throw 'changed';
-        const before = interaction(initial);
+        const observedBefore = interaction(initial);
         const vote = operation === 'like' || operation === 'dislike';
+        const before = vote ? withRecentVoteTally(observedBefore, initial) : observedBefore;
         const dislike = operation === 'dislike';
         if (!(vote ? dislike ? before.canDislike : before.canLike : before.canFollow)) throw own(initial) ? 'unsupported' : 'login';
         const key = vote ? dislike ? 'disliked' : 'liked' : 'following';
@@ -582,30 +594,72 @@ const videoSiteOperationBody = r'''
         else {
           // Original handlers serialize current states; polarity chooses the vote.
           const receipt = await post(form, path, vote ? {'like-is-positive':dislike ? '0' : '1'} : {}, vote ? initial : document);
-          const doc = parse(await get(expected.href));
-          requireCurrentPage();
           const owner = ownProfile(initial)?.href;
-          if (!owner || ownProfile(doc)?.href !== owner || ownProfile(document)?.href !== owner) throw 'changed';
-          const afterForm = formFor(doc,path,fields);
-          if (fieldValue(afterForm,vote ? 'like-foreign-id' : 'subscribe-artist-id') !== fieldValue(form,vote ? 'like-foreign-id' : 'subscribe-artist-id')) throw 'changed';
+          const workField = vote ? 'like-foreign-id' : 'subscribe-artist-id';
+          const replacement = vote && receipt.likeBtn ? formFor(parse(receipt.likeBtn), path, fields) : null;
+          const replacementTally = voteTally(replacement);
+          const hasChangedCounts = tally => hasVoteCounts(tally) && !sameVoteCounts(tally, observedBefore);
+          const matchingReplacement = selection =>
+            selection.liked !== null && selection.disliked !== null &&
+            fieldValue(replacement, 'like-foreign-id') === expected.searchParams.get('v') &&
+            fieldValue(replacement, 'like-user-id') === fieldValue(form, 'like-user-id') &&
+            fieldValue(replacement, 'like-status') === (selection.liked ? '1' : '') &&
+            fieldValue(replacement, 'unlike-status') === (selection.disliked ? '1' : '');
+          const confirmedTally = selection => matchingReplacement(selection) && hasChangedCounts(replacementTally)
+            ? replacementTally : null;
+          const selection = dislike
+            ? { liked: desired ? false : before.liked, disliked: desired }
+            : { liked: desired, disliked: desired ? false : before.disliked };
+          const acknowledged = receipt.accepted || (vote && matchingReplacement(selection));
+          if (vote && acknowledged) {
+            requireCurrentPage();
+            if (!owner || ownProfile(document)?.href !== owner) throw 'changed';
+            const tally = confirmedTally(selection) || projectedVoteTally(before, selection);
+            job.voteAccepted = { ...before, ...selection, ...tally };
+          }
+
+          const confirm = async () => {
+            requireCurrentPage();
+            if (!owner || ownProfile(document)?.href !== owner) throw 'changed';
+            const doc = parse(await get(expected.href));
+            requireCurrentPage();
+            if (ownProfile(doc)?.href !== owner || ownProfile(document)?.href !== owner) throw 'changed';
+            const verifiedForm = formFor(doc, path, fields);
+            if (fieldValue(verifiedForm, workField) !== fieldValue(form, workField)) throw 'changed';
+            if (vote && fieldValue(verifiedForm, 'like-user-id') !== fieldValue(form, 'like-user-id')) throw 'changed';
+            return doc;
+          };
+          let doc = await confirm();
           result = interaction(doc);
+          const selectionLagged = acknowledged && result[key] !== desired;
+          const countsLagged = result[key] === desired && !hasChangedCounts(result) && !confirmedTally(result);
+          if (vote && (selectionLagged || countsLagged) && !controller.signal.aborted) {
+            // The account's vote and the public totals can become visible at
+            // different times. A retry here must stay read-only.
+            await new Promise(resolve => setTimeout(resolve, 250));
+            requireCurrentPage();
+            if (ownProfile(document)?.href !== owner) throw 'changed';
+            if (!controller.signal.aborted) {
+              try {
+                const newer = await confirm();
+                const next = interaction(newer);
+                if (result[key] !== desired || next[key] === desired) {
+                  doc = newer;
+                  result = next;
+                }
+              } catch (error) {
+                if (result[key] !== desired || !['network', 'unconfirmed'].includes(error)) throw error;
+              }
+            }
+          }
           if (vote) {
             state.voteTally = null;
-            // The first-party response replaces its vote form immediately.
-            // Only use its public numbers after an independent GET confirms
-            // both choices for the same user and video.
-            if (receipt.likeBtn && result[key] === desired && result.disliked !== null && result.liked !== null) {
-              const replacement = formFor(parse(receipt.likeBtn), path, fields);
-              const confirmedState = ['like-status', 'unlike-status'].every(name =>
-                ['', '1'].includes(fieldValue(replacement, name)) &&
-                fieldValue(replacement, name) === fieldValue(afterForm, name));
-              const tally = voteTally(replacement);
-              if (confirmedState && tally.positiveVotes !== null && tally.negativeVotes !== null && tally.totalVotes !== null &&
-                  fieldValue(replacement, 'like-foreign-id') === expected.searchParams.get('v') &&
-                  fieldValue(replacement, 'like-user-id') === fieldValue(afterForm, 'like-user-id')) {
+            if (result[key] === desired && !hasChangedCounts(result)) {
+              const tally = confirmedTally(result) || projectedVoteTally(before, result);
+              if (tally) {
                 state.voteTally = { page: expected.href, owner, liked: result.liked, disliked: result.disliked,
-                  previous: before, tally, until: Date.now() + 30000 };
-                result = withRecentVoteTally(result, doc);
+                  previous: observedBefore, tally, until: Date.now() + 30000 };
+                result = { ...result, ...tally };
               }
             }
           } else {
@@ -654,7 +708,11 @@ String videoSiteOperationPollScript(String id, {bool cancel = false}) =>
   const state = window.__breezeNativeVideoWork, id = ${jsonEncode(id)}, job = state?.jobs[id];
   if (!job) return {status:'changed'};
   if (${cancel ? 'true' : 'false'}) { job.controller.abort(); delete state.jobs[id]; return {status:'cancelled'}; }
-  if (job.pending) return {status:'pending'};
+  if (job.pending) {
+    const voteAccepted = job.voteAccepted;
+    delete job.voteAccepted;
+    return voteAccepted ? {status:'pending', voteAccepted} : {status:'pending'};
+  }
   delete state.jobs[id];
   return job.result;
 })()
@@ -740,11 +798,15 @@ class VideoSiteOperations {
     VideoInteractionState.fromWire,
   );
 
-  Future<VideoSiteResult<VideoInteractionState>> setLiked(bool enabled) =>
-      _setInteraction('like', enabled);
+  Future<VideoSiteResult<VideoInteractionState>> setLiked(
+    bool enabled, {
+    void Function(VideoInteractionState)? onAccepted,
+  }) => _setInteraction('like', enabled, onAccepted);
 
-  Future<VideoSiteResult<VideoInteractionState>> setDisliked(bool enabled) =>
-      _setInteraction('dislike', enabled);
+  Future<VideoSiteResult<VideoInteractionState>> setDisliked(
+    bool enabled, {
+    void Function(VideoInteractionState)? onAccepted,
+  }) => _setInteraction('dislike', enabled, onAccepted);
 
   Future<VideoSiteResult<VideoInteractionState>> setFollowing(bool enabled) =>
       _setInteraction('follow', enabled);
@@ -757,10 +819,11 @@ class VideoSiteOperations {
 
   Future<VideoSiteResult<VideoInteractionState>> _setInteraction(
     String operation,
-    bool enabled,
-  ) async {
+    bool enabled, [
+    void Function(VideoInteractionState)? onVoteAccepted,
+  ]) async {
     final result = _typed(
-      await run(operation, {'enabled': enabled}),
+      await run(operation, {'enabled': enabled}, onVoteAccepted),
       VideoInteractionState.fromWire,
     );
     if (result.status != VideoSiteStatus.ok) return result;
@@ -936,6 +999,7 @@ class VideoSiteOperations {
   Future<Map<String, dynamic>> run(
     String operation, [
     Map<String, dynamic> payload = const {},
+    void Function(VideoInteractionState)? onVoteAccepted,
   ]) async {
     VideoDownloadResolutionOwner.current?.check();
     if (_disposed) return {'status': 'changed'};
@@ -989,6 +1053,18 @@ class VideoSiteOperations {
             ).timeout(const Duration(seconds: 2)),
           );
           if (result['status'] != 'pending') break;
+          if (!_disposed &&
+              !_cancelReadRequested &&
+              onVoteAccepted != null &&
+              result['voteAccepted'] is Map) {
+            final vote = VideoInteractionState.fromWire(
+              _decode(result['voteAccepted']),
+            );
+            final selected = operation == 'like' ? vote.liked : vote.disliked;
+            if (selected != null && selected == payload['enabled']) {
+              onVoteAccepted(vote);
+            }
+          }
         }
       }
       if (_disposed) return {'status': 'changed'};

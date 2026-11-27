@@ -3,16 +3,17 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/plugin_store/models/cloud_plugin_item.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
-import 'package:zephyr/plugin/utils/plugin_catalog_merge.dart';
+import 'package:zephyr/plugin/plugin_install_service.dart';
 import 'package:zephyr/plugin/utils/plugin_version_utils.dart';
 import 'package:zephyr/plugin/utils/plugin_update_channel_utils.dart'
     show parseGetInfoJson;
-import 'package:zephyr/plugin/utils/published_plugin_artifact.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/widgets/plugin_icon.dart';
 
-final _installedScriptHashes = Expando<String>();
+const _pluginIconExtent = 40.0;
+const _pluginIconGap = 12.0;
 
-class CloudPluginCard extends StatelessWidget {
+class CloudPluginCard extends StatefulWidget {
   const CloudPluginCard({
     super.key,
     required this.item,
@@ -29,8 +30,29 @@ class CloudPluginCard extends StatelessWidget {
   final ValueChanged<String>? onReinstall;
 
   @override
+  State<CloudPluginCard> createState() => _CloudPluginCardState();
+}
+
+class _CloudPluginCardState extends State<CloudPluginCard> {
+  static const _previewLines = 2;
+  bool _expanded = false;
+
+  @override
+  void didUpdateWidget(covariant CloudPluginCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldManifest = oldWidget.item.manifest;
+    final manifest = widget.item.manifest;
+    if (oldManifest.uuid != manifest.uuid ||
+        oldManifest.describe != manifest.describe) {
+      _expanded = false;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final item = widget.item;
     final manifest = item.manifest;
     final localState = manifest.uuid.isNotEmpty
         ? PluginRegistryService.I.getByUuid(manifest.uuid)
@@ -40,240 +62,305 @@ class CloudPluginCard extends StatelessWidget {
     final versionDifference = isInstalled
         ? compareVersion(manifest.version, localVersion)
         : 1;
-    final migration = isInstalled
-        ? item.formalRelease?.migrationFor(
-            installedUuid: localState.uuid,
-            installedVersion: localVersion,
-            scriptFingerprint: () => _installedScriptHashes[localState] ??=
-                publishedPluginScriptSha256(localState.originScript),
-          )
-        : null;
     final canDownload =
-        !isInstalled ||
-        migration != null ||
-        (versionDifference > 0 &&
-            preservesFormalPluginChannel(
-              installedInfo: PluginRegistryService.I.getCachedPluginInfo(
-                manifest.uuid,
-              ),
-              updateUrl: manifest.updateUrl,
-              npmName: manifest.npmName,
-            ));
-    final downloadLabel = !isInstalled
-        ? t.plugin.download
-        : canDownload
-        ? t.plugin.downloadUpdate
-        : versionDifference < 0
-        ? t.plugin.localVersionNewer
-        : t.plugin.alreadyLatest;
-    final title = manifest.name.trim().isNotEmpty
-        ? manifest.name.trim()
-        : item.repo.split('/').last.trim();
+        PluginInstallService.I.cloudBatchActionFor(item) ==
+        (isInstalled
+            ? CloudPluginBatchAction.update
+            : CloudPluginBatchAction.install);
     final canReinstall =
         isInstalled &&
-        onReinstall != null &&
+        widget.onReinstall != null &&
         item.canReinstallFromCloud(
           parseGetInfoJson(
             PluginRegistryService.I.readPersistedGetInfoJson(manifest.uuid),
           ),
         );
+    final cloudVersion = manifest.version.trim();
+    final description = manifest.describe.trim();
+    final descriptionStyle = DefaultTextStyle.of(
+      context,
+    ).style.merge(theme.textTheme.bodySmall);
+    final metadata = [
+      if (isInstalled && !canDownload)
+        if (versionDifference < 0)
+          t.plugin.localVersionNewer
+        else if (versionDifference == 0 && localVersion.isNotEmpty)
+          t.plugin.alreadyLatest
+        else
+          t.plugin.installed,
+      if (isInstalled && localVersion.isNotEmpty)
+        if (cloudVersion == localVersion)
+          localVersion
+        else
+          t.plugin.localVersion(version: localVersion),
+      if (cloudVersion.isNotEmpty &&
+          (!isInstalled || cloudVersion != localVersion))
+        t.plugin.cloudVersion(version: cloudVersion),
+    ].join(' · ');
+    final actionExtent = CollectionToolbarMetrics.actionExtentOf(context);
+    final actionStyle = theme.textTheme.labelLarge;
+    const actionPadding = 14.0;
+    final painter = TextPainter(
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      locale: Localizations.maybeLocaleOf(context),
+      maxLines: 1,
+    );
+    var actionWidth = actionExtent;
+    for (final label in [t.plugin.install, t.plugin.update]) {
+      painter.text = TextSpan(text: label, style: actionStyle);
+      painter.layout();
+      final width = painter.width.ceilToDouble() + actionPadding * 2;
+      if (width > actionWidth) actionWidth = width;
+    }
+    painter.dispose();
+    final action = FilledButton.tonal(
+      key: const ValueKey('cloud-plugin-card.action'),
+      onPressed: !canDownload || widget.installing ? null : widget.onInstall,
+      style: FilledButton.styleFrom(
+        minimumSize: Size(actionWidth, actionExtent),
+        padding: const EdgeInsets.symmetric(
+          horizontal: actionPadding,
+          vertical: 8,
+        ),
+        textStyle: actionStyle,
+        backgroundColor: colorScheme.primaryContainer,
+        foregroundColor: colorScheme.onPrimaryContainer,
+      ),
+      child: Text(isInstalled ? t.plugin.update : t.plugin.install),
+    );
+    final more = _buildMoreMenu(actionExtent, localVersion, canReinstall);
+    final actions = Row(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        action,
+        if (more != null) ...[
+          const SizedBox(width: CollectionToolbarMetrics.searchControlGap),
+          more,
+        ],
+      ],
+    );
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        color: colorScheme.surface.withValues(alpha: 0.85),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.6),
-        ),
+        color: colorScheme.surfaceContainerLow,
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final trailingAction =
+              constraints.maxWidth >= 324 &&
+              constraints.maxWidth - actionWidth >= 254 &&
+              MediaQuery.textScalerOf(context).scale(14) <= 18;
+          final summary = _buildSummary(
+            description: description,
+            descriptionStyle: descriptionStyle,
+            metadata: metadata,
+          );
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _CloudPluginIcon(iconUrl: manifest.iconUrl),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _CloudPluginIcon(iconUrl: manifest.iconUrl),
+                  const SizedBox(width: _pluginIconGap),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.titleSmall,
+                        Text(
+                          item.displayName,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                        if (isInstalled) ...[
-                          const SizedBox(width: 8),
-                          const _InstalledChip(),
-                        ],
+                        if (trailingAction) summary,
                       ],
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      isInstalled && localVersion.isNotEmpty
-                          ? '${t.plugin.cloudVersion(version: manifest.version)}  ·  ${t.plugin.localVersion(version: localVersion)}'
-                          : t.plugin.cloudVersion(version: manifest.version),
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
+                  ),
+                  if (trailingAction) ...[
+                    const SizedBox(
+                      width: CollectionToolbarMetrics.searchControlGap,
                     ),
-                    if (manifest.describe.trim().isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        manifest.describe.trim(),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
+                    actions,
                   ],
-                ),
+                ],
               ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              if (manifest.home.trim().isNotEmpty)
-                _CloudTextAction(
-                  label: t.plugin.homepage,
-                  onTap: installing
-                      ? null
-                      : () => onOpenHome(manifest.home.trim()),
+              if (!trailingAction) ...[
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Align(
+                    alignment: AlignmentDirectional.centerEnd,
+                    child: actions,
+                  ),
                 ),
-              if (item.githubRepositoryUrl.isNotEmpty)
-                _CloudTextAction(
-                  label: t.plugin.githubRepo,
-                  onTap: installing
-                      ? null
-                      : () => onOpenHome(item.githubRepositoryUrl),
+                Padding(
+                  padding: const EdgeInsetsDirectional.only(
+                    start: _pluginIconExtent + _pluginIconGap,
+                  ),
+                  child: summary,
                 ),
-              _CloudTextAction(
-                label: downloadLabel,
-                onTap: installing || !canDownload ? null : onInstall,
-              ),
-              if (canReinstall)
-                NativeVideoMenu(
-                  key: ValueKey((
-                    item.repo,
-                    manifest.version,
-                    manifest.updateUrl,
-                    manifest.npmName,
-                    manifest.scriptSha256,
-                    localVersion,
-                  )),
-                  label: '',
-                  tooltip: t.common.more,
-                  selected: '',
-                  hostPresentation: true,
-                  noPageDimming: true,
-                  options: {
-                    if (!installing) 'reinstall': t.pluginLifecycle.reinstall,
-                  },
-                  optionIcons: const {
-                    'reinstall': (
-                      icon: Icons.refresh,
-                      symbol: 'arrow.clockwise',
-                    ),
-                  },
-                  selectAfterDismissal: const {'reinstall'},
-                  onSelected: (_) {
-                    if (!installing) onReinstall!(localVersion);
-                  },
-                  hostTriggerBuilder: (context, onPressed) => IconButton(
-                    onPressed: onPressed,
-                    tooltip: t.common.more,
-                    icon: const Icon(Icons.more_horiz, size: 20),
-                    style: _cloudActionStyle(context, iconOnly: true),
+              ],
+              if (_expanded)
+                Padding(
+                  padding: EdgeInsetsDirectional.only(
+                    start: trailingAction
+                        ? _pluginIconExtent + _pluginIconGap
+                        : 0,
+                    top: 8,
+                  ),
+                  child: Text(
+                    description,
+                    style: descriptionStyle.copyWith(height: 1.5),
                   ),
                 ),
             ],
-          ),
-        ],
+          );
+        },
       ),
     );
   }
-}
 
-ButtonStyle _cloudActionStyle(BuildContext context, {bool iconOnly = false}) {
-  final theme = Theme.of(context);
-  return OutlinedButton.styleFrom(
-    minimumSize: const Size(44, 44),
-    alignment: Alignment.center,
-    padding: iconOnly
-        ? EdgeInsets.zero
-        : const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-    backgroundColor: theme.colorScheme.surfaceContainerLow,
-    foregroundColor: theme.colorScheme.primary,
-    disabledBackgroundColor: theme.colorScheme.surfaceContainerLow,
-    disabledForegroundColor: theme.colorScheme.onSurface.withValues(alpha: .38),
-    side: iconOnly
-        ? BorderSide(color: theme.colorScheme.outline.withValues(alpha: .55))
-        : null,
-    textStyle: theme.textTheme.labelMedium,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-  );
-}
+  Widget? _buildMoreMenu(
+    double actionExtent,
+    String localVersion,
+    bool canReinstall,
+  ) {
+    final item = widget.item;
+    final manifest = item.manifest;
+    final home = manifest.home.trim();
+    final repository = item.githubRepositoryUrl;
+    if (home.isEmpty && repository.isEmpty && !canReinstall) return null;
 
-/// Body actions use standard press, hover, focus and disabled feedback.
-class _CloudTextAction extends StatelessWidget {
-  const _CloudTextAction({required this.label, required this.onTap});
-
-  final String label;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return OutlinedButton(
-      onPressed: onTap,
-      style: _cloudActionStyle(context),
-      child: Text(label, textAlign: TextAlign.center),
+    return NativeVideoMenu(
+      key: ValueKey((
+        home,
+        repository,
+        manifest.version,
+        manifest.updateUrl,
+        manifest.npmName,
+        manifest.scriptSha256,
+        localVersion,
+      )),
+      label: '',
+      tooltip: t.common.more,
+      selected: '',
+      hostPresentation: true,
+      noPageDimming: true,
+      options: {
+        if (!widget.installing) ...{
+          if (home.isNotEmpty) 'homepage': t.plugin.homepage,
+          if (repository.isNotEmpty) 'repository': t.plugin.githubRepo,
+          if (canReinstall) 'reinstall': t.pluginLifecycle.reinstall,
+        },
+      },
+      optionIcons: const {
+        'homepage': (icon: Icons.language_outlined, symbol: 'globe'),
+        'repository': (
+          icon: Icons.code_rounded,
+          symbol: 'chevron.left.forwardslash.chevron.right',
+        ),
+        'reinstall': (icon: Icons.refresh, symbol: 'arrow.clockwise'),
+      },
+      selectAfterDismissal: const {'homepage', 'repository', 'reinstall'},
+      onSelected: (command) {
+        if (widget.installing) return;
+        switch (command) {
+          case 'homepage':
+            widget.onOpenHome(home);
+          case 'repository':
+            widget.onOpenHome(repository);
+          case 'reinstall':
+            if (canReinstall) widget.onReinstall?.call(localVersion);
+        }
+      },
+      hostTriggerBuilder: (context, onPressed) => IconButton(
+        onPressed: onPressed,
+        tooltip: t.common.more,
+        icon: const Icon(Icons.more_horiz, size: 20),
+        style: IconButton.styleFrom(
+          minimumSize: Size.square(actionExtent),
+          padding: EdgeInsets.zero,
+        ),
+      ),
     );
   }
-}
 
-class _InstalledChip extends StatelessWidget {
-  const _InstalledChip();
+  Widget _buildSummary({
+    required String description,
+    required TextStyle descriptionStyle,
+    required String metadata,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final theme = Theme.of(context);
+        final preview = TextPainter(
+          text: TextSpan(text: description, style: descriptionStyle),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+          locale: Localizations.maybeLocaleOf(context),
+          maxLines: _previewLines,
+          ellipsis: '…',
+        )..layout(maxWidth: constraints.maxWidth);
+        final showDisclosure = _expanded || preview.didExceedMaxLines;
+        preview.dispose();
 
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.check_circle_outline,
-            size: 12,
-            color: colorScheme.onSurfaceVariant,
-          ),
-          const SizedBox(width: 3),
-          Text(
-            t.plugin.installed,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ],
-      ),
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (description.isNotEmpty && !_expanded) ...[
+              const SizedBox(height: 4),
+              Text(
+                description,
+                style: descriptionStyle,
+                maxLines: _previewLines,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+            if (metadata.isNotEmpty || showDisclosure) ...[
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  if (metadata.isNotEmpty)
+                    Text(
+                      metadata,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  if (showDisclosure)
+                    Semantics(
+                      expanded: _expanded,
+                      child: TextButton(
+                        onPressed: () => setState(() => _expanded = !_expanded),
+                        style: TextButton.styleFrom(
+                          textStyle: theme.textTheme.labelMedium,
+                          minimumSize: Size.square(
+                            CollectionToolbarMetrics.actionExtentOf(context),
+                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          visualDensity: VisualDensity.standard,
+                        ),
+                        child: Text(
+                          _expanded
+                              ? t.comicInfo.collapse
+                              : t.comicInfo.expandFullText,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 }
@@ -289,8 +376,8 @@ class _CloudPluginIcon extends StatelessWidget {
     return ClipRRect(
       borderRadius: BorderRadius.circular(8),
       child: Container(
-        width: 40,
-        height: 40,
+        width: _pluginIconExtent,
+        height: _pluginIconExtent,
         color: colorScheme.surfaceContainerHigh,
         alignment: Alignment.center,
         child: PluginIcon(

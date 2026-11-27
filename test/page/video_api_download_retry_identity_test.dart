@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,6 +25,79 @@ const _detail = 'https://source.test/videos/7';
 const _watch = '$_detail?line=main&episode=7';
 const _fresh = 'https://media.test/fresh.mp4?signature=current';
 var _attempts = 0;
+
+class _RetryCatalogBrowser extends InAppWebViewPlatform {
+  final loads = <String>[];
+  String? downloadScript;
+
+  @override
+  PlatformInAppWebViewWidget createPlatformInAppWebViewWidget(
+    PlatformInAppWebViewWidgetCreationParams params,
+  ) => _RetryCatalogView(params, this);
+}
+
+class _RetryCatalogView extends PlatformInAppWebViewWidget {
+  _RetryCatalogView(super.params, this.browser) : super.implementation();
+  final _RetryCatalogBrowser browser;
+  bool _created = false;
+
+  @override
+  T controllerFromPlatform<T>(PlatformInAppWebViewController controller) =>
+      params.controllerFromPlatform!(controller) as T;
+
+  @override
+  void dispose() {}
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_created) {
+      _created = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final raw = _RetryCatalogController(params, browser);
+        params.onWebViewCreated?.call(params.controllerFromPlatform!(raw));
+      });
+    }
+    // Apple's bridge constructs a window without applying initialUrlRequest.
+    return const SizedBox();
+  }
+}
+
+class _RetryCatalogController extends PlatformInAppWebViewController {
+  _RetryCatalogController(this.config, this.browser)
+    : super.implementation(
+        const PlatformInAppWebViewControllerCreationParams(id: 'retry'),
+      );
+  final PlatformInAppWebViewWidgetCreationParams config;
+  final _RetryCatalogBrowser browser;
+
+  @override
+  Future<void> loadUrl({
+    required URLRequest urlRequest,
+    Uri? iosAllowingReadAccessTo,
+    WebUri? allowingReadAccessTo,
+  }) async {
+    final url = urlRequest.url!;
+    browser.loads.add(url.toString());
+    config.onLoadStop?.call(config.controllerFromPlatform!(this), url);
+  }
+
+  @override
+  Future<dynamic> evaluateJavascript({
+    required String source,
+    ContentWorld? contentWorld,
+  }) async {
+    if (!source.contains('const operation = "downloadChoices"')) {
+      return {'url': browser.loads.last, 'siteUi': true};
+    }
+    browser.downloadScript = source;
+    return {
+      'status': 'ok',
+      'choices': [
+        {'label': '720p', 'format': 'mp4', 'url': _fresh},
+      ],
+    };
+  }
+}
 
 Map<String, dynamic> _module(String name, {bool snapshot = false}) => {
   'type': 'openVideoLibrary',
@@ -195,6 +269,100 @@ void main() {
     await PluginRegistryService.I.init();
   });
   tearDownAll(TestObjectBoxHelper.tearDownTestObjectBox);
+
+  testWidgets(
+    'cold catalog retry explicitly opens the scoped browser document',
+    (tester) async {
+      const source = 'video-catalog-retry-explicit-load';
+      final navigator = GlobalKey<NavigatorState>();
+      final browser = _RetryCatalogBrowser();
+      final prior = InAppWebViewPlatform.instance;
+      InAppWebViewPlatform.instance = browser;
+      final owner = Object();
+      await tester.pumpWidget(
+        MaterialApp(navigatorKey: navigator, home: const SizedBox.shrink()),
+      );
+      final row = (await tester.runAsync(() async {
+        SharedPreferences.setMockInitialValues({});
+        await PluginRegistryService.I.upsert(
+          PluginInfo(
+            uuid: source,
+            version: 'fixture',
+            originScript: 'retry-fixture',
+            insertedAt: DateTime.utc(2026),
+            updatedAt: DateTime.utc(2026),
+            isEnabled: true,
+            isDeleted: false,
+            debug: false,
+            lastLoadSuccess: true,
+            getInfoJson: jsonEncode({
+              'function': [
+                {
+                  'action': {
+                    'type': 'openVideoCatalog',
+                    'payload': {
+                      'url': 'https://source.test/',
+                      'nativeSiteActions': true,
+                    },
+                  },
+                },
+              ],
+            }),
+          ),
+        );
+        final key = await VideoExportRecords.beginTransfer(
+          source: source,
+          video: Uri.parse('https://source.test/watch?v=42'),
+          title: 'Catalog retry',
+          quality: '720p',
+        );
+        return (await VideoExportRecords.readTaskSnapshot()).singleWhere(
+          (row) => row['key'] == key,
+        );
+      }))!;
+      VideoDownloadRetryResolution? result;
+      Object? failure;
+      final pending = () async {
+        try {
+          result = await VideoDownloadRetryHosts.resolve(
+            navigator.currentState!.overlay!,
+            row,
+            owner: owner,
+          );
+        } catch (error) {
+          failure = error is VideoDownloadRetryFailure ? error.reason : error;
+        }
+      }();
+      try {
+        for (var i = 0; i < 30 && result == null && failure == null; i++) {
+          await tester.pump(const Duration(milliseconds: 16));
+          await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+        }
+        expect(browser.loads, ['https://source.test/']);
+        expect(failure, isNull);
+        expect(
+          browser.downloadScript,
+          contains('https://source.test/watch?v=42'),
+        );
+        expect(result?.choices.single.url.toString(), _fresh);
+        await pending;
+      } finally {
+        await tester.runAsync(() async {
+          await result?.close();
+          await VideoDownloadRetryHosts.cancel(source, owner);
+          await VideoExportRecords.updateTransfer(
+            row['key'] as String,
+            received: null,
+            status: 'cancelled',
+            terminal: true,
+          );
+        });
+        if (prior != null) InAppWebViewPlatform.instance = prior;
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+    },
+    timeout: const Timeout(Duration(seconds: 20)),
+  );
 
   testWidgets('cold retry runs the module named by the saved work', (
     tester,

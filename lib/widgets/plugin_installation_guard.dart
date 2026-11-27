@@ -8,6 +8,7 @@ import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/page/setting/common/setting_page_route.dart';
 import 'package:zephyr/service/local_plugin_installation_state.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 /// Public record navigation checks installation before starting source requests.
 /// Local comic/video readers deliberately bypass this guard for saved files.
@@ -45,8 +46,7 @@ Future<bool> _ensurePluginInstalled(BuildContext context, String source) async {
   final reinstall = await showDialog<bool>(
     context: context,
     useRootNavigator: false,
-    builder: (dialog) => AlertDialog(
-      scrollable: true,
+    builder: (dialog) => ShortAlert(
       title: Text(t.pluginLifecycle.notInstalledTitle),
       content: Text(t.pluginLifecycle.notInstalledHint),
       actions: [

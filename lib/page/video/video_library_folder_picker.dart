@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/task_dialog.dart';
 import 'package:zephyr/page/search/widget/search_field_decoration.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
@@ -14,17 +15,25 @@ String videoLibraryError(Object error) {
   return t.videoLibrary.saveFailed;
 }
 
-Future<String?> videoFolderName(BuildContext context, {String initial = ''}) =>
-    showDialog<String>(
-      context: context,
-      builder: (context) => MediaQuery(
-        data: videoOverlayMedia(MediaQuery.of(context)),
-        child: _FolderNameDialog(initial: initial),
-      ),
+Future<String?> videoFolderName(
+  BuildContext context, {
+  String initial = '',
+  ValueChanged<ModalRoute<dynamic>?>? onRoute,
+  Future<String?> Function(String name)? save,
+}) => showDialog<String>(
+  context: context,
+  builder: (context) {
+    onRoute?.call(ModalRoute.of(context));
+    return MediaQuery(
+      data: videoOverlayMedia(MediaQuery.of(context)),
+      child: _FolderNameDialog(initial: initial, save: save),
     );
+  },
+);
 
 class _FolderNameDialog extends StatefulWidget {
-  const _FolderNameDialog({required this.initial});
+  const _FolderNameDialog({required this.initial, this.save});
+  final Future<String?> Function(String name)? save;
   final String initial;
   @override
   State<_FolderNameDialog> createState() => _FolderNameDialogState();
@@ -38,44 +47,80 @@ class _FolderNameDialogState extends State<_FolderNameDialog> {
     super.dispose();
   }
 
-  void _save() {
-    if (_input.text.trim().isNotEmpty) {
-      Navigator.pop(context, _input.text.trim());
+  bool _saving = false;
+  String? _error;
+
+  Future<void> _save() async {
+    final name = _input.text.trim();
+    if (_saving || name.isEmpty) return;
+    if (widget.save != null) {
+      setState(() {
+        _saving = true;
+        _error = null;
+      });
+      String? error;
+      try {
+        error = await widget.save!(name);
+      } catch (_) {
+        error = t.videoLibrary.saveFailed;
+      }
+      if (!mounted || ModalRoute.of(context)?.isActive != true) return;
+      if (error != null) {
+        setState(() {
+          _saving = false;
+          _error = error;
+        });
+        return;
+      }
     }
+    Navigator.pop(context, name);
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    scrollable: true,
-    title: Text(
-      widget.initial.isEmpty
+  Widget build(BuildContext context) => PopScope(
+    canPop: !_saving,
+    child: TaskDialog(
+      title: widget.initial.isEmpty
           ? t.videoLibrary.newFolder
           : t.videoLibrary.renameFolder,
-    ),
-    content: TextField(
-      key: const ValueKey('video-folder.name'),
-      controller: _input,
-      autofocus: true,
-      maxLength: 60,
-      textInputAction: TextInputAction.done,
-      decoration: InputDecoration(labelText: t.videoLibrary.folderName),
-      onSubmitted: (_) => _save(),
-    ),
-    actions: [
-      TextButton(
-        style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
-        onPressed: () => Navigator.pop(context),
-        child: Text(t.common.cancel),
-      ),
-      ValueListenableBuilder(
-        valueListenable: _input,
-        builder: (_, value, _) => TextButton(
-          style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
-          onPressed: value.text.trim().isEmpty ? null : _save,
-          child: Text(t.common.save),
+      content: TextField(
+        key: const ValueKey('video-folder.name'),
+        controller: _input,
+        readOnly: _saving,
+        autofocus: true,
+        maxLength: 60,
+        textInputAction: TextInputAction.done,
+        decoration: InputDecoration(
+          labelText: t.videoLibrary.folderName,
+          errorText: _error,
+          errorMaxLines: 3,
         ),
+        onChanged: (_) {
+          if (_error != null) setState(() => _error = null);
+        },
+        onSubmitted: (_) => _save(),
       ),
-    ],
+      actions: [
+        TextButton(
+          style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
+          onPressed: _saving ? null : () => Navigator.pop(context),
+          child: Text(t.common.cancel),
+        ),
+        ValueListenableBuilder(
+          valueListenable: _input,
+          builder: (_, value, _) => TextButton(
+            style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
+            onPressed: _saving || value.text.trim().isEmpty ? null : _save,
+            child: _saving
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Text(t.common.save),
+          ),
+        ),
+      ],
+    ),
   );
 }
 

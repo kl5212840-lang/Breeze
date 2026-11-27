@@ -6,6 +6,33 @@ import 'package:zephyr/page/video/video_personal_snapshot_store.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  for (final index in [0, 1]) {
+    testWidgets(
+      'snapshot queue releases completed work across test zones $index',
+      (tester) async {
+        final store = VideoPersonalSnapshotStore(
+          cacheSource: 'snapshot-$index',
+        );
+        final key = 'plugin|snapshot-$index|owner|likes';
+        var readCompleted = false;
+        final read = store.read(key).then((value) {
+          readCompleted = true;
+          return value;
+        });
+        await tester.pump();
+        expect(readCompleted, isTrue);
+        expect(await read, isNull);
+        await store.write(key, {
+          'videos': [
+            {'title': 'saved'},
+          ],
+        }, store.generation);
+        expect((await store.read(key))?['videos'], [
+          {'title': 'saved'},
+        ]);
+      },
+    );
+  }
   test(
     'survives recreation, isolates owner/page, excludes credentials and forms',
     () async {
@@ -91,6 +118,36 @@ void main() {
     expect((cached?['videos'] as List).single['title'], 'old');
     expect(store.fresh(cached!), false);
   });
+
+  test(
+    'another store sees replacement rows after source invalidation',
+    () async {
+      const source = 'shared-generation';
+      const key = 'plugin|shared-generation|owner|likes';
+      final a = VideoPersonalSnapshotStore(cacheSource: source);
+      final b = VideoPersonalSnapshotStore(cacheSource: source);
+      await a.write(key, {
+        'videos': [
+          {'title': 'old'},
+        ],
+      }, a.generation);
+      expect((await b.read(key))?['videos'], [
+        {'title': 'old'},
+      ]);
+      a.invalidate();
+      await a.write(key, {
+        'videos': [
+          {'title': 'new'},
+        ],
+      }, a.generation);
+      expect((await b.read(key))?['videos'], [
+        {'title': 'new'},
+      ]);
+      await VideoPersonalSnapshotStore.clearDisk(source: source);
+      expect(await a.read(key), isNull);
+      expect(await b.read(key), isNull);
+    },
+  );
   test(
     'oversized complete pages cannot silently replace a valid page',
     () async {

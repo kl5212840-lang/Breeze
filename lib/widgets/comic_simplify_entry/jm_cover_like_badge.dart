@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:visibility_detector/visibility_detector.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_native_navigation.dart';
+import 'package:zephyr/service/comic_like_updates.dart';
 import 'package:zephyr/service/jm_cover_like_loader.dart';
 import 'package:zephyr/service/jm_list_like_counts.dart';
 import 'package:zephyr/widgets/read_recovery_scope.dart';
@@ -16,16 +17,21 @@ class JmCoverLikeScope extends StatefulWidget {
     required this.counts,
     required this.child,
     this.loader,
+    this.subtleBadge = false,
   });
 
   final JmListLikeCounts counts;
   final Widget child;
   final JmCoverLikeLoader? loader;
+  final bool subtleBadge;
 
   static JmListLikeCounts? maybeOf(BuildContext context, String source) {
     if (source != JmListLikeCounts.source) return null;
-    return _JmCoverLikeHost.maybeOf(context)?.widget.counts;
+    return _JmCoverLikeHost.maybeOf(context)?.counts;
   }
+
+  static bool _subtleBadgeOf(BuildContext context) =>
+      _JmCoverLikeHost.maybeOf(context)?.subtleBadge ?? false;
 
   @override
   State<JmCoverLikeScope> createState() => _JmCoverLikeScopeState();
@@ -35,18 +41,22 @@ class _JmCoverLikeHost extends InheritedWidget {
   const _JmCoverLikeHost({
     required this.owner,
     required this.counts,
+    required this.subtleBadge,
     required super.child,
   });
 
   final _JmCoverLikeScopeState owner;
   final JmListLikeCounts counts;
+  final bool subtleBadge;
 
-  static _JmCoverLikeScopeState? maybeOf(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<_JmCoverLikeHost>()?.owner;
+  static _JmCoverLikeHost? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_JmCoverLikeHost>();
 
   @override
   bool updateShouldNotify(_JmCoverLikeHost oldWidget) =>
-      owner != oldWidget.owner || counts != oldWidget.counts;
+      owner != oldWidget.owner ||
+      counts != oldWidget.counts ||
+      subtleBadge != oldWidget.subtleBadge;
 }
 
 class _JmCoverLikeScopeState extends State<JmCoverLikeScope> {
@@ -149,6 +159,7 @@ class _JmCoverLikeScopeState extends State<JmCoverLikeScope> {
     child: _JmCoverLikeHost(
       owner: this,
       counts: widget.counts,
+      subtleBadge: widget.subtleBadge,
       child: NotificationListener<ScrollNotification>(
         onNotification: _onScroll,
         child: widget.child,
@@ -180,7 +191,7 @@ class _JmCoverLikeVisibilityState extends State<JmCoverLikeVisibility> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final next = _JmCoverLikeHost.maybeOf(context);
+    final next = _JmCoverLikeHost.maybeOf(context)?.owner;
     final bottomInset = NativeNavigationInset.of(context);
     if (_owner == next && _bottomInset == bottomInset) return;
     _reset();
@@ -241,10 +252,14 @@ class JmCoverLikeBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: counts,
+    listenable: Listenable.merge([counts, ComicLikeUpdates.instance]),
     builder: (context, _) {
-      final count = counts.countFor(comicId);
+      final vote = ComicLikeUpdates.instance.valueFor(
+        comicLikeWork(JmListLikeCounts.source, comicId),
+      );
+      final count = vote?.totalLikes ?? counts.countFor(comicId);
       if (count == null) return const SizedBox.shrink();
+      final subtle = JmCoverLikeScope._subtleBadgeOf(context);
       final label = count < 10000
           ? '$count'
           : NumberFormat.compact(
@@ -262,22 +277,26 @@ class JmCoverLikeBadge extends StatelessWidget {
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: Colors.black.withValues(
-                    alpha: MediaQuery.highContrastOf(context) ? 1 : 0.78,
+                    alpha: MediaQuery.highContrastOf(context)
+                        ? 1
+                        : subtle
+                        ? .60
+                        : .78,
                   ),
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 5,
-                    vertical: 3,
+                  padding: EdgeInsets.symmetric(
+                    horizontal: subtle ? 4 : 5,
+                    vertical: subtle ? 2 : 3,
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(
+                      Icon(
                         Icons.favorite_border,
                         color: Colors.white,
-                        size: 11,
+                        size: subtle ? 10 : 11,
                       ),
                       const SizedBox(width: 3),
                       Text(
@@ -285,7 +304,9 @@ class JmCoverLikeBadge extends StatelessWidget {
                         maxLines: 1,
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
                           color: Colors.white,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: subtle
+                              ? FontWeight.w500
+                              : FontWeight.w600,
                           height: 1,
                         ),
                       ),

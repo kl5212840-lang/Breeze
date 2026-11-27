@@ -16,18 +16,24 @@ PluginAccountAuthentication? videoSiteVerifiedIdentity(
       !RegExp(r'^\d+$').hasMatch(id)) {
     return null;
   }
-  final rawAvatar = ownProfile['avatarUrl']?.toString() ?? '';
-  final avatar = Uri.tryParse(rawAvatar);
+  final rawAvatar = ownProfile['avatarUrl']?.toString().trim() ?? '';
+  final requestAvatar = rawAvatar.isNotEmpty
+      ? rawAvatar
+      : value['avatarUrl']?.toString().trim() ?? '';
+  final avatar = Uri.tryParse(requestAvatar);
+  final profileName = ownProfile['name']?.toString().trim() ?? '';
   return PluginAccountAuthentication(
     serverIdentity: id,
     origin: home.origin,
-    label: ownProfile['name']?.toString() ?? value['label']?.toString() ?? '',
+    label: profileName.isNotEmpty
+        ? profileName
+        : value['label']?.toString().trim() ?? '',
     avatarUrl:
         avatar != null &&
             avatar.scheme == 'https' &&
             avatar.userInfo.isEmpty &&
             !avatar.hasFragment
-        ? rawAvatar
+        ? requestAvatar
         : '',
   );
 }

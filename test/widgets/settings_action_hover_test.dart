@@ -15,6 +15,7 @@ import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/page/setting/global/storage_setting_page.dart';
 import 'package:zephyr/src/rust/frb_generated.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/widgets/task_dialog.dart';
 import 'package:zephyr/widgets/touch_hover_intent.dart';
 
 import '../test_helper.dart';
@@ -210,16 +211,17 @@ void main() {
             await mouse.moveTo(position + const Offset(2, 0));
             await tester.pumpAndSettle();
             expect(_ink(tester, target).any((f) => f.color.a > 0), isTrue);
-            expect(find.byType(AlertDialog), findsNothing);
+            final dialog = find.byType(TaskDialog);
+            expect(dialog, findsNothing);
             expect(writes, 0);
             await tester.tap(target);
             await tester.pumpAndSettle();
             if (plugin) {
-              expect(find.byType(AlertDialog), findsOneWidget);
+              expect(dialog, findsOneWidget);
               await tester.enterText(find.byType(TextFormField), 'cancelled');
               await tester.tap(find.text(t.common.cancel));
               await tester.pumpAndSettle();
-              expect(find.byType(AlertDialog), findsNothing);
+              expect(dialog, findsNothing);
               expect(find.text('original'), findsOneWidget);
               expect(writes, 0, reason: 'Cancel must not persist an edit');
             } else {

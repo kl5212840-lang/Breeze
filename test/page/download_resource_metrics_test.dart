@@ -120,7 +120,12 @@ void main() {
           },
         ],
       );
-      final measured = await DownloadResourceMetrics().readComic(value);
+      final metrics = DownloadResourceMetrics();
+      expect(metrics.cachedComic(value), isNull);
+      final measured = await metrics.readComic(value);
+      expect(metrics.cachedComic(value), same(measured));
+      metrics.invalidate(value.key);
+      expect(metrics.cachedComic(value), isNull);
       expect(measured.status, DownloadResourceSizeStatus.complete);
       expect(measured.sizeBytes, 10);
       expect(measured.knownFiles, 3);

@@ -7,9 +7,12 @@ import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/page/comic_list/cubit/plugin_paged_comic_list_state.dart';
 import 'package:zephyr/page/search_result/view/source_comic_search.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
+import 'package:zephyr/page/source_shell/source_experience_preferences.dart';
 import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/service/plugin_account_identity.dart';
+import 'package:zephyr/service/jm_list_like_counts.dart';
 import 'package:zephyr/service/local_plugin_installation_state.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
 
@@ -20,8 +23,9 @@ class _Scope {
     this.folder, {
     this.canInsert = true,
     this.unfiltered = true,
+    this.newestFavoritesFirst = false,
   });
-  final bool canInsert, unfiltered;
+  final bool canInsert, unfiltered, newestFavoritesFirst;
   final String source, folder;
   final String? account;
 }
@@ -33,6 +37,8 @@ class _Snapshot {
     this.state, {
     DateTime? checkedAt,
     this.pageIdentities = const {},
+    this.officialPages = const {},
+    this.officialPageCount,
     this.cursorInvalid = false,
     this.nextProbePage = 2,
   }) : checkedAt = checkedAt ?? DateTime.now();
@@ -41,6 +47,8 @@ class _Snapshot {
   final PluginPagedComicListState state;
   final DateTime checkedAt;
   final Map<int, List<String>> pageIdentities;
+  final Set<int> officialPages;
+  final int? officialPageCount;
   final bool cursorInvalid;
   final int nextProbePage;
 }
@@ -231,12 +239,28 @@ class JmCollectionSnapshots {
           entry.key == 'source' && entry.value == 'cloudFavorite',
     );
     const pagingKeys = {'page', 'limit', 'pageSize', 'folderId'};
+    // These maintained endpoints declare an explicit newest-favorite sort.
+    // A newly favorited work can lead that order; a folder move of an
+    // existing favorite does not establish a new favorite timestamp.
+    final newestFavoritesFirst = switch ((source, function.trim())) {
+      (JmListLikeCounts.source, 'getCloudFavoriteData') =>
+        onlyKnown({...pagingKeys, 'order'}) &&
+            (core['order'] ?? extern['order']) == 'mr',
+      (bikaPlusSourceId, 'getFavoriteData') =>
+        onlyKnown({'page', 'limit', 'pageSize', 'sort', 'order'}) &&
+            (extern['sort'] ?? extern['order']) == 'dd',
+      (copyComicSourceId, 'getCloudFavoriteData') =>
+        onlyKnown({'page', 'limit', 'pageSize', 'ordering'}) &&
+            (core['ordering'] ?? extern['ordering']) == '-datetime_modifier',
+      _ => false,
+    };
     _scopes[key] = _Scope(
       source,
       account,
       (core['folderId'] ?? extern['folderId'] ?? '').toString(),
       canInsert: onlyKnown(pagingKeys),
       unfiltered: onlyKnown({...pagingKeys, 'order', 'ordering', 'sort'}),
+      newestFavoritesFirst: newestFavoritesFirst,
     );
     return key;
   }
@@ -276,6 +300,36 @@ class JmCollectionSnapshots {
   /// Recorded remote page boundaries, distinct from a merely partial index.
   Map<int, List<String>> pageIdentities(String key) =>
       _rows[key]?.pageIdentities ?? const {};
+
+  Set<int> officialPages(String key) => _rows[key]?.officialPages ?? const {};
+
+  int? officialPageCount(String key) {
+    final row = _rows[key];
+    final count = row?.officialPageCount;
+    if (row == null ||
+        row.scope.account == null ||
+        row.scope.account != accountScope(row.scope.source) ||
+        row.generation !=
+            pluginSessionWriteFence.generation(row.scope.source) ||
+        row.cursorInvalid ||
+        count == null ||
+        count < row.state.page ||
+        row.officialPages.isEmpty ||
+        !row.officialPages.every(
+          (page) => page <= count && row.pageIdentities.containsKey(page),
+        )) {
+      return null;
+    }
+    return count;
+  }
+
+  static Set<int> _decodeOfficialPages(Object? raw) =>
+      raw is List && raw.length <= 8000
+      ? {
+          for (final page in raw)
+            if (page is int && page > 0) page,
+        }
+      : const {};
 
   bool requiresRebuild(String key) => _rows[key]?.cursorInvalid ?? false;
 
@@ -322,6 +376,10 @@ class JmCollectionSnapshots {
           pluginSessionWriteFence.generation(source),
           state,
           pageIdentities: _decodePageIdentities(raw['pageIdentities']),
+          officialPages: _decodeOfficialPages(raw['officialPages']),
+          officialPageCount: raw['officialPageCount'] is int
+              ? raw['officialPageCount'] as int
+              : null,
           cursorInvalid: raw['cursorInvalid'] == true,
           nextProbePage: raw['nextProbePage'] as int? ?? 2,
           checkedAt: DateTime.fromMillisecondsSinceEpoch(
@@ -409,6 +467,8 @@ class JmCollectionSnapshots {
     PluginPagedComicListState state, {
     DateTime? checkedAt,
     Map<int, List<String>>? pageIdentities,
+    Set<int>? officialPages,
+    int? officialPageCount,
     bool? cursorInvalid,
     int? nextProbePage,
     int? expectedRevision,
@@ -439,7 +499,26 @@ class JmCollectionSnapshots {
         previous?.pageIdentities ??
         const <int, List<String>>{};
     final invalid = cursorInvalid ?? previous?.cursorInvalid ?? false;
+    final provenPages =
+        (officialPages ??
+                (pageIdentities == null ? previous?.officialPages : null) ??
+                const <int>{})
+            .where(identities.containsKey)
+            .toSet();
     final probePage = nextProbePage ?? previous?.nextProbePage ?? 2;
+    final provenCount =
+        officialPageCount ??
+        (officialPages == null && pageIdentities == null
+            ? previous?.officialPageCount
+            : null);
+    final verifiedCount =
+        !invalid &&
+            provenCount != null &&
+            provenCount >= state.page &&
+            provenPages.isNotEmpty &&
+            provenPages.every((page) => page <= provenCount)
+        ? provenCount
+        : null;
     _remember(
       key,
       _Snapshot(
@@ -448,6 +527,8 @@ class JmCollectionSnapshots {
         state,
         checkedAt: stamp,
         pageIdentities: identities,
+        officialPages: provenPages,
+        officialPageCount: verifiedCount,
         cursorInvalid: invalid,
         nextProbePage: probePage,
       ),
@@ -460,10 +541,13 @@ class JmCollectionSnapshots {
       'folder': scope.folder,
       'canInsert': scope.canInsert,
       'unfiltered': scope.unfiltered,
+      'newestFavoritesFirst': scope.newestFavoritesFirst,
       'savedAt': stamp.millisecondsSinceEpoch,
       'pageIdentities': {
         for (final entry in identities.entries) '${entry.key}': entry.value,
       },
+      if (provenPages.isNotEmpty) 'officialPages': provenPages.toList(),
+      if (verifiedCount != null) 'officialPageCount': verifiedCount,
       'cursorInvalid': invalid,
       'nextProbePage': probePage,
       'page': state.page,
@@ -581,6 +665,7 @@ class JmCollectionSnapshots {
   /// than replacing an entire list with a profile preview.
   Future<PluginPagedComicListState?> observePreview({
     required String key,
+    String? equivalentListKey,
     required String source,
     required int generation,
     required int expectedRevision,
@@ -598,15 +683,32 @@ class JmCollectionSnapshots {
         expectedRevision == revision(source) &&
         acceptsHeadRead(key, headRead);
     if (!current()) return null;
-    final previous = read(key, source) ?? await restore(key, source);
+    final exact = read(key, source) ?? await restore(key, source);
+    var previous = exact;
+    var comparisonKey = key;
+    final equivalentScope = _scopes[equivalentListKey];
+    if (exact == null &&
+        account != null &&
+        equivalentListKey != null &&
+        equivalentScope?.source == scope.source &&
+        equivalentScope?.account == account &&
+        equivalentScope?.folder == scope.folder &&
+        scope.unfiltered &&
+        equivalentScope?.unfiltered == true) {
+      previous =
+          read(equivalentListKey, source) ??
+          await restore(equivalentListKey, source);
+      if (previous != null) comparisonKey = equivalentListKey;
+    }
     if (!current()) return null;
+    if (!acceptsHeadRead(comparisonKey, headRead)) return null;
     final remote = PluginPagedComicListState(
       status: PluginPagedComicListStatus.success,
       list: items,
       knownTotal: total,
       hasReachedMax: total != null && total == items.length,
     );
-    if (!acceptsRemoteState(key, remote)) return previous;
+    if (!acceptsRemoteState(comparisonKey, remote)) return previous;
 
     final remembered = _heads[key];
     final observed =
@@ -617,7 +719,7 @@ class JmCollectionSnapshots {
     final newHead = items.map((item) => '${item.source}:${item.id}').toList();
     final oldHead =
         observed?.previewIds ??
-        _rows[key]?.pageIdentities[1] ??
+        _rows[comparisonKey]?.pageIdentities[1] ??
         previous?.list
             .take(items.isEmpty ? 1 : items.length)
             .map((item) => '${item.source}:${item.id}')
@@ -638,7 +740,7 @@ class JmCollectionSnapshots {
         ),
       );
     }
-    if (previous == null) {
+    if (exact == null) {
       write(
         key,
         source,
@@ -675,7 +777,8 @@ class JmCollectionSnapshots {
           pluginSessionWriteFence.isChanging(source) ||
           account != accountScope(source) ||
           observedRevision != revision(source) ||
-          !acceptsHeadRead(key, headRead))
+          !acceptsHeadRead(key, headRead) ||
+          !acceptsHeadRead(comparisonKey, headRead))
         return null;
     }
     return remote;
@@ -710,6 +813,7 @@ class JmCollectionSnapshots {
               raw['folder']?.toString() ?? '',
               canInsert: raw['canInsert'] == true,
               unfiltered: raw['unfiltered'] == true || raw['canInsert'] == true,
+              newestFavoritesFirst: raw['newestFavoritesFirst'] == true,
             );
         _scopes[key] = scope;
         final state = _decode(text, scope);
@@ -721,6 +825,7 @@ class JmCollectionSnapshots {
               generation,
               state,
               pageIdentities: _decodePageIdentities(raw['pageIdentities']),
+              officialPages: _decodeOfficialPages(raw['officialPages']),
               nextProbePage: raw['nextProbePage'] as int? ?? 2,
             ),
           );
@@ -742,6 +847,7 @@ class JmCollectionSnapshots {
         checkedAt: DateTime.fromMillisecondsSinceEpoch(0),
         cursorInvalid: true,
         pageIdentities: row.pageIdentities,
+        officialPages: row.officialPages,
         nextProbePage: row.nextProbePage,
       );
       _changes.add(
@@ -754,6 +860,22 @@ class JmCollectionSnapshots {
       );
     }
     await flush();
+  }
+
+  Future<void> recheckAfterUnconfirmedWrite({
+    required String source,
+    required String account,
+    required int generation,
+  }) async {
+    if (account != accountScope(source) ||
+        generation != pluginSessionWriteFence.generation(source) ||
+        pluginSessionWriteFence.isChanging(source)) {
+      return;
+    }
+    _heads.removeWhere((_, head) => head.scope.source == source);
+    final nextRevision = revision(source) + 1;
+    _revisions[source] = nextRevision;
+    await _invalidateObservedScope(source, account, generation, nextRevision);
   }
 
   Future<void> mutate({
@@ -837,13 +959,16 @@ class JmCollectionSnapshots {
         final raw = jsonDecode(text) as Map;
         if (raw['source'] != source || raw['account'] != account) continue;
         final key = storageKey.substring(prefix.length);
-        final scope = _Scope(
-          source,
-          account,
-          raw['folder']?.toString() ?? '',
-          canInsert: raw['canInsert'] == true,
-          unfiltered: raw['unfiltered'] == true || raw['canInsert'] == true,
-        );
+        final scope =
+            _scopes[key] ??
+            _Scope(
+              source,
+              account,
+              raw['folder']?.toString() ?? '',
+              canInsert: raw['canInsert'] == true,
+              unfiltered: raw['unfiltered'] == true || raw['canInsert'] == true,
+              newestFavoritesFirst: raw['newestFavoritesFirst'] == true,
+            );
         _scopes[key] = scope;
         final state = _decode(text, scope);
         if (state != null && !snapshots.containsKey(key))
@@ -852,6 +977,10 @@ class JmCollectionSnapshots {
             generation,
             state,
             pageIdentities: _decodePageIdentities(raw['pageIdentities']),
+            officialPages: _decodeOfficialPages(raw['officialPages']),
+            officialPageCount: raw['officialPageCount'] is int
+                ? raw['officialPageCount'] as int
+                : null,
             cursorInvalid: raw['cursorInvalid'] == true,
             nextProbePage: raw['nextProbePage'] as int? ?? 2,
             checkedAt: DateTime.fromMillisecondsSinceEpoch(
@@ -878,13 +1007,16 @@ class JmCollectionSnapshots {
               !global &&
               removedFromFolder == row.scope.folder ||
           movedToFolder != null && !global && movedToFolder != row.scope.folder;
+      final canInsert =
+          row.scope.canInsert ||
+          row.scope.newestFavoritesFirst && !previouslyFavorited;
       var delta = 0;
       if (shouldRemove && oldIndex >= 0) {
         list.removeAt(oldIndex);
         delta = -1;
       }
       if (belongs &&
-          row.scope.canInsert &&
+          canInsert &&
           oldIndex < 0 &&
           item != null &&
           item.source == source &&
@@ -920,7 +1052,7 @@ class JmCollectionSnapshots {
       final missingAddedRow =
           belongs &&
           oldIndex < 0 &&
-          (!row.scope.canInsert ||
+          (!canInsert ||
               item == null ||
               item.source != source ||
               item.id != id);
@@ -972,6 +1104,12 @@ class JmCollectionSnapshots {
         generation,
         next,
         pageIdentities: identities,
+        officialPages: membershipChanged || invalid
+            ? const {}
+            : row.officialPages,
+        officialPageCount: membershipChanged || invalid
+            ? null
+            : row.officialPageCount,
         cursorInvalid: invalid,
         nextProbePage: row.nextProbePage,
         checkedAt: invalid

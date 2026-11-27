@@ -1,3 +1,14 @@
+import 'package:zephyr/widgets/collection_results_row.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_management_island.dart';
+import 'package:zephyr/page/comic_list/scene_filter/plugin_list_filter_schema.dart';
+import 'package:zephyr/page/comic_list/view/jm_cloud_folder_controls.dart';
+import 'package:zephyr/page/comic_list/cubit/jm_collection_snapshots.dart';
+import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
+import 'package:zephyr/network/http/plugin/unified_plugin_envelope.dart';
+import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
+import 'package:zephyr/page/video/video_library_folder_picker.dart'
+    show videoFolderName;
+import 'package:zephyr/service/plugin_account_authentication.dart';
 import 'package:zephyr/widgets/applied_filter_bar.dart';
 import 'package:zephyr/widgets/collection_command_icons.dart';
 import 'package:zephyr/widgets/read_recovery_scope.dart';
@@ -6,6 +17,7 @@ import 'dart:async';
 import 'package:zephyr/page/search/widget/search_field_surface.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search/widget/search_keyboard.dart';
+import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
 import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/page/search_result/view/source_loaded_result_filter.dart';
 import 'package:zephyr/page/source_shell/source_experience_scope.dart';
@@ -32,6 +44,9 @@ import 'package:zephyr/widgets/collection_cover_settings.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/page/source_shell/source_list_block_preferences.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/plugin/plugin_registry_service.dart';
+import 'package:zephyr/util/json/json_value.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 @RoutePage()
 class ComicListPage extends StatelessWidget {
@@ -116,11 +131,478 @@ class _ComicListViewState extends State<_ComicListView>
     with AutomaticKeepAliveClientMixin {
   final _jmSearch = TextEditingController();
   final _jmSearchFocus = FocusNode();
+  var _jmSearchScope = KeywordSearchScope.all;
   bool _jmSearching = false;
   late (String, int) _searchSession;
   bool _filterOpening = false;
   bool _systemSearchSurface = false;
   ModalRoute<dynamic>? _remoteFilterRoute;
+
+  final _selectionBarKey = GlobalKey();
+  bool _selecting = false;
+  bool _folderBusy = false;
+  bool _movingWorks = false;
+  int _uncachedListRevision = 0;
+  Set<String> _selectedIds = {};
+  ModalRoute<dynamic>? _folderRoute;
+  ModalRoute<dynamic>? _folderManagerRoute;
+  bool _managerOpen = false;
+  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>? _folderFeedback;
+
+  bool _folderManagement(ComicListState state) =>
+      state.currentFrom == PluginAccountAuthenticationService.jm &&
+      state.scene?.cloudFavoriteFolderManagement == true;
+
+  Map<String, String> _customFolders(ComicListState state) => {
+    for (final field
+        in state.filterBundle?.scheme.fields ?? const <PluginChoiceField>[])
+      if (field.key == 'folderId')
+        for (final option in field.options)
+          if (option.value.isNotEmpty && option.value != '0')
+            option.value: option.label,
+  };
+
+  void _endSelection() => setState(() {
+    _selecting = false;
+    _selectedIds = {};
+  });
+
+  void _toggleWork(String id) {
+    if (_folderBusy || !_selecting || id.isEmpty) return;
+    setState(() {
+      final next = {..._selectedIds};
+      if (!next.add(id)) next.remove(id);
+      _selectedIds = next;
+    });
+  }
+
+  void _closeFolderRoute() {
+    final routes = [_folderRoute, _folderManagerRoute];
+    _folderRoute = null;
+    _folderManagerRoute = null;
+    _managerOpen = false;
+    scheduleMicrotask(() {
+      for (final route in routes) {
+        if (route != null && route.isActive) {
+          route.navigator?.removeRoute(route);
+        }
+      }
+    });
+  }
+
+  Future<void> _manageJmFolders() async {
+    if (_managerOpen || _folderBusy || _selecting) return;
+    final cubit = context.read<ComicListCubit>();
+    final session = _sessionOf(cubit.state);
+    bool current() =>
+        mounted &&
+        _sessionOf(cubit.state) == session &&
+        !pluginSessionWriteFence.isChanging(session.$1);
+    if (!current() || !_folderManagement(cubit.state)) return;
+    _managerOpen = true;
+    try {
+      final picked = await showBookshelfManagementIsland<String>(
+        context: context,
+        builder: (context) {
+          _folderManagerRoute = ModalRoute.of(context);
+          return JmCloudFolderManager(
+            options: () => !current()
+                ? {}
+                : {
+                    for (final field
+                        in cubit.state.filterBundle?.scheme.fields ??
+                            const <PluginChoiceField>[])
+                      if (field.key == 'folderId')
+                        for (final row in field.options) row.value: row.label,
+                  },
+            currentId: () => cubit.state.filterSelections['folderId'] ?? '',
+            onAction: (action, target, feedback) async {
+              if (current()) {
+                await _folderAction(action, target: target, report: feedback);
+              }
+            },
+          );
+        },
+      );
+      if (current() &&
+          picked != null &&
+          (picked.isEmpty ||
+              picked == '0' ||
+              _customFolders(cubit.state).containsKey(picked))) {
+        cubit.applyFilterSelections({
+          ...cubit.state.filterSelections,
+          'folderId': picked,
+        });
+      }
+    } finally {
+      if (current()) {
+        _managerOpen = false;
+        _folderManagerRoute = null;
+      }
+    }
+  }
+
+  Future<void> _folderAction(
+    String action, {
+    String? target,
+    void Function(String message, String? openId)? report,
+  }) async {
+    if (_folderBusy) return;
+    final cubit = context.read<ComicListCubit>();
+    final state = cubit.state;
+    final source = state.currentFrom;
+    if (!_folderManagement(state) || pluginSessionWriteFence.isChanging(source))
+      return;
+    final session = _sessionOf(state);
+    final snapshots = JmCollectionSnapshots.instance;
+    final account = snapshots.accountScope(source);
+    final currentId = target ?? state.filterSelections['folderId'] ?? '';
+    final fromFolder = _customFolders(state).containsKey(currentId);
+    final selected = {..._selectedIds};
+    bool current() =>
+        mounted &&
+        _sessionOf(cubit.state) == session &&
+        !pluginSessionWriteFence.isChanging(source);
+    Future<void> refreshMoveCollections() async {
+      if (!current()) return;
+      if (account != null) {
+        try {
+          await snapshots.recheckAfterUnconfirmedWrite(
+            source: source,
+            account: account,
+            generation: session.$2,
+          );
+          return;
+        } catch (_) {}
+      }
+      if (current()) setState(() => _uncachedListRevision++);
+    }
+
+    void feedback(String label, {String? openId}) {
+      if (!current()) return;
+      if (report != null) {
+        report(label, openId);
+        return;
+      }
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.removeCurrentSnackBar();
+      final barHeight = _selectionBarKey.currentContext?.size?.height ?? 0;
+      final controller = messenger.showSnackBar(
+        SnackBar(
+          content: Text(label),
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.fromLTRB(16, 0, 16, barHeight + 8),
+          duration: Duration(seconds: openId == null ? 2 : 4),
+          action: openId == null
+              ? null
+              : SnackBarAction(
+                  label: t.videoLibrary.viewFolder,
+                  onPressed: () {
+                    if (!current() ||
+                        _selecting ||
+                        _folderRoute?.isActive == true ||
+                        !_customFolders(cubit.state).containsKey(openId))
+                      return;
+                    cubit.applyFilterSelections({
+                      ...cubit.state.filterSelections,
+                      'folderId': openId,
+                    });
+                  },
+                ),
+        ),
+      );
+      _folderFeedback = controller;
+      unawaited(
+        controller.closed.then((_) {
+          if (identical(_folderFeedback, controller)) _folderFeedback = null;
+        }),
+      );
+    }
+
+    Future<Map<String, dynamic>> write(
+      String fnPath,
+      Map<String, dynamic> core,
+    ) async {
+      if (!current()) throw const PluginSessionChanged();
+      final result = await callUnifiedComicPlugin(
+        from: source,
+        fnPath: fnPath,
+        core: core,
+      );
+      if (!current()) throw const PluginSessionChanged();
+      requireSuccessfulPluginEnvelope(result);
+      if (result['ok'] != true) throw const FormatException();
+      return result;
+    }
+
+    String? recoveredName;
+    Future<String?> editName({bool rename = false}) async {
+      final previous = _customFolders(cubit.state)[currentId];
+      if (!current() || rename && previous == null) return null;
+      final info = PluginRegistryService.I.getCachedPluginInfo(source);
+      final supportsPreparation =
+          asJsonMap(info?['breezeExperience'])['jmFavoriteFolderPreparation'] ==
+          1;
+      String? preflightId;
+      Future<void> prepare() async {
+        try {
+          final result = await callUnifiedComicPlugin(
+            from: source,
+            fnPath: 'prepareJmFavoriteFolderChange',
+            core: {if (rename) 'folderId': currentId},
+            notifyUnauthorized: false,
+          );
+          final id = result['preflightId'];
+          if (current() && id is String && id.isNotEmpty) preflightId = id;
+        } catch (_) {
+          // Save can perform its own check if preparation is unavailable.
+        }
+      }
+
+      if (supportsPreparation) unawaited(prepare());
+      String? confirmedId;
+      final saved = await videoFolderName(
+        context,
+        initial: rename ? previous! : '',
+        onRoute: (route) => _folderRoute = route,
+        save: (name) async {
+          if (!current()) return t.videoLibrary.saveFailed;
+          if (rename && _customFolders(cubit.state)[currentId] == name)
+            return null;
+          final before = _customFolders(cubit.state);
+          final prepared = preflightId;
+          preflightId = null;
+          try {
+            final result = await write(
+              rename ? 'renameFavoriteFolder' : 'createFavoriteFolder',
+              {
+                'folderName': name,
+                if (rename) 'folderId': currentId,
+                if (supportsPreparation) 'reportFolderFailure': true,
+                if (prepared != null) 'preflightId': prepared,
+              },
+            );
+            final folder = result['folder'];
+            if (folder is! Map ||
+                folder['id'] is! String ||
+                folder['name'] is! String)
+              throw const FormatException();
+            final id = folder['id'] as String,
+                confirmedName = folder['name'] as String;
+            if (id.isEmpty ||
+                id == '0' ||
+                confirmedName.isEmpty ||
+                rename && id != currentId)
+              throw const FormatException();
+            cubit.applyConfirmedJmFolderChange(
+              result['folders'],
+              id: id,
+              name: confirmedName,
+            );
+            confirmedId = id;
+            return null;
+          } catch (error) {
+            if (!current()) return t.videoLibrary.saveFailed;
+            final message = quickJsErrorMessage(error) ?? '';
+            final failure = message.startsWith('{')
+                ? decodeJsonMap(message)
+                : const <String, dynamic>{};
+            final phase = failure['type'] == 'jm_folder_change'
+                ? failure['phase']
+                : null;
+            final reason = failure['reason'];
+            if (phase == 'rejected' && reason == 'limit') {
+              final count = failure['folderCount'];
+              return count is int && count > 0
+                  ? t.sourceProfile.jmFolderLimitDetail(count: count)
+                  : t.sourceProfile.jmFolderLimit;
+            }
+            if (message == '收藏夹已达上限') {
+              return t.sourceProfile.jmFolderLimit;
+            }
+            if (phase == 'notSubmitted' && reason == 'duplicate' ||
+                message == '已存在同名收藏夹') {
+              return t.videoLibrary.duplicateFolder;
+            }
+            if (phase == 'notSubmitted' && reason == 'missing') {
+              unawaited(cubit.loadFilter(refresh: true));
+              return t.sourceProfile.jmFolderMissing;
+            }
+            if (phase == 'notSubmitted' ||
+                error is PluginLoginRequiredException) {
+              return t.videoLibrary.saveFailed;
+            }
+            // The write can land even when its receipt is unavailable. Recover
+            // from a fresh directory read without repeating the write.
+            await cubit.loadFilter(refresh: true);
+            if (!current()) return t.videoLibrary.saveFailed;
+            if (cubit.state.filterError == null) {
+              final folders = _customFolders(cubit.state);
+              final matches = folders.entries
+                  .where((entry) => entry.value == name)
+                  .toList();
+              if (rename && folders[currentId] == name) {
+                confirmedId = currentId;
+                return null;
+              }
+              if (!rename &&
+                  matches.length == 1 &&
+                  !before.containsValue(name) &&
+                  !before.containsKey(matches.single.key)) {
+                confirmedId = matches.single.key;
+                recoveredName = name;
+                return null;
+              }
+              if (matches.any(
+                (entry) => entry.key != (rename ? currentId : null),
+              )) {
+                return t.videoLibrary.duplicateFolder;
+              }
+            }
+            return t.sourceProfile.jmFolderUnconfirmed;
+          }
+        },
+      );
+      return saved == null || !current() ? null : confirmedId;
+    }
+
+    setState(() => _folderBusy = true);
+    try {
+      if (action == 'refresh') {
+        await cubit.loadFilter(refresh: true);
+        if (current()) {
+          feedback(
+            cubit.state.filterError == null
+                ? t.common.refreshChecked
+                : t.common.refreshFailed,
+          );
+        }
+        return;
+      }
+      if (action == 'create' || action == 'rename') {
+        final rename = action == 'rename';
+        final id = await editName(rename: rename);
+        if (id != null && current()) {
+          feedback(
+            rename
+                ? t.sourceProfile.jmFolderRenamed
+                : recoveredName != null
+                ? t.sourceProfile.jmFolderAvailable(name: recoveredName!)
+                : t.bookshelf.folderCreated,
+            openId: !rename && !_selecting ? id : null,
+          );
+        }
+        return;
+      }
+      if (action == 'delete') {
+        final name = _customFolders(cubit.state)[currentId];
+        if (name == null) return;
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) {
+            _folderRoute = ModalRoute.of(context);
+            return ShortAlert(
+              title: Text(t.sourceProfile.jmDeleteFolder(name: name)),
+              actions: [
+                ShortAlertAction(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(t.common.cancel),
+                ),
+                ShortAlertAction(
+                  destructive: true,
+                  onPressed: () => Navigator.pop(context, true),
+                  child: Text(t.common.delete),
+                ),
+              ],
+            );
+          },
+        );
+        if (!current() || confirmed != true) return;
+        final result = await write('deleteFavoriteFolder', {
+          'folderId': currentId,
+          'folderName': name,
+        });
+        cubit.applyConfirmedJmFolderChange(result['folders'], id: currentId);
+        feedback(t.sourceProfile.jmFolderDeleted);
+        return;
+      }
+      if (action != 'move' || selected.isEmpty) return;
+      String? created;
+      while (current() && mounted) {
+        final folders = _customFolders(cubit.state);
+        final target = await pickJmCloudFolder(
+          context,
+          label: fromFolder
+              ? t.sourceProfile.jmMoveToFolder
+              : t.bookshelf.addToFolder,
+          options: {
+            if (created != null && folders.containsKey(created))
+              created: folders[created]!,
+            for (final e in folders.entries)
+              if (e.key != created && e.key != currentId) e.key: e.value,
+          },
+          onRoute: (route) => _folderRoute = route,
+        );
+        if (!current() || target == null) return;
+        if (target == jmCreateFolderChoice) {
+          created = await editName();
+          continue;
+        }
+        final name = folders[target];
+        if (name == null) return;
+        setState(() => _movingWorks = true);
+        await write('moveFavoriteToFolder', {
+          'comicIds': selected.toList(),
+          'folderId': target,
+          'folderName': name,
+        });
+        if (!current()) return;
+        if (account == null) _uncachedListRevision++;
+        if (account != null) {
+          try {
+            for (final id in selected) {
+              if (!current()) return;
+              await snapshots.mutate(
+                source: source,
+                account: account,
+                generation: session.$2,
+                id: id,
+                previouslyFavorited: true,
+                favorited: true,
+                movedToFolder: target,
+              );
+            }
+          } catch (_) {
+            await refreshMoveCollections();
+          }
+        }
+        if (!current()) return;
+        _endSelection();
+        feedback(
+          fromFolder
+              ? t.sourceProfile.jmMovedToFolder(name: name)
+              : t.comicInfo.addedToFolder(name: name),
+          openId: target,
+        );
+        return;
+      }
+    } catch (_) {
+      if (current()) {
+        if (_movingWorks) await refreshMoveCollections();
+        if (!current()) return;
+        feedback(t.sourceProfile.jmFolderUnconfirmed);
+        await cubit.loadFilter(refresh: true);
+      }
+    } finally {
+      if (current()) {
+        setState(() {
+          _folderBusy = false;
+          _movingWorks = false;
+          _folderRoute = null;
+        });
+      }
+    }
+  }
 
   void _dismissRemoteFilter() {
     final route = _remoteFilterRoute;
@@ -146,6 +628,7 @@ class _ComicListViewState extends State<_ComicListView>
   @override
   void dispose() {
     _dismissRemoteFilter();
+    _closeFolderRoute();
     _jmSearch.dispose();
     _jmSearchFocus.dispose();
     super.dispose();
@@ -161,9 +644,10 @@ class _ComicListViewState extends State<_ComicListView>
             request.extern['source']?.toString() == 'cloudFavorite');
   }
 
-  bool _compactCloud(ComicListState state) =>
+  bool _usesCollectionTools(ComicListState state) =>
       widget.jmCollection ||
       widget.cloudFavoriteEntryPoint ||
+      state.scene?.profileRecords == true ||
       (state.scene != null && _isCloudFavoriteScene(state.scene!));
 
   void _toggleCategory(
@@ -171,28 +655,13 @@ class _ComicListViewState extends State<_ComicListView>
     Set<String> blocked,
     ValueChanged<Set<String>> change,
   ) {
-    final wasBlocked = blocked.contains(category);
     final next = {...blocked};
-    wasBlocked ? next.remove(category) : next.add(category);
+    if (!next.add(category)) next.remove(category);
     change(next);
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          wasBlocked
-              ? '已恢复「${convertChineseForDisplay(category)}」'
-              : '已屏蔽「${convertChineseForDisplay(category)}」· 再点恢复',
-        ),
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
-      ),
-    );
   }
 
   void _closeJmSearch() {
     _jmSearchFocus.unfocus();
-    _jmSearch.clear();
     setState(() => _jmSearching = false);
   }
 
@@ -213,6 +682,7 @@ class _ComicListViewState extends State<_ComicListView>
         ? null
         : JmCollectionSortAction(
             key: const ValueKey('jm-collection.sort'),
+            bare: true,
             options: {
               for (final option in sort.options) option.value: option.label,
             },
@@ -233,15 +703,23 @@ class _ComicListViewState extends State<_ComicListView>
               });
             },
           );
+    final canOrganize = _folderManagement(state) && state.hasResolvedFilter;
+    final canEditFolder =
+        canOrganize &&
+        _customFolders(state).containsKey(state.filterSelections['folderId']);
     final body = Column(
       children: [
-        if (remoteFilters)
-          JmCollectionResultsRow(
+        if (remoteFilters && !_selecting)
+          CollectionResultsRow(
             scope: _cloudFolderChoice(state),
+            startInset: _folderManagement(state)
+                ? CollectionToolbarMetrics.horizontalInset
+                : null,
             countLabel: '',
             sortAction: sortAction,
             filterButton: SourceChromeIconButton(
               key: const ValueKey('jm-cloud-remote-filter'),
+              bare: true,
               tooltip: t.comicList.filter,
               icon: CollectionCommandIcons.filter.icon,
               symbol: CollectionCommandIcons.filter.symbol,
@@ -251,6 +729,7 @@ class _ComicListViewState extends State<_ComicListView>
             ),
             viewAction: SourceListViewToggle(
               key: const ValueKey('jm-cloud-view'),
+              bare: true,
               detailed: detailed,
               onChanged: onViewChanged,
             ),
@@ -261,115 +740,214 @@ class _ComicListViewState extends State<_ComicListView>
             inset: CollectionToolbarMetrics.horizontalInset,
           ),
         Expanded(
-          child: CollectionCoverPrivacyScope(
-            child: _buildBody(
-              context,
-              state,
-              detailed,
-              blocked,
-              jmViewChanged: onViewChanged,
-              jmSortAction: sortAction,
+          child: JmCloudSelection(
+            active: _selecting,
+            enabled: !_folderBusy,
+            ids: _selectedIds,
+            toggle: _toggleWork,
+            child: CollectionCoverPrivacyScope(
+              child: _buildBody(
+                context,
+                state,
+                detailed,
+                blocked,
+                jmViewChanged: onViewChanged,
+                jmSortAction: sortAction,
+              ),
             ),
           ),
         ),
+        if (_selecting)
+          JmCloudSelectionBar(
+            key: _selectionBarKey,
+            count: _selectedIds.length,
+            busy: _folderBusy,
+            moving: _movingWorks,
+            moveLabel: canEditFolder
+                ? t.sourceProfile.jmMoveToFolder
+                : t.bookshelf.addToFolder,
+            onCreate: () => _folderAction('create'),
+            onMove: () => _folderAction('move'),
+            onCancel: _endSelection,
+          ),
       ],
     );
     final actions = <Widget>[
-      JmCollectionNavigationActions(
-        showSearch: !remoteFilters,
-        onSearch: remoteFilters
-            ? null
-            : () {
-                final accountGeneration = pluginSessionWriteFence.generation(
-                  state.currentFrom,
-                );
-                setState(() => _jmSearching = true);
-                requestSearchKeyboard(
-                  _jmSearchFocus,
-                  isCurrent: () =>
-                      mounted &&
-                      _jmSearching &&
-                      context.read<ComicListCubit>().state.currentFrom ==
-                          state.currentFrom &&
-                      !pluginSessionWriteFence.isChanging(state.currentFrom) &&
-                      pluginSessionWriteFence.generation(state.currentFrom) ==
-                          accountGeneration &&
-                      ModalRoute.of(context)?.isCurrent != false,
-                );
-              },
-        options: {
-          if (!remoteFilters &&
-              cloudFavoriteNeedsFilterDialog(state.filterBundle))
-            'remote-filter': t.comicList.filter,
-          collectionCoverSettingsAction: collectionCoverSettingsLabel(context),
-        },
-        groups: [
-          [
+      if (_selecting)
+        Padding(
+          padding: CollectionToolbarMetrics.contentPaddingOf(context),
+          child: Text(t.videoLibrary.selectedCount(count: _selectedIds.length)),
+        )
+      else
+        JmCollectionNavigationActions(
+          source: state.currentFrom,
+          showSearch: !remoteFilters,
+          onSearch: remoteFilters
+              ? null
+              : () {
+                  final accountGeneration = pluginSessionWriteFence.generation(
+                    state.currentFrom,
+                  );
+                  setState(() => _jmSearching = true);
+                  requestSearchKeyboard(
+                    _jmSearchFocus,
+                    isCurrent: () =>
+                        mounted &&
+                        _jmSearching &&
+                        context.read<ComicListCubit>().state.currentFrom ==
+                            state.currentFrom &&
+                        !pluginSessionWriteFence.isChanging(
+                          state.currentFrom,
+                        ) &&
+                        pluginSessionWriteFence.generation(state.currentFrom) ==
+                            accountGeneration &&
+                        ModalRoute.of(context)?.isCurrent != false,
+                  );
+                },
+          options: {
+            if (canOrganize) ...{
+              'cloud-folder.select': t.bookshelf.multiSelect,
+              'cloud-folder.create': t.bookshelf.createFolder,
+              'cloud-folder.refresh': t.sourceProfile.jmRefreshFolders,
+              if (canEditFolder)
+                'cloud-folder.rename': t.bookshelf.renameFolder,
+              if (canEditFolder)
+                'cloud-folder.delete': t.videoLibrary.deleteFolder,
+            },
             if (!remoteFilters &&
                 cloudFavoriteNeedsFilterDialog(state.filterBundle))
-              'remote-filter',
-            collectionCoverSettingsAction,
+              'remote-filter': t.comicList.filter,
+            collectionCoverSettingsAction: collectionCoverSettingsLabel(
+              context,
+            ),
+          },
+          groups: [
+            if (canOrganize)
+              [
+                'cloud-folder.select',
+                'cloud-folder.create',
+                'cloud-folder.refresh',
+                if (canEditFolder) 'cloud-folder.rename',
+                if (canEditFolder) 'cloud-folder.delete',
+              ],
+            [
+              if (!remoteFilters &&
+                  cloudFavoriteNeedsFilterDialog(state.filterBundle))
+                'remote-filter',
+              collectionCoverSettingsAction,
+            ],
           ],
-        ],
-        onSelected: (value) {
-          if (value == 'remote-filter') {
-            unawaited(_openFilterDialog(context));
-          } else if (value == collectionCoverSettingsAction) {
-            unawaited(openCollectionCoverSettings(context));
-          }
-        },
-      ),
+          onSelected: (value) {
+            if (value.startsWith('cloud-folder.')) {
+              if (_folderBusy ||
+                  !context.mounted ||
+                  _sessionOf(context.read<ComicListCubit>().state) !=
+                      sortSession)
+                return;
+              if (value == 'cloud-folder.select') {
+                setState(() => _selecting = true);
+              } else {
+                unawaited(
+                  _folderAction(value.substring('cloud-folder.'.length)),
+                );
+              }
+            } else if (value == 'remote-filter') {
+              unawaited(_openFilterDialog(context));
+            } else if (value == collectionCoverSettingsAction) {
+              unawaited(openCollectionCoverSettings(context));
+            }
+          },
+        ),
     ];
-    if (widget.embedded)
+    final headerHeight = SearchToolbarScope.stableHeight(
+      context,
+      kToolbarHeight,
+    );
+    final searchField = searching
+        ? SearchToolbarScope(
+            extent: SearchToolbarScope.fieldExtent(context),
+            onClose: _closeJmSearch,
+            closeKey: const ValueKey('jm-collection.search'),
+            child: SourceLoadedSearchField(
+              controller: _jmSearch,
+              focusNode: _jmSearchFocus,
+              scopeMenu: KeywordScopeMenu(
+                key: const ValueKey('source-loaded.search-scope'),
+                scope: _jmSearchScope,
+                onChanged: (scope) {
+                  if (!context.mounted ||
+                      !_jmSearching ||
+                      _sessionOf(context.read<ComicListCubit>().state) !=
+                          sortSession) {
+                    return;
+                  }
+                  setState(() => _jmSearchScope = scope);
+                },
+              ),
+            ),
+          )
+        : null;
+    if (widget.embedded) {
       return Column(
         children: [
-          if (!searching)
-            Padding(
-              padding: CollectionToolbarMetrics.contentPaddingOf(context),
+          Padding(
+            padding: CollectionToolbarMetrics.contentPaddingOf(context),
+            child: SizedBox(
+              height: headerHeight,
               child: Row(
                 children: [
                   Expanded(
-                    child: widget.titleInParent
-                        ? const SizedBox.shrink()
-                        : Text(widget.title ?? '站点收藏'),
+                    child:
+                        searchField ??
+                        (widget.titleInParent
+                            ? const SizedBox.shrink()
+                            : Text(widget.title ?? '站点收藏')),
                   ),
-                  ...actions,
+                  if (!searching) ...actions,
                 ],
               ),
             ),
+          ),
           Expanded(child: body),
         ],
       );
+    }
     return PopScope(
-      canPop: !searching,
+      canPop: !searching && !_selecting,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && searching) _closeJmSearch();
+        if (didPop || _folderBusy) return;
+        if (_selecting) {
+          _endSelection();
+        } else if (searching) {
+          _closeJmSearch();
+        }
       },
       child: Scaffold(
-        appBar: searching
-            ? null
-            : AppBar(
-                leadingWidth: CollectionToolbarMetrics.leadingExtentOf(context),
-                leading: CollectionToolbarMetrics.leading(
+        appBar: AppBar(
+          automaticallyImplyLeading: false,
+          toolbarHeight: headerHeight,
+          leadingWidth: CollectionToolbarMetrics.leadingExtentOf(context),
+          leading: searching
+              ? null
+              : CollectionToolbarMetrics.leading(
                   context,
                   const SourceBackButton(),
                 ),
-                title: Text(
+          title: searchField == null
+              ? Text(
                   widget.title ?? state.scene?.title ?? '站点收藏',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                )
+              : Padding(
+                  padding: CollectionToolbarMetrics.contentPaddingOf(context),
+                  child: searchField,
                 ),
-                titleSpacing: 0,
-                actionsPadding: CollectionToolbarMetrics.trailingPadding,
-                actions: actions,
-              ),
-        body: SafeArea(
-          top: searching,
-          bottom: false,
-          left: false,
-          right: false,
-          child: body,
+          titleSpacing: 0,
+          actionsPadding: CollectionToolbarMetrics.trailingPadding,
+          actions: searching ? null : actions,
         ),
+        body: body,
       ),
     );
   }
@@ -381,43 +959,74 @@ class _ComicListViewState extends State<_ComicListView>
     bool detailed,
     ValueChanged<bool> onViewChanged,
     Widget? sortAction,
-  ) => Column(
-    mainAxisSize: MainAxisSize.min,
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      AnimatedSize(
-        duration: const Duration(milliseconds: 180),
-        alignment: Alignment.topCenter,
-        child: _jmSearching
-            ? Padding(
-                padding: CollectionToolbarMetrics.contentPaddingOf(
-                  context,
-                  top: 4,
-                  bottom: 8,
-                ),
-                child: SearchToolbarScope(
-                  extent: SearchToolbarScope.fieldExtent(context),
-                  onClose: _closeJmSearch,
-                  closeKey: const ValueKey('jm-collection.search'),
-                  child: chrome.searchField,
-                ),
-              )
-            : const SizedBox.shrink(),
-      ),
-      JmCollectionResultsRow(
-        scope: _cloudFolderChoice(state),
-        countLabel: chrome.countLabel,
-        filterButton: chrome.filterButton,
-        sortAction: sortAction,
-        viewAction: SourceListViewToggle(
-          key: const ValueKey('jm-cloud-view'),
-          detailed: detailed,
-          onChanged: onViewChanged,
-        ),
-      ),
-      if (chrome.appliedFilters case final applied?) applied,
-    ],
-  );
+  ) => _selecting
+      ? const SizedBox.shrink()
+      : Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            CollectionResultsRow(
+              scope: _cloudFolderChoice(state) ?? chrome.pageNavigation,
+              inlineScope:
+                  chrome.pageNavigation != null &&
+                  _cloudFolderChoice(state) == null,
+              startInset: _folderManagement(state)
+                  ? CollectionToolbarMetrics.horizontalInset
+                  : null,
+              countLabel: chrome.pageNavigation == null
+                  ? chrome.countLabel
+                  : chrome.total > 0 ||
+                        chrome.knownTotal != null ||
+                        chrome.complete
+                  ? _numberedCollectionCount(chrome)
+                  : '',
+              countSemanticsLabel: chrome.pageNavigation == null
+                  ? null
+                  : _numberedCollectionCount(chrome, compact: false),
+              countKey: chrome.pageNavigation == null
+                  ? null
+                  : const ValueKey('plugin-list.numbered-count'),
+              filterButton: chrome.filterButton,
+              sortAction: sortAction,
+              viewAction: SourceListViewToggle(
+                key: const ValueKey('jm-cloud-view'),
+                bare: true,
+                detailed: detailed,
+                onChanged: onViewChanged,
+              ),
+            ),
+            if (chrome.pageNavigation case final navigation?
+                when _cloudFolderChoice(state) != null)
+              Padding(
+                padding: CollectionToolbarMetrics.contentPaddingOf(context),
+                child: navigation,
+              ),
+            if (chrome.appliedFilters case final applied?) applied,
+          ],
+        );
+
+  String _numberedCollectionCount(
+    SourceLoadedResultChrome chrome, {
+    bool compact = true,
+  }) {
+    if (chrome.filtersActive ||
+        _jmSearch.text.trim().isNotEmpty ||
+        chrome.shown != chrome.total) {
+      return t.videoLibrary.filteredLoaded(
+        loaded: chrome.total,
+        shown: chrome.shown,
+      );
+    }
+    final total = chrome.knownTotal;
+    if (total != null && chrome.total < total) {
+      if (compact) return '${chrome.total}/$total';
+      return t.sourceShell.collectionLoadingCount(
+        loaded: chrome.total,
+        total: total,
+      );
+    }
+    return t.videoLibrary.results(count: chrome.total);
+  }
 
   Widget _cloudToolbar(
     ComicListState state,
@@ -463,7 +1072,7 @@ class _ComicListViewState extends State<_ComicListView>
         )
         .firstOrNull;
     if (folders == null) {
-      if (_compactCloud(state) && state.filterLoading)
+      if (_usesCollectionTools(state) && state.filterLoading)
         return Row(
           key: const ValueKey('cloud-favorite.folder-loading'),
           mainAxisSize: MainAxisSize.min,
@@ -482,20 +1091,41 @@ class _ComicListViewState extends State<_ComicListView>
         );
       return null;
     }
-    if (!_compactCloud(state) && folders.options.length < 2) return null;
+    if (!_usesCollectionTools(state) && folders.options.length < 2) return null;
     final value = state.filterSelections[folders.key] ?? '';
     final options = {
       for (final option in folders.options) option.value: option.label,
     };
-    void select(String value) => context
-        .read<ComicListCubit>()
-        .applyFilterSelections({...state.filterSelections, folders.key: value});
-    final Widget choice = _compactCloud(state) && folders.options.length > 8
+    final session = _sessionOf(state);
+    void select(String value) {
+      if (!mounted ||
+          _folderBusy ||
+          _selecting ||
+          pluginSessionWriteFence.isChanging(session.$1))
+        return;
+      final cubit = context.read<ComicListCubit>();
+      if (_sessionOf(cubit.state) != session) return;
+      cubit.applyFilterSelections({
+        ...cubit.state.filterSelections,
+        folders.key: value,
+      });
+    }
+
+    if (_folderManagement(state)) {
+      return JmCloudFolderButton(
+        key: const ValueKey('cloud-favorite.folder'),
+        label: options[value] ?? options.values.first,
+        onPressed: _folderBusy || _selecting ? null : _manageJmFolders,
+      );
+    }
+    final Widget choice =
+        _usesCollectionTools(state) && folders.options.length > 8
         ? JmCollectionFolderChoice(
             key: const ValueKey('cloud-favorite.folder'),
             label: folders.label,
             value: value,
             options: options,
+            onRoute: (route) => _folderRoute = route,
             onChanged: folders.options.length == 1 ? null : select,
           )
         : SourceChoiceMenu<String>(
@@ -506,13 +1136,14 @@ class _ComicListViewState extends State<_ComicListView>
                 folders.options.first.label,
             value: value,
             options: options,
-            selectionIndicator: !_compactCloud(state),
-            maximumWidth: _compactCloud(state) ? 160 : 180,
-            onChanged: _compactCloud(state) && folders.options.length == 1
+            selectionIndicator: !_usesCollectionTools(state),
+            maximumWidth: _usesCollectionTools(state) ? 160 : 180,
+            onChanged:
+                _usesCollectionTools(state) && folders.options.length == 1
                 ? null
                 : select,
           );
-    if (!_compactCloud(state)) return choice;
+    if (!_usesCollectionTools(state)) return choice;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -531,7 +1162,14 @@ class _ComicListViewState extends State<_ComicListView>
       listenWhen: (_, state) => _searchSession != _sessionOf(state),
       listener: (_, state) {
         _searchSession = _sessionOf(state);
+        _folderFeedback?.close();
+        _closeFolderRoute();
+        _folderBusy = false;
+        _movingWorks = false;
+        _selectedIds = {};
+        _selecting = false;
         _jmSearching = false;
+        _jmSearchScope = KeywordSearchScope.all;
         _jmSearch.clear();
         _jmSearchFocus.unfocus();
       },
@@ -550,7 +1188,8 @@ class _ComicListViewState extends State<_ComicListView>
           builder: (context, blocked, onBlockedChanged) =>
               SourceListPresentation(
                 source: state.currentFrom,
-                detailedByDefault: isCloudFavorite,
+                detailedByDefault:
+                    isCloudFavorite || state.scene?.profileRecords == true,
                 builder: (context, detailed, onViewChanged) {
                   Widget loadedTools(
                     BuildContext context,
@@ -564,7 +1203,9 @@ class _ComicListViewState extends State<_ComicListView>
                     detailed: detailed,
                     onViewChanged: onViewChanged,
                   );
-                  if (isCloudFavorite && _compactCloud(state)) {
+                  if ((isCloudFavorite ||
+                          state.scene?.profileRecords == true) &&
+                      _usesCollectionTools(state)) {
                     return _buildJmCollection(
                       context,
                       state,
@@ -581,6 +1222,9 @@ class _ComicListViewState extends State<_ComicListView>
                                 state.filterBundle,
                               ))
                       ? SourceChromeIconButton(
+                          bare:
+                              widget.embedded ||
+                              !usesNativeSourceChrome(context),
                           tooltip: t.comicList.filter,
                           icon: CollectionCommandIcons.filter.icon,
                           symbol: CollectionCommandIcons.filter.symbol,
@@ -590,9 +1234,16 @@ class _ComicListViewState extends State<_ComicListView>
                         )
                       : null;
                   if (widget.embedded) {
+                    final viewInPageRow =
+                        widget.titleInParent &&
+                        state.scene?.body.request != null &&
+                        !state.requiresFilter &&
+                        !publicLoadedFacets &&
+                        !isCloudFavorite &&
+                        !isBikaRanking;
                     return Column(
                       children: [
-                        if (!publicLoadedFacets)
+                        if (!publicLoadedFacets && !viewInPageRow)
                           Padding(
                             padding: const EdgeInsetsDirectional.fromSTEB(
                               CollectionToolbarMetrics.sourceContentInset,
@@ -647,6 +1298,12 @@ class _ComicListViewState extends State<_ComicListView>
                               blocked,
                               publicLoadedTools: publicLoadedFacets
                                   ? loadedTools
+                                  : null,
+                              pageViewAction: viewInPageRow
+                                  ? SourceListViewToggle(
+                                      detailed: detailed,
+                                      onChanged: onViewChanged,
+                                    )
                                   : null,
                             ),
                           ),
@@ -733,6 +1390,11 @@ class _ComicListViewState extends State<_ComicListView>
   }) => Column(
     mainAxisSize: MainAxisSize.min,
     children: [
+      if (chrome.pageNavigation case final navigation?)
+        Padding(
+          padding: CollectionToolbarMetrics.contentPaddingOf(context),
+          child: navigation,
+        ),
       Padding(
         padding: CollectionToolbarMetrics.contentPaddingOf(
           context,
@@ -813,6 +1475,7 @@ class _ComicListViewState extends State<_ComicListView>
     return AppliedFilterBar(
       entries: selected,
       inset: inset,
+      compact: _usesCollectionTools(state),
       onClearAll: () => clearFields(selected.map((entry) => entry.id)),
     );
   }
@@ -890,6 +1553,7 @@ class _ComicListViewState extends State<_ComicListView>
     Widget Function(BuildContext, SourceLoadedResultChrome)? publicLoadedTools,
     ValueChanged<bool>? jmViewChanged,
     Widget? jmSortAction,
+    Widget? pageViewAction,
   }) {
     final currentFrom = state.currentFrom;
 
@@ -969,6 +1633,7 @@ class _ComicListViewState extends State<_ComicListView>
         publicLoadedTools,
         jmViewChanged,
         jmSortAction,
+        pageViewAction,
       );
     }
 
@@ -983,6 +1648,7 @@ class _ComicListViewState extends State<_ComicListView>
     Widget Function(BuildContext, SourceLoadedResultChrome)? publicLoadedTools,
     ValueChanged<bool>? jmViewChanged,
     Widget? jmSortAction,
+    Widget? pageViewAction,
   ) {
     final request = scene.body.request!;
     final filterCore = state.resolvedFilterCore;
@@ -997,32 +1663,37 @@ class _ComicListViewState extends State<_ComicListView>
 
     return PluginPagedComicListView(
       key: ValueKey(
-        '${request.fnPath}_${listCore}_${listExtern}_${pluginSessionWriteFence.generation(state.currentFrom)}',
+        '${state.currentFrom}_${request.fnPath}_${listCore}_${listExtern}_${pluginSessionWriteFence.generation(state.currentFrom)}_$_uncachedListRevision',
       ),
       pluginId: state.currentFrom,
       fnPath: request.fnPath,
+      pageViewAction: pageViewAction,
       tabReselectEnabled:
           widget.embedded &&
           !_jmSearching &&
           !_filterOpening &&
           !_systemSearchSurface,
-      coreBuilder: (page) => {'page': page, ...listCore},
+      coreBuilder: (page) => {...listCore, 'page': page},
       externBuilder: (_) => listExtern,
       collectionTargetId: collectionTargetId,
       rankingLayout: _usesBikaRankingLayout(state),
       cloudFavorite:
           widget.cloudFavoriteEntryPoint || _isCloudFavoriteScene(scene),
+      flatCollectionControls: scene.profileRecords,
       detailedView: detailed,
       blockedCategories: blocked,
       localResultTools: !cloudFavoriteHasRemoteResultFilters(
         state.filterBundle,
       ),
       publicLoadedFacets: publicLoadedTools != null,
-      loadedSearchController: _compactCloud(state) ? _jmSearch : null,
-      loadedSearchFocusNode: _compactCloud(state) ? _jmSearchFocus : null,
-      loadedSearchExpanded: !_compactCloud(state) || _jmSearching,
-      focusedFacets: _compactCloud(state),
-      loadedChromeBuilder: _compactCloud(state) && jmViewChanged != null
+      loadedSearchController: _usesCollectionTools(state) ? _jmSearch : null,
+      loadedSearchFocusNode: _usesCollectionTools(state)
+          ? _jmSearchFocus
+          : null,
+      loadedSearchExpanded: !_usesCollectionTools(state) || _jmSearching,
+      loadedSearchScope: _usesCollectionTools(state) ? _jmSearchScope : null,
+      focusedFacets: _usesCollectionTools(state),
+      loadedChromeBuilder: _usesCollectionTools(state) && jmViewChanged != null
           ? (context, chrome) => _jmControls(
               context,
               state,
@@ -1091,12 +1762,15 @@ class _ComicListViewState extends State<_ComicListView>
           : scene?.body.request?.fnPath ?? 'list';
       final favoriteScope =
           'source-filter|$source|comic-list|${Uri.encodeComponent(role)}';
+      FocusManager.instance.primaryFocus?.unfocus();
       final result = await showModalBottomSheet<Map<String, String>>(
         context: context,
         isScrollControlled: true,
         useSafeArea: true,
         constraints: const BoxConstraints(maxWidth: 640),
-        clipBehavior: _systemSearchSurface ? Clip.none : Clip.antiAlias,
+        backgroundColor: Colors.transparent,
+        clipBehavior: Clip.none,
+        elevation: 0,
         builder: (sheetContext) {
           _remoteFilterRoute = ModalRoute.of(sheetContext);
           return PluginListFilterDialog(

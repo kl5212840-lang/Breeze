@@ -207,17 +207,14 @@ void main() {
     } finally {
       await cancelling;
     }
+    await Future<void>.delayed(Duration.zero);
     expect(await page.exists(), isFalse);
-    final rows = objectbox.downloadTaskBox.getAll();
-    expect(rows, hasLength(2));
-    expect(
-      rows.singleWhere((row) => row.id == id).taskInfo!.stateCode,
-      'cancelled',
-    );
-    expect(
-      rows.singleWhere((row) => row.id != id).taskInfo!.stateCode,
-      'queued',
-    );
+    final row = objectbox.downloadTaskBox.getAll().single;
+    expect(row.id, id);
+    expect(row.isCompleted, isFalse);
+    expect(row.taskInfo!.stateCode, 'queued');
+    expect(row.taskInfo!.phaseCode, 'retry');
+    expect(row.taskInfo!.imagePaths, isEmpty);
   });
 
   test(
@@ -249,15 +246,13 @@ void main() {
     final page = await writePage();
     final oldId = seedTask(interruptedCancellation: true);
     final newId = seedTask(interruptedCancellation: false);
+    final checkpoint = objectbox.downloadTaskBox.get(newId)!.dbTaskInfoStr;
 
     queue.resetStuckTasks();
 
-    expect(
-      objectbox.downloadTaskBox.get(oldId)!.taskInfo!.stateCode,
-      'cancelled',
-    );
-    expect(objectbox.downloadTaskBox.get(newId)!.taskInfo!.stateCode, 'queued');
-    expect(await page.exists(), isTrue);
+    expect(objectbox.downloadTaskBox.get(oldId), isNull);
+    expect(objectbox.downloadTaskBox.get(newId)!.dbTaskInfoStr, checkpoint);
+    expect(await page.readAsBytes(), [1]);
   });
 
   test(

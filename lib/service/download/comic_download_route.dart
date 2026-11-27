@@ -52,11 +52,13 @@ class ComicDownloadRouteUnavailable implements Exception {
     this.message,
     this.retryReason,
     this.noCandidate = false,
+    this.retryAfter,
   ]);
 
   final String? message;
   final ComicDownloadRetryReason? retryReason;
   final bool noCandidate;
+  final Duration? retryAfter;
 
   static ComicDownloadRouteUnavailable? fromPluginError(Object error) {
     final message = quickJsErrorMessage(error);
@@ -89,6 +91,9 @@ class ComicDownloadRouteUnavailable implements Exception {
             retryable != false &&
             (value['reason'] == 'noCandidate' ||
                 (retryable == null && value['reason'] == null)),
+        reason != null && value['retryAfter'] is String
+            ? comicDownloadRetryAfter('Retry-After: ${value['retryAfter']}')
+            : null,
       );
     } on FormatException {
       return null;

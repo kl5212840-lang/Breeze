@@ -410,6 +410,21 @@ Future<T> _runQjsTask<T>({
       (taskGroupKey?.isNotEmpty == true
           ? taskGroupKey
           : _networkRoutes.currentTaskGroup(resolvedPluginId));
+  var groupCancelled = false;
+  if (group != null && group.isNotEmpty) {
+    groupCancelled = isDownloadCancelSignaled(group);
+    unawaited(
+      waitForDownloadCancelSignal(group).then((_) => groupCancelled = true),
+    );
+  }
+  void requireCurrentGroup() {
+    if (group != null && (groupCancelled || isDownloadCancelSignaled(group))) {
+      _networkRoutes.releaseGroup(resolvedPluginId, group);
+      throw const DownloadTaskCancelledException();
+    }
+  }
+
+  requireCurrentGroup();
   PlaybackTrace.note(
     resolvedPluginId,
     'qjs_route',
@@ -422,6 +437,7 @@ Future<T> _runQjsTask<T>({
           runtimeName: runtimeName,
           taskGroupKey: group,
         );
+  requireCurrentGroup();
   _requireSessionOwner(resolvedPluginId, sessionOwner);
   PlaybackTrace.note(
     resolvedPluginId,
@@ -436,9 +452,7 @@ Future<T> _runQjsTask<T>({
   );
   _requireSessionOwner(resolvedPluginId, sessionOwner);
   resolutionOwner?.check();
-  if (group != null && group.isNotEmpty && isDownloadCancelSignaled(group)) {
-    throw const DownloadTaskCancelledException();
-  }
+  requireCurrentGroup();
 
   final useCallOnce = _shouldUseQjsCallOnce(resolvedPluginId);
   PlaybackTrace.note(
@@ -459,9 +473,7 @@ Future<T> _runQjsTask<T>({
     throw const PluginSessionChanged();
   }
   resolutionOwner?.check();
-  if (group != null && group.isNotEmpty && isDownloadCancelSignaled(group)) {
-    throw const DownloadTaskCancelledException();
-  }
+  requireCurrentGroup();
   final removeResolutionCancel = resolutionOwner?.onCancel(() async {
     if (group == null) return;
     triggerDownloadCancelSignal(group);
@@ -490,10 +502,12 @@ Future<T> _runQjsTask<T>({
         ),
       ).whenComplete(() async {
         try {
-          await collectRoutingRuntimeDomains(
-            source: resolvedPluginId,
-            runtime: resolvedRuntimeName,
-          );
+          if (resolutionOwner?.passive != true) {
+            await collectRoutingRuntimeDomains(
+              source: resolvedPluginId,
+              runtime: resolvedRuntimeName,
+            );
+          }
         } finally {
           removeResolutionCancel?.call();
           _releaseSessionRuntime(resolvedRuntimeName);

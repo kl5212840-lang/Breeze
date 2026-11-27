@@ -2,6 +2,8 @@ import 'dart:io';
 import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/widgets.dart';
+import 'package:zephyr/service/http_retry_after.dart';
+import 'package:zephyr/util/error_filter.dart';
 
 abstract interface class ImageFailureEvidence {
   bool get retryable;
@@ -11,13 +13,9 @@ class ImageRecoverySuperseded implements Exception {
   const ImageRecoverySuperseded();
 }
 
-final _imageHttpStatus = RegExp(
-  r'(?:http(?:\s+error)?|status(?:code)?[ :=]*)\s*([1-5]\d\d)',
-  caseSensitive: false,
-);
-
-int? imageFailureHttpStatus(Object error) =>
-    int.tryParse(_imageHttpStatus.firstMatch(error.toString())?.group(1) ?? '');
+int? imageFailureHttpStatus(Object error) => error is NetworkImageLoadException
+    ? error.statusCode
+    : reportedHttpStatus(error);
 
 /// Only transient failures are eligible for automatic recovery. Unknown plugin
 /// transport failures receive the same small budget; permanent HTTP failures do not.
@@ -29,6 +27,11 @@ bool imageFailureIsTransient(Object error) {
       error is StateError ||
       error is FileSystemException)
     return false;
+  if (error is TimeoutException ||
+      error is SocketException ||
+      error is HandshakeException) {
+    return true;
+  }
   final text = error.toString().toLowerCase();
   if (text.contains('unsupported') ||
       text.contains('cancel') ||
@@ -44,14 +47,7 @@ bool imageFailureIsTransient(Object error) {
       text.contains('missing plugin'))
     return false;
   final code = imageFailureHttpStatus(error);
-  if (code != null)
-    return code == 408 || code == 425 || code == 429 || code >= 500;
-  if (text == '404' || RegExp(r'\b404\b').hasMatch(text)) return false;
-  if (error is NetworkImageLoadException)
-    return error.statusCode == 408 ||
-        error.statusCode == 429 ||
-        error.statusCode >= 500;
-  return true;
+  return code == null || isTransientHttpStatus(code);
 }
 
 /// Shared bounded admission. Jobs with the same identity share one running
@@ -143,20 +139,12 @@ class ImageRecoveryHub with WidgetsBindingObserver {
         foreground =
             WidgetsBinding.instance.lifecycleState == null ||
             WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
-        final connectivity = Connectivity();
-        var receivedEvent = false;
-        _connectivity = connectivity.onConnectivityChanged.listen((values) {
-          receivedEvent = true;
-          updateConnectivity(values);
-        }, onError: (Object _) {});
-        unawaited(
-          connectivity
-              .checkConnectivity()
-              .then((values) {
-                if (!receivedEvent && !_disposed) updateConnectivity(values);
-              })
-              .catchError((Object _) {}),
+        final connectivity = _platformConnectivity = Connectivity();
+        _connectivity = connectivity.onConnectivityChanged.listen(
+          updateConnectivity,
+          onError: (Object _) {},
         );
+        unawaited(_refreshConnectivity());
       } catch (_) {}
     }
   }
@@ -168,7 +156,9 @@ class ImageRecoveryHub with WidgetsBindingObserver {
   final _activity = StreamController<void>.broadcast(sync: true);
   Stream<void> get recovered => _recovered.stream;
   Stream<void> get activity => _activity.stream;
+  Connectivity? _platformConnectivity;
   StreamSubscription<List<ConnectivityResult>>? _connectivity;
+  int _connectivityRevision = 0;
   bool _disposed = false;
   bool foreground = true, online = true;
   Set<ConnectivityResult>? _transports;
@@ -184,6 +174,7 @@ class ImageRecoveryHub with WidgetsBindingObserver {
 
   void updateConnectivity(List<ConnectivityResult> values) {
     if (_disposed) return;
+    _connectivityRevision++;
     final previous = online;
     final transports = values
         .where((v) => v != ConnectivityResult.none)
@@ -211,6 +202,22 @@ class ImageRecoveryHub with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _refreshConnectivity() async {
+    final platform = _platformConnectivity;
+    if (platform == null || _disposed) return;
+    final revision = ++_connectivityRevision;
+    final elapsed = Stopwatch()..start();
+    try {
+      final values = await platform.checkConnectivity();
+      if (revision == _connectivityRevision &&
+          elapsed.elapsed <= const Duration(seconds: 2)) {
+        updateConnectivity(values);
+      }
+    } catch (_) {
+      // A failed snapshot leaves the last observed transport in effect.
+    }
+  }
+
   /// A real successful image transport can prove same-Wi-Fi service recovered.
   /// Each failed consumer accepts this hint only once, never as a polling loop.
   void noteSuccessfulRequest({required String imageHost}) {
@@ -231,7 +238,11 @@ class ImageRecoveryHub with WidgetsBindingObserver {
     final previous = foreground;
     foreground = state == AppLifecycleState.resumed;
     _activity.add(null);
-    if (foreground && !previous) _recover('resume');
+    if (foreground && !previous) {
+      _recover('resume');
+      // Platform callbacks can omit a path change while the app is suspended.
+      unawaited(_refreshConnectivity());
+    }
   }
 
   Future<void> dispose() async {
@@ -248,6 +259,7 @@ class ImageRecoveryController {
   ImageRecoveryController({
     required this.retry,
     this.maxAutomaticAttempts = 2,
+    this.retryIntervalAfterAttempts,
     bool active = true,
     ImageRecoveryHub? hub,
     this.imageHost,
@@ -300,6 +312,8 @@ class ImageRecoveryController {
   final String? Function()? imageHost;
   final VoidCallback? onChanged;
   final int maxAutomaticAttempts;
+  // Visible reader pages may continue after the initial, short retry burst.
+  final Duration? retryIntervalAfterAttempts;
   final ImageRecoveryHub hub;
   late final StreamSubscription<void> _signal, _activity;
   Timer? _timer;
@@ -308,26 +322,47 @@ class ImageRecoveryController {
   bool _successWakeUsed = false;
   bool _active, _disposed = false, _running = false;
   DateTime? _lastRecovery;
+  DateTime? _retryNotBefore;
   bool get _eligible => _error != null && imageFailureIsTransient(_error!);
   bool get _canRun => !_disposed && _active && hub.foreground && hub.online;
-  bool get recovering =>
+  bool get _hasRetryBudget =>
+      _attempts < maxAutomaticAttempts || retryIntervalAfterAttempts != null;
+  bool get hasPendingRecovery =>
+      !_disposed &&
       _eligible &&
-      (_running ||
-          _timer != null ||
-          _canRun && _attempts < maxAutomaticAttempts);
+      (_running || _timer != null || _hasRetryBudget);
+  bool get recovering =>
+      hasPendingRecovery && (_running || _timer != null || _canRun);
   void failed(Object error) {
     if (identical(_error, error)) {
       _schedule();
       return;
     }
-    _error = error;
+    _recordFailure(error);
     _schedule();
     onChanged?.call();
+  }
+
+  void _recordFailure(Object error) {
+    _error = error;
+    final status = imageFailureHttpStatus(error);
+    if (status == null || !isTransientHttpStatus(status)) return;
+    final now = DateTime.now();
+    final delay =
+        httpRetryAfterDelay(error.toString(), now: now) ??
+        (status == 429 ? const Duration(seconds: 45) : Duration.zero);
+    final retryAt = now.add(delay);
+    if (retryAt.isAfter(_retryNotBefore ?? now)) {
+      _retryNotBefore = retryAt;
+      _timer?.cancel();
+      _timer = null;
+    }
   }
 
   void succeeded() {
     if (_error == null && _attempts == 0 && _timer == null) return;
     _error = null;
+    _retryNotBefore = null;
     _attempts = 0;
     _timer?.cancel();
     _timer = null;
@@ -339,6 +374,7 @@ class ImageRecoveryController {
     _timer?.cancel();
     _timer = null;
     _error = null;
+    _retryNotBefore = null;
     _attempts = 0;
     _lastRecovery = null;
     _successWakeUsed = false;
@@ -359,10 +395,14 @@ class ImageRecoveryController {
         !_eligible ||
         _running ||
         _timer != null ||
-        _attempts >= maxAutomaticAttempts)
+        !_hasRetryBudget)
       return;
+    final backoff = _attempts < maxAutomaticAttempts
+        ? Duration(milliseconds: _attempts == 0 ? 800 : 2400)
+        : retryIntervalAfterAttempts!;
+    final remaining = _retryNotBefore?.difference(DateTime.now());
     _timer = Timer(
-      Duration(milliseconds: _attempts == 0 ? 800 : 2400),
+      remaining != null && remaining > backoff ? remaining : backoff,
       () async {
         _timer = null;
         if (!_canRun || !_eligible) return;
@@ -378,7 +418,7 @@ class ImageRecoveryController {
           if (!_disposed &&
               epoch == _epoch &&
               error is! ImageRecoverySuperseded)
-            _error = error;
+            _recordFailure(error);
         } finally {
           _running = false;
           if (!_disposed) {

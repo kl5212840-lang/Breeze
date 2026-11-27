@@ -1,9 +1,78 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/widgets/android_glass_plate.dart';
 import 'package:zephyr/widgets/breeze_theme_colors.dart';
 
 /// Breeze control surfaces: neutral at rest, tinted when they convey state.
 abstract final class BreezeControlColors {
+  static ({Color track, Color fill, Color foreground})
+  androidNavigationSelection(ColorScheme colors, {bool highContrast = false}) {
+    final track = highContrast
+        ? colors.surface
+        : AndroidGlassPlate.track(colors);
+    final fill = highContrast
+        ? BreezeThemeColors.readableOn(
+            colors.secondaryContainer,
+            track,
+            minimumContrast: 3.4,
+          )
+        : colors.secondaryContainer;
+    return (
+      track: track,
+      fill: fill,
+      foreground: BreezeThemeColors.readableOn(
+        colors.onSecondaryContainer,
+        fill,
+      ),
+    );
+  }
+
+  static ({Color track, Color fill, Color foreground})?
+  androidContentSelectionOf(BuildContext context) =>
+      AppInterfaceStyleScope.usesAndroidSystem(context)
+      ? androidContentSelection(
+          Theme.of(context).colorScheme,
+          highContrast: MediaQuery.highContrastOf(context),
+        )
+      : null;
+
+  static ({Color track, Color fill, Color foreground}) androidContentSelection(
+    ColorScheme colors, {
+    bool highContrast = false,
+  }) {
+    final track = AndroidGlassPlate.track(colors);
+    final tint = AndroidGlassPlate.selected(colors, track);
+    final fill = highContrast
+        ? BreezeThemeColors.readableOn(tint, track, minimumContrast: 3.05)
+        : tint;
+    return (
+      track: track,
+      fill: fill,
+      foreground: BreezeThemeColors.readableOn(colors.onSurface, fill),
+    );
+  }
+
+  /// Ordinary Android content selectors use a tonal fill and state feedback.
+  /// Return null to inherit the platform or theme boundary in other modes.
+  static BorderSide? contentSelectionSide(BuildContext context) =>
+      AppInterfaceStyleScope.usesAndroidSystem(context) &&
+          !MediaQuery.highContrastOf(context)
+      ? BorderSide.none
+      : null;
+
+  static WidgetStateProperty<Color?>? contentSelectionColor(
+    BuildContext context,
+  ) {
+    if (contentSelectionSide(context) == null) return null;
+    final selection = androidContentSelection(Theme.of(context).colorScheme);
+    return WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.disabled)) return null;
+      return states.contains(WidgetState.selected)
+          ? selection.fill
+          : selection.track;
+    });
+  }
+
   static Color _pageSurface(ThemeData theme) => Color.alphaBlend(
     theme.scaffoldBackgroundColor,
     theme.colorScheme.surface,

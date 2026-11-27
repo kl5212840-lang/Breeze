@@ -82,6 +82,58 @@ void main() {
     },
   );
 
+  testWidgets('landscape swipe settings offer two persisted zone layouts', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(320, 760);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: const TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: const VideoPlaybackSettingsPage(),
+      ),
+    );
+    await pump(tester);
+    await tester.enterText(find.byType(TextField), 'brightness');
+    await pump(tester);
+    final toggle = find.byKey(
+      const ValueKey('video-setting.landscapeAdjustments'),
+    );
+    final choice = find.text(t.videoPlayback.landscapeAdjustmentSides);
+    expect(tester.widget<SwitchListTile>(toggle).value, isFalse);
+    expect(choice, findsNothing);
+    await tester.tap(toggle);
+    await pump(tester);
+    expect(choice, findsOneWidget);
+    expect(
+      find.text(t.videoPlayback.brightnessLeftVolumeRight),
+      findsOneWidget,
+    );
+    await tester.tap(choice);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(t.videoPlayback.volumeLeftBrightnessRight).last);
+    await pump(tester);
+    final saved = await VideoPlaybackPreferences.read();
+    expect(saved.landscapeAdjustments, isTrue);
+    expect(saved.reverseLandscapeAdjustments, isTrue);
+    await tester.tap(toggle);
+    await pump(tester);
+    expect(choice, findsNothing);
+    expect(
+      (await VideoPlaybackPreferences.read()).reverseLandscapeAdjustments,
+      isTrue,
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('history disables resume and a rejected save stays unchanged', (
     tester,
   ) async {

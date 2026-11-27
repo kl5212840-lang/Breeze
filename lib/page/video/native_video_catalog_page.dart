@@ -1,4 +1,5 @@
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
+import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/page/bookshelf/service/shelf_facet_preferences.dart';
 import 'package:zephyr/widgets/collection_command_icons.dart';
@@ -19,6 +20,9 @@ import 'package:zephyr/page/bookshelf/widgets/shelf_filter_sheet.dart';
 import 'package:zephyr/util/text/public_search_text.dart';
 import 'package:zephyr/page/video/source_profile_video_preview.dart';
 import 'package:zephyr/page/video/video_download_retry.dart';
+import 'package:zephyr/page/video/video_download.dart';
+import 'package:zephyr/page/video/native_site_episode_downloads.dart';
+import 'package:zephyr/page/video/video_episode_download_picker.dart';
 import 'package:zephyr/network/http/plugin/qjs_network_route.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/service/plugin_account_profiles.dart';
@@ -50,10 +54,12 @@ import 'package:flutter/foundation.dart'
     show kIsWeb, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/widgets/breeze_control_colors.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/page/video/video_native_navigation.dart';
+import 'package:zephyr/widgets/breeze_scroll_navigation.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_return_preferences.dart';
 import 'package:zephyr/page/source_shell/source_diagnostic_preferences.dart';
@@ -98,6 +104,7 @@ import 'package:zephyr/page/video/video_search_page.dart';
 import 'package:zephyr/page/video/video_search_history.dart';
 import 'package:zephyr/widgets/tab_reselect_scope.dart';
 import 'package:zephyr/util/json/json_value.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 typedef NativeVideoPluginCall =
     Future<Map<String, dynamic>> Function(
@@ -177,6 +184,7 @@ class NativeVideoCatalogPage extends StatefulWidget {
     this.returnToCallerAfterPlayback = false,
     this.structuredHanime = false,
     this.hanimeCategory,
+    this.cacheClock,
   });
 
   final Uri? initialUrl;
@@ -190,6 +198,8 @@ class NativeVideoCatalogPage extends StatefulWidget {
   final bool returnToCallerAfterPlayback;
   final bool structuredHanime;
   final NativeCatalogCategory? hanimeCategory;
+  @visibleForTesting
+  final DateTime Function()? cacheClock;
 
   final String source;
   final String title;
@@ -341,7 +351,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     final web = _web;
     if (web == null || !VideoAccountService.supported(config, widget.homeUrl))
       return;
-    final cookies = widget.accountCookies ?? videoSiteAccountCookies(web);
+    final cookies =
+        widget.accountCookies ??
+        videoSiteAccountCookies(web, source: widget.source);
     if (cookies == null)
       return; // Never substitute the default iOS cookie store.
     final epoch = ++_accountSyncEpoch;
@@ -586,7 +598,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   final _backStack = <_VideoLocation>[];
   final _tabHistory = <String>[];
   final _detailParents = <String, _VideoLocation?>{};
-  late final _catalogCache = VideoCatalogCache(cacheSource: widget.source);
+  late final _catalogCache = VideoCatalogCache(
+    cacheSource: widget.source,
+    now: widget.cacheClock,
+  );
   Object _catalogImageRefresh = Object();
   int _documentCacheGeneration = 0;
   int _documentPersonalCacheGeneration = 0;
@@ -661,6 +676,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     if (widget.structuredHanime && !_hanimeLayoutRead) {
       _hanimeLayoutRead = true;
       CollectionViewPreferences.changes.addListener(_readHanimeLayout);
+      HanimeWorkFactsStore.changes.addListener(_invalidateHanimeFacts);
       unawaited(_readHanimeLayout());
       _storedHanimeFacts = _readHanimeFacts();
     }
@@ -679,7 +695,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   final _hanimeDetailFacts = <Uri, HanimeWorkFacts>{};
   Future<void>? _storedHanimeFacts;
   Future<void> _hanimeFactsQueue = Future.value();
-  final _hanimeReads = <(int, Uri), Future<void>>{};
+  final _hanimeReads = <(int, int, Uri), Future<void>>{};
   int _hanimeAttemptEpoch = -1;
   final _hanimeAttempted = <Uri>{};
   DateTime? _lastHanimeRead;
@@ -691,10 +707,25 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   HanimeWorkFacts? _knownHanimeFacts(Uri? target) =>
       _hanimeDetailFacts[hanimeWorkPage(target)];
 
+  void _invalidateHanimeFacts() {
+    if (!mounted) return;
+    setState(() {
+      _hanimeDetailFacts.clear();
+      _hanimeAttempted.clear();
+      _hanimeReadFailures = 0;
+    });
+    _updatePersonalFilterFacts?.call();
+  }
+
   Future<void> _readHanimeFacts() async {
+    final epoch = HanimeWorkFactsStore.generation;
     try {
       final stored = await HanimeWorkFactsStore.read();
-      if (!mounted || stored.isEmpty) return;
+      if (!mounted ||
+          epoch != HanimeWorkFactsStore.generation ||
+          stored.isEmpty) {
+        return;
+      }
       setState(() {
         for (final entry in stored.entries) {
           _hanimeDetailFacts.putIfAbsent(entry.key, () => entry.value);
@@ -753,10 +784,12 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     final web = _web;
     if (page == null || web == null || !_canReadHanimeWork) return;
     final epoch = _loadEpoch, account = _accountGeneration;
+    final factsGeneration = HanimeWorkFactsStore.generation;
     bool current() =>
         mounted &&
         epoch == _loadEpoch &&
         account == _accountGeneration &&
+        factsGeneration == HanimeWorkFactsStore.generation &&
         !_websiteVisible &&
         !_documentLoading &&
         !_busy &&
@@ -765,7 +798,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     final cached = _hanimeDetailFacts[page];
     if (!current() || (needTags ? cached?.hasTagsInfo == true : cached != null))
       return;
-    final key = (epoch, page);
+    final key = (epoch, factsGeneration, page);
     if (_hanimeReads[key] case final pending?) return pending;
     if (_hanimeReads.length >= 12) return;
     if (_hanimeAttemptEpoch != epoch) {
@@ -972,7 +1005,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           );
         } else {
           final cached = _cachedCatalog(entry.uri);
-          if (cached == null || _needsSubscriptionDocument(entry.uri)) {
+          if (cached == null ||
+              !_catalogCache.isFresh(_catalogKey(entry.uri)) ||
+              _needsSubscriptionDocument(entry.uri)) {
             await _load(
               entry.uri,
               rememberHistory: false,
@@ -1449,22 +1484,12 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         _requestedUrl == target &&
         _verificationVisible;
     try {
-      final confirmed = await showAdaptiveDialog<bool>(
+      final confirmed = await confirmShortAlert(
         context: context,
-        builder: (context) => AlertDialog.adaptive(
-          title: Text(t.videoPlayback.reloadVerification),
-          content: Text(t.videoPlayback.reloadVerificationPrompt),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text(t.common.cancel),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text(t.common.retry),
-            ),
-          ],
-        ),
+        title: Text(t.videoPlayback.reloadVerification),
+        content: Text(t.videoPlayback.reloadVerificationPrompt),
+        confirmLabel: t.common.retry,
+        adaptiveRoute: true,
       );
       if (confirmed != true || !ownsVerification()) return;
       reloadEpoch = ++_loadEpoch;
@@ -1666,7 +1691,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     final searchUrl = widget.structuredHanime && !inHanimeResults
         ? widget.homeUrl
         : _listUrl ?? widget.homeUrl;
-    var scope = _keywordScopeFor(searchUrl) ?? KeywordSearchScope.all;
+    late KeywordSearchScope scope;
     final searchFilterSchema = _siteFilters ?? widget.searchFilters;
     final filterReader = searchFilterSchema == null
         ? null
@@ -1706,6 +1731,14 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     setState(() => _searchVisible = true);
     VideoSearchFilters? result;
     try {
+      scope =
+          _keywordScopeFor(searchUrl) ??
+          await readVideoKeywordScope(widget.source);
+      if (!mounted) return;
+      if (epoch != _loadEpoch) {
+        setState(() => _searchVisible = false);
+        return;
+      }
       result = await Navigator.of(context).push<VideoSearchFilters>(
         videoPageRoute(
           networkSource: widget.source,
@@ -1724,6 +1757,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
             scopeHint: widget.hanimeCategory?.title,
             initialScope: scope,
             onSubmitScope: (value) => scope = value,
+            showScopeSelection: false,
             filterBuilder: searchFilterSchema == null
                 ? null
                 : buildSearchFilters,
@@ -1755,9 +1789,11 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         : result;
     final target = queryResult.toUri(widget.homeUrl);
     unawaited(
-      VideoSearchHistory.add(widget.source, result.query).catchError((
-        Object _,
-      ) {
+      VideoSearchHistory.add(
+        widget.source,
+        result.query,
+        scope: result.author ? null : scope,
+      ).catchError((Object _) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(t.videoSearch.historyWriteFailed)),
@@ -1769,9 +1805,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       await _pushContentPage(target, keywordScope: scope);
       return;
     }
-    if (widget.structuredHanime) {
-      _hanimeResultKeywordScope = scope;
-    } else if (!result.author) {
+    if (widget.structuredHanime) _hanimeResultKeywordScope = scope;
+    if (!result.author) {
       _keywordScopes.remove(result.query);
       _keywordScopes[result.query] = scope;
       if (_keywordScopes.length > VideoSearchHistory.limit) {
@@ -2036,6 +2071,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   void dispose() {
     if (_hanimeLayoutRead) {
       CollectionViewPreferences.changes.removeListener(_readHanimeLayout);
+      HanimeWorkFactsStore.changes.removeListener(_invalidateHanimeFacts);
     }
     unawaited(_accountChanges?.cancel());
     _readRecovery.dispose();
@@ -2190,13 +2226,21 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       _parsingEpoch = null;
       return true;
     }
+    final loginEntryRedirect =
+        widget.initialUrl?.path == '/login' &&
+        _requestedUrl.path == '/login' &&
+        _busy &&
+        _documentLoading &&
+        _isFirstParty(uri) &&
+        (uri!.path == '/' || _personalRoot(uri) == uri);
     if (!_catalogWebsite &&
         widget.nativeAuth &&
-        _authSubmissionStarted &&
+        (_authSubmissionStarted || loginEntryRedirect) &&
         _isFirstParty(uri) &&
         !_detailVisible &&
         !_personalVisible &&
         !videoSiteDocumentMatches(_requestedUrl, uri)) {
+      if (loginEntryRedirect) _loginReturnUrl ??= _requestedUrl;
       _requestedUrl = videoSiteDocumentUrl(uri!);
       _loadEpoch++;
       _parsingEpoch = null;
@@ -2549,11 +2593,12 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           snapshotOwner != _ownIdentityRoot)
         return;
     }
+    final memorySnapshot = _cachedCatalog(uri);
     final cached =
         (_isAccountEdit(uri) ||
             const {'/login', '/register', '/password/reset'}.contains(uri.path))
         ? null
-        : _cachedCatalog(uri) ??
+        : memorySnapshot ??
               (personalSnapshot == null
                   ? null
                   : {...personalSnapshot, 'account': _ownIdentity});
@@ -2562,9 +2607,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         !_verificationVisible &&
         !_needsSubscriptionDocument(uri) &&
         cached != null &&
-        (_catalogCache.isFresh(key) ||
-            personalSnapshot != null &&
-                _personalSnapshots.fresh(personalSnapshot));
+        (memorySnapshot != null
+            ? _catalogCache.isFresh(key)
+            : personalSnapshot != null &&
+                  _personalSnapshots.fresh(personalSnapshot));
     final wasLoading = _documentLoading;
     final canProbeForEmptySearch =
         _multiTagHanimeSearch(uri) &&
@@ -3608,6 +3654,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           section != VideoFilterSection.query) {
         final choice = await showVideoTaskSheet<Object>(
           context: context,
+          filterDetents: true,
           builder: (_) => VideoQuickFilterPanel(
             source: widget.source,
             section: section,
@@ -3636,6 +3683,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       if (!mounted) return;
       result = await showVideoTaskSheet<VideoSearchFilters>(
         context: context,
+        filterDetents: true,
         portraitHeightFraction: widget.structuredHanime ? .94 : .82,
         portraitMaxHeight: widget.structuredHanime ? 680 : 600,
         builder: (_) => VideoSearchFilterPanel(
@@ -4020,13 +4068,18 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     return NativePlaybackSession.fromDetailResponse(result, watchUrl: watchUrl);
   }
 
-  Future<NativePlaybackSession> _refreshPlayback(Uri watchUrl) {
+  Future<NativePlaybackSession> _refreshPlayback(
+    Uri watchUrl,
+    bool Function() currentDetail,
+    Future<void> detailClosed,
+  ) {
     final epoch = _loadEpoch;
+    bool current() => mounted && epoch == _loadEpoch && currentDetail();
     final task = _playbackDocumentQueue.then((_) async {
-      if (!mounted || epoch != _loadEpoch) {
+      if (!current()) {
         throw StateError('Video source closed');
       }
-      return _readPlaybackDocument(watchUrl, epoch);
+      return _readPlaybackDocument(watchUrl, epoch, current, detailClosed);
     });
     _playbackDocumentQueue = task.then<void>(
       (_) {},
@@ -4038,11 +4091,20 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
   Future<NativePlaybackSession> _readPlaybackDocument(
     Uri watchUrl,
     int epoch,
+    bool Function() currentDetail,
+    Future<void> detailClosed,
   ) async {
     final web = _web;
     if (web == null || _refreshCompleter != null) {
       throw StateError('Video source unavailable');
     }
+    void requireCurrentDetail() {
+      if (!currentDetail() || !identical(web, _web)) {
+        throw StateError('Video detail closed');
+      }
+    }
+
+    requireCurrentDetail();
     final ready = Completer<void>();
     _refreshWatchUrl = watchUrl;
     _refreshCompleter = ready;
@@ -4055,7 +4117,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       return task.timeout(left);
     }
 
-    try {
+    Future<NativePlaybackSession> read() async {
       final commitSerial = _refreshCommitSerial;
       Object? previousOrigin;
       try {
@@ -4065,9 +4127,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       } catch (_) {}
       // The route can leave during the awaited metadata read above, including
       // an untracked expired-source refresh. Never navigate its old document.
-      if (!mounted || epoch != _loadEpoch) {
-        throw StateError('Video source closed');
-      }
+      requireCurrentDetail();
       // The underlying WebView may have followed a site redirect while the
       // native detail was open. Refresh this video, not whichever page won.
       _browserDiagnostics.requested('playback-source-refresh');
@@ -4079,13 +4139,12 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       // frames. Require a new document, then its interactive video DOM instead.
       final deadline = DateTime.now().add(const Duration(seconds: 15));
       var documentReady = false;
-      while (mounted &&
-          epoch == _loadEpoch &&
-          DateTime.now().isBefore(deadline)) {
+      while (currentDetail() && DateTime.now().isBefore(deadline)) {
         VideoSiteState? state;
         try {
           state = await _readSiteState().timeout(const Duration(seconds: 2));
         } catch (_) {}
+        requireCurrentDetail();
         if (state != null && videoSiteDocumentMatches(watchUrl, state.url)) {
           var fresh = ready.isCompleted || _refreshCommitSerial > commitSerial;
           if (!fresh && previousOrigin is num) {
@@ -4096,6 +4155,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
               fresh = origin is num && origin != previousOrigin;
             } catch (_) {}
           }
+          requireCurrentDetail();
           if (fresh &&
               state.accessBlocked &&
               videoSiteDocumentMatches(watchUrl, _accessDeniedResponseUrl)) {
@@ -4111,18 +4171,20 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         }
         await Future<void>.delayed(const Duration(milliseconds: 150));
       }
-      if (!mounted || epoch != _loadEpoch) {
-        throw StateError('Video source closed');
-      }
+      requireCurrentDetail();
       if (!documentReady) throw TimeoutException('Video document not ready');
       final session = await bounded(
         _onceAfterDomSettles(() async {
+          requireCurrentDetail();
           final snapshot = await _watchSnapshot(watchUrl);
+          requireCurrentDetail();
           final response = await _callPlugin(widget.playbackFnPath, {
             'watchUrl': watchUrl.toString(),
             'snapshot': snapshot,
           });
+          requireCurrentDetail();
           final detail = await _watchDetails(watchUrl, snapshot);
+          requireCurrentDetail();
           final media = NativePlaybackSession.fromPluginResponse(
             response,
             watchUrl: watchUrl,
@@ -4130,18 +4192,32 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           return detail.withSources(media.sources);
         }, epoch),
       );
+      requireCurrentDetail();
       try {
         await _evaluate(
+          'if (location.origin === ${jsonEncode(watchUrl.origin)} && '
+          'location.pathname === "/watch" && '
+          'new URL(location.href).searchParams.get("v") === '
+          '${jsonEncode(watchUrl.queryParameters['v'])}) '
           'document.querySelector(${jsonEncode(widget.selectors['video'])})?.pause();',
         );
       } catch (_) {}
+      requireCurrentDetail();
       final current = await _readSiteState();
-      if (!mounted ||
-          epoch != _loadEpoch ||
-          !videoSiteDocumentMatches(watchUrl, current.url)) {
+      requireCurrentDetail();
+      if (!videoSiteDocumentMatches(watchUrl, current.url)) {
         throw const FormatException('Episode document changed during parsing');
       }
       return session;
+    }
+
+    try {
+      return await Future.any([
+        read(),
+        detailClosed.then<NativePlaybackSession>(
+          (_) => throw StateError('Video detail closed'),
+        ),
+      ]);
     } finally {
       _refreshWatchUrl = null;
       _refreshCompleter = null;
@@ -4158,6 +4234,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     final uri = _requestedUrl;
     final epoch = _loadEpoch;
     final accountGeneration = _accountGeneration;
+    final factsGeneration = HanimeWorkFactsStore.generation;
     if (_parsingEpoch == epoch) return;
     _parsingEpoch = epoch;
     try {
@@ -4333,12 +4410,15 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         _detailVisible = true;
         _siteVerificationRequired.value = false;
         _rememberCreator(session.creator);
-        _rememberHanimeFacts(
-          session,
-          tagsObserved: detailSnapshot?['tagsObserved'] == true,
-        );
+        if (factsGeneration == HanimeWorkFactsStore.generation) {
+          _rememberHanimeFacts(
+            session,
+            tagsObserved: detailSnapshot?['tagsObserved'] == true,
+          );
+        }
+        final detailClosed = Completer<void>();
         bool currentDetail() =>
-            mounted && epoch == _loadEpoch && _detailVisible;
+            mounted && epoch == _loadEpoch && !detailClosed.isCompleted;
         final initialMedia = () async {
           try {
             // Reuse the validated document snapshot for media. If its source
@@ -4382,7 +4462,22 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
             ? _pendingPlaybackReturn?.state
             : null;
         _pendingPlaybackReturn = null;
-        Future<NativePlaybackSession>? episodeDocumentTask;
+        Future<NativePlaybackSession>? playbackDocumentTask;
+        Future<NativePlaybackSession> readDetailPlayback(Uri watchUrl) async {
+          final task = playbackDocumentTask = _refreshPlayback(
+            watchUrl,
+            currentDetail,
+            detailClosed.future,
+          );
+          try {
+            return await task;
+          } finally {
+            if (identical(playbackDocumentTask, task)) {
+              playbackDocumentTask = null;
+            }
+          }
+        }
+
         final callerRoute = ModalRoute.of(context);
         final callerNavigator = callerRoute?.navigator;
         final useWebsite = await Navigator.of(context)
@@ -4418,17 +4513,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                     // Both reads share the same WebView document. Finish the
                     // bounded initial parse before moving it to another episode.
                     await initialMedia;
-                    if (!currentDetail())
+                    if (!currentDetail()) {
                       throw StateError('Video detail closed');
-                    final task = episodeDocumentTask = _refreshPlayback(next);
-                    late NativePlaybackSession nextSession;
-                    try {
-                      nextSession = await task;
-                    } finally {
-                      if (identical(episodeDocumentTask, task)) {
-                        episodeDocumentTask = null;
-                      }
                     }
+                    final nextSession = await readDetailPlayback(next);
                     return (
                       session: nextSession,
                       operations: widget.nativeSiteActions
@@ -4442,6 +4530,91 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                           : null,
                     );
                   },
+                  selectDownloadEpisodes:
+                      widget.structuredHanime &&
+                          widget.nativeSiteActions &&
+                          VideoSystemDownload.available &&
+                          (_web?.platform is VideoBrowserBackgroundLifetime ||
+                              defaultTargetPlatform == TargetPlatform.android)
+                      ? (playerContext, current, systemStyle) async {
+                          final browser = _web;
+                          final lifetime = browser?.platform;
+                          if (browser == null || !currentDetail()) {
+                            return;
+                          }
+                          final source = widget.source;
+                          final generation = pluginSessionWriteFence.generation(
+                            source,
+                          );
+                          final retained =
+                              lifetime is VideoBrowserBackgroundLifetime
+                              ? lifetime as VideoBrowserBackgroundLifetime
+                              : null;
+                          final coldOverlay = retained == null
+                              ? Overlay.maybeOf(
+                                  playerContext,
+                                  rootOverlay: true,
+                                )
+                              : null;
+                          bool currentSelection() =>
+                              playerContext.mounted &&
+                              currentDetail() &&
+                              identical(browser, _web) &&
+                              !_siteVerificationRequired.value &&
+                              !pluginSessionWriteFence.isChanging(source) &&
+                              pluginSessionWriteFence.generation(source) ==
+                                  generation;
+                          Future<List<String>> enqueue(
+                            List<NativeVideoCard> entries, {
+                            String? quality,
+                            String? format,
+                          }) => enqueueNativeSiteEpisodes(
+                            source: source,
+                            web: retained == null ? null : browser,
+                            lifetime: retained,
+                            coldOverlay: coldOverlay,
+                            session: current,
+                            selected: entries,
+                            current: currentSelection,
+                            preferredQuality: quality,
+                            preferredFormat: format,
+                          );
+
+                          await showVideoEpisodeDownloadPicker(
+                            playerContext,
+                            episodes: nativeSiteDownloadEntries(current),
+                            currentWatch: current.watchUrl,
+                            source: source,
+                            systemStyle: systemStyle,
+                            sitePlaylist: current.isSitePlaylist,
+                            readQualities: (episodes) =>
+                                readNativeSiteEpisodeQualities(
+                                  web: browser,
+                                  episodes: episodes,
+                                  current: currentSelection,
+                                ),
+                            onEnqueue: (entries, {quality}) => enqueue(
+                              entries,
+                              quality: quality?.label,
+                              format: quality?.format,
+                            ),
+                            onRetry: (card, row) {
+                              if (row['source'] != source ||
+                                  row['url'] != card.watchUrl.toString()) {
+                                throw StateError('Download task changed');
+                              }
+                              final quality = row['quality'];
+                              return enqueue(
+                                [card],
+                                quality: quality is String && quality.isNotEmpty
+                                    ? quality
+                                    : null,
+                                format: row['format'] as String?,
+                              );
+                            },
+                          );
+                        }
+                      : null,
                   onEpisodeChanged: (next) {
                     session = next.session;
                     operations = next.operations;
@@ -4515,7 +4688,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                             throw StateError('Video detail closed');
                           }
                           final current = session;
-                          final refreshed = await _refreshPlayback(
+                          final refreshed = await readDetailPlayback(
                             current.watchUrl,
                           );
                           return current.withSources(refreshed.sources);
@@ -4526,6 +4699,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
               ),
             )
             .whenComplete(() {
+              detailClosed.complete();
               _detailVisible = false;
               operations?.dispose();
             });
@@ -4537,10 +4711,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
             ModalRoute.of(context)?.isActive != true) {
           return;
         }
-        // If the user left during a manual selection, finish that bounded read
-        // before restoring the originating page; a late document cannot win.
+        // Let the cancelled read release the shared browser before restoring
+        // the originating page.
         try {
-          await episodeDocumentTask?.timeout(const Duration(seconds: 25));
+          await playbackDocumentTask?.timeout(const Duration(seconds: 25));
         } catch (_) {}
         if (mounted &&
             epoch == _loadEpoch &&
@@ -5792,11 +5966,14 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           page.path == '/playlist' &&
               (page.queryParameters['list']?.isNotEmpty ?? false));
 
-  Widget _catalogBody() => _recordPrivacyPage(_requestedUrl)
-      ? CollectionCoverPrivacyScope(child: _catalogBodyContent())
-      : _catalogBodyContent();
+  Widget _catalogBody({double? scrollBottom}) {
+    final content = _catalogBodyContent(scrollBottom: scrollBottom);
+    return _recordPrivacyPage(_requestedUrl)
+        ? CollectionCoverPrivacyScope(child: content)
+        : content;
+  }
 
-  Widget _catalogBodyContent() {
+  Widget _catalogBodyContent({double? scrollBottom}) {
     if (_recoveryPage case final page?) {
       if (!_recoveryReady) {
         return const Center(child: CircularProgressIndicator());
@@ -5906,7 +6083,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         fit: StackFit.expand,
         children: [
           Offstage(offstage: !accountVisible, child: form),
-          if (!accountVisible) _nativeContent(),
+          if (!accountVisible) _nativeContent(scrollBottom: scrollBottom),
         ],
       );
     }
@@ -5916,7 +6093,10 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       enabled: _animateCatalogArrival,
       child: PageImageRefreshScope(
         revision: _catalogImageRefresh,
-        child: _nativeContent(contentOnly: personal),
+        child: _nativeContent(
+          contentOnly: personal,
+          scrollBottom: scrollBottom,
+        ),
       ),
     );
     if (_hasPersonalShell) {
@@ -6228,6 +6408,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           ),
           if (subscriptionPreview) const Spacer(),
           VideoCardFacts(
+            workUrl: watchUrl,
             metadata: metadata,
             creator: card['creatorName']?.toString() ?? '',
             fallback: card['subtitle']?.toString() ?? '',
@@ -6329,6 +6510,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     Map<String, dynamic>? preview,
     Uri? page,
     bool contentOnly = false,
+    double? scrollBottom,
   }) {
     if (preview == null && _nativeHanimeResults && (_busy || _siteLoadFailed)) {
       return _hanimeResults(
@@ -6361,21 +6543,28 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         _authForm['supported'] == true &&
         const {'/login', '/register'}.contains(_requestedUrl.path)) {
       final authPage = _requestedUrl;
+      // The enclosing switch owns the serialized profile write. The form can
+      // sign in, while a separate credential save would wait for its own route.
+      final accountChanging = _accountChanging;
       return NativeVideoAuthForm(
         key: ValueKey('native-auth.${authPage.path}'),
         revision: _authRevision,
         loginUsername: _accountLoginUsername,
-        credentials: _accountLoginUsername == null
+        credentials: _accountLoginUsername == null && !accountChanging
             ? VideoAccountCredentials.load(widget.source, widget.homeUrl)
             : null,
-        saveCredentials: (account, password) => VideoAccountCredentials.save(
-          widget.source,
-          widget.homeUrl,
-          account,
-          password,
-        ),
-        clearCredentials: () =>
-            VideoAccountCredentials.clear(widget.source, widget.homeUrl),
+        saveCredentials: accountChanging
+            ? null
+            : (account, password) => VideoAccountCredentials.save(
+                widget.source,
+                widget.homeUrl,
+                account,
+                password,
+              ),
+        clearCredentials: accountChanging
+            ? null
+            : () =>
+                  VideoAccountCredentials.clear(widget.source, widget.homeUrl),
         registration: authPage.path == '/register',
         hasRemember: _authForm['remember'] == true,
         onForgotPassword:
@@ -6508,7 +6697,12 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
             title: '${row['title'] ?? ''}',
             detailUrl: target,
             coverUrl: Uri.tryParse('${row['coverUrl'] ?? ''}'),
-            description: '${row['creatorName'] ?? row['subtitle'] ?? ''}',
+            description: hanime && layout == HanimeCatalogLayout.detail
+                ? metadata.byline(
+                    creator: '${row['creatorName'] ?? ''}',
+                    fallback: '${row['subtitle'] ?? ''}',
+                  )
+                : '${row['creatorName'] ?? row['subtitle'] ?? ''}',
             sourceViews: metadata.viewCount,
             sourceDuration:
                 metadata.duration ??
@@ -6539,11 +6733,9 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
               : ApiVideoView.grid,
           storageKey:
               'hanime-personal.${_personalPreferenceScope(currentPage)}',
-          gridColumns: hanime && layout == HanimeCatalogLayout.large ? 2 : 3,
+          gridColumns: hanime ? layout.columns : 3,
           minimumGridItemWidth: hanime
-              ? layout == HanimeCatalogLayout.large
-                    ? 180
-                    : 124
+              ? HanimeCatalogLayout.minimumGridItemWidth
               : null,
           posterAspectRatio: hanime ? 16 / 9 : 2 / 3,
           compactDetails: hanime,
@@ -6575,6 +6767,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                   context,
                   facts[item.detailUrl]!,
                   layout,
+                  workUrl: item.detailUrl,
                   known: _knownHanimeFacts(item.detailUrl)?.metadata,
                 )
               : null,
@@ -6627,7 +6820,6 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                 ? null
                 : SourceFilterIconButton(
                     key: const ValueKey('personal-records.filter'),
-                    bare: false,
                     tooltip: (_personalFacets[scope]?.isActive ?? false)
                         ? t.videoFilters.active
                         : t.videoFilters.title,
@@ -6794,7 +6986,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
               16,
               author == null ? 16 : 4,
               16,
-              32 + MediaQuery.paddingOf(context).bottom,
+              32 + (scrollBottom ?? MediaQuery.paddingOf(context).bottom),
             ),
             sliver: SliverMainAxisGroup(
               slivers: [
@@ -6865,6 +7057,14 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                                       end: 8,
                                     ),
                                     child: ChoiceChip(
+                                      color:
+                                          BreezeControlColors.contentSelectionColor(
+                                            context,
+                                          ),
+                                      side:
+                                          BreezeControlColors.contentSelectionSide(
+                                            context,
+                                          ),
                                       selected:
                                           currentPage.path.replaceFirst(
                                             RegExp(r'/$'),
@@ -7657,7 +7857,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     await _pushContentPage(target);
   }
 
-  Widget _hanimeCategoryDirectory() {
+  Widget _hanimeCategoryDirectory({double? scrollBottom}) {
     final categories = _categories
         .where(
           (entry) => entry.url.queryParameters['genre']?.isNotEmpty == true,
@@ -7675,7 +7875,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
         16,
         16,
         16,
-        NativeNavigationInset.scrollBottom(context) + 16,
+        (scrollBottom ?? NativeNavigationInset.scrollBottom(context)) + 16,
       ),
       children: [
         _hanimeCategoryTile(all, prominent: true),
@@ -7818,6 +8018,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     icon: CollectionCommandIcons.grid.icon,
     symbol: CollectionCommandIcons.grid.symbol,
     hostPresentation: true,
+    bare: true,
     width: 44,
     onSelected: (value) => onSelected(HanimeCatalogLayout.values.byName(value)),
   );
@@ -7855,6 +8056,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                   for (final rank in HanimeRanking.values)
                     ChoiceChip(
                       key: ValueKey('hanime.ranking.${rank.name}'),
+                      color: BreezeControlColors.contentSelectionColor(context),
+                      side: BreezeControlColors.contentSelectionSide(context),
                       label: Text(_hanimeRankingLabel(rank)),
                       showCheckmark: false,
                       selected: rank == _hanimeRanking,
@@ -7949,8 +8152,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
       mode: _hanimeLayout == HanimeCatalogLayout.detail
           ? ApiVideoView.list
           : ApiVideoView.grid,
-      gridColumns: _hanimeLayout == HanimeCatalogLayout.large ? 2 : 3,
-      minimumGridItemWidth: 108,
+      gridColumns: _hanimeLayout.columns,
+      minimumGridItemWidth: HanimeCatalogLayout.minimumGridItemWidth,
       posterAspectRatio: portraitPage ? 2 / 3 : 16 / 9,
       compactDetails: true,
       loadDetail: _hanimeLayout == HanimeCatalogLayout.detail && !preview
@@ -7965,6 +8168,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
               context,
               facts[item.detailUrl]!,
               _hanimeLayout,
+              workUrl: item.detailUrl,
               known: _knownHanimeFacts(item.detailUrl)?.metadata,
             )
           : null,
@@ -7998,7 +8202,6 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
               }),
               filter: SourceFilterIconButton(
                 key: const ValueKey('hanime-results.filter'),
-                bare: false,
                 tooltip: t.videoFilters.title,
                 active: active,
                 onPressed: preview
@@ -8119,6 +8322,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                 final category = _categories[index];
                 return Center(
                   child: ChoiceChip(
+                    color: BreezeControlColors.contentSelectionColor(context),
+                    side: BreezeControlColors.contentSelectionSide(context),
                     label: Text(category.title),
                     selected: _categorySelected(category.url, page: page),
                     showCheckmark: false,
@@ -8190,17 +8395,16 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     );
   }
 
-  Future<void> _showVerificationHelp() => showAdaptiveDialog<void>(
+  Future<void> _showVerificationHelp() => showShortAlert<void>(
     context: context,
-    builder: (context) => AlertDialog.adaptive(
+    builder: (context) => ShortAlert(
       title: Text(t.videoPlayback.verificationTitle),
-      scrollable: true,
       content: Text(
         '${t.videoPlayback.verificationNote}\n\n'
         '${_verificationStalled ? t.videoPlayback.verificationSlow : t.videoPlayback.verificationStableNote}',
       ),
       actions: [
-        TextButton(
+        ShortAlertAction(
           onPressed: () => Navigator.pop(context),
           child: Text(t.videoPlayback.acknowledge),
         ),
@@ -8219,23 +8423,12 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     final enabled = !_inspectionEnabled;
     try {
       if (enabled) {
-        final confirmed = await showAdaptiveDialog<bool>(
+        final confirmed = await confirmShortAlert(
           context: context,
-          builder: (context) => AlertDialog.adaptive(
-            title: Text(t.videoPlayback.enableBrowserInspection),
-            scrollable: true,
-            content: Text(t.videoPlayback.browserInspectionPrompt),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: Text(t.common.cancel),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: Text(t.videoPlayback.enableBrowserInspection),
-              ),
-            ],
-          ),
+          title: Text(t.videoPlayback.enableBrowserInspection),
+          content: Text(t.videoPlayback.browserInspectionPrompt),
+          confirmLabel: t.videoPlayback.enableBrowserInspection,
+          adaptiveRoute: true,
         );
         if (!mounted ||
             confirmed != true ||
@@ -8295,23 +8488,12 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     _dismissCatalogMenu();
     FocusScope.of(context).unfocus();
     try {
-      final proceed = await showAdaptiveDialog<bool>(
+      final proceed = await confirmShortAlert(
         context: context,
-        builder: (context) => AlertDialog.adaptive(
-          title: Text(t.videoSiteAccount.googleWebsiteTitle),
-          scrollable: true,
-          content: Text(t.videoSiteAccount.googleWebsiteNote),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text(t.common.cancel),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text(t.videoSiteAccount.continueInBrowser),
-            ),
-          ],
-        ),
+        title: Text(t.videoSiteAccount.googleWebsiteTitle),
+        content: Text(t.videoSiteAccount.googleWebsiteNote),
+        confirmLabel: t.videoSiteAccount.continueInBrowser,
+        adaptiveRoute: true,
       );
       if (!mounted ||
           epoch != _loadEpoch ||
@@ -8377,7 +8559,28 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
     ),
   );
 
-  Widget _buildPage(BuildContext context) {
+  bool get _ownsTabNavigation =>
+      _tabs.isNotEmpty &&
+      !_inPersonalLibrary &&
+      !_personalVisible &&
+      !_websiteVisible &&
+      !_verificationVisible;
+
+  Widget _buildPage(BuildContext context) => BreezeScrollNavigation(
+    ownsNavigation: _ownsTabNavigation,
+    content: (_activeTab, _requestedUrl),
+    acceptsScroll:
+        !_searchVisible &&
+        !_catalogLookupOpen &&
+        !_detailVisible &&
+        _openNativeMenu == null,
+    builder: _buildWithNavigation,
+  );
+
+  Widget _buildWithNavigation(
+    BuildContext context,
+    BreezeScrollNavigationState navigation,
+  ) {
     final officialWebsite = sourceOfficialWebsite(widget.source);
     final tabIndex = _tabs.indexWhere((tab) => tab.id == _activeTab);
     final android = defaultTargetPlatform == TargetPlatform.android;
@@ -8446,7 +8649,8 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
           child: Stack(
             children: [
               Scaffold(
-                extendBody: usesNativeSourceChrome(context),
+                extendBody:
+                    navigation.automatic || usesSystemSourceChrome(context),
                 appBar: _personalVisible
                     ? null
                     : _inPersonalLibrary
@@ -8469,6 +8673,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                             ),
                             query: _catalogLookupQuery,
                             inline: true,
+                            animateExpansion: true,
                             closeOnSubmit: false,
                             focusNode: _catalogLookupFocus,
                             hintText: canSearchAuthor
@@ -8499,6 +8704,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                         leading: CollectionToolbarMetrics.leading(
                           context,
                           NativeVideoIconButton(
+                            pageChrome: true,
                             light: false,
                             tooltip:
                                 internalBack ||
@@ -8577,6 +8783,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                         actions: [
                           if (canSearchCatalog)
                             NativeVideoIconButton(
+                              pageChrome: true,
                               light: false,
                               tooltip: t.common.search,
                               symbol: 'magnifyingglass',
@@ -8598,6 +8805,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                               padding: const EdgeInsetsDirectional.only(end: 4),
                               child: NativeVideoIconButton(
                                 key: const ValueKey('video-search.entry'),
+                                pageChrome: true,
                                 light: false,
                                 tooltip: t.common.search,
                                 symbol: 'magnifyingglass',
@@ -8614,6 +8822,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                               !_verificationVisible &&
                               !_websiteVisible)
                             NativeVideoIconButton(
+                              pageChrome: true,
                               light: false,
                               tooltip: t.videoPlayback.search,
                               symbol: 'magnifyingglass',
@@ -8624,6 +8833,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                             hostPresentation: true,
                             selectAfterDismissal: const {
                               collectionCoverSettingsAction,
+                              'tools',
                               'exit',
                             },
                             // UIKit and the Breeze fallback each own outside-tap
@@ -8689,7 +8899,7 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                                 'browserInspection': _inspectionEnabled
                                     ? t.videoPlayback.disableBrowserInspection
                                     : t.videoPlayback.enableBrowserInspection,
-                              'tools': t.discover.settings,
+                              'tools': t.plugin.pluginSettings,
                               if (!widget.structuredHanime &&
                                   officialWebsite != null)
                                 'officialWebsite':
@@ -9158,9 +9368,26 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                                   Expanded(
                                     child: TabReselectScope(
                                       controller: _catalogTabReselect,
-                                      child: _categoryDirectory
-                                          ? _hanimeCategoryDirectory()
-                                          : _catalogBody(),
+                                      child: Builder(
+                                        builder: (viewportContext) {
+                                          final scrollBottom =
+                                              navigation.automatic ||
+                                                  AppInterfaceStyleScope.usesAndroidSystem(
+                                                    viewportContext,
+                                                  )
+                                              ? MediaQuery.paddingOf(
+                                                  viewportContext,
+                                                ).bottom
+                                              : null;
+                                          return _categoryDirectory
+                                              ? _hanimeCategoryDirectory(
+                                                  scrollBottom: scrollBottom,
+                                                )
+                                              : _catalogBody(
+                                                  scrollBottom: scrollBottom,
+                                                );
+                                        },
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -9212,48 +9439,48 @@ class _NativeVideoCatalogPageState extends State<NativeVideoCatalogPage>
                       ),
                   ],
                 ),
-                bottomNavigationBar:
-                    _tabs.isEmpty ||
-                        _inPersonalLibrary ||
-                        _personalVisible ||
-                        _websiteVisible ||
-                        _verificationVisible
+                bottomNavigationBar: !_ownsTabNavigation
                     ? null
-                    : VideoNativeNavigation(
-                        symbols: [
-                          for (final tab in _tabs)
-                            switch (tab.id) {
-                              'recommend' => 'house',
-                              _categoryTab => 'square.grid.2x2',
-                              'ranking' => 'chart.bar',
-                              'subscriptions' => 'play.rectangle.on.rectangle',
-                              _ => 'person.crop.circle',
-                            },
-                        ],
-                        currentIndex: tabIndex < 0 ? 0 : tabIndex,
-                        onTap: _verificationVisible
-                            ? null
-                            : _onCatalogDestinationSelected,
-                        items: [
-                          for (final tab in _tabs)
-                            BottomNavigationBarItem(
-                              icon: Icon(switch (tab.id) {
-                                'recommend' => Icons.home_outlined,
-                                _categoryTab => Icons.category_outlined,
-                                'ranking' => Icons.leaderboard_outlined,
-                                'subscriptions' => Icons.subscriptions_outlined,
-                                _ => Icons.person_outline_rounded,
-                              }),
-                              activeIcon: Icon(switch (tab.id) {
-                                'recommend' => Icons.home_rounded,
-                                _categoryTab => Icons.category_rounded,
-                                'ranking' => Icons.leaderboard_rounded,
-                                'subscriptions' => Icons.subscriptions_rounded,
-                                _ => Icons.person_rounded,
-                              }),
-                              label: tab.title,
-                            ),
-                        ],
+                    : navigation.bar(
+                        VideoNativeNavigation(
+                          symbols: [
+                            for (final tab in _tabs)
+                              switch (tab.id) {
+                                'recommend' => 'house',
+                                _categoryTab => 'square.grid.2x2',
+                                'ranking' => 'chart.bar',
+                                'subscriptions' =>
+                                  'play.rectangle.on.rectangle',
+                                _ => 'person.crop.circle',
+                              },
+                          ],
+                          currentIndex: tabIndex < 0 ? 0 : tabIndex,
+                          onTap: _verificationVisible
+                              ? null
+                              : _onCatalogDestinationSelected,
+                          items: [
+                            for (final tab in _tabs)
+                              BottomNavigationBarItem(
+                                icon: Icon(switch (tab.id) {
+                                  'recommend' => Icons.home_outlined,
+                                  _categoryTab => Icons.category_outlined,
+                                  'ranking' => Icons.leaderboard_outlined,
+                                  'subscriptions' =>
+                                    Icons.subscriptions_outlined,
+                                  _ => Icons.person_outline_rounded,
+                                }),
+                                activeIcon: Icon(switch (tab.id) {
+                                  'recommend' => Icons.home_rounded,
+                                  _categoryTab => Icons.category_rounded,
+                                  'ranking' => Icons.leaderboard_rounded,
+                                  'subscriptions' =>
+                                    Icons.subscriptions_rounded,
+                                  _ => Icons.person_rounded,
+                                }),
+                                label: tab.title,
+                              ),
+                          ],
+                        ),
                       ),
               ),
               if (_openNativeMenu != null && !_openNativeMenu!.ownsBarrier)
@@ -9299,7 +9526,10 @@ class _AndroidVideoVerificationPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(t.videoPlayback.verificationTitle)),
+      appBar: AppBar(
+        leading: SourceBackButton.nativeLeading(context),
+        title: Text(t.videoPlayback.verificationTitle),
+      ),
       body: SafeArea(
         top: false,
         child: Column(

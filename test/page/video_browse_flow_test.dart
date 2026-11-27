@@ -16,6 +16,7 @@ import 'package:zephyr/page/video/api_video_models.dart';
 import 'package:zephyr/page/video/api_video_repository.dart';
 import 'package:zephyr/page/video/omofun_account_page.dart';
 import 'package:zephyr/page/video/omofun_site_client.dart';
+import 'package:zephyr/page/video/source_profile_video_preview.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/page/video/video_search_page.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
@@ -61,6 +62,24 @@ void phone(WidgetTester tester) {
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
+}
+
+Future<void> settleLocalVideoPreviews(WidgetTester tester) async {
+  await tester.pump();
+  bool loading() => tester
+      .widgetList<SourceProfileVideoPreview>(
+        find.byType(SourceProfileVideoPreview),
+      )
+      .any((preview) => preview.loading);
+  final elapsed = Stopwatch()..start();
+  while (loading() && elapsed.elapsed < const Duration(seconds: 5)) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
+    await tester.pump(const Duration(milliseconds: 16));
+  }
+  expect(loading(), isFalse, reason: 'Local downloads metadata resolved');
+  await tester.pumpAndSettle();
 }
 
 ApiVideoRepository repository(
@@ -305,11 +324,14 @@ void main() {
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
+      final page = find.byKey(const ValueKey('api-catalog.page-progress'));
+      expect(page, findsNothing);
       final before = tester.getRect(
         find.byKey(const ValueKey('api-skeleton.poster.0')),
       );
       pending.complete(result([work('a'), work('b'), work('c')]));
       await tester.pumpAndSettle();
+      expect(page, findsOneWidget);
       final after = tester.getRect(find.byType(ApiVideoPoster).first);
       expect(after.left, closeTo(before.left, .5));
       expect(after.top, closeTo(before.top, .5));
@@ -516,7 +538,7 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await settleLocalVideoPreviews(tester);
       expect(operations, ['account', 'favorites']);
       expect(find.text(t.videoSource.siteFavorites), findsOneWidget);
       expect(find.byKey(const ValueKey('omo-my.follows-fold')), findsNothing);
@@ -585,7 +607,7 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await settleLocalVideoPreviews(tester);
       expect(find.text(t.videoSource.notSignedIn), findsNothing);
       expect(find.text(t.videoSource.login), findsNothing);
       final accountFailure = find.widgetWithText(

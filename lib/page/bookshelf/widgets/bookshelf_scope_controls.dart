@@ -1,4 +1,4 @@
-import 'dart:ui' show SemanticsRole;
+import 'dart:ui' show MaskFilter, SemanticsRole;
 
 import 'package:flutter/foundation.dart' show setEquals;
 import 'package:flutter/rendering.dart'
@@ -11,6 +11,7 @@ import 'package:zephyr/plugin/plugin_display_name.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_control_colors.dart';
 import 'package:zephyr/widgets/breeze_control_motion.dart';
+import 'package:zephyr/widgets/breeze_theme_colors.dart';
 import 'package:zephyr/widgets/collection_press_feedback.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/widgets/touch_hover_intent.dart';
@@ -23,6 +24,8 @@ Widget _sourcePressPlate(
   required bool hoverAllowed,
   required BorderRadius radius,
   bool selected = false,
+  double verticalInset = 0,
+  Widget? selectionEffect,
 }) {
   final colors = Theme.of(context).colorScheme;
   final enabled = !states.contains(WidgetState.disabled);
@@ -30,7 +33,7 @@ Widget _sourcePressPlate(
   final focused = enabled && states.contains(WidgetState.focused);
   final hovered =
       enabled && hoverAllowed && states.contains(WidgetState.hovered);
-  return AnimatedContainer(
+  final plate = AnimatedContainer(
     duration: !pressed && selected
         ? Duration.zero
         : BreezeControlMotion.press(context, pressed: pressed),
@@ -39,11 +42,11 @@ Widget _sourcePressPlate(
       borderRadius: radius,
       color: colors.primary.withValues(
         alpha: pressed
-            ? .16
+            ? (selected ? .12 : .16)
             : focused
-            ? .12
+            ? (selected ? .05 : .12)
             : hovered
-            ? .08
+            ? (selected ? .035 : .08)
             : 0,
       ),
     ),
@@ -53,7 +56,21 @@ Widget _sourcePressPlate(
             border: Border.all(color: colors.primary, width: 2),
           )
         : null,
-    child: child,
+    child: verticalInset == 0 ? child : null,
+  );
+  if (verticalInset == 0) return plate;
+  return Stack(
+    alignment: Alignment.center,
+    children: [
+      if (selectionEffect != null)
+        Positioned.fill(
+          top: verticalInset,
+          bottom: verticalInset,
+          child: selectionEffect,
+        ),
+      Positioned.fill(top: verticalInset, bottom: verticalInset, child: plate),
+      ?child,
+    ],
   );
 }
 
@@ -150,6 +167,7 @@ class BookshelfSourceNavigation extends StatelessWidget {
               width: CollectionToolbarMetrics.actionExtentOf(context),
               child: SourceChromeIconButton(
                 key: const ValueKey('bookshelf.sources.manage'),
+                bare: true,
                 icon: Icons.label_outline,
                 symbol: 'tag',
                 tooltip: t.bookshelf.sourceLabels,
@@ -235,7 +253,7 @@ Widget _sourceLabel(
         builder: (_, label) => builder(label),
       );
 
-const _classicChipRadius = BorderRadius.all(Radius.circular(10));
+const _classicChipRadius = BorderRadius.all(Radius.circular(999));
 
 class _ClassicBreezeSources extends StatefulWidget {
   const _ClassicBreezeSources({
@@ -272,22 +290,81 @@ class _ClassicBreezeSourcesState extends State<_ClassicBreezeSources>
     }
   }
 
-  Widget _label(String id, String label, Color idle, Color selected) {
+  Widget _label(
+    BuildContext context,
+    String id,
+    String label,
+    Color idle,
+    Color selected,
+    TextStyle style,
+  ) {
+    // Measure the emphasized label for both states so selecting an item
+    // cannot move its neighbors or shift the horizontal scroll position.
+    final painter = TextPainter(
+      text: TextSpan(text: label, style: style),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout(maxWidth: 160);
+    final width = painter.width.ceilToDouble();
+    painter.dispose();
     Widget text() => Text(
       label,
+      textAlign: TextAlign.center,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: widget.onChanged == null
-          ? null
-          : TextStyle(color: Color.lerp(idle, selected, _selection.weight(id))),
+      style: TextStyle(
+        fontWeight: widget.active.contains(id)
+            ? FontWeight.w600
+            : FontWeight.w500,
+        color: widget.onChanged == null
+            ? null
+            : Color.lerp(idle, selected, _selection.weight(id)),
+      ),
     );
     if (widget.onChanged != null && _selection.animates(id)) {
-      return ListenableBuilder(
-        listenable: _selection.changes,
-        builder: (context, _) => text(),
+      return SizedBox(
+        width: width,
+        child: ListenableBuilder(
+          listenable: _selection.changes,
+          builder: (context, _) => text(),
+        ),
       );
     }
-    return text();
+    return SizedBox(width: width, child: text());
+  }
+
+  Widget? _selectedPlateFeedback(
+    String id,
+    Set<WidgetState> states, {
+    required bool hoverAllowed,
+    required bool highContrast,
+    required Color fill,
+    required Color shadow,
+    required Color highlight,
+  }) {
+    if (highContrast || !widget.active.contains(id)) return null;
+
+    final engaged =
+        !states.contains(WidgetState.disabled) &&
+        (states.contains(WidgetState.focused) ||
+            (hoverAllowed && states.contains(WidgetState.hovered)));
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: engaged ? 1 : 0),
+      duration: widget.duration,
+      curve: Curves.easeInOut,
+      builder: (context, progress, _) => ListenableBuilder(
+        listenable: _selection.changes,
+        builder: (context, _) => CustomPaint(
+          painter: _FocusedSourcePlate(
+            fill: fill,
+            shadow: shadow,
+            highlight: highlight,
+            progress: _selection.weight(id) >= .999 ? progress : 0,
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -300,10 +377,25 @@ class _ClassicBreezeSourcesState extends State<_ClassicBreezeSources>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final selection = BreezeControlColors.sectionSelection(
-      theme,
-      highContrast: MediaQuery.highContrastOf(context),
+    final backdrop = Color.alphaBlend(
+      theme.scaffoldBackgroundColor,
+      colors.surface,
     );
+    final dark = colors.brightness == Brightness.dark;
+    final tint = Color.lerp(backdrop, colors.primary, dark ? .12 : .04)!;
+    final highContrast = MediaQuery.highContrastOf(context);
+    final fill = highContrast
+        ? BreezeThemeColors.readableOn(tint, backdrop, minimumContrast: 3.05)
+        : tint;
+    final shadow = colors.shadow.withValues(alpha: dark ? .24 : .14);
+    final highlight = colors.surfaceBright.withValues(alpha: .62);
+    final selectedLabel = BreezeThemeColors.readableOn(
+      colors.onPrimaryContainer,
+      fill,
+    );
+    final labelStyle = (theme.textTheme.labelLarge ?? const TextStyle())
+        .copyWith(fontWeight: FontWeight.w600);
+    final extent = CollectionToolbarMetrics.actionExtentOf(context);
     final onChanged = widget.onChanged;
     return Padding(
       padding: const EdgeInsetsDirectional.only(end: 4),
@@ -313,14 +405,22 @@ class _ClassicBreezeSourcesState extends State<_ClassicBreezeSources>
         active: widget.active,
         repaint: _selection.changes,
         weight: _selection.weight,
-        color: selection.fill,
+        color: fill,
+        shadow: shadow,
+        highlight: highlight,
+        outline: highContrast
+            ? BreezeThemeColors.readableOn(
+                colors.outline,
+                backdrop,
+                minimumContrast: 3.05,
+              )
+            : null,
         children: [
           for (final entry in widget.options.entries)
             _sourceLabel(
               entry,
               (label) => Semantics(
                 selected: widget.active.contains(entry.key),
-                label: entry.value,
                 child: CollectionPressFeedback.builder(
                   enabled: onChanged != null,
                   pressedBuilder: (context, pressed) => TouchHoverIntent(
@@ -338,8 +438,15 @@ class _ClassicBreezeSourcesState extends State<_ClassicBreezeSources>
                             },
                       style:
                           TextButton.styleFrom(
-                            minimumSize: const Size(44, 44),
-                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            minimumSize: Size.square(extent),
+                            visualDensity: VisualDensity.standard,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 7,
+                            ),
+                            textStyle: labelStyle,
+                            backgroundColor: Colors.transparent,
                             foregroundColor: colors.onSurfaceVariant,
                             overlayColor: Colors.transparent,
                             splashFactory: NoSplash.splashFactory,
@@ -355,19 +462,29 @@ class _ClassicBreezeSourcesState extends State<_ClassicBreezeSources>
                                   pointerPressed: pressed,
                                   hoverAllowed: hover.allowed,
                                   radius: _classicChipRadius,
+                                  verticalInset:
+                                      CollectionToolbarMetrics.actionPlateInset,
                                   selected:
                                       !widget.quiet &&
                                       widget.active.contains(entry.key),
+                                  selectionEffect: _selectedPlateFeedback(
+                                    entry.key,
+                                    states,
+                                    hoverAllowed: hover.allowed,
+                                    highContrast: highContrast,
+                                    fill: fill,
+                                    shadow: shadow,
+                                    highlight: highlight,
+                                  ),
                                 ),
                           ),
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 160),
-                        child: _label(
-                          entry.key,
-                          label,
-                          colors.onSurfaceVariant,
-                          selection.foreground,
-                        ),
+                      child: _label(
+                        context,
+                        entry.key,
+                        label,
+                        colors.onSurfaceVariant,
+                        selectedLabel,
+                        labelStyle,
                       ),
                     ),
                   ),
@@ -391,6 +508,9 @@ class _SourceSelectionTrack extends Row {
     required this.repaint,
     required this.weight,
     required this.color,
+    required this.shadow,
+    required this.highlight,
+    required this.outline,
   }) : super(spacing: 4);
 
   final List<String> ids;
@@ -398,6 +518,8 @@ class _SourceSelectionTrack extends Row {
   final Listenable repaint;
   final double Function(String) weight;
   final Color color;
+  final Color shadow, highlight;
+  final Color? outline;
 
   @override
   _RenderSourceSelectionTrack createRenderObject(BuildContext context) =>
@@ -408,6 +530,9 @@ class _SourceSelectionTrack extends Row {
         repaint: repaint,
         weight: weight,
         color: color,
+        shadow: shadow,
+        highlight: highlight,
+        outline: outline,
       );
 
   @override
@@ -420,6 +545,9 @@ class _SourceSelectionTrack extends Row {
       ..ids = ids
       ..active = active
       ..plate.color = color
+      ..shadow = shadow
+      ..highlight = highlight
+      ..outline = outline
       ..markNeedsPaint();
   }
 }
@@ -432,6 +560,9 @@ class _RenderSourceSelectionTrack extends RenderFlex {
     required this.repaint,
     required this.weight,
     required Color color,
+    required this.shadow,
+    required this.highlight,
+    required this.outline,
   }) : plate = Paint()..color = color,
        super(direction: Axis.horizontal, spacing: 4);
 
@@ -440,6 +571,8 @@ class _RenderSourceSelectionTrack extends RenderFlex {
   final Listenable repaint;
   final double Function(String) weight;
   final Paint plate;
+  Color shadow, highlight;
+  Color? outline;
 
   @override
   void attach(PipelineOwner owner) {
@@ -486,17 +619,132 @@ class _RenderSourceSelectionTrack extends RenderFlex {
           );
         }
       } else if (selected) {
-        context.canvas.drawRRect(_classicChipRadius.toRRect(bounds), plate);
+        _paintPlate(context.canvas, bounds);
       }
     }
     if (target != null) {
-      context.canvas.drawRRect(
-        _classicChipRadius.toRRect(blended ?? target),
-        plate,
-      );
+      _paintPlate(context.canvas, blended ?? target);
     }
     super.paint(context, offset);
   }
+
+  void _paintPlate(Canvas canvas, Rect bounds) => _drawSourcePlate(
+    canvas,
+    bounds,
+    fill: plate.color,
+    shadow: shadow,
+    highlight: highlight,
+    outline: outline,
+  );
+}
+
+// From Uiverse.io by adamgiebl - https://uiverse.io/adamgiebl/good-mouse-67
+// MIT License, Copyright (c) adamgiebl (Adam Giebl)
+void _drawSourcePlate(
+  Canvas canvas,
+  Rect bounds, {
+  required Color fill,
+  required Color shadow,
+  required Color highlight,
+  Color? outline,
+  double progress = 0,
+}) {
+  final shape = _classicChipRadius.toRRect(bounds);
+  // The website preview shows the focused style. Its two inset and two
+  // outside shadows use 2px offsets and a 5px blur on a 55px-tall button.
+  const scale = CollectionToolbarMetrics.actionPlateExtent / 55;
+  const delta = Offset(2 * scale, 2 * scale);
+  const blur = MaskFilter.blur(BlurStyle.normal, 5 * scale / 2);
+  final borderWidth = outline == null ? 2 * scale : 2.0;
+  final exterior = bounds.inflate(16);
+  final paint = Paint();
+  if (outline == null) {
+    // The focus pass adds a little light around the resting selected plate.
+    final outsideLight = progress == 0 ? highlight.a : .12 * progress;
+    final outsideShade = progress == 0 ? .11 : .045 * progress;
+    canvas.save();
+    canvas.clipPath(
+      Path()
+        ..fillType = PathFillType.evenOdd
+        ..addRect(exterior)
+        ..addRRect(shape),
+    );
+    paint.maskFilter = blur;
+    canvas.drawPath(
+      Path()..addRRect(shape.shift(-delta)),
+      paint..color = highlight.withValues(alpha: outsideLight),
+    );
+    canvas.drawPath(
+      Path()..addRRect(shape.shift(delta)),
+      paint..color = shadow.withValues(alpha: outsideShade),
+    );
+    canvas.restore();
+  }
+  canvas.drawRRect(
+    shape,
+    paint
+      ..maskFilter = null
+      ..color = fill,
+  );
+  if (outline == null) {
+    final innerShape = shape.deflate(borderWidth);
+    canvas.save();
+    canvas.clipRRect(innerShape);
+    paint.maskFilter = blur;
+    void inset(Offset offset, Color color) {
+      canvas.drawPath(
+        Path()
+          ..fillType = PathFillType.evenOdd
+          ..addRect(exterior)
+          ..addRRect(innerShape.shift(offset)),
+        paint..color = color,
+      );
+    }
+
+    inset(-delta, highlight);
+    inset(delta, shadow);
+    canvas.restore();
+  }
+  canvas.drawPath(
+    Path()..addRRect(shape.deflate(borderWidth / 2)),
+    paint
+      ..maskFilter = null
+      ..color = outline ?? shadow.withValues(alpha: .065)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = borderWidth,
+  );
+}
+
+class _FocusedSourcePlate extends CustomPainter {
+  const _FocusedSourcePlate({
+    required this.fill,
+    required this.shadow,
+    required this.highlight,
+    required this.progress,
+  });
+
+  final Color fill, shadow, highlight;
+  final double progress;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (progress == 0) return;
+    _drawSourcePlate(
+      canvas,
+      Offset.zero & size,
+      fill: fill,
+      shadow: shadow,
+      highlight: highlight,
+      progress: progress,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_FocusedSourcePlate oldDelegate) =>
+      oldDelegate.progress != progress ||
+      oldDelegate.fill != fill ||
+      oldDelegate.shadow != shadow ||
+      oldDelegate.highlight != highlight;
 }
 
 class _SourceTabs extends StatelessWidget {

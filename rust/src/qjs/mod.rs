@@ -4,6 +4,7 @@ use ciborium::ser::into_writer;
 use dashmap::DashMap;
 use ferrous_opencc::{OpenCC, config::BuiltinConfig};
 use flutter_rust_bridge::DartFnFuture;
+use rquickjs_playground::web_runtime::{HttpReadScope, cancel_http_read_group};
 use rquickjs_playground::{
     AsyncHostRuntime, AsyncHostRuntimeBuilder, BridgeRuntimeConfig, HttpClientConfig,
     WebRuntimeOptions, configure_bridge_runtime as configure_bridge_runtime_global,
@@ -81,9 +82,11 @@ const BRIDGE_ROUTE_CACHE_SET_SYNC: &str = "cache.set.sync";
 const BRIDGE_ROUTE_CACHE_SET_IF_ABSENT: &str = "cache.set_if_absent";
 const BRIDGE_ROUTE_CACHE_COMPARE_AND_SET: &str = "cache.compare_and_set";
 const BRIDGE_ROUTE_CACHE_DELETE: &str = "cache.delete";
+const BRIDGE_ROUTE_RESPONSE_CACHE_EPOCH: &str = "cache.response_generation";
 const BRIDGE_ROUTE_RUNTIME_GC: &str = "runtime.gc";
 const BRIDGE_ROUTE_RUNTIME_IS_TASK_GROUP_CANCELLED: &str = "runtime.is_task_group_cancelled";
 const HOST_CACHE_VALUE_MAX_BYTES: usize = 500 * 1024;
+const HOST_RESPONSE_CACHE_MAX_ENTRIES: usize = 96;
 const CANCELLED_GROUP_TTL: Duration = Duration::from_secs(120);
 const REGISTERED_DART_CALLBACK_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_IMAGE_CROP_CONCURRENCY: usize = 4;
@@ -91,16 +94,43 @@ const MAX_IMAGE_CROP_CONCURRENCY: usize = 4;
 static OPENCC_CONVERTERS: LazyLock<DashMap<String, OpenCC>> = LazyLock::new(DashMap::new);
 
 static HOST_CACHE_STORE: OnceLock<DashMap<String, HostCacheEntry>> = OnceLock::new();
+static HOST_RESPONSE_CACHE_EPOCHS: LazyLock<Mutex<ResponseCacheEpochs>> =
+    LazyLock::new(|| Mutex::new(ResponseCacheEpochs::default()));
 static HOST_CACHE_GC_STARTED: OnceLock<()> = OnceLock::new();
 static HOST_CACHE_GC_ENABLED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 static CANCELLED_TASK_GROUPS: OnceLock<DashMap<String, Instant>> = OnceLock::new();
+static LAST_CANCELLED_GROUP_SWEEP: Mutex<Option<Instant>> = Mutex::new(None);
 static IMAGE_CROP_SEMAPHORE: Semaphore = Semaphore::const_new(MAX_IMAGE_CROP_CONCURRENCY);
 
 #[derive(Clone)]
 struct HostCacheEntry {
     value: Value,
     expires_at: Instant,
+}
+
+#[derive(Default)]
+struct ResponseCacheEpochs {
+    sequence: u64,
+    global: u64,
+    sources: HashMap<String, u64>,
+}
+
+impl ResponseCacheEpochs {
+    fn current(&self, runtime: &str) -> u64 {
+        let source = response_cache_source(runtime);
+        self.sources.get(source).copied().unwrap_or(self.global)
+    }
+
+    fn advance(&mut self, source: Option<&str>) {
+        self.sequence += 1;
+        if let Some(source) = source {
+            self.sources.insert(source.to_owned(), self.sequence);
+        } else {
+            self.global = self.sequence;
+            self.sources.clear();
+        }
+    }
 }
 
 fn opencc_convert_by_config(text: &str, config_name: &str) -> Result<String> {
@@ -169,10 +199,26 @@ fn mark_task_group_cancelled(runtime_name: &str, task_group_key: &str) {
     if task_group_key.trim().is_empty() {
         return;
     }
-    cancelled_task_groups_cell().insert(
+    let groups = cancelled_task_groups_cell();
+    let now = Instant::now();
+    groups.insert(
         cancelled_group_key(runtime_name, task_group_key),
-        Instant::now() + CANCELLED_GROUP_TTL,
+        now + CANCELLED_GROUP_TTL,
     );
+    sweep_expired_cancelled_groups(groups, &LAST_CANCELLED_GROUP_SWEEP, now);
+}
+
+fn sweep_expired_cancelled_groups(
+    groups: &DashMap<String, Instant>,
+    last_sweep: &Mutex<Option<Instant>>,
+    now: Instant,
+) {
+    if let Ok(mut last) = last_sweep.try_lock()
+        && last.is_none_or(|last| now.duration_since(last) >= CANCELLED_GROUP_TTL)
+    {
+        groups.retain(|_, expires_at| *expires_at > now);
+        *last = Some(now);
+    }
 }
 
 fn clear_task_group_cancelled(runtime_name: &str, task_group_key: &str) {
@@ -193,7 +239,7 @@ fn is_task_group_cancelled(runtime_name: &str, task_group_key: &str) -> bool {
             return true;
         }
     }
-    cancelled_task_groups_cell().remove(&key);
+    cancelled_task_groups_cell().remove_if(&key, |_, expiry| *expiry <= now);
     false
 }
 
@@ -351,6 +397,66 @@ fn scoped_route_key(runtime: &str, key: &str) -> String {
     format!("{runtime}::{key}")
 }
 
+fn response_cache_source(runtime: &str) -> &str {
+    let runtime = runtime.trim_matches(['(', ')']);
+    runtime.split(['@', '.']).next().unwrap_or(runtime)
+}
+
+fn is_response_cache_key(key: &str) -> bool {
+    [
+        "bikaComic:requestCache:",
+        "copyComic:chapters:",
+        "copyComic:chapterContent:",
+        "copyComic:getChapter:",
+        "copyComic:themes:",
+        "JmComic::resp:",
+    ]
+    .iter()
+    .any(|prefix| key.starts_with(prefix))
+}
+
+pub fn clear_host_response_cache(source: Option<&str>) {
+    let mut epochs = HOST_RESPONSE_CACHE_EPOCHS.lock().unwrap();
+    epochs.advance(source);
+    host_cache_store_cell().retain(|key, _| {
+        !key.split_once("::").is_some_and(|(runtime, key)| {
+            is_response_cache_key(key)
+                && source.is_none_or(|source| response_cache_source(runtime) == source)
+        })
+    });
+}
+
+fn limit_host_response_cache() {
+    let cache = host_cache_store_cell();
+    let mut entries: Vec<_> = cache
+        .iter()
+        .filter(|entry| {
+            entry
+                .key()
+                .split_once("::")
+                .is_some_and(|(_, key)| is_response_cache_key(key))
+        })
+        .map(|entry| (entry.key().clone(), entry.expires_at))
+        .collect();
+    let now = Instant::now();
+    entries.retain(|(key, expires)| {
+        let valid = *expires > now;
+        if !valid {
+            cache.remove(key);
+        }
+        valid
+    });
+    let extra = entries
+        .len()
+        .saturating_sub(HOST_RESPONSE_CACHE_MAX_ENTRIES);
+    if extra > 0 {
+        entries.sort_unstable_by_key(|(_, expires)| *expires);
+        for (key, _) in entries.into_iter().take(extra) {
+            cache.remove(&key);
+        }
+    }
+}
+
 fn cache_value_size_exceeds_limit(value: &Value) -> bool {
     serde_json::to_vec(value)
         .map(|bytes| bytes.len() > HOST_CACHE_VALUE_MAX_BYTES)
@@ -386,7 +492,10 @@ fn handle_cache_get(runtime: &str, args: &[Value]) -> Result<Value> {
     let scoped_key = scoped_route_key(runtime, key);
     let cache = host_cache_store_cell();
     let out = match cache.get(&scoped_key) {
-        Some(entry) => entry.value.clone(),
+        Some(entry) if !is_response_cache_key(key) || entry.expires_at > Instant::now() => {
+            entry.value.clone()
+        }
+        Some(_) => fallback,
         None => fallback,
     };
     Ok(out)
@@ -412,7 +521,26 @@ fn handle_cache_set(runtime: &str, args: &[Value]) -> Result<Value> {
         return Ok(json!(false));
     }
     let scoped_key = scoped_route_key(runtime, key);
-    host_cache_store_cell().insert(scoped_key, new_host_cache_entry(value));
+    if is_response_cache_key(key) {
+        let epochs = HOST_RESPONSE_CACHE_EPOCHS.lock().unwrap();
+        if args
+            .get(2)
+            .and_then(Value::as_u64)
+            .is_some_and(|epoch| epoch != epochs.current(runtime))
+        {
+            return Ok(json!(false));
+        }
+        let mut entry = new_host_cache_entry(value);
+        if key.starts_with("copyComic:themes:") {
+            // Copy treats the public taxonomy as fresh for one day and keeps
+            // it as an offline fallback after that freshness window.
+            entry.expires_at = Instant::now() + Duration::from_secs(7 * 24 * 60 * 60);
+        }
+        host_cache_store_cell().insert(scoped_key, entry);
+        limit_host_response_cache();
+    } else {
+        host_cache_store_cell().insert(scoped_key, new_host_cache_entry(value));
+    }
     Ok(json!(true))
 }
 
@@ -1263,7 +1391,7 @@ async fn start_qjs_task(
     fn_path: &str,
     args_json: &str,
 ) -> Result<u64> {
-    if !task_group_key.is_empty() {
+    if !task_group_key.is_empty() && !task_group_key.starts_with("page-read-") {
         clear_task_group_cancelled(runtime_name, task_group_key);
     }
 
@@ -1312,6 +1440,19 @@ pub async fn qjs_task_call(
     fn_path: String,
     args_json: String,
 ) -> Result<Vec<u8>> {
+    let mut scoped_args = None;
+    let mut read_scope = None;
+    if task_group_key.starts_with("page-read-") {
+        let scope = HttpReadScope::new(&runtime_name, &task_group_key);
+        if is_task_group_cancelled(&runtime_name, &task_group_key) {
+            return Err(anyhow!(QJS_RUNTIME_CANCELLED_ERROR_CODE));
+        }
+        if let Ok(Value::Object(mut args)) = serde_json::from_str(&args_json) {
+            args.insert("__breezeReadScope".to_owned(), json!(scope.token()));
+            scoped_args = Some(Value::Object(args).to_string());
+        }
+        read_scope = Some(scope);
+    }
     let task_id = start_qjs_task(
         &runtime_name,
         &task_group_key,
@@ -1319,11 +1460,17 @@ pub async fn qjs_task_call(
         bundle_js,
         bundle_url,
         &fn_path,
-        &args_json,
+        scoped_args.as_deref().unwrap_or(&args_json),
     )
     .await?;
+    if read_scope.is_some() && is_task_group_cancelled(&runtime_name, &task_group_key) {
+        let _ = qjs_cancel_tasks_by_group(runtime_name.clone(), task_group_key.clone()).await;
+        return Err(anyhow!(QJS_RUNTIME_CANCELLED_ERROR_CODE));
+    }
 
-    wait_tracked_task_bytes(&runtime_name, task_id).await
+    let result = wait_tracked_task_bytes(&runtime_name, task_id).await;
+    drop(read_scope);
+    result
 }
 
 pub async fn qjs_fetch_image(
@@ -1421,6 +1568,12 @@ pub async fn qjs_drop_runtime(runtime_name: String) -> Result<bool> {
 
     let _ = qjs_tracked_task_map().write().await.remove(&runtime_name);
 
+    let _epochs = HOST_RESPONSE_CACHE_EPOCHS.lock().unwrap();
+    host_cache_store_cell().retain(|key, _| {
+        !key.split_once("::")
+            .is_some_and(|(owner, key)| owner == runtime_name && is_response_cache_key(key))
+    });
+
     Ok(runtime.is_some())
 }
 
@@ -1450,16 +1603,19 @@ pub async fn qjs_debug_snapshot(runtime_name: String) -> Result<String> {
             .unwrap_or_default()
     };
     let tracked_tasks = tracked_task_debug_items(&runtime_name).await;
+    let now = Instant::now();
+    let runtime_prefix = format!("{runtime_name}::");
     let cancelled_groups = cancelled_task_groups_cell()
         .iter()
         .filter_map(|entry| {
             let key = entry.key();
-            if !key.starts_with(&format!("{runtime_name}::")) {
+            let expires_at = *entry.value();
+            if !key.starts_with(&runtime_prefix) || expires_at <= now {
                 return None;
             }
             Some(json!({
                 "key": key.clone(),
-                "expiresInMs": entry.value().saturating_duration_since(Instant::now()).as_millis() as u64,
+                "expiresInMs": expires_at.duration_since(now).as_millis() as u64,
             }))
         })
         .collect::<Vec<_>>();
@@ -1538,6 +1694,7 @@ pub async fn qjs_cancel_tasks_by_group(
     task_group_key: String,
 ) -> Result<QjsCancelTasksByGroupResult> {
     mark_task_group_cancelled(&runtime_name, &task_group_key);
+    cancel_http_read_group(&runtime_name, &task_group_key);
     let task_ids = tracked_task_ids_by_group(&runtime_name, &task_group_key).await;
     if task_ids.is_empty() {
         return Ok(QjsCancelTasksByGroupResult {
@@ -1800,6 +1957,12 @@ pub fn init_rust_functions() -> Result<()> {
         handle_cache_set(&runtime, &args)
     })?;
 
+    register_bridge_route_sync_handler(BRIDGE_ROUTE_RESPONSE_CACHE_EPOCH, |runtime, _| {
+        Ok(json!(
+            HOST_RESPONSE_CACHE_EPOCHS.lock().unwrap().current(&runtime)
+        ))
+    })?;
+
     register_bridge_route_sync_handler(BRIDGE_ROUTE_CACHE_SET_SYNC, |runtime, args| {
         handle_cache_set(&runtime, &args)
     })?;
@@ -1923,6 +2086,24 @@ mod tests {
             .expect("convert with tw2sp again");
         assert_eq!(first, second);
         assert!(super::OPENCC_CONVERTERS.contains_key("tw2sp.json"));
+    }
+
+    #[test]
+    fn cancelled_group_sweep_expires_unused_keys_and_preserves_active_keys() {
+        use super::{CANCELLED_GROUP_TTL, sweep_expired_cancelled_groups};
+        use dashmap::DashMap;
+        use std::sync::Mutex;
+
+        let groups = DashMap::new();
+        let start = Instant::now();
+        let last_sweep = Mutex::new(Some(start));
+        groups.insert("reader::old".into(), start + CANCELLED_GROUP_TTL);
+        groups.insert("reader::active".into(), start + CANCELLED_GROUP_TTL * 2);
+
+        sweep_expired_cancelled_groups(&groups, &last_sweep, start + CANCELLED_GROUP_TTL);
+
+        assert!(!groups.contains_key("reader::old"));
+        assert!(groups.contains_key("reader::active"));
     }
 
     #[test]
@@ -2158,6 +2339,50 @@ mod tests {
 
         assert_eq!(out, json!("stale"));
         assert!(cache.get(&scoped_key).is_some());
+    }
+
+    #[test]
+    fn response_cache_clear_preserves_session_keys_and_fences_late_writes() {
+        use super::{HOST_RESPONSE_CACHE_EPOCHS, clear_host_response_cache, handle_cache_set};
+        let source = "response-clear-owner";
+        let runtime = "response-clear-owner@net.1234.breeze-session.2";
+        let other = "response-other-owner";
+        let response = "bikaComic:requestCache:fixture";
+        let session = "session:fixture";
+        let old_epoch = HOST_RESPONSE_CACHE_EPOCHS.lock().unwrap().current(runtime);
+        handle_cache_set(
+            runtime,
+            &[json!(response), json!("response"), json!(old_epoch)],
+        )
+        .unwrap();
+        handle_cache_set(runtime, &[json!(session), json!("session")]).unwrap();
+        handle_cache_set(other, &[json!(response), json!("other")]).unwrap();
+
+        clear_host_response_cache(Some(source));
+        assert_eq!(
+            handle_cache_get(runtime, &[json!(response)]).unwrap(),
+            Value::Null
+        );
+        assert_eq!(
+            handle_cache_get(runtime, &[json!(session)]).unwrap(),
+            json!("session")
+        );
+        assert_eq!(
+            handle_cache_get(other, &[json!(response)]).unwrap(),
+            json!("other")
+        );
+        assert_eq!(
+            handle_cache_set(runtime, &[json!(response), json!("old"), json!(old_epoch)]).unwrap(),
+            json!(false),
+        );
+        let epoch = HOST_RESPONSE_CACHE_EPOCHS.lock().unwrap().current(runtime);
+        assert_eq!(
+            handle_cache_set(runtime, &[json!(response), json!("new"), json!(epoch)]).unwrap(),
+            json!(true),
+        );
+        clear_host_response_cache(Some(source));
+        clear_host_response_cache(Some(other));
+        host_cache_store_cell().remove(&scoped_route_key(runtime, session));
     }
 
     #[test]

@@ -4,7 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart';
 import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
-import 'package:zephyr/service/jm_list_like_counts.dart' show JmListLikeCounts;
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/service/jm_list_like_counts.dart'
+    show JmListLikeCounts, readJmSearchLikeCounts;
 import 'package:zephyr/util/event/event.dart';
 import 'package:zephyr/util/json/json_value.dart';
 
@@ -42,6 +44,7 @@ Future<Map<String, dynamic>> callUnifiedComicPlugin({
       'getFunctionPage',
       'getHomeData',
       'getRankingData',
+      'getComicDetail',
     },
     '6886291b-f524-441c-844b-c2efae9899a9' => const {
       'getFunctionPage',
@@ -51,6 +54,7 @@ Future<Map<String, dynamic>> callUnifiedComicPlugin({
       'getPromoteListData',
       'getLatestData',
       'getWeekRankingData',
+      'getCloudFavoriteFilterBundle',
     },
     _ => const <String>{},
   }.contains(resolvedFnPath);
@@ -61,6 +65,11 @@ Future<Map<String, dynamic>> callUnifiedComicPlugin({
   };
   final argsJson = jsonEncode(payload);
   final runtime = runtimeName ?? resolvedPluginId;
+  final jmSearchGeneration =
+      resolvedPluginId == JmListLikeCounts.source &&
+          resolvedFnPath == 'searchComic'
+      ? pluginSessionWriteFence.generation(resolvedPluginId)
+      : null;
   final foregroundJmRead =
       resolvedPluginId == JmListLikeCounts.source &&
       !jmCoverLikeRead &&
@@ -92,7 +101,14 @@ Future<Map<String, dynamic>> callUnifiedComicPlugin({
       requireCurrentResult: notifyUnauthorized,
     );
     final decoded = requireJsonMap(jsonDecode(raw), message: '插件返回格式错误');
-    return _normalizePluginSourceFields(decoded, resolvedPluginId);
+    final response = _normalizePluginSourceFields(decoded, resolvedPluginId);
+    if (jmSearchGeneration != null) {
+      JmListLikeCounts.instance.remember(
+        readJmSearchLikeCounts(response),
+        generation: jmSearchGeneration,
+      );
+    }
+    return response;
   } catch (error) {
     final unauthorized = parseUnauthorizedPayload(
       error,

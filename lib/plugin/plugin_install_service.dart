@@ -21,9 +21,58 @@ const _blockedPluginUuid = kDebugMode
 
 bool allowsPluginInstallation(String uuid) => uuid != _blockedPluginUuid;
 
+enum CloudPluginBatchAction { install, update }
+
 class PluginInstallService {
   PluginInstallService._();
   static final PluginInstallService I = PluginInstallService._();
+
+  /// Returns the batch action available to this catalog row on this device.
+  CloudPluginBatchAction? cloudBatchActionFor(CloudPluginItem item) {
+    final uuid = item.manifest.uuid.trim();
+    if (uuid.isEmpty) return null;
+    final current = _findExistingPluginInfoByUuid(uuid);
+    return _cloudBatchActionFor(
+      item,
+      current: current,
+      locallyRemoved: LocalPluginInstallationState.instance.isRemoved(uuid),
+    );
+  }
+
+  CloudPluginBatchAction? _cloudBatchActionFor(
+    CloudPluginItem item, {
+    required PluginInfo? current,
+    required bool locallyRemoved,
+  }) {
+    final manifest = item.manifest;
+    if (!allowsPluginInstallation(manifest.uuid.trim()) ||
+        manifest.version.trim().isEmpty ||
+        !item.hasDownloadChannel ||
+        !PluginHostCompatibility.checkInfo(
+          manifest.compatibilityMetadata,
+        ).supported) {
+      return null;
+    }
+    if (current == null || current.isDeleted || locallyRemoved) {
+      return CloudPluginBatchAction.install;
+    }
+    final migration = item.formalRelease?.migrationFor(
+      installedUuid: current.uuid,
+      installedVersion: current.version,
+      scriptFingerprint: () =>
+          publishedPluginScriptSha256(current.originScript),
+    );
+    if (migration != null ||
+        (compareVersion(manifest.version, current.version) > 0 &&
+            preservesFormalPluginChannel(
+              installedInfo: parseGetInfoJson(current.getInfoJson),
+              updateUrl: manifest.updateUrl,
+              npmName: manifest.npmName,
+            ))) {
+      return CloudPluginBatchAction.update;
+    }
+    return null;
+  }
 
   /// Downloads and installs a plugin from the cloud store.
   ///
@@ -33,6 +82,7 @@ class PluginInstallService {
     CloudPluginItem item, {
     String? expectedUuid,
     bool reinstall = false,
+    CloudPluginBatchAction? batchAction,
   }) async {
     final pluginUuid = item.manifest.uuid.trim();
     if (pluginUuid.isEmpty) {
@@ -58,6 +108,16 @@ class PluginInstallService {
 
     final installation = _captureKnownInstallation(pluginUuid);
     final current = _findExistingPluginInfoByUuid(pluginUuid);
+    if (batchAction != null &&
+        (reinstall ||
+            _cloudBatchActionFor(
+                  item,
+                  current: current,
+                  locallyRemoved: installation?.removedAt != null,
+                ) !=
+                batchAction)) {
+      throw const PluginLifecycleChanged();
+    }
     final installed =
         current != null &&
         !current.isDeleted &&
@@ -109,25 +169,25 @@ class PluginInstallService {
         throw StateError(t.plugin.localVersionNewer);
       }
     }
-    final script = reinstall && formal != null
+    final script = migration != null
+        ? await downloadFormalPluginMigration(migration)
+        : formal != null
         ? await downloadFormalPluginRelease(formal)
-        : migration == null
-        ? await downloadFromJsdelivrOrGitHub(
+        : await downloadFromJsdelivrOrGitHub(
             npmName: npmName,
             cloudVersion: item.manifest.version.trim(),
             updateUrl: updateUrl,
-          )
-        : await downloadFormalPluginMigration(migration);
+          );
     verifyPublishedPluginScript(script, item.manifest.scriptSha256);
     return _savePluginWithLease(
       script,
       sourceLabel: '云端组件: ${item.repo}',
-      allowReplaceExisting: true,
+      allowReplaceExisting: batchAction != CloudPluginBatchAction.install,
       expectedUuid: pluginUuid,
       expectedVersion: item.manifest.version,
       expectedInstallation: installation,
       migration: migration,
-      formalRelease: reinstall ? formal : null,
+      formalRelease: formal,
     );
   }
 

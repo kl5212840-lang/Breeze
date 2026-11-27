@@ -1,12 +1,17 @@
 import 'dart:async';
 
+import 'package:auto_route/auto_route.dart';
+import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoDialogRoute;
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/cubit/plugin_registry_cubit.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/main.dart' show eventBus;
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/comic_follow/cubit/comic_follow_cubit.dart';
 import 'package:zephyr/page/comic_follow/view/comic_follow_page.dart';
@@ -25,7 +30,9 @@ import 'package:zephyr/service/comic_follow/comic_follow_foreground_scheduler.da
 import 'package:zephyr/service/comic_follow/comic_follow_reminders.dart';
 import 'package:zephyr/src/rust/frb_generated.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/widgets/breeze_theme_colors.dart';
 import 'package:zephyr/widgets/tab_reselect_scope.dart';
+import 'package:zephyr/widgets/toast.dart';
 
 class _FollowSearchTextApi extends RustLibApi {
   @override
@@ -64,6 +71,7 @@ class _FollowHostRepository implements ComicFollowRepository {
       );
   ComicFollow row;
   int calls = 0;
+  bool failWrites = false;
   final additionalRows = <String, ComicFollow>{};
   final histories = <String, UnifiedComicHistory>{};
   final pending = Completer<ComicFollowDetection?>();
@@ -82,6 +90,7 @@ class _FollowHostRepository implements ComicFollowRepository {
       (key == row.uniqueKey ? row : additionalRows[key])?.copyWith();
   @override
   void putFollow(ComicFollow value) {
+    if (failWrites) throw StateError('Fixture write failure');
     if (value.uniqueKey == row.uniqueKey) {
       row = value;
     } else {
@@ -186,6 +195,35 @@ void main() {
     messenger.setMockMethodCallHandler(connectivityChanges, null);
   });
 
+  test(
+    'follow sort keeps the last rapid selection across a cold read',
+    () async {
+      const key = 'breeze.local.comic-follow.sort.v1';
+      SharedPreferences.setMockInitialValues({key: 99});
+      final preferences = await SharedPreferences.getInstance();
+      final repository = _FollowHostRepository(DateTime.utc(2026));
+      final cubit = ComicFollowCubit(
+        repository: repository,
+        sortPreferences: preferences,
+      );
+      expect(cubit.state.sort, ComicFollowSort.lastRead);
+      cubit.setSort(ComicFollowSort.recentUpdate);
+      cubit.setSort(ComicFollowSort.update);
+      cubit.setSort(ComicFollowSort.recentUpdate);
+      expect(cubit.state.sort, ComicFollowSort.recentUpdate);
+      await cubit.close();
+      await preferences.reload();
+      expect(preferences.get(key), ComicFollowSort.recentUpdate.name);
+
+      final reopened = ComicFollowCubit(
+        repository: repository,
+        sortPreferences: preferences,
+      );
+      addTearDown(reopened.close);
+      expect(reopened.state.sort, ComicFollowSort.recentUpdate);
+    },
+  );
+
   testWidgets('main follow shows only comics and keeps the unread filter', (
     tester,
   ) async {
@@ -279,6 +317,365 @@ void main() {
     }
   });
 
+  testWidgets('follow swipe is bounded and opens actions without confirmation', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final now = DateTime.utc(2026, 11, 23, 12);
+    final repository = _FollowHostRepository(now);
+    repository.row = repository.row.copyWith(
+      detectedChapterCount: 12,
+      hasUpdate: true,
+    );
+    final cubit = ComicFollowCubit(repository: repository, now: () => now);
+    final registry = PluginRegistryCubit();
+    final notices = <ToastEvent>[];
+    final subscription = eventBus.on<ToastEvent>().listen(notices.add);
+    addTearDown(subscription.cancel);
+    final router = RootStackRouter.build(
+      routes: [
+        NamedRouteDef(
+          name: 'FollowFixture',
+          path: '/',
+          builder: (_, _) => const ComicFollowPage(active: false),
+        ),
+        NamedRouteDef(
+          name: ComicInfoRoute.name,
+          path: '/comic-detail',
+          builder: (_, data) => Scaffold(
+            body: Text(
+              'Detail opened for ${data.argsAs<ComicInfoRouteArgs>().comicId}',
+            ),
+          ),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    try {
+      await tester.pumpWidget(
+        MultiBlocProvider(
+          providers: [
+            BlocProvider.value(value: cubit),
+            BlocProvider.value(value: registry),
+          ],
+          child: MaterialApp.router(routerConfig: router.config()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final row = find.byKey(ValueKey(repository.row.uniqueKey));
+      final title = find.text(repository.row.title);
+      final read = find.text(t.sourceNotices.read);
+      final unfollow = find.text(t.comicFollow.unfollow);
+      final dialog = find.byType(AlertDialog);
+      final badge = find.byKey(
+        ValueKey('follow-update-${repository.row.uniqueKey}'),
+      );
+      final dot = find.byKey(
+        ValueKey('follow-update-dot-${repository.row.uniqueKey}'),
+      );
+      final closedLeft = tester.getTopLeft(title).dx;
+      final point = tester.getCenter(row);
+
+      Future<void> reveal() async {
+        await tester.flingFrom(point, const Offset(-145, 0), 1800);
+        await tester.pumpAndSettle();
+        expect(unfollow.hitTestable(), findsOneWidget);
+        expect(dialog, findsNothing);
+      }
+
+      expect(badge, findsOneWidget);
+      expect(dot, findsOneWidget);
+      await tester.dragFrom(Offset(20, point.dy), const Offset(-100, 0));
+      await tester.pumpAndSettle();
+      expect(unfollow, findsNothing);
+
+      final touch = await tester.startGesture(tester.getCenter(row));
+      await touch.moveBy(const Offset(-8, 0));
+      await tester.pump(const Duration(milliseconds: 70));
+      await touch.moveBy(const Offset(-24, 0));
+      await tester.pump(const Duration(milliseconds: 70));
+      await touch.moveBy(const Offset(-220, 0));
+      await tester.pump();
+      final displacement = closedLeft - tester.getTopLeft(title).dx;
+      await touch.moveBy(const Offset(40, 0));
+      await tester.pump();
+      final reversed = closedLeft - tester.getTopLeft(title).dx;
+      await touch.moveBy(const Offset(-50, 0));
+      await touch.up();
+      await tester.pumpAndSettle();
+
+      expect(
+        (displacement <= 152, find.byType(AlertDialog).evaluate().isEmpty),
+        (true, true),
+        reason:
+            'A swipe moved the row by $displacement and must only reveal actions.',
+      );
+      expect(displacement, greaterThanOrEqualTo(88));
+      expect(reversed, closeTo(displacement - 40, 1));
+      expect(read.hitTestable(), findsOneWidget);
+      expect(unfollow.hitTestable(), findsOneWidget);
+      expect(repository.row.deleted, isFalse);
+
+      final cancelled = await tester.startGesture(tester.getCenter(unfollow));
+      await cancelled.moveBy(const Offset(110, 0));
+      await tester.pump();
+      await cancelled.cancel();
+      await tester.pumpAndSettle();
+      expect(unfollow.hitTestable(), findsOneWidget);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pumpAndSettle();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(unfollow, findsNothing);
+
+      await reveal();
+      await tester.tapAt(point);
+      await tester.pumpAndSettle();
+      expect(find.text('Detail opened for 1'), findsNothing);
+      expect(unfollow, findsNothing);
+      await tester.tap(title);
+      await tester.pumpAndSettle();
+      expect(find.text('Detail opened for 1'), findsOneWidget);
+      router.pop();
+      await tester.pumpAndSettle();
+      expect(unfollow, findsNothing);
+
+      await reveal();
+      await tester.tap(unfollow);
+      await tester.pumpAndSettle();
+      expect(dialog, findsOneWidget);
+      expect(repository.row.deleted, isFalse);
+      await tester.tap(find.text(t.common.cancel));
+      await tester.pumpAndSettle();
+      expect(dialog, findsNothing);
+
+      repository.failWrites = true;
+      await reveal();
+      await tester.tap(read);
+      await tester.pumpAndSettle();
+      expect(notices.last.type, ToastType.error);
+      expect(badge, findsOneWidget);
+      expect(dot, findsOneWidget);
+      expect(repository.row.hasUpdate, isTrue);
+
+      repository.failWrites = false;
+      final filter = find.byKey(const ValueKey('follow-filter'));
+      await tester.tap(
+        find.descendant(of: filter, matching: find.text(t.comicFollow.unread)),
+      );
+      await tester.pumpAndSettle();
+      await reveal();
+      await tester.tap(read);
+      await tester.pumpAndSettle();
+      expect(notices.last.type, ToastType.success);
+      expect(row, findsNothing);
+      expect(repository.row.lastChapterCount, 12);
+      expect(repository.row.deleted, isFalse);
+
+      await tester.tap(find.text(t.comicFollow.showAll));
+      await tester.pumpAndSettle();
+      expect(row, findsOneWidget);
+      expect(badge, findsNothing);
+      expect(dot, findsNothing);
+      await reveal();
+      expect(read, findsNothing);
+      await tester.tap(unfollow);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(of: dialog, matching: find.text(t.comicInfo.unfollow)),
+      );
+      await tester.pumpAndSettle();
+      expect(repository.row.deleted, isTrue);
+      expect(row, findsNothing);
+    } finally {
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await _followFixtureStage(tester, cubit.close, 'close swipe cubit');
+      await _followFixtureStage(tester, registry.close, 'close swipe registry');
+    }
+  });
+
+  for (final (style, platform, brightness, size) in [
+    ('system', TargetPlatform.iOS, Brightness.light, const Size(320, 568)),
+    ('breeze', TargetPlatform.iOS, Brightness.dark, const Size(844, 390)),
+    ('system', TargetPlatform.android, Brightness.light, const Size(320, 568)),
+  ]) {
+    testWidgets('follow confirmation stays modal in $style on $platform', (
+      tester,
+    ) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final preference = ValueNotifier(style);
+      addTearDown(preference.dispose);
+      final now = DateTime.utc(2026, 11, 23, 12);
+      final repository = _FollowHostRepository(now);
+      repository.row = repository.row.copyWith(
+        title: List.filled(24, '很长的漫画标题').join(' · '),
+      );
+      repository.additionalRows['fixture:2'] = repository.row.copyWith(
+        id: 2,
+        uniqueKey: 'fixture:2',
+        comicId: '2',
+        title: 'Other followed work',
+      );
+      final cubit = ComicFollowCubit(repository: repository, now: () => now);
+      final registry = PluginRegistryCubit();
+      final systemIos = style == 'system' && platform == TargetPlatform.iOS;
+      try {
+        await tester.pumpWidget(
+          MultiBlocProvider(
+            providers: [
+              BlocProvider.value(value: cubit),
+              BlocProvider.value(value: registry),
+            ],
+            child: AppInterfaceStyleScope(
+              style: preference,
+              child: MaterialApp(
+                theme: ThemeData(platform: platform, brightness: brightness),
+                builder: (context, child) => MediaQuery(
+                  data: MediaQuery.of(
+                    context,
+                  ).copyWith(textScaler: TextScaler.linear(2.2)),
+                  child: child!,
+                ),
+                home: const ComicFollowPage(active: false),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final row = find.byKey(ValueKey(repository.row.uniqueKey));
+        final alert = find.byType(AlertDialog);
+        final cancel = find.descendant(
+          of: alert,
+          matching: find.widgetWithText(TextButton, t.common.cancel),
+        );
+        final confirm = find.descendant(
+          of: alert,
+          matching: find.widgetWithText(TextButton, t.comicInfo.unfollow),
+        );
+        Future<void> open() async {
+          await tester.longPress(row);
+          await tester.pumpAndSettle();
+          await tester.tap(find.text(t.comicFollow.unfollow));
+          await tester.pumpAndSettle();
+          expect(alert, findsOneWidget);
+        }
+
+        await open();
+        final body = find.descendant(
+          of: alert,
+          matching: find.text(
+            t.comicFollow.unfollowConfirm(title: repository.row.title),
+          ),
+        );
+        final alertTitle = find.descendant(
+          of: alert,
+          matching: find.text(t.comicFollow.unfollow),
+        );
+        for (final text in [alertTitle, body]) {
+          expect(
+            tester.renderObject<RenderParagraph>(text).didExceedMaxLines,
+            isFalse,
+          );
+        }
+        final scrollable = find
+            .ancestor(of: body, matching: find.byType(Scrollable))
+            .first;
+        expect(
+          tester.state<ScrollableState>(scrollable).position.maxScrollExtent,
+          greaterThan(0),
+        );
+        for (final button in [cancel, confirm]) {
+          expect(button.hitTestable(), findsOneWidget);
+          expect(tester.getSize(button).shortestSide, greaterThanOrEqualTo(44));
+        }
+        expect(
+          ModalRoute.of(tester.element(alert)) is CupertinoDialogRoute<bool>,
+          systemIos,
+        );
+        final dialog = tester.widget<AlertDialog>(alert);
+        final destructive = tester.widget<TextButton>(confirm);
+        final ink = destructive.style!.foregroundColor!.resolve({})!;
+        expect(dialog.backgroundColor!.a, 1);
+        expect(
+          BreezeThemeColors.contrast(ink, dialog.backgroundColor!),
+          greaterThanOrEqualTo(4.5),
+        );
+        final surface = find.descendant(
+          of: alert,
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is Material && widget.color == dialog.backgroundColor,
+          ),
+        );
+        expect(
+          tester.getSize(surface).width,
+          lessThanOrEqualTo(systemIos ? 360 : 400),
+        );
+        final rowRect = tester.getRect(row);
+        await tester.tapAt(Offset(rowRect.left + 3, rowRect.center.dy));
+        await tester.pumpAndSettle();
+        expect(alert, findsOneWidget);
+        expect(tester.takeException(), isNull);
+        expect(repository.row.deleted, isFalse);
+
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(alert, findsNothing);
+        expect(repository.row.deleted, isFalse);
+
+        await open();
+        await tester.tap(cancel);
+        await tester.pumpAndSettle();
+        expect(alert, findsNothing);
+        expect(repository.row.deleted, isFalse);
+
+        await open();
+        final replacementTime = now.add(const Duration(seconds: 1));
+        repository.row = repository.row.copyWith(
+          title: 'Replacement subscription for the same work',
+          createdAt: replacementTime,
+          updatedAt: replacementTime,
+        );
+        await cubit.loadFromDatabase();
+        await tester.pumpAndSettle();
+        await tester.tap(confirm);
+        await tester.pumpAndSettle();
+        expect(alert, findsNothing);
+        expect(repository.row.deleted, isFalse);
+        expect(repository.row.createdAt, replacementTime);
+
+        await open();
+        await tester.tap(confirm);
+        await tester.pumpAndSettle();
+        expect(alert, findsNothing);
+        expect(repository.row.deleted, isTrue);
+        expect(repository.additionalRows['fixture:2']!.deleted, isFalse);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await _followFixtureStage(
+          tester,
+          cubit.close,
+          'close confirmation cubit',
+        );
+        await _followFixtureStage(
+          tester,
+          registry.close,
+          'close confirmation registry',
+        );
+      }
+    });
+  }
+
   for (final style in ['system', 'breeze']) {
     testWidgets('follow toolbar stays aligned across unread states in $style', (
       tester,
@@ -325,12 +722,18 @@ void main() {
               widget.tooltip == t.comicFollow.markAllReadHint,
         );
         for (final direction in TextDirection.values) {
-          for (final (width, scale) in [
-            (430.0, 1.0),
-            (320.0, 2.5),
-            (1050.0, 1.0),
+          for (final (width, scale, brightness) in [
+            (430.0, 1.0, Brightness.dark),
+            (320.0, 2.5, Brightness.light),
+            (1050.0, 1.0, Brightness.light),
           ]) {
             tester.view.physicalSize = Size(width, 850);
+            final scheme = BreezeThemeColors.fromSeed(
+              brightness == Brightness.dark
+                  ? const Color(0xFFE05272)
+                  : const Color(0xFF007B84),
+              brightness,
+            );
             await tester.pumpWidget(
               MultiBlocProvider(
                 providers: [
@@ -340,6 +743,7 @@ void main() {
                 child: AppInterfaceStyleScope(
                   style: preference,
                   child: MaterialApp(
+                    theme: ThemeData(colorScheme: scheme),
                     builder: (context, child) => Directionality(
                       textDirection: direction,
                       child: MediaQuery(
@@ -378,6 +782,7 @@ void main() {
               expect(sortRect.width, greaterThanOrEqualTo(44));
               expect(tester.getSize(sort).height, greaterThanOrEqualTo(44));
               final sortMenu = tester.widget<NativeVideoMenu>(sort);
+              expect(sortMenu.bare, isTrue);
               if (width >= 430 && scale == 1) {
                 expect(sortMenu.label, t.comicFollow.lastRead);
               }
@@ -402,38 +807,68 @@ void main() {
               final latest = find.byKey(
                 const ValueKey('follow-latest-fixture:1'),
               );
-              final badge = find.descendant(
-                of: latest,
-                matching: find.text(t.comicFollow.newChaptersShort(diff: 1)),
+              final cover = find.byKey(
+                const ValueKey('follow-cover-fixture:1'),
+              );
+              final badge = find.byKey(
+                const ValueKey('follow-update-fixture:1'),
+              );
+              final dot = find.byKey(
+                const ValueKey('follow-update-dot-fixture:1'),
               );
               expect(badge, unread ? findsOneWidget : findsNothing);
+              expect(dot, unread ? findsOneWidget : findsNothing);
               if (unread) {
-                final bounds = tester.getRect(latest);
+                final bounds = tester.getRect(cover);
                 final badgeBounds = tester.getRect(badge);
-                final chapterBounds = tester.getRect(
-                  find
-                      .descendant(of: latest, matching: find.byType(Text))
-                      .first,
-                );
-                expect(badgeBounds.left, greaterThanOrEqualTo(bounds.left));
+                final dotBounds = tester.getRect(dot);
+                expect(dotBounds.top, closeTo(bounds.top - 4, .01));
                 expect(
-                  badgeBounds.right,
-                  lessThanOrEqualTo(bounds.right + .01),
+                  rtl
+                      ? dotBounds.right - bounds.right
+                      : bounds.left - dotBounds.left,
+                  closeTo(4, .01),
                 );
-                expect(badgeBounds.bottom, lessThanOrEqualTo(bounds.bottom));
-                if (badgeBounds.top < chapterBounds.bottom) {
-                  final gap = rtl
-                      ? chapterBounds.left - badgeBounds.right
-                      : badgeBounds.left - chapterBounds.right;
-                  expect(gap, closeTo(14, .01));
+                expect(dotBounds.overlaps(bounds), isTrue);
+                expect(badgeBounds.overlaps(bounds), isFalse);
+                final latestBounds = tester.getRect(latest);
+                expect(latestBounds.overlaps(badgeBounds), isFalse);
+                if (badgeBounds.top < latestBounds.bottom) {
+                  expect(
+                    badgeBounds.center.dy,
+                    closeTo(latestBounds.center.dy, .01),
+                  );
+                  expect(
+                    rtl
+                        ? latestBounds.left - badgeBounds.right
+                        : badgeBounds.left - latestBounds.right,
+                    closeTo(8, .01),
+                  );
                 } else {
                   expect(
                     rtl ? badgeBounds.right : badgeBounds.left,
-                    closeTo(
-                      (rtl ? chapterBounds.right : chapterBounds.left) +
-                          (rtl ? -6 : 6),
-                      .01,
+                    closeTo(rtl ? latestBounds.right : latestBounds.left, .01),
+                  );
+                }
+                final label = t.comicFollow.newChaptersShort(diff: 1);
+                expect(find.text(label), findsOneWidget);
+                if (scale == 1) {
+                  expect(find.text(label), findsOneWidget);
+                  final ink = tester
+                      .widget<Text>(find.text(label))
+                      .style!
+                      .color!;
+                  final badgeBox = tester.widget<DecoratedBox>(
+                    find.descendant(
+                      of: badge,
+                      matching: find.byType(DecoratedBox),
                     ),
+                  );
+                  final fill = (badgeBox.decoration as BoxDecoration).color!;
+                  expect(fill, scheme.primary);
+                  expect(
+                    BreezeThemeColors.contrast(ink, fill),
+                    greaterThanOrEqualTo(4.5),
                   );
                 }
               }
@@ -544,7 +979,12 @@ void main() {
       metadata: '[{"type":"tags","value":["Mystery Genre"]}]',
       updateTime: now,
     );
-    final cubit = ComicFollowCubit(repository: repository, now: () => now);
+    final preferences = await SharedPreferences.getInstance();
+    final cubit = ComicFollowCubit(
+      repository: repository,
+      now: () => now,
+      sortPreferences: preferences,
+    );
     final registry = PluginRegistryCubit();
     try {
       tester.view.physicalSize = const Size(320, 700);
@@ -578,6 +1018,15 @@ void main() {
       await tester.tap(find.text(t.comicFollow.lastUpdate));
       await tester.pumpAndSettle();
       expect(cubit.state.sort, ComicFollowSort.update);
+      await tester.tap(sort);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(t.comicFollow.recentUpdate));
+      await tester.pumpAndSettle();
+      expect(cubit.state.sort, ComicFollowSort.recentUpdate);
+      expect(
+        preferences.getString('breeze.local.comic-follow.sort.v1'),
+        ComicFollowSort.recentUpdate.name,
+      );
 
       final toggle = find.byKey(const ValueKey('follow-search-toggle'));
       final input = find.byType(TextField);
@@ -658,7 +1107,7 @@ void main() {
       expect(input, findsNothing);
       expect(tester.getTopLeft(sort).dy, closeTo(toolsTop, .01));
       expect(title, findsOneWidget);
-      expect(cubit.state.sort, ComicFollowSort.update);
+      expect(cubit.state.sort, ComicFollowSort.recentUpdate);
       expect(repository.calls, 0);
       expect(tester.takeException(), isNull);
     } finally {
@@ -964,7 +1413,7 @@ void main() {
   });
 
   testWidgets(
-    'reading progress uses confirmed chapter position and survives a failed check',
+    'reading and chapter text survive a failed check without a progress bar',
     (tester) async {
       final now = DateTime.utc(2026, 11, 2, 12);
       final repository = _FollowHostRepository(now);
@@ -1029,27 +1478,30 @@ void main() {
         );
         await tester.pumpAndSettle();
         final track = find.byType(LinearProgressIndicator);
-        expect(find.textContaining('Starting chapter'), findsOneWidget);
+        final reading = find.text(
+          t.comicFollow.lastReadChapter(chapter: 'Starting chapter'),
+        );
+        expect(reading, findsOneWidget);
         expect(track, findsNothing);
 
         repository.nextDetection = (await reader.detect(row))!;
         await cubit.checkUpdateForItem(row);
         await tester.pumpAndSettle();
-        expect(
-          tester.widget<LinearProgressIndicator>(track).value,
-          closeTo(1 / 3, 0.001),
+        final latest = find.text(
+          t.comicFollow.chapterSummary(count: 3, chapter: 'Last'),
         );
+        expect(latest, findsOneWidget);
+        expect(reading, findsOneWidget);
+        expect(track, findsNothing);
 
         repository.nextDetection = const ComicFollowDetection.failed(
           ComicFollowCheckFailure.network,
         );
         await cubit.checkUpdateForItem(row);
         await tester.pumpAndSettle();
-        expect(
-          tester.widget<LinearProgressIndicator>(track).value,
-          closeTo(1 / 3, 0.001),
-        );
-        expect(find.textContaining('Starting chapter'), findsOneWidget);
+        expect(latest, findsOneWidget);
+        expect(reading, findsOneWidget);
+        expect(track, findsNothing);
       } finally {
         await tester.pumpWidget(const SizedBox.shrink());
         await _followFixtureStage(tester, cubit.close, 'close progress cubit');
@@ -1100,6 +1552,8 @@ void main() {
         );
         expect(find.text(t.comicFollow.noUnread), findsNothing);
         expect(find.text(t.comicFollow.checkingUpdates), findsWidgets);
+        final card = find.byKey(const ValueKey('fixture:1'));
+        final checkingHeight = tester.getSize(card).height;
         repository.pending.completeError(
           const FormatException("unexpected token: 'error'"),
         );
@@ -1110,7 +1564,7 @@ void main() {
         expect(find.byTooltip(t.common.refresh), findsNothing);
         expect(
           find.text(
-            t.comicFollow.knownChapter(
+            t.comicFollow.chapterSummary(
               count: 10,
               chapter: 'Previously observed chapter',
             ),
@@ -1121,7 +1575,7 @@ void main() {
           find.text(
             t.comicFollow.lastCheckAttempt(time: formatFollowCheckTime(now)),
           ),
-          findsOneWidget,
+          findsNothing,
         );
         expect(
           find.text(
@@ -1129,8 +1583,9 @@ void main() {
               time: formatFollowCheckTime(repository.row.updateTime),
             ),
           ),
-          findsOneWidget,
+          findsNothing,
         );
+        expect(tester.getSize(card).height, checkingHeight);
         expect(tester.takeException(), isNull);
 
         debugPrint('follow fixture checkpoint: background then resume');

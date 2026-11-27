@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
+import 'package:zephyr/widgets/task_dialog.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 
 Future<int?> showNumberInputDialog({
@@ -7,25 +8,26 @@ Future<int?> showNumberInputDialog({
   String? title,
   String? hintText,
   int? initialValue,
-}) {
-  final TextEditingController inputController = TextEditingController(
-    text: initialValue?.toString() ?? '',
+}) async {
+  final text = initialValue?.toString() ?? '';
+  final inputController = TextEditingController.fromValue(
+    TextEditingValue(
+      text: text,
+      selection: TextSelection(baseOffset: 0, extentOffset: text.length),
+    ),
   );
-  final FocusNode focusNode = FocusNode();
-
-  return showDialog<int?>(
+  ModalRoute<int>? route;
+  final result = await showDialog<int>(
     context: context,
     builder: (BuildContext innerContext) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        focusNode.requestFocus();
-      });
-
-      return AlertDialog(
-        title: Text(title ?? t.searchResult.enterPageNumber),
+      route = ModalRoute.of<int>(innerContext);
+      return TaskDialog(
+        title: title ?? t.searchResult.enterPageNumber,
         content: TextField(
-          focusNode: focusNode,
+          autofocus: true,
           controller: inputController,
           keyboardType: TextInputType.number,
+          textInputAction: TextInputAction.done,
           inputFormatters: [FilteringTextInputFormatter.digitsOnly],
           decoration: InputDecoration(
             hintText: hintText ?? t.searchResult.pleaseEnterNumber,
@@ -51,4 +53,7 @@ Future<int?> showNumberInputDialog({
       );
     },
   );
+  await route?.completed;
+  inputController.dispose();
+  return result;
 }

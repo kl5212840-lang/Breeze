@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_content_layout.dart';
 import 'package:zephyr/widgets/collection_record_time.dart';
+import 'package:zephyr/widgets/detailed_metadata.dart';
 
 /// pageIndex is a stored, zero-based reading position. Chapter order from a
 /// source is not necessarily an ordinal and must never manufacture a label.
@@ -28,24 +29,17 @@ class BookshelfDetailedContent extends StatelessWidget {
     this.metadata = '',
     this.description = '',
     this.statistics = '',
+    this.details = const [],
+    this.showMetadata = true,
   });
   final Widget cover;
   final String title, source, progress, time, metadata, description, statistics;
+  final List<({String label, String value})> details;
+  final bool showMetadata;
 
   static const coverWidth = 80.0;
   static const coverHeight =
       coverWidth / BookshelfContentLayout.coverAspectRatio;
-  static double contentHeight(BuildContext context) {
-    final theme = Theme.of(context), scale = MediaQuery.textScalerOf(context);
-    final body = theme.textTheme.bodySmall?.fontSize ?? 12;
-    if (scale.scale(body) <= body * 1.2) return coverHeight;
-    return math.max(
-      coverHeight,
-      scale.scale(theme.textTheme.titleSmall?.fontSize ?? 14) * 2.6 +
-          scale.scale(body) * 6.75 +
-          14,
-    );
-  }
 
   @override
   Widget build(BuildContext context) => Row(
@@ -60,8 +54,10 @@ class BookshelfDetailedContent extends StatelessWidget {
           metadata: metadata,
           description: description,
           statistics: statistics,
+          details: details,
           progress: progress,
           time: time,
+          showMetadata: showMetadata,
         ),
       ),
     ],
@@ -78,8 +74,12 @@ class BookshelfDetailedCaption extends StatelessWidget {
     this.metadata = '',
     this.description = '',
     this.statistics = '',
+    this.details = const [],
+    this.showMetadata = true,
   });
   final String title, source, progress, time, metadata, description, statistics;
+  final List<({String label, String value})> details;
+  final bool showMetadata;
 
   static final _closingMarks = RegExp(r'[ \t]*[+＋)）\]］】」』》〉]+$');
 
@@ -111,18 +111,40 @@ class BookshelfDetailedCaption extends StatelessWidget {
     final summary = description.replaceAll(RegExp(r'\s+'), ' ').trim();
     final distinctSummary =
         summary == title.replaceAll(RegExp(r'\s+'), ' ').trim() ? '' : summary;
-    final minimumHeight = BookshelfDetailedContent.contentHeight(context);
     final timeStyle = collectionRecordTimeStyle(context);
+    final fields = showMetadata
+        ? [
+            if (source.isNotEmpty) (label: '', value: source),
+            if (metadata.isNotEmpty) (label: '', value: metadata),
+            ...details,
+            if (distinctSummary.isNotEmpty)
+              (label: t.comicInfo.description, value: description),
+            if (statistics.isNotEmpty) (label: '', value: statistics),
+            if (progress.isNotEmpty) (label: '', value: progress),
+            if (time.isNotEmpty) (label: '', value: time),
+          ]
+        : const <({String label, String value})>[];
+    final actionExtent = fields.isEmpty
+        ? 0.0
+        : DetailedMetadata.actionExtentOf(context);
     return LayoutBuilder(
       builder: (context, constraints) {
-        double measured(String text, TextStyle? style, [int? lines]) {
+        final previewWidth = math.max(0.0, constraints.maxWidth - actionExtent);
+        final scaler = MediaQuery.textScalerOf(context);
+        final direction = Directionality.of(context);
+        double measured(
+          String text,
+          TextStyle? style, {
+          int? lines,
+          bool preview = false,
+        }) {
           if (text.isEmpty) return 0;
           final painter = TextPainter(
             text: TextSpan(text: text, style: style),
             maxLines: lines,
-            textScaler: MediaQuery.textScalerOf(context),
-            textDirection: Directionality.of(context),
-          )..layout(maxWidth: constraints.maxWidth);
+            textScaler: scaler,
+            textDirection: direction,
+          )..layout(maxWidth: preview ? previewWidth : constraints.maxWidth);
           final value = painter.height;
           painter.dispose();
           return value;
@@ -132,73 +154,94 @@ class BookshelfDetailedCaption extends StatelessWidget {
           source,
           metadata,
         ].where((value) => value.isNotEmpty).join(' · ');
-        final top =
-            measured(displayTitle, heading, 2) +
-            (information.isEmpty ? 0 : 3 + measured(information, secondary, 1));
+        final top = math.max(
+          actionExtent,
+          measured(displayTitle, heading, lines: 2, preview: true) +
+              (information.isEmpty
+                  ? 0
+                  : 3 +
+                        measured(
+                          information,
+                          secondary,
+                          lines: 1,
+                          preview: true,
+                        )),
+        );
         final bottom =
-            measured(progress, secondary, 1) +
+            measured(progress, secondary, lines: 1) +
             measured(displayTime, timeStyle) +
             (progress.isNotEmpty && time.isNotEmpty ? 3 : 0);
-        // Reserve the full time at the actual width. Narrow, large-text
-        // captions can wrap the date and clock onto more than two lines.
-        final height = displayTime.isEmpty
-            ? minimumHeight
-            : math.max(minimumHeight, top + bottom + 4);
-        final available = height - top - bottom - 4;
-        final summaryHeight = measured(distinctSummary, secondary, 1) + 4;
+        final statisticsHeight = statistics.isEmpty
+            ? 0.0
+            : measured(statistics, secondary, lines: 1, preview: true) + 4;
+        // The caption can make room for a wrapped timestamp and large text
+        // without changing the cover size or hiding the primary statistics.
+        final requiredHeight =
+            top + bottom + (bottom > 0 ? 4 : 0) + statisticsHeight;
+        final height = math.max(
+          BookshelfDetailedContent.coverHeight,
+          requiredHeight,
+        );
         final showSummary =
-            distinctSummary.isNotEmpty && summaryHeight <= available;
-        final statisticsHeight = measured(statistics, secondary, 1) + 4;
-        final showStatistics =
-            statistics.isNotEmpty &&
-            statisticsHeight <= available - (showSummary ? summaryHeight : 0);
+            distinctSummary.isNotEmpty &&
+            measured(distinctSummary, secondary, lines: 1, preview: true) + 4 <=
+                height - requiredHeight;
         return SizedBox(
           height: height,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                displayTitle,
-                semanticsLabel: displayTitle == title ? null : title,
-                key: const ValueKey('shelf-detail.title'),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: heading,
+              DetailedMetadata(
+                title: title,
+                fields: fields,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      displayTitle,
+                      semanticsLabel: displayTitle == title ? null : title,
+                      key: const ValueKey('shelf-detail.title'),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: heading,
+                    ),
+                    if (information.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Semantics(
+                        label: information,
+                        excludeSemantics: true,
+                        child: Text(
+                          information,
+                          key: const ValueKey('shelf-detail.metadata'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: secondary,
+                        ),
+                      ),
+                    ],
+                    if (statistics.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        statistics,
+                        key: const ValueKey('shelf-detail.statistics'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: secondary,
+                      ),
+                    ],
+                    if (showSummary) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        distinctSummary,
+                        key: const ValueKey('shelf-detail.description'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: secondary,
+                      ),
+                    ],
+                  ],
+                ),
               ),
-              if (information.isNotEmpty) ...[
-                const SizedBox(height: 3),
-                Semantics(
-                  label: information,
-                  excludeSemantics: true,
-                  child: Text(
-                    information,
-                    key: const ValueKey('shelf-detail.metadata'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: secondary,
-                  ),
-                ),
-              ],
-              if (showSummary) ...[
-                const SizedBox(height: 4),
-                Text(
-                  distinctSummary,
-                  key: const ValueKey('shelf-detail.description'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: secondary,
-                ),
-              ],
-              if (showStatistics) ...[
-                const SizedBox(height: 4),
-                Text(
-                  statistics,
-                  key: const ValueKey('shelf-detail.statistics'),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: secondary,
-                ),
-              ],
               if (bottom > 0) ...[
                 const Spacer(),
                 if (progress.isNotEmpty)

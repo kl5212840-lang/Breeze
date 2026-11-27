@@ -10,6 +10,7 @@ import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/widgets/picture_bloc/bloc/picture_event.dart';
 import 'package:zephyr/widgets/picture_bloc/bloc/picture_state.dart';
+import 'package:zephyr/widgets/picture_bloc/models/picture_info.dart';
 
 export 'package:zephyr/widgets/picture_bloc/bloc/picture_event.dart';
 export 'package:zephyr/widgets/picture_bloc/bloc/picture_state.dart';
@@ -19,6 +20,8 @@ EventTransformer<E> throttleDroppable<E>(Duration duration) =>
     (events, mapper) => droppable<E>().call(events.throttle(duration), mapper);
 
 typedef PicturePathLoader = Future<String> Function(GetPicture request);
+typedef PictureCacheInvalidator =
+    Future<bool> Function(PictureInfo info, String imagePath);
 
 class _PublishPictureState {
   const _PublishPictureState(this.value, this.epoch);
@@ -31,10 +34,13 @@ class PictureBloc extends Bloc<Object, PictureLoadState> {
     bool autoRecover = true,
     bool initiallyActive = true,
     bool useDownloads = true,
+    Duration? retryIntervalAfterAttempts,
     ImageRecoveryHub? recoveryHub,
     PicturePathLoader? loader,
+    PictureCacheInvalidator? cacheInvalidator,
   }) : _active = initiallyActive,
        _loader = loader,
+       _cacheInvalidator = cacheInvalidator ?? _invalidateCache,
        _useDownloads = useDownloads,
        super(const PictureLoadState()) {
     on<_PublishPictureState>((event, emit) {
@@ -44,6 +50,7 @@ class PictureBloc extends Bloc<Object, PictureLoadState> {
       _recovery = ImageRecoveryController(
         active: initiallyActive,
         hub: recoveryHub,
+        retryIntervalAfterAttempts: retryIntervalAfterAttempts,
         imageHost: () => Uri.tryParse(_last?.pictureInfo.url ?? '')?.host,
         retry: () async {
           if (_last != null) await _execute(_last!);
@@ -72,6 +79,7 @@ class PictureBloc extends Bloc<Object, PictureLoadState> {
     }, transformer: droppable());
   }
   final PicturePathLoader? _loader;
+  final PictureCacheInvalidator _cacheInvalidator;
   final bool _useDownloads;
   late final StreamSubscription<PluginSessionBoundary> _session;
   ImageRecoveryController? _recovery;
@@ -79,8 +87,10 @@ class PictureBloc extends Bloc<Object, PictureLoadState> {
   Object? _failure;
   bool _active, _inflight = false, _waitingForSession = false;
   int _epoch = 0, _decodeRepairs = 0;
+  int? _decodeRepairEpoch;
   int _activation = 0;
   bool get recovering => _recovery?.recovering ?? false;
+  bool get hasPendingRecovery => _recovery?.hasPendingRecovery ?? false;
   bool get isLoading => _inflight;
   Object? get lastFailure => _failure;
   bool get pictureNotFound => switch (_failure) {
@@ -213,6 +223,8 @@ class PictureBloc extends Bloc<Object, PictureLoadState> {
     if (isClosed ||
         _last == null ||
         _inflight ||
+        _decodeRepairEpoch == _epoch ||
+        state.status != PictureLoadStatus.success ||
         imagePath == null ||
         imagePath != state.imagePath)
       return;
@@ -223,17 +235,13 @@ class PictureBloc extends Bloc<Object, PictureLoadState> {
       _recoveryChanged();
       return;
     }
-    final info = request.pictureInfo;
-    final removed = await invalidateCachedPicture(
-      from: info.from,
-      path: info.path,
-      url: info.url,
-      imagePath: imagePath,
-      cartoonId: info.cartoonId,
-      chapterId: info.chapterId,
-      storageChapterId: info.storageChapterId,
-      pictureType: info.pictureType,
-    );
+    _decodeRepairEpoch = epoch;
+    final bool removed;
+    try {
+      removed = await _cacheInvalidator(request.pictureInfo, imagePath);
+    } finally {
+      if (_decodeRepairEpoch == epoch) _decodeRepairEpoch = null;
+    }
     if (isClosed || epoch != _epoch) return;
     if (!removed) {
       _failure = const FormatException('Invalid local image');
@@ -241,8 +249,23 @@ class PictureBloc extends Bloc<Object, PictureLoadState> {
       _recoveryChanged();
       return;
     }
+    // The canonical path no longer exists. An inactive slot will pick up the
+    // pending load when it becomes visible again.
+    emit(const PictureLoadState());
     await _execute(request);
   }
+
+  static Future<bool> _invalidateCache(PictureInfo info, String imagePath) =>
+      invalidateCachedPicture(
+        from: info.from,
+        path: info.path,
+        url: info.url,
+        imagePath: imagePath,
+        cartoonId: info.cartoonId,
+        chapterId: info.chapterId,
+        storageChapterId: info.storageChapterId,
+        pictureType: info.pictureType,
+      );
 
   @override
   Future<void> close() {

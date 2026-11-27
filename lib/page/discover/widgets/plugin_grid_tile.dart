@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/task_bottom_sheet.dart';
 import 'package:zephyr/plugin/plugin_display_name.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
@@ -249,7 +250,7 @@ class PluginGridTile extends StatelessWidget {
     String title,
     List<Map<String, dynamic>> functions,
   ) async {
-    await showModalBottomSheet<void>(
+    await showReadableTaskBottomSheet<void>(
       context: context,
       showDragHandle: true,
       builder: (sheetContext) => SafeArea(

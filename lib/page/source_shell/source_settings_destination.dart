@@ -1,6 +1,8 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/page/plugin_settings/view/plugin_settings_page.dart';
 import 'package:zephyr/page/plugin_settings/widgets/plugin_settings_content.dart';
+import 'package:zephyr/page/setting/common/setting_page_route.dart';
 import 'package:zephyr/page/source_shell/models/source_shell_section.dart';
 import 'package:zephyr/page/source_shell/source_experience_preferences.dart';
 import 'package:zephyr/page/source_shell/view/source_shell_page.dart';
@@ -9,6 +11,32 @@ import 'package:zephyr/page/video/video_network_scope.dart';
 import 'package:zephyr/page/video/video_page_route.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/widgets/native_view_occlusion.dart';
+
+const sourceSettingsMenuAction = '__source_settings';
+
+Future<void> openSourcePreferences(
+  BuildContext context, {
+  required String source,
+  required String sourceName,
+}) => openSettingPage(
+  context,
+  route: PluginSettingsRoute(
+    from: source,
+    pluginUuid: source,
+    pluginRuntimeName: source,
+    pluginDisplayName: sourceName,
+    insideSource: true,
+    scope: PluginSettingsScope.preferences,
+  ),
+  builder: (_) => PluginSettingsPage(
+    from: source,
+    pluginUuid: source,
+    pluginRuntimeName: source,
+    pluginDisplayName: sourceName,
+    insideSource: true,
+    scope: PluginSettingsScope.preferences,
+  ),
+);
 
 /// A source with a permanent settings tab opens that existing tab. Child video
 /// modules and profile shortcuts must not push another copy over the shell.

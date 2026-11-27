@@ -4,6 +4,8 @@ import 'dart:async';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/widgets/collection_cover_settings.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
+import 'package:zephyr/widgets/collection_results_row.dart';
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/widgets/source_collection_menu_icons.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_content_layout.dart';
@@ -11,6 +13,7 @@ import 'package:zephyr/page/bookshelf/widgets/bookshelf_actions_scope.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_header_slots.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_selection_toolbar.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/page/source_shell/source_settings_destination.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/page/video/video_interaction.dart';
 
@@ -39,11 +42,12 @@ class BookshelfContentToolbar extends StatelessWidget {
     this.selection,
     this.canRun,
     this.privacyAction,
+    this.collectionPageTitle,
     this.keyPrefix = 'shelf',
     this.horizontalInset = CollectionToolbarMetrics.sourceContentInset,
   });
   final String title, subtitle, keyPrefix;
-  final String? folderRootLabel;
+  final String? folderRootLabel, collectionPageTitle;
   final BookshelfContentView view;
   final VoidCallback? onBack,
       onRoot,
@@ -107,61 +111,64 @@ class BookshelfContentToolbar extends StatelessWidget {
         if (e.key.startsWith('sort.')) e.key: e.value,
     };
     options.removeWhere((key, _) => key.startsWith('sort.'));
-    final controls = <Widget>[
-      if (sourceSortOptions.isNotEmpty)
-        VideoControlAppearance(
-          systemControls: usesNativeSourceChrome(context),
-          child: NativeVideoMenu(
-            key: ValueKey('$keyPrefix.sort'),
-            label: '',
-            tooltip: t.bookshelf.sort,
-            selected:
-                sourceSortOptions.entries
-                    .where((entry) => entry.value == subtitle)
-                    .firstOrNull
-                    ?.key ??
-                '',
-            icon: CollectionCommandIcons.sort.icon,
-            symbol: CollectionCommandIcons.sort.symbol,
-            bare: usesNativeSourceChrome(context),
-            width: CollectionToolbarMetrics.actionExtent,
-            hostPresentation: true,
-            options: sourceSortOptions,
-            optionIcons: collectionMenuIcons(sourceSortOptions),
-            onSelected: (value) {
-              if (canUseMenu()) onMore?.call(value);
-            },
-          ),
-        ),
-      if (showFilter || onFilter != null)
-        Semantics(
-          selected: filterActive,
-          child: SourceFilterIconButton(
-            key: ValueKey('$keyPrefix.filter'),
-            active: filterActive,
-            bare: false,
-            tooltip: filterActive ? t.videoFilters.active : t.bookshelf.filter,
-            onPressed: lifted && onFilter != null
-                ? () {
-                    if (canUseMenu()) onFilter!.call();
-                  }
-                : onFilter,
-          ),
-        ),
-      SourceChromeIconButton(
-        key: ValueKey('$keyPrefix.view'),
-        icon: CollectionCommandIcons.toggleTarget(
-          view == BookshelfContentView.grid,
-        ).icon,
-        symbol: CollectionCommandIcons.toggleTarget(
-          view == BookshelfContentView.grid,
-        ).symbol,
-        tooltip: view == BookshelfContentView.grid
-            ? t.videoLibrary.detailList
-            : t.videoLibrary.grid,
-        onPressed: directAction(onToggleView),
-      ),
-    ];
+    final sortAction = sourceSortOptions.isEmpty
+        ? null
+        : VideoControlAppearance(
+            systemControls: usesNativeSourceChrome(context),
+            child: NativeVideoMenu(
+              key: ValueKey('$keyPrefix.sort'),
+              label: '',
+              tooltip: t.bookshelf.sort,
+              selected:
+                  sourceSortOptions.entries
+                      .where((entry) => entry.value == subtitle)
+                      .firstOrNull
+                      ?.key ??
+                  '',
+              icon: CollectionCommandIcons.sort.icon,
+              symbol: CollectionCommandIcons.sort.symbol,
+              bare: true,
+              width: CollectionToolbarMetrics.actionExtent,
+              hostPresentation: true,
+              options: sourceSortOptions,
+              optionIcons: collectionMenuIcons(sourceSortOptions),
+              onSelected: (value) {
+                if (canUseMenu()) onMore?.call(value);
+              },
+            ),
+          );
+    final filterAction = showFilter || onFilter != null
+        ? Semantics(
+            selected: filterActive,
+            child: SourceFilterIconButton(
+              key: ValueKey('$keyPrefix.filter'),
+              active: filterActive,
+              tooltip: filterActive
+                  ? t.videoFilters.active
+                  : t.bookshelf.filter,
+              onPressed: lifted && onFilter != null
+                  ? () {
+                      if (canUseMenu()) onFilter!.call();
+                    }
+                  : onFilter,
+            ),
+          )
+        : null;
+    final viewAction = SourceChromeIconButton(
+      key: ValueKey('$keyPrefix.view'),
+      bare: true,
+      icon: CollectionCommandIcons.toggleTarget(
+        view == BookshelfContentView.grid,
+      ).icon,
+      symbol: CollectionCommandIcons.toggleTarget(
+        view == BookshelfContentView.grid,
+      ).symbol,
+      tooltip: view == BookshelfContentView.grid
+          ? t.videoLibrary.detailList
+          : t.videoLibrary.grid,
+      onPressed: directAction(onToggleView),
+    );
+    final controls = [?sortAction, ?filterAction, viewAction];
     final more = options.isEmpty
         ? null
         : Builder(
@@ -180,6 +187,8 @@ class BookshelfContentToolbar extends StatelessWidget {
                 selectAfterDismissal: {
                   if (options.containsKey(collectionCoverSettingsAction))
                     collectionCoverSettingsAction,
+                  if (options.containsKey(sourceSettingsMenuAction))
+                    sourceSettingsMenuAction,
                 },
                 options: options,
                 optionIcons: {
@@ -242,6 +251,31 @@ class BookshelfContentToolbar extends StatelessWidget {
               ),
             ),
           );
+    final pageTitle = collectionPageTitle;
+    if (hostHeader == null && pageTitle != null) {
+      final header = sourceSecondaryAppBar(
+        context,
+        title: pageTitle,
+        actions: [?privacyAction, ?more],
+      );
+      return BookshelfSelectionHeader(
+        regular: Column(
+          children: [
+            SizedBox(height: header.preferredSize.height, child: header),
+            if (onBack != null)
+              _layout(context, const [], breadcrumbOnly: true),
+            CollectionResultsRow(
+              countLabel: subtitle,
+              sortAction: sortAction,
+              filterButton: filterAction,
+              viewAction: viewAction,
+              horizontalInset: horizontalInset,
+            ),
+          ],
+        ),
+        selection: selection,
+      );
+    }
     if (hostHeader == null) {
       final regular = _layout(context, [
         // Keep source sorting before protection in standalone toolbars.
@@ -255,6 +289,8 @@ class BookshelfContentToolbar extends StatelessWidget {
     return BookshelfHeaderPublisher(
       controller: hostHeader,
       generation: scope!.headerGeneration,
+      pane: (scope.video, scope.mode),
+      query: scope.headerQuery,
       slots: BookshelfHeaderSlots(
         subtitle: onBack == null ? subtitle : '',
         identity: headerIdentity,
@@ -349,6 +385,7 @@ class BookshelfContentToolbar extends StatelessWidget {
               ? null
               : SourceChromeIconButton(
                   key: ValueKey('$keyPrefix.back'),
+                  bare: folder,
                   icon: Icons.arrow_back,
                   symbol: 'chevron.left',
                   tooltip: !folder

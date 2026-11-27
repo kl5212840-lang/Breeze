@@ -1,4 +1,5 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/widgets/task_dialog.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_folder_visual.dart';
 import 'package:zephyr/page/video/video_interaction.dart';
@@ -190,7 +191,7 @@ class _BookshelfFolderPickerState extends State<BookshelfFolderPicker> {
   }
 
   @override
-  Widget build(BuildContext context) => Dialog(
+  Widget build(BuildContext context) => TaskDialogSurface(
     insetPadding: const EdgeInsets.all(16),
     child: LayoutBuilder(
       builder: (context, limits) => ConstrainedBox(

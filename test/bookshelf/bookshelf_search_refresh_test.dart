@@ -284,7 +284,7 @@ void main() {
   );
 
   testWidgets(
-    'leaving a pending comic editor flushes its own scope across media changes',
+    'closing a pending comic editor discards the query across media changes',
     (tester) async {
       await _mount(tester);
       final bloc = _comicBloc(tester);
@@ -297,27 +297,27 @@ void main() {
       await tester.tap(find.byTooltip(t.bookshelf.searchList));
       await tester.pump();
       await tester.enterText(_editor(), 'Needle');
-      // Leave before the debounce expires. Returning to the media chooser must
-      // commit and refresh comics, without writing the pending word to videos.
+      // Close before the debounce expires, then visit videos before returning
+      // to comics. Neither medium should inherit the pending text.
       await tester.tap(find.byTooltip(t.common.close));
       await tester.pump();
       expect(_editor(), findsNothing);
       await tester.tap(find.text(t.bookshelf.mediaVideos));
       await _localReads(tester);
-      expect(comicSearch.state.favorite.keyword, 'Needle');
+      expect(comicSearch.state.favorite.keyword, isEmpty);
       expect(videoSearch.state.favorite.keyword, '');
-      expect(bloc.state.search?.keyword, 'Needle');
-      expect(_titles(bloc), {'Needle Alpha'});
+      expect(bloc.state.search?.keyword ?? '', isEmpty);
+      expect(_titles(bloc), {'Needle Alpha', 'Beta', 'Gamma'});
       await tester.pump(const Duration(milliseconds: 600));
       expect(videoSearch.state.favorite.keyword, '');
       await tester.tap(find.text(t.bookshelf.mediaComics));
       await _localReads(tester);
-      expect(_titles(bloc), {'Needle Alpha'});
+      expect(_titles(bloc), {'Needle Alpha', 'Beta', 'Gamma'});
       expect(find.text('Needle Alpha'), findsOneWidget);
-      expect(find.text('Beta'), findsNothing);
+      expect(find.text('Beta'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('bookshelf.search')));
       await tester.pump();
-      expect(tester.widget<TextField>(_editor()).controller!.text, 'Needle');
+      expect(tester.widget<TextField>(_editor()).controller!.text, isEmpty);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       await _localReads(tester);

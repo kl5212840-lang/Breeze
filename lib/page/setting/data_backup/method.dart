@@ -458,16 +458,7 @@ Future<String> _exportBreezeBackup({
   required BackupProtectionSession? protectionSession,
 }) async {
   if (includeDownloads) await VideoLocalResources.requirePortableBackup();
-  final cachePath = await getCachePath();
-  final tempDir = await Directory(
-    p.join(
-      cachePath,
-      'breeze_backup',
-      DateTime.now().millisecondsSinceEpoch.toString(),
-    ),
-  ).create(recursive: true);
-
-  try {
+  return withPrivateBackupWorkspace((tempDir) async {
     // 1. 写入 config.json
     final packageInfo = await PackageInfo.fromPlatform();
     final config = <String, dynamic>{
@@ -573,11 +564,7 @@ Future<String> _exportBreezeBackup({
     );
 
     return zipPath;
-  } finally {
-    try {
-      await tempDir.delete(recursive: true);
-    } catch (_) {}
-  }
+  });
 }
 
 /// 读取备份包中的 config.json，并把 zip 复制到应用缓存目录后返回配置信息。

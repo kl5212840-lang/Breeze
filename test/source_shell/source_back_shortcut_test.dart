@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/breeze_navigation_bar.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -152,7 +153,7 @@ void main() {
       );
       await tester.tap(find.text('Discover'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byType(NavigationDestination).last);
+      await tester.tap(find.byType(BreezeNavigationTab).last);
       await tester.pumpAndSettle();
       expect(find.byTooltip('${t.common.back} · First'), findsNothing);
       await tester.tap(find.byTooltip(t.sourceShell.navigationActions));

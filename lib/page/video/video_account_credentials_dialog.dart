@@ -1,6 +1,8 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/widgets/task_dialog.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_account_credentials.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 /// The route owns the editors until its exit transition has unmounted them.
 Future<bool?> showVideoAccountCredentialsDialog(
@@ -120,9 +122,8 @@ class _CredentialsDialogState extends State<_CredentialsDialog> {
   @override
   Widget build(BuildContext context) => PopScope(
     canPop: !_busy,
-    child: AlertDialog(
-      scrollable: true,
-      title: Text(t.videoCommunity.credentials),
+    child: TaskDialog(
+      title: t.videoCommunity.credentials,
       content: AutofillGroup(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -202,18 +203,16 @@ class _DeleteCredentialsConfirmationState
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    scrollable: true,
+  Widget build(BuildContext context) => ShortAlert(
     title: Text(t.videoCommunity.deleteSavedLoginTitle),
     content: Text(t.videoCommunity.deleteSavedLoginPrompt),
     actions: [
-      TextButton(
-        style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
+      ShortAlertAction(
         onPressed: () => _finish(false),
         child: Text(t.common.cancel),
       ),
-      TextButton(
-        style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
+      ShortAlertAction(
+        destructive: true,
         onPressed: () => _finish(true),
         child: Text(t.common.delete),
       ),

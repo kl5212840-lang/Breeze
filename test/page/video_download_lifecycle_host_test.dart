@@ -435,10 +435,7 @@ void main() {
           stage: 'the new explicit-cancel transfer and visible task',
         );
         expect(cancels, 0);
-        final cancel = find.byWidgetPredicate(
-          (widget) =>
-              widget is IconButton && widget.tooltip == t.download.cancelTask,
-        );
+        final cancel = find.widgetWithText(TextButton, t.download.cancelTask);
         await tester.tap(cancel);
         await until(
           tester,
@@ -454,10 +451,10 @@ void main() {
           tester,
           () =>
               cancelReceived.isCompleted &&
-              tester.widget<IconButton>(cancel).onPressed == null,
+              tester.widget<TextButton>(cancel).onPressed == null,
           stage: 'native cancellation request and rebuilt disabled task action',
         );
-        expect(tester.widget<IconButton>(cancel).onPressed, isNull);
+        expect(tester.widget<TextButton>(cancel).onPressed, isNull);
         expect(find.text(t.download.videoCancelled), findsNothing);
         expect(cancels, 1);
         pending.complete('cancelled');
@@ -477,7 +474,7 @@ void main() {
           await finish(tester, result, 'native cancellation finalization'),
           VideoDownloadStatus.cancelled,
         );
-        expect(find.byTooltip(t.download.cancelTask), findsNothing);
+        expect(cancel, findsNothing);
         expect(
           await finish(
             tester,

@@ -161,6 +161,11 @@ pub fn is_host_cache_gc_enabled() -> Result<bool> {
 }
 
 #[frb(sync)]
+pub fn clear_host_response_cache(source: Option<String>) {
+    crate::qjs::clear_host_response_cache(source.as_deref());
+}
+
+#[frb(sync)]
 pub fn set_log_http_forward(url: String) -> Result<()> {
     crate::qjs::set_log_http_forward(url)
 }

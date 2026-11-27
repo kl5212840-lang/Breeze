@@ -244,6 +244,28 @@ void main() {
     },
   );
 
+  test('Hanime can renew the session cookie without invalidating the verified saved account', () {
+    const source = '1e600cff-8ebe-4517-8aa4-6678aec46424';
+    final home = Uri.parse('https://hanime1.me');
+    final remember = 'remember_web_${List.filled(40, 'a').join()}';
+    VideoAccountBackup snapshot(String session, String login) =>
+        VideoAccountBackup.parse({
+          'version': 1,
+          'origin': home.origin,
+          'cookies': [
+            {..._cookie('hanime1_session', value: session, domain: home.host), 'secure': false},
+            {..._cookie(remember, value: login, domain: home.host), 'secure': false},
+          ],
+        }, home, source: source)!;
+    final initial = snapshot('first', 'account');
+    final renewed = snapshot('renewed', 'account');
+    expect(renewed.sessionFingerprint, isNot(initial.sessionFingerprint));
+    expect(renewed.matchesAuthenticatedRead(initial, source), isTrue);
+    expect(snapshot('renewed', 'other').matchesAuthenticatedRead(initial, source), isFalse);
+    expect(renewed.matchesAuthenticatedRead(initial, 'another-plugin'), isFalse);
+    expect(renewed.cookies.every((cookie) => cookie['secure'] == true), isTrue);
+  });
+
   test(
     'restore replaces only account cookies and rollback keeps current account on failure',
     () async {

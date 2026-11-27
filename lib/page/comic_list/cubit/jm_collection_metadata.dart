@@ -5,18 +5,19 @@ import 'dart:collection';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
 import 'package:zephyr/page/search_result/view/source_comic_search.dart';
+import 'package:zephyr/service/read_recovery.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
 
 typedef JmDetailRead = Future<Map<String, dynamic>> Function(String id);
 
-/// Public detail fields only. One account owns at most two read-only requests;
-/// failed IDs stay unknown and are not retried by every rebuild/page response.
+/// Public detail fields only. One account owns at most two read-only requests.
 class JmCollectionMetadata {
   static final instance = JmCollectionMetadata();
   static const prefix = 'breeze.local.jm-metadata.v1.';
   final _loaded = <String, Future<void>>{};
   final _values = <String, Map<String, List<UnifiedComicMetadata>>>{};
   final _attempted = <String, Set<String>>{};
+  final _retryAfter = <String, Map<String, DateTime>>{};
   final _pending = <String, Map<String, UnifiedComicListItem>>{};
   final _pendingSources = <String, Map<String, String>>{};
   final _running = <String, Future<void>>{};
@@ -108,6 +109,7 @@ class JmCollectionMetadata {
     if (_epochs[account] != generation) {
       _epochs[account] = generation;
       _attempted.remove(account);
+      _retryAfter.remove(account);
       _blocked.remove(account);
     }
     if (_blocked.contains(account)) return;
@@ -117,8 +119,10 @@ class JmCollectionMetadata {
       _pendingSources.putIfAbsent(account, () => {})[row.id] = row.source;
       final known = _values[account]?[row.id] ?? row.metadata;
       if (!known.any((m) => m.type == 'tags' || m.type == 'tag') &&
-          !attempted.contains(row.id))
+          !attempted.contains(row.id) &&
+          _retryAfter[account]?[row.id]?.isAfter(DateTime.now()) != true) {
         pending[row.id] = row;
+      }
     }
     if (!current() || active?.call() == false || pending.isEmpty) return;
     if (_running[account] case final running?) {
@@ -195,18 +199,27 @@ class JmCollectionMetadata {
           if (batch.length >= 8) await publish();
           continue;
         }
-        if (!_attempted[account]!.add(id)) continue;
+        if (_attempted[account]!.contains(id)) continue;
         final now = DateTime.now();
         final start = nextStart.isAfter(now) ? nextStart : now;
         nextStart = start.add(const Duration(milliseconds: 400));
         if (start.isAfter(now))
           await Future<void>.delayed(start.difference(now));
-        if (!current() || active?.call() == false) break;
+        if (!current()) break;
+        if (active?.call() == false) {
+          pending[id] = work;
+          break;
+        }
         try {
           await _acquire();
           late Map<String, dynamic> response;
           try {
             if (!current()) break;
+            if (active?.call() == false) {
+              pending[id] = work;
+              break;
+            }
+            if (!_attempted[account]!.add(id)) continue;
             response = await read(id);
           } finally {
             _release();
@@ -274,7 +287,12 @@ class JmCollectionMetadata {
             _pending[account]?.clear();
             break;
           }
-          // A failed detail remains unknown; it is not retried by list rebuilds.
+          if (current() && readFailureIsTransient(error)) {
+            _attempted[account]?.remove(id);
+            _retryAfter.putIfAbsent(account, () => {})[id] = DateTime.now().add(
+              readRetryAfterDelay(error),
+            );
+          }
         }
       }
     }
@@ -284,6 +302,7 @@ class JmCollectionMetadata {
     if (!current()) {
       _pending.remove(account);
       _attempted.remove(account);
+      _retryAfter.remove(account);
     }
   }
 
@@ -383,6 +402,7 @@ class JmCollectionMetadata {
         _loaded.remove(account);
         _values.remove(account);
         _attempted.remove(account);
+        _retryAfter.remove(account);
         _pending.remove(account);
         _pendingSources.remove(account);
         _epochs.remove(account);
@@ -396,6 +416,7 @@ class JmCollectionMetadata {
     _loaded.clear();
     _values.clear();
     _attempted.clear();
+    _retryAfter.clear();
     _pending.clear();
     _pendingSources.clear();
     _epochs.clear();
