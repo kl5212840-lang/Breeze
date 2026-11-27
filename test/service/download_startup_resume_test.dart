@@ -102,7 +102,7 @@ class _HeldRuntime extends RustLibApi {
             ],
           },
         },
-        'getDownloadConcurrency' => {'concurrency': 1},
+        'getDownloadConcurrency' => {'maxConcurrency': 1},
         _ => throw StateError('Unexpected plugin function $fnPath'),
       };
       return Uint8List.fromList(utf8.encode(jsonEncode(response)));
