@@ -95,7 +95,9 @@ class _HeldRuntime extends RustLibApi {
           'chapter': {
             'epId': task.chapterKey,
             'docs': [
-              for (final path in ['shared.png', 'held.png'])
+              // Hold the first request so the shared file has a live claim
+              // but has not been reused or added to the checkpoint.
+              for (final path in ['held.png', 'shared.png'])
                 {'path': path, 'url': 'https://fixture.invalid/$path'},
             ],
           },
