@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/task_dialog.dart';
 import 'package:zephyr/widgets/touch_hover_intent.dart';
 import 'dart:convert';
 
@@ -301,9 +302,8 @@ Future<String?> showPluginSettingInputDialog(
   var value = initialValue;
   return showDialog<String>(
     context: context,
-    builder: (context) => AlertDialog(
-      title: Text(title),
-      scrollable: true,
+    builder: (context) => TaskDialog(
+      title: title,
       content: TextFormField(
         initialValue: initialValue,
         autofocus: true,
@@ -319,7 +319,7 @@ Future<String?> showPluginSettingInputDialog(
           onPressed: () => Navigator.of(context).pop(),
           child: Text(t.common.cancel),
         ),
-        TextButton(
+        FilledButton(
           onPressed: () => Navigator.of(context).pop(value),
           child: Text(t.common.save),
         ),

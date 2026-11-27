@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/collection_results_row.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:zephyr/page/source_shell/view/jm_collection_toolbar.dart';
@@ -6,6 +7,7 @@ import 'package:zephyr/widgets/work_list_divider.dart';
 import 'package:zephyr/page/search/widget/search_keyboard.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/page/source_shell/source_settings_destination.dart';
 import 'package:zephyr/page/source_shell/source_list_view_toggle.dart';
 import 'package:zephyr/page/source_shell/source_list_presentation.dart';
 import 'package:zephyr/widgets/collection_cover_settings.dart';
@@ -21,14 +23,13 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/page/bookshelf/models/shelf_page_mode.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_content_layout.dart';
+import 'package:zephyr/page/bookshelf/widgets/bookshelf_detailed_content.dart'
+    show shelfReadingPosition;
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_content_toolbar.dart';
-import 'package:zephyr/page/bookshelf/widgets/bookshelf_detailed_content.dart';
+import 'package:zephyr/page/search_result/view/source_search_detail_list.dart';
 import 'package:zephyr/widgets/collection_cover_fit.dart';
-import 'package:zephyr/widgets/comic_entry/comic_record_time.dart';
 import 'package:zephyr/page/video/video_interaction.dart';
 import 'package:zephyr/page/video/video_native_navigation.dart';
-import 'package:zephyr/page/search_result/view/source_search_detail_list.dart';
-import 'package:zephyr/page/search_result/view/source_list_categories.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
@@ -36,7 +37,6 @@ import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/cover.dart';
 import 'package:zephyr/widgets/collection_cover_privacy.dart';
 import 'package:zephyr/widgets/touch_hover_intent.dart';
-import 'package:zephyr/page/source_shell/source_list_block_preferences.dart';
 import 'package:zephyr/page/search_result/view/source_loaded_result_filter.dart';
 
 String sourceProfileRecordLabel(ShelfPageMode mode) => switch (mode) {
@@ -553,30 +553,6 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
     return PullRefreshResult.ignored;
   }
 
-  void _toggleCategory(
-    String category,
-    Set<String> blocked,
-    ValueChanged<Set<String>> change,
-  ) {
-    final wasBlocked = blocked.contains(category);
-    final next = {...blocked};
-    wasBlocked ? next.remove(category) : next.add(category);
-    change(next);
-    final messenger = ScaffoldMessenger.of(context);
-    messenger.hideCurrentSnackBar();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          wasBlocked
-              ? '已恢复「${convertChineseForDisplay(category)}」'
-              : '已屏蔽「${convertChineseForDisplay(category)}」· 再点恢复',
-        ),
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
-      ),
-    );
-  }
-
   List<UnifiedComicListItem> _sortedEntries() {
     final visible = widget.entries.toList();
     if (widget.mode == ShelfPageMode.history &&
@@ -659,48 +635,30 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
       ..sort();
     final scope =
         '${widget.source ?? sources.join(',')}|profile:${widget.mode.name}';
-    return SourceCategoryBlockScope(
+    return SourceLoadedResultFilter(
+      compactControls: true,
+      flatCollectionControls: _compact,
+      searchController: _compact ? _jmSearch : null,
+      searchFocusNode: _compact ? _jmSearchFocus : null,
+      searchExpanded: !_compact || _jmSearchOpen,
+      onChanged: () {
+        if (_jmSearchOpen) _scrollPositions.reset(afterLayout: true);
+      },
+      focusedFacets: _compact,
+      chromeBuilder: _compact
+          ? (context, chrome) =>
+                _jmChrome(context, chrome, detailed, selectView)
+          : null,
+      entries: _sortedEntries(),
       scope: scope,
-      builder: (context, blocked, onBlockedChanged) => SourceLoadedResultFilter(
-        compactControls: true,
-        searchController: _compact ? _jmSearch : null,
-        searchFocusNode: _compact ? _jmSearchFocus : null,
-        searchExpanded: !_compact || _jmSearchOpen,
-        onChanged: () {
-          if (_jmSearchOpen) _scrollPositions.reset(afterLayout: true);
-        },
-        focusedFacets: _compact,
-        chromeBuilder: _compact
-            ? (context, chrome) => _jmChrome(
-                context,
-                chrome,
-                blocked,
-                onBlockedChanged,
-                detailed,
-                selectView,
-              )
-            : null,
-        entries: _sortedEntries(),
-        blockedCategories: blocked,
-        scope: scope,
-        builder: (context, visible, controls) => _buildRecords(
-          context,
-          visible,
-          controls,
-          blocked,
-          onBlockedChanged,
-          detailed,
-          selectView,
-        ),
-      ),
+      builder: (context, visible, controls) =>
+          _buildRecords(context, visible, controls, detailed, selectView),
     );
   }
 
   Widget _jmChrome(
     BuildContext context,
     SourceLoadedResultChrome chrome,
-    Set<String> blocked,
-    ValueChanged<Set<String>> onBlockedChanged,
     bool detailed,
     ValueChanged<bool> selectView,
   ) {
@@ -711,30 +669,13 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
       if (widget.entries.any((entry) => entry.likesCount > 0)) 'likes': '最多喜欢',
       if (widget.entries.any((entry) => entry.viewsCount > 0)) 'views': '最多观看',
     };
-    final sources = {
-      if (widget.source != null) widget.source!,
-      ...widget.entries.map((entry) => entry.source),
-    };
-    final categories =
-        {for (final source in sources) ...sourceQuickCategories(source)}.where(
-          (category) => widget.entries.any(
-            (entry) => isEntryBlockedByCategory(entry, {category}),
-          ),
-        );
-    final categoryActions = {
-      for (final category in categories)
-        'category.${Uri.encodeComponent(category)}': category,
-    };
     final options = {
       collectionCoverSettingsAction: collectionCoverSettingsLabel(context),
-      for (final entry in categoryActions.entries)
-        entry.key:
-            '${blocked.contains(entry.value) ? '恢复' : '屏蔽'} ${convertChineseForDisplay(entry.value)}',
-      if (blocked.isNotEmpty) 'clear-blocked': '清除屏蔽 (${blocked.length})',
       if (widget.onManageFolders != null)
         'folders': t.videoSource.manageFolders,
     };
     final navigation = JmCollectionNavigationActions(
+      source: source ?? '',
       keyPrefix: 'jm-record',
       inlineSearch: true,
       searching: _jmSearchOpen,
@@ -767,22 +708,11 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
       },
       groups: [
         [collectionCoverSettingsAction],
-        [
-          for (final key in [
-            ...categoryActions.keys,
-            'clear-blocked',
-            'folders',
-          ])
-            if (options.containsKey(key)) key,
-        ],
+        if (options.containsKey('folders')) ['folders'],
       ],
       onSelected: (value) {
         if (!mounted || widget.mode != mode || widget.source != source) return;
-        if (categoryActions[value] case final category?)
-          _toggleCategory(category, blocked, onBlockedChanged);
-        else if (value == 'clear-blocked')
-          onBlockedChanged({});
-        else if (value == 'folders')
+        if (value == 'folders')
           widget.onManageFolders?.call();
         else if (value == collectionCoverSettingsAction)
           unawaited(openCollectionCoverSettings(context));
@@ -835,7 +765,46 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
     return Column(
       key: const ValueKey('profile-record-controls'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
+      // Paint the results row before the platform navigation buttons, so the
+      // left count stays with the list while a previous route is sliding out.
+      verticalDirection: VerticalDirection.up,
       children: [
+        if (chrome.appliedFilters != null)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: chrome.appliedFilters!,
+          ),
+        CollectionResultsRow(
+          key: const ValueKey('jm-record-tools'),
+          countKey: const ValueKey('jm-record-count'),
+          countLabel: jmCollectionCountLabel(
+            complete: chrome.complete,
+            shown: chrome.shown,
+            loaded: chrome.total,
+            knownTotal: chrome.knownTotal,
+          ),
+          filterButton: chrome.filterButton,
+          sortAction: JmCollectionSortAction(
+            key: const ValueKey('jm-record.sort'),
+            bare: true,
+            options: sortOptions,
+            selected: _sort,
+            onSelected: (next) {
+              if (mounted &&
+                  widget.mode == mode &&
+                  widget.source == source &&
+                  sortOptions.containsKey(next)) {
+                setState(() => _sort = next);
+              }
+            },
+          ),
+          viewAction: SourceListViewToggle(
+            key: const ValueKey('jm-record-view'),
+            bare: true,
+            detailed: detailed,
+            onChanged: selectView,
+          ),
+        ),
         if (controller == null)
           Padding(
             padding: CollectionToolbarMetrics.contentPaddingOf(context),
@@ -852,6 +821,7 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
                     ? SearchToolbarScope.fieldExtent(context)
                     : null,
                 child: Row(
+                  spacing: CollectionToolbarMetrics.searchControlGap,
                   children: [
                     if (widget.showBackButton && !_jmSearchOpen)
                       SourceChromeIconButton(
@@ -875,40 +845,6 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
               ),
             ),
           ),
-        JmCollectionResultsRow(
-          key: const ValueKey('jm-record-tools'),
-          countKey: const ValueKey('jm-record-count'),
-          countLabel: jmCollectionCountLabel(
-            complete: chrome.complete,
-            shown: chrome.shown,
-            loaded: chrome.total,
-            knownTotal: chrome.knownTotal,
-          ),
-          filterButton: chrome.filterButton,
-          sortAction: JmCollectionSortAction(
-            key: const ValueKey('jm-record.sort'),
-            options: sortOptions,
-            selected: _sort,
-            onSelected: (next) {
-              if (mounted &&
-                  widget.mode == mode &&
-                  widget.source == source &&
-                  sortOptions.containsKey(next)) {
-                setState(() => _sort = next);
-              }
-            },
-          ),
-          viewAction: SourceListViewToggle(
-            key: const ValueKey('jm-record-view'),
-            detailed: detailed,
-            onChanged: selectView,
-          ),
-        ),
-        if (chrome.appliedFilters != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: chrome.appliedFilters!,
-          ),
       ],
     );
   }
@@ -917,104 +853,23 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
     BuildContext context,
     List<UnifiedComicListItem> visibleEntries,
     Widget controls,
-    Set<String> blocked,
-    ValueChanged<Set<String>> onBlockedChanged,
     bool detailed,
     ValueChanged<bool> selectView,
   ) {
-    final sources = {
-      if (widget.source != null) widget.source!,
-      ...widget.entries.map((entry) => entry.source),
-    };
-    final categories = sources
-        .expand(sourceQuickCategories)
-        .toSet()
-        .where(
-          (category) => widget.entries.any(
-            (entry) => isEntryBlockedByCategory(entry, {category}),
-          ),
-        )
-        .toList();
     final sortOptions = {
       'new': '最新',
       'old': '最早',
       if (widget.entries.any((entry) => entry.likesCount > 0)) 'likes': '最多喜欢',
       if (widget.entries.any((entry) => entry.viewsCount > 0)) 'views': '最多观看',
     };
-    final categoryActions = {
-      for (final category in categories)
-        'category.${Uri.encodeComponent(category)}': category,
-    };
     final mode = widget.mode, source = widget.source;
     return CollectionCoverPrivacyScope(
       child: CollectionCoverFitScope(
         child: Column(
+          // Keep the list in one Flutter paint slice before the UIKit
+          // toolbar layers. The header remains at the top of the layout.
+          verticalDirection: VerticalDirection.up,
           children: [
-            if (!_compact)
-              BookshelfContentToolbar(
-                key: const ValueKey('profile-record-controls'),
-                keyPrefix: 'profile-record',
-                title: sourceProfileRecordLabel(widget.mode),
-                // The search/filter row already shows the complete local count.
-                subtitle: sortOptions[_sort] ?? '',
-                view: detailed
-                    ? BookshelfContentView.list
-                    : BookshelfContentView.grid,
-                onBack: widget.showBackButton ? widget.onBack : null,
-                onToggleView: () => selectView(!detailed),
-                onManage: null,
-                privacyAction: const CollectionCoverPrivacyButton(),
-                moreOptions: {
-                  for (final entry in sortOptions.entries)
-                    'sort.${entry.key}': entry.value,
-                  for (final entry in categoryActions.entries)
-                    entry.key:
-                        '${blocked.contains(entry.value) ? '恢复' : '屏蔽'} ${convertChineseForDisplay(entry.value)}',
-                  if (blocked.isNotEmpty)
-                    'clear-blocked': '清除屏蔽 (${blocked.length})',
-                  if (widget.onManageFolders != null)
-                    'folders': t.videoSource.manageFolders,
-                },
-                moreGroups: [
-                  [for (final key in sortOptions.keys) 'sort.$key'],
-                  [...categoryActions.keys, 'clear-blocked'],
-                  if (widget.onManageFolders != null) ['folders'],
-                ],
-                onMore: (value) {
-                  if (!mounted ||
-                      widget.mode != mode ||
-                      widget.source != source)
-                    return;
-                  if (value.startsWith('sort.') &&
-                      sortOptions.containsKey(value.substring(5))) {
-                    setState(() => _sort = value.substring(5));
-                  } else if (categoryActions[value] case final category?) {
-                    _toggleCategory(category, blocked, onBlockedChanged);
-                  } else if (value == 'clear-blocked') {
-                    onBlockedChanged({});
-                  } else if (value == 'folders') {
-                    widget.onManageFolders?.call();
-                  }
-                },
-              ),
-            controls,
-            const Divider(height: 1),
-            if (_refreshError != null || widget.error != null)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    Expanded(child: Text(_refreshError ?? widget.error!)),
-                    TextButton.icon(
-                      onPressed: _refreshTask != null
-                          ? null
-                          : () => _refreshIndicator.currentState?.show(),
-                      icon: const Icon(Icons.refresh),
-                      label: Text(t.common.retry),
-                    ),
-                  ],
-                ),
-              ),
             Expanded(
               child: PullRefreshFeedback.indicator(
                 indicatorKey: _refreshIndicator,
@@ -1033,7 +888,9 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
                               child: Center(
                                 child: Text(
                                   widget.entries.isEmpty
-                                      ? '暂无${sourceProfileRecordLabel(widget.mode)}的漫画'
+                                      ? sourceProfileRecordEmptyMessage(
+                                          widget.mode,
+                                        )
                                       : '当前筛选没有匹配的漫画',
                                 ),
                               ),
@@ -1089,6 +946,73 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
                       ),
               ),
             ),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!_compact)
+                  BookshelfContentToolbar(
+                    key: const ValueKey('profile-record-controls'),
+                    keyPrefix: 'profile-record',
+                    title: sourceProfileRecordLabel(widget.mode),
+                    // The search/filter row already shows the complete local count.
+                    subtitle: sortOptions[_sort] ?? '',
+                    view: detailed
+                        ? BookshelfContentView.list
+                        : BookshelfContentView.grid,
+                    onBack: widget.showBackButton ? widget.onBack : null,
+                    onToggleView: () => selectView(!detailed),
+                    onManage: null,
+                    privacyAction: const CollectionCoverPrivacyButton(),
+                    moreOptions: {
+                      for (final entry in sortOptions.entries)
+                        'sort.${entry.key}': entry.value,
+                      if (widget.onManageFolders != null)
+                        'folders': t.videoSource.manageFolders,
+                      if (source?.isNotEmpty == true)
+                        sourceSettingsMenuAction: t.plugin.pluginSettings,
+                    },
+                    moreGroups: [
+                      [for (final key in sortOptions.keys) 'sort.$key'],
+                      if (widget.onManageFolders != null) ['folders'],
+                      if (source?.isNotEmpty == true)
+                        [sourceSettingsMenuAction],
+                    ],
+                    onMore: (value) {
+                      if (!mounted ||
+                          widget.mode != mode ||
+                          widget.source != source)
+                        return;
+                      if (value.startsWith('sort.') &&
+                          sortOptions.containsKey(value.substring(5))) {
+                        setState(() => _sort = value.substring(5));
+                      } else if (value == 'folders') {
+                        widget.onManageFolders?.call();
+                      } else if (value == sourceSettingsMenuAction &&
+                          source != null) {
+                        unawaited(openSourceSettings(context, source: source));
+                      }
+                    },
+                  ),
+                controls,
+                if (!_compact) const Divider(height: 1),
+                if (_refreshError != null || widget.error != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      children: [
+                        Expanded(child: Text(_refreshError ?? widget.error!)),
+                        TextButton.icon(
+                          onPressed: _refreshTask != null
+                              ? null
+                              : () => _refreshIndicator.currentState?.show(),
+                          icon: const Icon(Icons.refresh),
+                          label: Text(t.common.retry),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
           ],
         ),
       ),
@@ -1097,9 +1021,6 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
 
   Widget _recordTile(UnifiedComicListItem entry, {required bool detailed}) {
     final info = entry.toSimplifyEntryInfo();
-    final readTime = widget.mode == ShelfPageMode.history
-        ? comicLastReadTimestamp(entry)
-        : '';
     final page = entry.raw['pageIndex'];
     final progress = widget.mode == ShelfPageMode.history
         ? shelfReadingPosition(
@@ -1116,15 +1037,13 @@ class _SourceProfileRecordsViewState extends State<SourceProfileRecordsView> {
       horizontal: detailed,
       coverAspectRatio: BookshelfContentLayout.coverAspectRatio,
       caption: detailed
-          ? BookshelfDetailedCaption(
-              title: convertChineseForDisplay(info.title),
-              source: widget.sourceName,
-              metadata: info.detailMetadata,
-              description: info.description,
+          ? ComicDetailedCaption(
+              entry: entry,
+              type: _entryType(widget.mode),
+              sourceName: widget.sourceName,
               progress: progress,
-              time: readTime.isEmpty
-                  ? ''
-                  : t.comicEntry.lastReadAt(time: readTime),
+              localRecord: true,
+              onReturned: () => unawaited(_refresh()),
             )
           : BookshelfCardCaption(
               title: convertChineseForDisplay(info.title),

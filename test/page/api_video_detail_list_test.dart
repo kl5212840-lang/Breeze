@@ -33,6 +33,152 @@ Widget page(Widget child) => MaterialApp(home: Scaffold(body: child));
 
 void main() {
   testWidgets(
+    'detailed video synopsis expands without opening the work or changing poster geometry',
+    (tester) async {
+      phone(tester);
+      var opens = 0;
+      final description = List.filled(
+        24,
+        'Video synopsis to read in the details panel.',
+      ).join(' ');
+      await tester.pumpWidget(
+        page(
+          ApiVideoCollection(
+            items: [item('long', description: description)],
+            mode: ApiVideoView.list,
+            compactDetails: true,
+            storageKey: 'source.metadata.disclosure',
+            onOpen: (_) => opens++,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final cover = find.byKey(const ValueKey('video-list.cover.long'));
+      final rect = tester.getRect(cover);
+      expect(rect.size, const Size(80, 120));
+      await tester.tap(find.byTooltip(t.download.workDetails));
+      await tester.pumpAndSettle();
+      expect(opens, 0);
+      final full = find.descendant(
+        of: find.byType(ListView),
+        matching: find.text(description),
+      );
+      expect(full, findsOneWidget);
+      expect(tester.widget<Text>(full).maxLines, isNull);
+      await tester.tap(find.byTooltip(t.common.close));
+      await tester.pumpAndSettle();
+      expect(tester.getRect(cover), rect);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('large text keeps portrait and landscape cover proportions', (
+    tester,
+  ) async {
+    phone(tester);
+    final work = ApiVideoItem(
+      id: 'large',
+      title: 'A long title that needs more room in accessibility text sizes',
+      detailUrl: Uri.parse('https://example.test/anime/large.html'),
+      description:
+          'A synopsis that is available in full from the work details.',
+      genres: 'Adventure',
+      language: 'Japanese',
+      sourceStatus: 'Complete',
+      sourceViews: 123456,
+      sourceRating: 8.5,
+      doubanScore: 9.1,
+    );
+    for (final aspect in [2 / 3, 16 / 9]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(2)),
+              child: Scaffold(
+                body: ApiVideoCollection(
+                  items: [work],
+                  mode: ApiVideoView.list,
+                  compactDetails: true,
+                  posterAspectRatio: aspect,
+                  contentPadding: EdgeInsets.zero,
+                  storageKey: 'source.large-text',
+                  onOpen: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final cover = tester.getRect(
+        find.byKey(const ValueKey('video-list.cover.large')),
+      );
+      final row = tester.getRect(find.byKey(const ValueKey('api-video.large')));
+      final expectedWidth = aspect < 1 ? 80.0 : 390 * .36;
+      expect(cover.width, closeTo(expectedWidth, .01));
+      expect(cover.height, closeTo(expectedWidth / aspect, .01));
+      expect(row.height, greaterThan(cover.height + 16));
+      expect(
+        find.text(t.videoLibrary.sourceRatingOnly(score: 8.5)),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets(
+    'detailed rows expose available source facts without changing the grid',
+    (tester) async {
+      phone(tester);
+      final work = ApiVideoItem(
+        id: 'metadata',
+        title: 'Metadata',
+        detailUrl: Uri.parse('https://example.test/voddetail/10.html'),
+        genres: 'Adventure',
+        language: 'Japanese',
+        sourceStatus: 'Complete',
+        sourceViews: 46,
+        sourceViewsAreClicks: true,
+        sourceRating: 8.5,
+        sourceRatingCount: 20,
+        sourceRatingCountConsistent: false,
+        doubanScore: 9.1,
+      );
+      Future<void> show(ApiVideoView mode) => tester.pumpWidget(
+        page(
+          ApiVideoCollection(
+            items: [work],
+            mode: mode,
+            storageKey: 'source.metadata',
+            onOpen: (_) {},
+          ),
+        ),
+      );
+      final facts = [
+        t.videoLibrary.sourceClicks(count: 46),
+        t.videoLibrary.sourceRatingOnly(score: 8.5),
+        t.videoLibrary.doubanRating(score: 9.1),
+      ];
+      await show(ApiVideoView.list);
+      for (final fact in facts) {
+        expect(find.text(fact), findsOneWidget);
+      }
+      expect(find.text('Adventure · Japanese · Complete'), findsOneWidget);
+      expect(
+        find.text(t.videoLibrary.sourceRating(score: 8.5, count: 20)),
+        findsNothing,
+      );
+      await show(ApiVideoView.grid);
+      for (final fact in facts) {
+        expect(find.text(fact), findsNothing);
+      }
+    },
+  );
+
+  testWidgets(
     'covered grid requests no detail; lazy list requests only nearby rows',
     (tester) async {
       phone(tester);

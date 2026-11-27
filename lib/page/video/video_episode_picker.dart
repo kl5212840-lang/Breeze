@@ -27,6 +27,32 @@ class _VideoEpisodePickerState extends State<VideoEpisodePicker> {
   VideoEpisodeSequence? _draft;
   int? _range;
   final _scrollController = ScrollController();
+  final _currentRow = GlobalKey();
+
+  @override
+  void initState() {
+    super.initState();
+    _revealCurrent();
+  }
+
+  @override
+  void didUpdateWidget(covariant VideoEpisodePicker oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.current != oldWidget.current && _draft == null) {
+      _range = null;
+      _revealCurrent();
+    }
+  }
+
+  void _revealCurrent() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      final row = _currentRow.currentContext?.findRenderObject();
+      if (row != null) {
+        _scrollController.position.ensureVisible(row, alignment: .15);
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -86,7 +112,7 @@ class _VideoEpisodePickerState extends State<VideoEpisodePicker> {
     }
     final orderControl = SettingChoiceTile<VideoEpisodeOrder>(
       key: const ValueKey('episode-queue.order'),
-      title: t.bookshelf.sort,
+      title: t.videoPlayback.episodeListOrder,
       value: !queue.numbered && queue.order != VideoEpisodeOrder.manual
           ? VideoEpisodeOrder.site
           : queue.order,
@@ -135,14 +161,23 @@ class _VideoEpisodePickerState extends State<VideoEpisodePicker> {
       Flexible(
         child: _section(
           _draft == null
-              ? ListView.builder(
+              ? SingleChildScrollView(
                   key: const ValueKey('episode-queue.list'),
                   controller: _scrollController,
-                  shrinkWrap: true,
                   primary: false,
-                  padding: EdgeInsets.zero,
-                  itemCount: count,
-                  itemBuilder: (_, i) => _row(visibleItems[i], start + i),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (var i = 0; i < visibleItems.length; i++)
+                        if (visibleItems[i].isCurrent(widget.current))
+                          KeyedSubtree(
+                            key: _currentRow,
+                            child: _row(visibleItems[i], start + i),
+                          )
+                        else
+                          _row(visibleItems[i], start + i),
+                    ],
+                  ),
                 )
               : ReorderableListView.builder(
                   key: const ValueKey('episode-queue.list'),

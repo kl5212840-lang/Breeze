@@ -1,11 +1,18 @@
+import 'package:zephyr/widgets/native_material_surface.dart';
 import 'package:zephyr/widgets/native_view_occlusion.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_navigation_bar.dart';
 import 'package:zephyr/widgets/breeze_control_colors.dart';
+import 'package:zephyr/widgets/breeze_control_motion.dart';
 import 'package:zephyr/widgets/breeze_theme_colors.dart';
+import 'package:zephyr/widgets/android_glass_plate.dart';
 import 'dart:async';
+import 'dart:ui' show SemanticsRole;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:zephyr/config/global/global_setting.dart';
+import 'package:zephyr/config/global/navigation_appearance.dart';
 import 'package:collection/collection.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -36,7 +43,7 @@ class NativeNavigationInset extends InheritedWidget {
 
 /// Site navigation follows the app appearance independently of player controls.
 /// Breeze uses the shared tab bar. In system style UIKit owns iOS tab semantics
-/// and material, while other platforms use the existing Material navigation.
+/// and material. Android system style uses the shared glass island.
 class VideoNativeNavigation extends StatefulWidget {
   const VideoNativeNavigation({
     super.key,
@@ -56,8 +63,15 @@ class VideoNativeNavigation extends StatefulWidget {
   final int currentIndex;
   final ValueChanged<int>? onTap;
 
+  static const _androidIslandMargins = EdgeInsets.fromLTRB(12, 0, 12, 8);
+
   static double androidContentHeightOf(BuildContext context) =>
       68 + (MediaQuery.textScalerOf(context).scale(12) - 12).clamp(0, 48);
+
+  static double androidFloatingHeightOf(BuildContext context) =>
+      androidContentHeightOf(context) +
+      _androidIslandMargins.bottom +
+      MediaQuery.paddingOf(context).bottom;
 
   @override
   State<VideoNativeNavigation> createState() => _VideoNativeNavigationState();
@@ -121,66 +135,11 @@ class _VideoNativeNavigationState extends State<VideoNativeNavigation> {
       );
     }
     if (AppInterfaceStyleScope.usesAndroidSystem(context)) {
-      final theme = Theme.of(context);
-      final colors = theme.colorScheme;
-      final surface = BreezeControlColors.navigationSurface(theme);
-      final selection = BreezeControlColors.navigation(
-        colors,
-        backdrop: surface,
-        highContrast: MediaQuery.highContrastOf(context),
-      );
-      final selectedLabel = BreezeThemeColors.readableOn(
-        colors.primary,
-        surface,
-      );
-      final otherLabel = BreezeThemeColors.readableOn(
-        colors.onSurfaceVariant,
-        surface,
-      );
-      return NavigationBarTheme(
-        data: NavigationBarTheme.of(context).copyWith(
-          iconTheme: WidgetStateProperty.resolveWith(
-            (states) => IconThemeData(
-              size: 24,
-              color: states.contains(WidgetState.selected)
-                  ? selection.foreground
-                  : otherLabel,
-            ),
-          ),
-          labelTextStyle: WidgetStateProperty.resolveWith(
-            (states) => theme.textTheme.labelMedium?.copyWith(
-              color: states.contains(WidgetState.selected)
-                  ? selectedLabel
-                  : otherLabel,
-            ),
-          ),
-        ),
-        child: MediaQuery.removePadding(
-          context: context,
-          // The root tab host passes the full window insets to its custom bar.
-          // A bottom bar must reserve the gesture inset only.
-          removeTop: true,
-          child: NavigationBar(
-            height: VideoNativeNavigation.androidContentHeightOf(context),
-            backgroundColor: surface,
-            surfaceTintColor: Colors.transparent,
-            elevation: 0,
-            indicatorColor: selection.indicator,
-            labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-            selectedIndex: widget.currentIndex,
-            onDestinationSelected: widget.onTap,
-            destinations: [
-              for (final item in widget.items)
-                NavigationDestination(
-                  icon: item.icon,
-                  selectedIcon: item.activeIcon,
-                  label: item.label ?? '',
-                  tooltip: item.tooltip,
-                  enabled: widget.onTap != null,
-                ),
-            ],
-          ),
-        ),
+      return _AndroidNavigationIsland(
+        items: widget.items,
+        badgeValues: widget.badgeValues,
+        currentIndex: widget.currentIndex,
+        onTap: widget.onTap,
       );
     }
     if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) {
@@ -231,6 +190,178 @@ class _VideoNativeNavigationState extends State<VideoNativeNavigation> {
             _sent = null;
             unawaited(_update(_arguments(context)));
           },
+        ),
+      ),
+    );
+  }
+}
+
+class _AndroidNavigationIsland extends StatelessWidget {
+  const _AndroidNavigationIsland({
+    required this.items,
+    required this.badgeValues,
+    required this.currentIndex,
+    required this.onTap,
+  });
+
+  final List<BottomNavigationBarItem> items;
+  final List<String?> badgeValues;
+  final int currentIndex;
+  final ValueChanged<int>? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final eInk = context.select<GlobalSettingCubit?, bool>(
+      (cubit) => cubit?.state.eInkSetting.enabled ?? false,
+    );
+    final transparency = context.select<GlobalSettingCubit?, int>(
+      (cubit) =>
+          cubit?.state.navigationTransparency ?? defaultNavigationTransparency,
+    );
+    final highContrast = MediaQuery.highContrastOf(context) || eInk;
+    final selection = BreezeControlColors.androidNavigationSelection(
+      colors,
+      highContrast: highContrast,
+    );
+    final foregroundEmphasis = highContrast
+        ? 0.0
+        : ((transparency - defaultNavigationTransparency) /
+                  (maxNavigationTransparency - defaultNavigationTransparency))
+              .clamp(0.0, 1.0);
+    final idle = BreezeThemeColors.readableOn(
+      Color.lerp(
+        colors.onSurfaceVariant,
+        colors.onSurface,
+        foregroundEmphasis,
+      )!,
+      selection.track,
+    );
+    final labels = MaterialLocalizations.of(context);
+    final enabled = onTap != null;
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: VideoNativeNavigation._androidIslandMargins,
+        child: RepaintBoundary(
+          child: NativeMaterialSurface(
+            radius: 28,
+            androidGlass: true,
+            androidBackdrop: false,
+            androidNavigationTransparency: transparency,
+            floating: true,
+            readableContent: true,
+            child: SizedBox(
+              height: VideoNativeNavigation.androidContentHeightOf(context),
+              child: Stack(
+                children: [
+                  if (items.isNotEmpty)
+                    Positioned.fill(
+                      child: _AndroidNavigationSelection(
+                        count: items.length,
+                        index: currentIndex,
+                        color: selection.fill,
+                        rimTheme: highContrast ? null : colors,
+                        duration: eInk
+                            ? Duration.zero
+                            : BreezeControlMotion.segmentSelection(context),
+                      ),
+                    ),
+                  Semantics(
+                    role: SemanticsRole.tabBar,
+                    container: true,
+                    explicitChildNodes: true,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (final (index, item) in items.indexed)
+                          Expanded(
+                            child: BreezeNavigationTab(
+                              key: ValueKey('android-navigation-tab-$index'),
+                              tab: NavigationDestination(
+                                icon: item.icon,
+                                selectedIcon: item.activeIcon,
+                                label: item.label ?? '',
+                                tooltip: item.tooltip ?? item.label,
+                                enabled: enabled,
+                              ),
+                              selected: index == currentIndex,
+                              foreground: enabled
+                                  ? (index == currentIndex
+                                        ? selection.foreground
+                                        : idle)
+                                  : colors.onSurface.withValues(alpha: .38),
+                              glass: true,
+                              semanticsLabel: [
+                                if (badgeValues.elementAtOrNull(index)
+                                    case final value?)
+                                  value,
+                                item.label ?? '',
+                                labels.tabLabel(
+                                  tabIndex: index + 1,
+                                  tabCount: items.length,
+                                ),
+                              ].join('\n'),
+                              onTap: enabled ? () => onTap!(index) : null,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AndroidNavigationSelection extends StatelessWidget {
+  const _AndroidNavigationSelection({
+    required this.count,
+    required this.index,
+    required this.color,
+    required this.rimTheme,
+    required this.duration,
+  });
+
+  final int count, index;
+  final Color color;
+  final ColorScheme? rimTheme;
+  final Duration duration;
+
+  @override
+  Widget build(BuildContext context) {
+    const corners = BorderRadius.all(Radius.circular(23));
+    return IgnorePointer(
+      child: AnimatedAlign(
+        duration: duration,
+        curve: BreezeControlMotion.selectionCurve,
+        alignment: AlignmentDirectional(
+          count <= 1 ? 0 : 2 * index / (count - 1) - 1,
+          0,
+        ),
+        child: FractionallySizedBox(
+          widthFactor: 1 / count,
+          heightFactor: 1,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+            child: DecoratedBox(
+              key: const ValueKey('android-navigation-selection'),
+              decoration: BoxDecoration(color: color, borderRadius: corners),
+              child: rimTheme == null
+                  ? null
+                  : CustomPaint(
+                      foregroundPainter: AndroidGlassNavigationRim(
+                        corners: corners,
+                        colors: rimTheme!,
+                        width: 1,
+                      ),
+                    ),
+            ),
+          ),
         ),
       ),
     );

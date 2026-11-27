@@ -59,7 +59,8 @@ class ComicFollowCheckException implements Exception {
 }
 
 final _pluginHttpStatus = RegExp(
-  r'(?:\bstatus(?:\s*code)?[ :=]+|\bhttp(?:\s*error)?[ :=]+|^)([1-5]\d{2})\b',
+  r'(?:\bstatus(?:\s*code)?[ :=]+|\bhttp(?:\s*error)?[ :=]+'
+  r'|服务器响应异常\s*[(（]\s*|^)([1-5]\d{2})\b',
   caseSensitive: false,
 );
 

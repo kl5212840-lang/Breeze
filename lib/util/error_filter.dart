@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
@@ -67,6 +68,34 @@ String normalizeSearchErrorMessage(Object error) {
   return t.error.executionFailed;
 }
 
+final _reportedHttpStatus = RegExp(
+  r'(?:^|[\s(\[（])(?:http(?:\s+error)?|status(?:\s*code)?)[\s:=]+([1-5]\d{2})\b'
+  r'|服务器响应异常\s*[(（]\s*([1-5]\d{2})\b|^([1-5]\d{2})$',
+  caseSensitive: false,
+);
+
+/// Error text may contain work IDs, URLs and durations alongside the status.
+int? reportedHttpStatus(Object error) {
+  if (error is TimeoutException ||
+      error is SocketException ||
+      error is HandshakeException) {
+    return null;
+  }
+  final text = quickJsErrorMessage(error) ?? normalizeSearchErrorMessage(error);
+  final match = _reportedHttpStatus.firstMatch(text);
+  return match == null ? null : int.tryParse(match[1] ?? match[2] ?? match[3]!);
+}
+
+final _localizedRequestTimeout = RegExp(r'(?:^|[\s:：])请求超时(?:$|[\s。！!，,])');
+
+bool isRequestTimeout(Object error) {
+  if (error is TimeoutException) return true;
+  final text = (quickJsErrorMessage(error) ?? error.toString()).toLowerCase();
+  return text.contains('timed out') ||
+      text.contains('timeout') ||
+      _localizedRequestTimeout.hasMatch(text);
+}
+
 /// Keep plugin/runtime diagnostics in logs, never in an end-user error view.
 bool isTransientNetworkError(Object error) {
   final text = error.toString().toLowerCase();
@@ -78,8 +107,7 @@ bool isTransientNetworkError(Object error) {
       text.contains('failed host lookup') ||
       text.contains('network error') ||
       text.contains('network request failed') ||
-      text.contains('timed out') ||
-      text.contains('timeout') ||
+      isRequestTimeout(error) ||
       text.contains('connectexception');
 }
 
@@ -106,7 +134,8 @@ final _privateErrorDetail = RegExp(
   caseSensitive: false,
 );
 final _httpErrorDetail = RegExp(
-  r'^(?:(?:request failed with )?status(?:\s*code)?|http(?:\s*error)?|[1-5]\d{2})\b',
+  r'^(?:(?:request failed with )?status(?:\s*code)?|http(?:\s*error)?|[1-5]\d{2})\b'
+  r'|^服务器响应异常\s*[(（]|\bHTTP\s+[1-5]\d{2}\b',
   caseSensitive: false,
 );
 final _inlineStackFrame = RegExp(
@@ -152,6 +181,7 @@ String? readableErrorMessage(String message) {
       lower.contains('formatexception') ||
       lower.contains('node_modules') ||
       lower.contains('args:') ||
+      lower.contains('retry-after:') ||
       lower.contains('http 请求失败')) {
     return null;
   }
@@ -165,6 +195,9 @@ String userFacingErrorMessage(Object error) {
   }
   final text = normalizeSearchErrorMessage(error);
   final lower = text.toLowerCase();
+  if (RegExp(r'\bhttp\s+429\b').hasMatch(lower)) {
+    return '请求太频繁，请稍后重试';
+  }
   if (isTransientNetworkError(text)) {
     return '连接暂时中断，请检查网络或切换插件线路后重试';
   }

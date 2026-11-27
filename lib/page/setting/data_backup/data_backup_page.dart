@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'package:zephyr/widgets/task_dialog.dart';
 import 'package:zephyr/page/video/video_hls_assets.dart';
 import 'package:zephyr/page/video/video_local_resources.dart';
 
@@ -70,6 +72,7 @@ class _DataBackupPageState extends State<DataBackupPage> {
   bool _includeDownloads = false;
   bool _usesSharedPassword = false;
   bool _busy = false;
+  bool _exportConfirmationOpen = false;
   BackupConfig? _pendingImport;
 
   @override
@@ -201,7 +204,8 @@ class _DataBackupPageState extends State<DataBackupPage> {
       showErrorToast(t.dataBackup.unsupportedData);
     } on BackupRestoreIncomplete {
       showErrorToast(t.dataBackup.restoreIncomplete);
-    } catch (_) {
+    } catch (error, stack) {
+      logger.e('备份操作失败 (${error.runtimeType})', stackTrace: stack);
       showErrorToast(failureMessage);
     } finally {
       final config = _pendingImport;
@@ -211,113 +215,138 @@ class _DataBackupPageState extends State<DataBackupPage> {
     }
   }
 
-  Future<void> _exportData() => _protectedAction(
-    () => widget.actions.exportBackup?.call(_includeDownloads) ?? _saveBackup(),
-    t.dataBackup.exportFailed,
-  );
-
-  Future<void> _saveBackup() async {
-    if (_includeDownloads) await VideoLocalResources.requirePortableBackup();
-    if (!mounted) return;
-    final session = await resolveFileBackupProtection(context);
-    if (mounted) await _writeBackup(session);
+  Future<void> _exportData() async {
+    if (_busy || _exportConfirmationOpen) return;
+    final includeDownloads = _includeDownloads;
+    _exportConfirmationOpen = true;
+    final bool? confirmed;
+    try {
+      confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          key: const ValueKey('backup.export-confirm'),
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 24,
+          ),
+          constraints: const BoxConstraints(minWidth: 280, maxWidth: 520),
+          title: Text(t.backupFlow.exportConfirmTitle),
+          scrollable: true,
+          content: Text(
+            includeDownloads
+                ? t.backupFlow.downloadsIncluded
+                : t.backupFlow.exportWithoutDownloads,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
+              child: Text(t.common.cancel),
+            ),
+            TextButton(
+              key: const ValueKey('backup.confirm-export'),
+              onPressed: () {
+                if (ModalRoute.of(dialogContext)?.isCurrent == true) {
+                  Navigator.of(dialogContext).pop(true);
+                }
+              },
+              style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
+              child: Text(t.common.export),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _exportConfirmationOpen = false;
+    }
+    if (confirmed != true || !mounted) return;
+    await _protectedAction(
+      () =>
+          widget.actions.exportBackup?.call(includeDownloads) ??
+          _saveBackup(includeDownloads: includeDownloads),
+      t.dataBackup.exportFailed,
+    );
   }
 
-  Future<void> _writeBackup(BackupProtectionSession? session) async {
-    // Mobile saves through its system document picker.
-    final granted =
-        Platform.isIOS || Platform.isAndroid || await requestExportPermission();
-    if (!granted) {
-      showErrorToast(t.comicInfo.exportPermissionDenied);
-      return;
+  Future<void> _saveBackup({required bool includeDownloads}) async {
+    if (includeDownloads) await VideoLocalResources.requirePortableBackup();
+    if (!mounted) return;
+    final session = await resolveFileBackupProtection(context);
+    if (mounted) {
+      await _writeBackup(session, includeDownloads: includeDownloads);
     }
+  }
 
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final fileName =
-        'Breeze-export-$timestamp.${session == null ? 'zip' : 'breezebackup'}';
-    final privateWork = await createPrivateBackupWorkspace();
-    late final String zipPath;
-
-    // The mobile picker needs a private staging file until the save finishes.
-    if (Platform.isIOS || Platform.isAndroid) {
-      zipPath = p.join(privateWork.path, fileName);
-    } else {
-      String? selectedDir;
+  Future<void> _writeBackup(
+    BackupProtectionSession? session, {
+    required bool includeDownloads,
+  }) async {
+    final isMobile = Platform.isIOS || Platform.isAndroid;
+    String? selectedDir;
+    if (!isMobile) {
+      if (!await requestExportPermission()) {
+        if (mounted) showErrorToast(t.comicInfo.exportPermissionDenied);
+        return;
+      }
+      if (!mounted) return;
       try {
         selectedDir = await getDirectoryPath();
       } catch (e, s) {
         logger.e('选择导出目录失败', error: e, stackTrace: s);
-        await privateWork.delete(recursive: true);
-        showErrorToast(t.dataBackup.selectExportDirFailed);
+        if (mounted) showErrorToast(t.dataBackup.selectExportDirFailed);
         return;
       }
-
-      if (selectedDir == null || selectedDir.trim().isEmpty) {
-        await privateWork.delete(recursive: true);
-        return;
-      }
-      zipPath = p.join(selectedDir, fileName);
+      if (selectedDir == null || selectedDir.trim().isEmpty) return;
     }
+    if (!mounted) return;
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final fileName =
+        'Breeze-export-$timestamp.${session == null ? 'zip' : 'breezebackup'}';
+    final desktopPath = selectedDir == null
+        ? null
+        : p.join(selectedDir, fileName);
 
-    if (!mounted) {
-      await privateWork.delete(recursive: true);
-      return;
-    }
-    _setBusy(true);
-    _showLoadingDialog(t.dataBackup.exporting);
-    var loadingOpen = true;
-    void closeLoading() {
-      if (!loadingOpen || !mounted) return;
-      loadingOpen = false;
-      Navigator.of(context).pop();
-    }
-
-    final plainZip = session == null
-        ? zipPath
-        : p.join(privateWork.path, 'backup.zip');
-    try {
-      await exportBreezeBackup(
-        zipPath: plainZip,
-        includeDownloads: _includeDownloads,
-        protectionSession: session,
-      );
-      if (session != null) await session.encryptFile(plainZip, zipPath);
-      if (!mounted) return;
-      closeLoading();
-
-      if (Platform.isIOS || Platform.isAndroid) {
-        final status = await const MethodChannel(
-          'breeze/backup_security',
-        ).invokeMethod<String>('exportFile', {'path': zipPath});
-        if (status == 'cancelled') return;
-        if (status != 'saved') {
-          throw const FileSystemException('Backup export did not finish');
-        }
-        if (mounted)
-          showSuccessToast(t.dataBackup.exportSuccess, context: context);
-      } else {
-        await _showResultDialog(
-          t.dataBackup.exportSuccess,
-          t.dataBackup.savedTo(path: zipPath),
+    final saved = await withPrivateBackupWorkspace((privateWork) async {
+      if (!mounted) return false;
+      final zipPath = desktopPath ?? p.join(privateWork.path, fileName);
+      final plainZip = session == null
+          ? zipPath
+          : p.join(privateWork.path, 'backup.zip');
+      await _withLoading(t.dataBackup.exporting, () async {
+        await exportBreezeBackup(
+          zipPath: plainZip,
+          includeDownloads: includeDownloads,
+          protectionSession: session,
         );
+        if (session != null) {
+          await session.encryptFile(plainZip, zipPath);
+          try {
+            await File(plainZip).delete();
+          } on FileSystemException {
+            // Workspace cleanup retries after the picker closes.
+          }
+        }
+      });
+
+      if (desktopPath != null) return true;
+      if (!mounted) return false;
+      final status = await const MethodChannel(
+        'breeze/backup_security',
+      ).invokeMethod<String>('exportFile', {'path': zipPath});
+      if (status == 'cancelled') return false;
+      if (status != 'saved') {
+        throw const FileSystemException('Backup export did not finish');
       }
-    } on ComicDownloadTreeBusy {
-      closeLoading();
-      rethrow;
-    } catch (e, s) {
-      closeLoading();
-      logger.e('导出数据失败', error: e, stackTrace: s);
-      showErrorToast(t.dataBackup.exportFailed);
-    } finally {
-      if (session != null) {
-        try {
-          await File(plainZip).delete();
-        } catch (_) {}
-      }
-      try {
-        await privateWork.delete(recursive: true);
-      } catch (_) {}
-      _setBusy(false);
+      return true;
+    });
+    if (!saved || !mounted) return;
+    if (desktopPath == null) {
+      showSuccessToast(t.dataBackup.exportSuccess, context: context);
+    } else {
+      await _showResultDialog(
+        t.dataBackup.exportSuccess,
+        t.dataBackup.savedTo(path: desktopPath),
+      );
     }
   }
 
@@ -374,11 +403,34 @@ class _DataBackupPageState extends State<DataBackupPage> {
     String message,
     Future<T> Function() operation,
   ) async {
-    _showLoadingDialog(message);
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final route = DialogRoute<void>(
+      context: context,
+      themes: InheritedTheme.capture(from: context, to: navigator.context),
+      barrierColor: DialogTheme.of(context).barrierColor ?? Colors.black54,
+      barrierDismissible: false,
+      builder: (context) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2.5),
+              ),
+              const SizedBox(width: 20),
+              Expanded(child: Text(message)),
+            ],
+          ),
+        ),
+      ),
+    );
+    unawaited(navigator.push(route));
     try {
       return await operation();
     } finally {
-      if (mounted) Navigator.of(context).pop();
+      if (navigator.mounted && route.isActive) navigator.removeRoute(route);
     }
   }
 
@@ -452,29 +504,6 @@ class _DataBackupPageState extends State<DataBackupPage> {
     }
   }
 
-  void _showLoadingDialog(String message) {
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => PopScope(
-        canPop: false,
-        child: AlertDialog(
-          content: Row(
-            children: [
-              const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2.5),
-              ),
-              const SizedBox(width: 20),
-              Expanded(child: Text(message)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Future<void> _showResultDialog(String title, String message) async {
     if (!mounted) return;
     await showDialog<void>(
@@ -506,15 +535,14 @@ class _DataBackupPageState extends State<DataBackupPage> {
     return showDialog<_BackupImportDraft>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
-        builder: (context, update) => AlertDialog(
+        builder: (context, update) => TaskDialog(
           key: const ValueKey('backup.import-preview'),
           insetPadding: const EdgeInsets.symmetric(
             horizontal: 16,
             vertical: 24,
           ),
-          constraints: const BoxConstraints(maxWidth: 520),
-          title: Text(t.backupFlow.previewTitle),
-          scrollable: true,
+          width: 448,
+          title: t.backupFlow.previewTitle,
           content: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 400),
             child: Column(

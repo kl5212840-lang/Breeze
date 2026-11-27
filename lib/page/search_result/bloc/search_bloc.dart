@@ -116,6 +116,8 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
   SearchEvent? _pendingReplacement;
   Future<void>? _replacementCancellation;
   int _queryRevision = 0;
+  int _firstLoadedPage = 1;
+  int get firstLoadedPage => _firstLoadedPage;
 
   @override
   void add(SearchEvent event) {
@@ -261,6 +263,7 @@ class SearchBloc extends Bloc<SearchEvent, SearchState> {
 
       if (!current()) return;
       blocState = result;
+      if (event.status == SearchStatus.initial) _firstLoadedPage = event.page;
       emit(
         state.copyWith(
           status: SearchStatus.success,

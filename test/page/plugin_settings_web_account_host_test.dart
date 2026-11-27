@@ -25,6 +25,8 @@ import 'package:zephyr/page/plugin_settings/cubit/plugin_settings_cubit.dart';
 import 'package:zephyr/page/plugin_settings/view/plugin_settings_page.dart';
 import 'package:zephyr/page/plugin_settings/widgets/plugin_settings_content.dart';
 import 'package:zephyr/page/setting/common/plugin_user_info_card.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
+import 'package:zephyr/page/video/native_video_catalog_page.dart';
 import 'package:zephyr/page/video/omo_network.dart';
 import 'package:zephyr/page/video/native_video_auth_form.dart';
 import 'package:zephyr/page/video/omofun_account_page.dart';
@@ -42,6 +44,7 @@ import 'package:zephyr/widgets/app_interface_style.dart';
 import '../test_helper.dart';
 
 final _home = Uri.parse('https://site.example/');
+final _hanimeHome = Uri.parse('https://hanime1.me/');
 const _declaredLoginSource = 'vendor-declared-web-login';
 const _declaredLoginLabel = 'Vendor web login';
 
@@ -52,9 +55,11 @@ class _Api extends RustLibApi {
 
   int imageCalls = 0;
   bool declaredWebAccount = false;
+  Uri? accountOrigin;
   String? webLoginFunction;
   bool webLoginField = false;
   bool webLoginChangesSession = false;
+  bool legacyParseSetting = false;
   Completer<Map<String, dynamic>>? webLoginResponse;
   final webLoginCalls = <String>[];
 
@@ -79,8 +84,20 @@ class _Api extends RustLibApi {
       'init' => {},
       'getSettingsBundle' => {
         'data':{'mediaType':'video','canLogin':false,'canShowUserInfo':false,'values':{},
-          if (declaredWebAccount) 'accountSync':{'version':1,'origin':_home.origin,'readFn':'read','saveFn':'save','forgetFn':'forget'}},
-        if (webLoginFunction != null && webLoginField)
+          if (declaredWebAccount) 'accountSync':{'version':1,'origin':(accountOrigin ?? _home).origin,'readFn':'read','saveFn':'save','forgetFn':'forget'}},
+        if (legacyParseSetting)
+          'scheme': {
+            'sections': [
+              {
+                'title': '目录与播放',
+                'fields': [
+                  {'key': 'video.parseTimeoutSeconds', 'label': '解析等待', 'kind': 'select'},
+                  {'key': 'video.preferredSource', 'label': '清晰度偏好', 'kind': 'select'},
+                ],
+              },
+            ],
+          }
+        else if (webLoginFunction != null && webLoginField)
           'scheme': {
             'sections': [
               {
@@ -119,6 +136,9 @@ class _Web extends InAppWebViewPlatform {
   int reads = 0, creations = 0, disposals = 0;
   bool nativeLoginSupported = false;
   bool holdLoginDocument = false;
+  bool holdHanimeLoginDocument = false;
+  bool commitWithoutFinishing = false;
+  final hanimeAccountsByCookie = <String, Map<String, String>>{};
   final loads = <Uri>[];
   List<Cookie>? restorationCookies;
   final cookieWriteGenerations = <int>[];
@@ -210,6 +230,11 @@ class _Controller extends PlatformInAppWebViewController {
   @override Future<void> loadUrl({required URLRequest urlRequest,Uri? iosAllowingReadAccessTo,WebUri? allowingReadAccessTo}) async {
     final uri=Uri.parse(urlRequest.url.toString());host.loads.add(uri);
     if (host.holdLoginDocument && uri.path == '/user/login') return;
+    if (host.holdHanimeLoginDocument && uri.path == '/login') return;
+    if (host.commitWithoutFinishing) {
+      host.params.onPageCommitVisible?.call(host.wrapped, WebUri(uri.toString()));
+      return;
+    }
     host.params.onLoadStop?.call(host.wrapped,WebUri(uri.toString()));
   }
   @override Future<CallAsyncJavaScriptResult?> callAsyncJavaScript({required String functionBody,
@@ -217,8 +242,15 @@ class _Controller extends PlatformInAppWebViewController {
     if (functionBody.contains('return {supported:false}')) {
       return CallAsyncJavaScriptResult(value: {'supported': host.nativeLoginSupported});
     }
-    expect(functionBody,contains('("account",{"includeProfile":true},'));
+    expect(functionBody, anyOf(
+      contains('("account",{"includeProfile":true},'),
+      allOf(contains('hanime1.me'), contains('new DOMParser().parseFromString')),
+    ));
     host.reads++;
+    if (functionBody.contains('hanime1.me') && host.hanimeAccountsByCookie.isNotEmpty) {
+      final cookie = host.restorationCookies?.firstOrNull?.value;
+      return CallAsyncJavaScriptResult(value: host.hanimeAccountsByCookie[cookie] ?? {'status': 'signedOut'});
+    }
     return CallAsyncJavaScriptResult(value:await (host.next??Future.value(host.reply)));
   }
 }
@@ -283,13 +315,50 @@ void main(){
       lastLoadSuccess: true,
       debug: false,
     ));
+    await PluginRegistryService.I.upsert(PluginInfo(
+      uuid: hanimeSourceId,
+      version: 'cold-settings',
+      originScript: 'Hanime fixture',
+      insertedAt: DateTime.utc(2026),
+      updatedAt: DateTime.utc(2026),
+      isEnabled: true,
+      isDeleted: false,
+      lastLoadSuccess: true,
+      debug: false,
+      getInfoJson: jsonEncode({
+        'name': 'Hanime1',
+        'function': [
+          {'action': {'type': 'openVideoCatalog', 'payload': {
+            'url': _hanimeHome.toString(),
+            'nativeAccount': true,
+            'nativeAuth': true,
+            'catalogFnPath': 'getCatalog',
+            'detailFnPath': 'getVideoDetail',
+            'playbackFnPath': 'getPlayback',
+            'tabs': [
+              {'id': 'me', 'title': '我的', 'url': _hanimeHome.resolve('/login').toString(), 'mode': 'account'},
+            ],
+            'selectors': {
+              for (final key in [
+                'row', 'rowTitle', 'rowCards', 'cards', 'cardLink',
+                'cardTitle', 'cardImage', 'cardSubtitle', 'cardDuration',
+                'detailTitle', 'detailCover', 'detailDescription',
+                'detailTags', 'episodes', 'related', 'video',
+              ]) key: key,
+            },
+          }}},
+        ],
+      }),
+    ));
   });
   tearDownAll(TestObjectBoxHelper.tearDownTestObjectBox);
   setUp((){
     SharedPreferences.setMockInitialValues({});api.imageCalls=0;api.declaredWebAccount=false;pluginSessionWriteFence.advance(omoNetworkSource);
+    api.accountOrigin = null;
     api.webLoginFunction = null;
     api.webLoginField = false;
     api.webLoginChangesSession = false;
+    api.legacyParseSetting = false;
     api.webLoginResponse = null;
     api.webLoginCalls.clear();
     previous=InAppWebViewPlatform.instance;web=_Web();InAppWebViewPlatform.instance=web;
@@ -471,6 +540,7 @@ void main(){
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     final add = find.byKey(const ValueKey('saved-account-add'));
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
     await tester.tap(add);
     await tester.tap(add, warnIfMissed: false);
     await tester.pump();
@@ -502,7 +572,9 @@ void main(){
     expect(find.byType(NativeVideoAuthForm), findsOneWidget);
     Navigator.of(tester.element(find.byType(NativeVideoAuthForm))).pop();
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('saved-account-add')), findsOneWidget);
+    expect(add.hitTestable(), findsOneWidget);
+    expect(tester.widget<ListTile>(add).onTap, isNotNull);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(find.text(t.accountProfiles.switchFailed), findsNothing);
     expect(web.restorationCookies!.single.value, 'first-fixture-session');
     expect(PluginAccountIdentities.current(omoNetworkSource)?.serverIdentity, '42');
@@ -780,6 +852,146 @@ void main(){
       await tester.pumpWidget(const SizedBox());await tester.pump();
     },createHttpClient:(_)=>images);
   },variant:TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  for (final signedIn in [true, false]) {
+    testWidgets('cold Hanime settings exposes ${signedIn ? 'the verified account' : 'direct login'}', (tester) async {
+      api.declaredWebAccount = true;
+      api.accountOrigin = _hanimeHome;
+      api.legacyParseSetting = true;
+      web.commitWithoutFinishing = true;
+      pluginSessionWriteFence.advance(hanimeSourceId);
+      web.reply = signedIn
+          ? {'id': '88', 'label': 'Cold Hanime member'}
+          : {'status': 'signedOut'};
+      await mount(tester, source: hanimeSourceId);
+      expect(web.loads, [_hanimeHome]);
+      expect(web.reads, 1);
+      expect(find.text('解析等待'), findsNothing);
+      expect(find.text('清晰度偏好'), findsOneWidget);
+      expect(find.byType(PluginUserInfoCard), signedIn ? findsOneWidget : findsNothing);
+      expect(find.text('Cold Hanime member'), signedIn ? findsOneWidget : findsNothing);
+      expect(find.byKey(const ValueKey('plugin-settings-direct-login')), signedIn ? findsNothing : findsOneWidget);
+      expect(find.text(t.plugin.switchAccount), findsOneWidget);
+      expect(PluginAccountSyncCoordinator.instance.hasProfileAccess(hanimeSourceId), isTrue);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+    }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+  }
+
+  testWidgets('cold Hanime settings switches to the saved account and refreshes the card', (tester) async {
+    const source = hanimeSourceId;
+    api.declaredWebAccount = true;
+    api.accountOrigin = _hanimeHome;
+    pluginSessionWriteFence.advance(source);
+    final original = readHostPluginConfiguration(source);
+    addTearDown(() => replaceActivePluginAccount(source, activePluginAccountSnapshot(original)));
+    replaceActivePluginAccount(source, {
+      'account.backup': {
+        'version': 1,
+        'origin': _hanimeHome.origin,
+        'cookies': [
+          {'name': 'session', 'value': 'fixture-B', 'domain': _hanimeHome.host, 'path': '/', 'httpOnly': true, 'secure': true},
+        ],
+      },
+    });
+    await PluginAccountProfiles.rememberCurrent(source, identity: '102',
+      label: 'Saved Hanime member', origin: _hanimeHome.origin, kind: 'web',
+      serverIdentity: '102', verifiedWebSession: true);
+    final target = PluginAccountProfiles.read(source).profiles.values.singleWhere(
+      (profile) => profile.serverIdentity == '102',
+    );
+    replaceActivePluginAccount(source, {});
+    web.restorationCookies = [
+      Cookie(name: 'session', value: 'fixture-A', domain: _hanimeHome.host, path: '/', isHttpOnly: true, isSecure: true),
+    ];
+    web.hanimeAccountsByCookie.addAll({
+      'fixture-A': {'id': '101', 'label': 'Current Hanime member'},
+      'fixture-B': {
+        'id': '102',
+        'label': 'Saved Hanime member',
+        'avatarUrl': 'https://images.example/hanime.png?signature=fixture',
+      },
+    });
+    await mount(tester, source: source);
+    expect(find.text('Current Hanime member'), findsOneWidget);
+    await tester.tap(find.text(t.plugin.switchAccount));
+    await tester.pumpAndSettle();
+    final saved = find.byKey(ValueKey('saved-account-${target.id}'));
+    await tester.tap(saved);
+    await tester.pumpAndSettle();
+    expect(web.restorationCookies!.single.value, 'fixture-B');
+    expect(await PluginAccountProfiles.selected(source), target.id);
+    expect(find.text(t.accountProfiles.switchFailed), findsNothing);
+    expect(
+      tester.widget<PluginAccountAvatar>(
+        find.descendant(of: saved, matching: find.byType(PluginAccountAvatar)),
+      ).url,
+      'https://images.example/hanime.png?signature=fixture',
+    );
+    expect(PluginAccountProfiles.read(source).profiles[target.id]!.avatarUrl, isEmpty);
+    Navigator.of(tester.element(saved)).pop();
+    await tester.pumpAndSettle();
+    expect(find.text('Saved Hanime member'), findsOneWidget);
+    expect(PluginAccountIdentities.current(source)?.serverIdentity, '102');
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
+
+  for (final addAccount in [false, true]) {
+    testWidgets(
+      'Hanime ${addAccount ? 'add account' : 'continue login'} opens a visible login when background identity is unavailable',
+      (tester) async {
+        const source = hanimeSourceId;
+        api.declaredWebAccount = true;
+        api.accountOrigin = _hanimeHome;
+        pluginSessionWriteFence.advance(source);
+        web.reply = {'status': 'unknown'};
+        web.holdHanimeLoginDocument = true;
+        web.restorationCookies = [
+          Cookie(name: 'cf_clearance', value: 'fixture', path: '/'),
+        ];
+        final before = activePluginAccountSnapshot(readHostPluginConfiguration(source));
+        await PluginAccountProfiles.rememberCredentials(source, {
+          'version': 1,
+          'origin': _hanimeHome.origin,
+          'deleted': false,
+          'account': 'saved@example.test',
+          'password': 'fixture',
+        });
+        final saved = PluginAccountProfiles.read(source).profiles.values.singleWhere(
+          (profile) => profile.identity == 'saved@example.test',
+        );
+        await mount(tester, source: source);
+        await tester.tap(find.text(t.plugin.switchAccount));
+        await tester.pumpAndSettle();
+        if (!addAccount) {
+          await tester.tap(find.byKey(ValueKey('saved-account-${saved.id}')));
+          await tester.pumpAndSettle();
+          expect(find.text(t.accountProfiles.switchFailed), findsOneWidget);
+        }
+        await tester.tap(find.text(addAccount
+          ? t.accountProfiles.add
+          : t.accountProfiles.continueLogin));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        final login = tester.widget<NativeVideoCatalogPage>(find.byType(NativeVideoCatalogPage));
+        expect(login.initialUrl, _hanimeHome.resolve('/login'));
+        expect(login.accountLoginUsername, addAccount ? '' : 'saved@example.test');
+        expect(web.restorationCookies!.single.name, 'cf_clearance');
+        expect(activePluginAccountSnapshot(readHostPluginConfiguration(source)), before);
+        expect(PluginAccountIdentities.current(source), isNull);
+        expect(await PluginAccountProfiles.selected(source), isNull);
+        Navigator.of(tester.element(find.byType(NativeVideoCatalogPage))).pop();
+        await tester.pumpAndSettle();
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+  }
 
   testWidgets('declared Hanime Web account uses its confirmed origin image transport without inventing an image API', (tester) async {
     final visibility = VisibilityDetectorController.instance;

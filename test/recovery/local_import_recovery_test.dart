@@ -1,17 +1,35 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter/services.dart';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:objectbox/objectbox.dart' show TxMode;
 import 'package:shared_preferences/shared_preferences.dart';
+// ignore: depend_on_referenced_packages
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/service/local_appearance_images.dart';
 import 'package:zephyr/service/local_import_recovery.dart';
 
 import '../test_helper.dart';
+
+class _RejectPreferenceOnce extends InMemorySharedPreferencesStore {
+  _RejectPreferenceOnce(super.data) : super.withData();
+
+  String? rejectKey;
+
+  @override
+  Future<bool> setValue(String type, String key, Object value) async {
+    if (key == rejectKey) {
+      rejectKey = null;
+      return false;
+    }
+    return super.setValue(type, key, value);
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -60,6 +78,32 @@ void main() {
         .toString();
     await file.writeAsString(jsonEncode(envelope));
   }
+
+  test('recovery retries a rejected preference rollback from disk', () async {
+    final previous = SharedPreferencesStorePlatform.instance;
+    final backend = _RejectPreferenceOnce({'flutter.owned': 'old'});
+    SharedPreferencesStorePlatform.instance = backend;
+    addTearDown(() {
+      SharedPreferences.resetStatic();
+      SharedPreferencesStorePlatform.instance = previous;
+    });
+
+    final checkpoint = await begin();
+    await checkpoint.beforePreferences({'owned': 'new'});
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('owned', 'new');
+    backend.rejectKey = 'flutter.owned';
+
+    await expectLater(recover(), throwsA(isA<LocalImportRecoveryFailed>()));
+    final journal = File('${recovery.path}/pending.json');
+    expect(await journal.exists(), isTrue);
+    expect((await backend.getAll())['flutter.owned'], 'new');
+
+    await recover();
+    expect(await journal.exists(), isFalse);
+    await prefs.reload();
+    expect(prefs.getString('owned'), 'old');
+  });
 
   for (final databaseCommitted in [false, true]) {
     test(

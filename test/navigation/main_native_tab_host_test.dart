@@ -168,18 +168,17 @@ void main() {
           reason: 'The real page must paint behind the native island',
         );
         expect(viewport.bottom, greaterThan(nav.top));
-        // The dependency itself paints a full-width custom-bar decoration.
+        // The package retains the tab routes while the host overlays the island.
+        final tabs = find.byType(PersistentTabView);
+        final tabWidget = tester.widget<PersistentTabView>(tabs);
+        expect(tabWidget.navBarHeight, 0);
+        expect(tabWidget.backgroundColor, Colors.transparent);
         final platform = find.descendant(
           of: find.byType(VideoNativeNavigation),
           matching: find.byType(UiKitView),
         );
-        final deck = find
-            .ancestor(of: platform, matching: find.byType(DecoratedBox))
-            .first;
-        expect(
-          (tester.widget<DecoratedBox>(deck).decoration as BoxDecoration).color,
-          Colors.transparent,
-        );
+        expect(platform, findsOneWidget);
+        expect(find.ancestor(of: platform, matching: tabs), findsNothing);
         final scrollable = find
             .descendant(
               of: find.byType(CustomScrollView),

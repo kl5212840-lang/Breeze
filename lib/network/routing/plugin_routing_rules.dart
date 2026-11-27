@@ -89,6 +89,8 @@ const routingSources = [
   ]),
   RoutingSource('b28da416-f2d4-4208-a85e-8b4c7c648e48', '拷贝漫画', [
     'www.mangacopy.com',
+    'api.copy202602.com',
+    'mapi.mangacopy.com',
     'api.mangacopy.com',
     'api.copy2000.online',
     'api.copy3000.com',
@@ -96,6 +98,7 @@ const routingSources = [
     'mapi.copy2000.site',
     'api.2025copy.com',
     'api.2026copy.com',
+    'api.copy4000.com',
     '2026copy.com',
     'mapi.hotmangasd.com',
     'api.manga2025.com',

@@ -1,3 +1,4 @@
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
@@ -84,9 +85,10 @@ class _OldHomePageState extends State<OldHomePage> {
           ? AppBar(
               title: Text(t.oldHome.title),
               actions: [
-                IconButton(
+                SourceChromeIconButton(
                   tooltip: t.oldHome.search,
-                  icon: const Icon(Icons.search),
+                  icon: Icons.search,
+                  symbol: 'magnifyingglass',
                   onPressed: () => context.pushRoute(
                     SearchRoute(
                       searchState: SearchStates.initial(),

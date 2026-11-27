@@ -12,15 +12,19 @@ class VideoDownloadResolutionFailure implements Exception {
 /// One parsing attempt. A source gate can retire early only after the exact
 /// browser/runtime owner acknowledges cancellation, never from a UI flag.
 class VideoDownloadResolutionOwner {
-  VideoDownloadResolutionOwner(this.source, {this.cooperative = false})
-    : token =
-          'video-resolve-${DateTime.now().microsecondsSinceEpoch}-${++_sequence}';
+  VideoDownloadResolutionOwner(
+    this.source, {
+    this.cooperative = false,
+    this.passive = false,
+  }) : token =
+           'video-resolve-${DateTime.now().microsecondsSinceEpoch}-${++_sequence}';
   static int _sequence = 0;
   static final _zoneKey = Object();
   static VideoDownloadResolutionOwner? get current =>
       Zone.current[_zoneKey] as VideoDownloadResolutionOwner?;
   final String source, token;
   final bool cooperative;
+  final bool passive;
   final _callbacks = <Object, Future<void> Function()>{};
   final _cleanups = <void Function()>[];
   final _stopped = Completer<void>();

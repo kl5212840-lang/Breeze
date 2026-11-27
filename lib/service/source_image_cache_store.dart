@@ -24,7 +24,15 @@ class SourceImageCacheStore {
     var bytes = 0;
     for (final segment in sourceSegments) {
       await for (final file in _files(p.join(root, segment))) {
-        bytes += await file.length();
+        try {
+          bytes += await file.length();
+        } on FileSystemException {
+          // Another cache consumer can remove the file after enumeration.
+          if (await FileSystemEntity.type(file.path, followLinks: false) !=
+              FileSystemEntityType.notFound) {
+            rethrow;
+          }
+        }
       }
     }
     return bytes;

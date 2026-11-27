@@ -14,11 +14,6 @@ _SearchStates _$SearchStatesFromJson(Map<String, dynamic> json) =>
       pluginExtern:
           json['pluginExtern'] as Map<String, dynamic>? ??
           const <String, dynamic>{},
-      aggregateSources:
-          (json['aggregateSources'] as Map<String, dynamic>?)?.map(
-            (k, e) => MapEntry(k, e as bool),
-          ) ??
-          const <String, bool>{},
     );
 
 Map<String, dynamic> _$SearchStatesToJson(_SearchStates instance) =>
@@ -27,5 +22,4 @@ Map<String, dynamic> _$SearchStatesToJson(_SearchStates instance) =>
       'searchKeyword': instance.searchKeyword,
       'sortBy': instance.sortBy,
       'pluginExtern': instance.pluginExtern,
-      'aggregateSources': instance.aggregateSources,
     };

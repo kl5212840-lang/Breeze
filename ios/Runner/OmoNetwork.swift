@@ -96,10 +96,10 @@ final class OmoNetworkLease {
     visit.assetDownloadConfiguration(identifier: identifier)
   }
   func isFirstParty(_ url: URL) -> Bool { visit.firstParty(url) }
-  func downloadTask(with request: URLRequest, delegate: URLSessionDownloadDelegate) -> (URLSession, URLSessionDownloadTask)? {
-    visit.downloadTask(with: request, delegate: delegate)
+  func downloadTask(with request: URLRequest, streaming: Bool, delegate: URLSessionTaskDelegate) -> (URLSession, URLSessionTask)? {
+    visit.downloadTask(with: request, streaming: streaming, delegate: delegate)
   }
-  func removeDownload(_ task: URLSessionDownloadTask) { visit.removeDownload(task) }
+  func removeDownload(_ task: URLSessionTask) { visit.removeDownload(task) }
   deinit {
     let callback = release
     if Thread.isMainThread { callback?() } else { DispatchQueue.main.async { callback?() } }
@@ -286,7 +286,7 @@ private final class OmoNetworkVisit {
     // remaining bytes and cancels them; only delegate routing ends here.
     taskTransfers.removeValue(forKey: task.taskIdentifier)?.complete(error)
   }
-  fileprivate func downloadTask(with request: URLRequest, delegate: URLSessionDownloadDelegate) -> (URLSession, URLSessionDownloadTask)? {
+  fileprivate func downloadTask(with request: URLRequest, streaming: Bool, delegate: URLSessionTaskDelegate) -> (URLSession, URLSessionTask)? {
     guard !closed, let session, let url = request.url, OmoNetworkTransfer.publicURL(url),
           request.httpMethod == nil || request.httpMethod == "GET" else { return nil }
     // Export media never receives website cookies, even on a first-party host.
@@ -294,7 +294,7 @@ private final class OmoNetworkVisit {
     safe.setValue(nil, forHTTPHeaderField: "Cookie")
     safe.setValue(nil, forHTTPHeaderField: "Authorization")
     if safe.value(forHTTPHeaderField: "User-Agent") == nil, let userAgent { safe.setValue(userAgent, forHTTPHeaderField: "User-Agent") }
-    let task = session.downloadTask(with: safe)
+    let task: URLSessionTask = streaming ? session.dataTask(with: safe) : session.downloadTask(with: safe)
     downloads[task.taskIdentifier] = OmoNetworkDownloadObserver(delegate)
     return (session, task)
   }
@@ -307,7 +307,7 @@ private final class OmoNetworkVisit {
     if let userAgent { copy.httpAdditionalHeaders = ["User-Agent": userAgent] }
     return copy
   }
-  fileprivate func downloadDelegate(_ task: URLSessionTask) -> URLSessionDownloadDelegate? { downloads[task.taskIdentifier]?.delegate }
+  fileprivate func downloadDelegate(_ task: URLSessionTask) -> URLSessionTaskDelegate? { downloads[task.taskIdentifier]?.delegate }
   fileprivate func removeDownload(_ task: URLSessionTask) { downloads.removeValue(forKey: task.taskIdentifier) }
 
   func close() {
@@ -323,19 +323,25 @@ private final class OmoNetworkVisit {
 /// URLSession retains its delegate until invalidation. A weak owner avoids a
 /// session/visit cycle, while task identifiers keep concurrent responses apart.
 private final class OmoNetworkDownloadObserver {
-  weak var delegate: URLSessionDownloadDelegate?
-  init(_ delegate: URLSessionDownloadDelegate) { self.delegate = delegate }
+  weak var delegate: URLSessionTaskDelegate?
+  init(_ delegate: URLSessionTaskDelegate) { self.delegate = delegate }
 }
 
 private final class OmoNetworkSessionDelegate: NSObject, URLSessionDataDelegate, URLSessionDownloadDelegate {
   weak var visit: OmoNetworkVisit?
   func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
                   completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+    if let delegate = visit?.downloadDelegate(dataTask) as? URLSessionDataDelegate {
+      delegate.urlSession?(session, dataTask: dataTask, didReceive: response, completionHandler: completionHandler)
+      return
+    }
     guard let transfer = visit?.transfer(dataTask) else { completionHandler(.cancel); return }
     transfer.receive(response, completionHandler: completionHandler)
   }
   func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-    visit?.transfer(dataTask)?.receive(data)
+    if let delegate = visit?.downloadDelegate(dataTask) as? URLSessionDataDelegate {
+      delegate.urlSession?(session, dataTask: dataTask, didReceive: data)
+    } else { visit?.transfer(dataTask)?.receive(data) }
   }
   func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
     if let delegate = visit?.downloadDelegate(task) {
@@ -344,11 +350,12 @@ private final class OmoNetworkSessionDelegate: NSObject, URLSessionDataDelegate,
     } else { visit?.complete(task, error: error) }
   }
   func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-    visit?.downloadDelegate(downloadTask)?.urlSession(session, downloadTask: downloadTask, didFinishDownloadingTo: location)
+    (visit?.downloadDelegate(downloadTask) as? URLSessionDownloadDelegate)?
+      .urlSession(session, downloadTask: downloadTask, didFinishDownloadingTo: location)
   }
   func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
                   totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-    visit?.downloadDelegate(downloadTask)?.urlSession?(session, downloadTask: downloadTask,
+    (visit?.downloadDelegate(downloadTask) as? URLSessionDownloadDelegate)?.urlSession?(session, downloadTask: downloadTask,
       didWriteData: bytesWritten, totalBytesWritten: totalBytesWritten, totalBytesExpectedToWrite: totalBytesExpectedToWrite)
   }
   func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
@@ -422,7 +429,8 @@ private final class OmoNetworkTransfer {
   }
   func receive(_ response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
     guard let response = response as? HTTPURLResponse, let url = response.url, Self.publicURL(url) else { completionHandler(.cancel); cancel(); return }
-    let allowed = ["content-type", "content-length", "content-range", "accept-ranges", "last-modified", "etag"]
+    let allowed = ["content-type", "content-length", "content-range", "accept-ranges", "last-modified", "etag", "retry-after",
+      "cache-control", "age", "expires", "pragma", "vary"]
     var headers: [String: String] = [:]
     for (key, value) in response.allHeaderFields { let name = String(describing: key).lowercased(); if allowed.contains(name) { headers[name] = String(describing: value) } }
     started?(["status": response.statusCode, "url": url.absoluteString, "headers": headers]); started = nil

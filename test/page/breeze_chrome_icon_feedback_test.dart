@@ -124,5 +124,5 @@ void main() {
     expect(find.text('Manage'), findsNothing);
     expect(tester.widget<IconButton>(more).isSelected, isFalse);
     await tester.pumpWidget(const SizedBox.shrink());
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 }

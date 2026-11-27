@@ -67,10 +67,11 @@ VideoBookshelfRow _row(
 );
 
 class _Data {
-  _Data(this.rows) {
+  _Data(this.rows, {bool projectSourceFilter = false}) {
     source = VideoBookshelfPaneDataSource(
       load: (mode, search) async =>
           loader == null ? rows : await loader!(mode, search),
+      projectSourceFilter: projectSourceFilter,
       sourceNames: () async => {'a': '来源甲', 'b': '来源乙'},
       open: (_, row) async => opened.add(row),
       remove: (mode, selected) async {
@@ -853,6 +854,68 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  for (final mode in [ShelfPageMode.history, ShelfPageMode.favorite]) {
+    testWidgets(
+      '${mode.name} source chips keep existing covers during a read',
+      (tester) async {
+        final all = [_row('a'), _row('b')];
+        final data = _Data(all, projectSourceFilter: true);
+        addTearDown(data.dispose);
+        final reads = <SearchStatusState>[];
+        final refreshed = Completer<List<VideoBookshelfRow>>();
+        data.loader = (_, search) async {
+          reads.add(search);
+          return reads.length == 1 ? all : refreshed.future;
+        };
+        await _mount(tester, data, mode: mode);
+        await tester.pumpAndSettle();
+        final cover = find.byWidgetPredicate(
+          (widget) => widget is ApiVideoPoster && widget.item.id == 'key-b-1',
+        );
+        final element = tester.element(cover);
+        final viewport = tester.state<ScrollableState>(
+          find.byType(Scrollable).last,
+        );
+
+        data.changes.value++;
+        await tester.pump();
+        await _mount(
+          tester,
+          data,
+          mode: mode,
+          search: const SearchStatusState(sources: ['b']),
+        );
+        expect(_collection(tester).items.map((item) => item.id), ['key-b-1']);
+        expect(_collection(tester).loading, isFalse);
+        expect(tester.element(cover), same(element));
+        expect(
+          tester.state<ScrollableState>(find.byType(Scrollable).last),
+          same(viewport),
+        );
+        expect(reads, [const SearchStatusState(), const SearchStatusState()]);
+
+        await _mount(
+          tester,
+          data,
+          mode: mode,
+          search: const SearchStatusState(sources: ['a']),
+        );
+        expect(_collection(tester).items.map((item) => item.id), ['key-a-1']);
+        refreshed.complete([_row('b', id: '2'), _row('a')]);
+        await tester.pumpAndSettle();
+        expect(_collection(tester).items.map((item) => item.id), ['key-a-1']);
+
+        await _mount(tester, data, mode: mode);
+        expect(_collection(tester).items.map((item) => item.id), [
+          'key-b-2',
+          'key-a-1',
+        ]);
+        expect(reads, hasLength(2));
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets(
     'same resource IDs from different sources open the actual matching row',

@@ -78,7 +78,6 @@ class SourceDownloadedVideosPage extends StatefulWidget {
 
 class _SourceDownloadedVideosPageState
     extends State<SourceDownloadedVideosPage> {
-  late Future<List<Map<String, dynamic>>> _rows;
   late final _hanimeFacts = widget.source == hanimeSourceId
       ? HanimeWorkFactsStore.read()
       : null;
@@ -88,7 +87,9 @@ class _SourceDownloadedVideosPageState
   ShelfFacetSelection _facets = const ShelfFacetSelection();
   bool _openingFilters = false;
   bool _searching = false, _managing = false, _busy = false;
-  List<Map<String, dynamic>> _snapshot = [];
+  List<Map<String, dynamic>>? _snapshot;
+  bool _readFailed = false;
+  bool _reading = false;
   final _selected = <String>{};
   int _readEpoch = 0;
   final _searchFocus = FocusNode();
@@ -96,25 +97,47 @@ class _SourceDownloadedVideosPageState
   @override
   void initState() {
     super.initState();
-    _rows = _read();
+    unawaited(_read());
     VideoLocalResources.changes.addListener(_changed);
   }
 
-  Future<List<Map<String, dynamic>>> _read() async {
+  Future<void> _read() async {
     final epoch = ++_readEpoch;
-    final rows = widget.groupDownloads
-        ? (await DownloadCenterResources.readVideos())
-              .where((row) => row['source'] == widget.source)
-              .toList()
-        : sourcePlayableVideoRows(
-            await VideoLocalResources.read(),
-            widget.source,
-          );
-    if (mounted && widget.groupDownloads && epoch == _readEpoch)
+    final source = widget.source;
+    _reading = true;
+    void publish(List<Map<String, dynamic>> rows) {
+      if (!mounted || epoch != _readEpoch) return;
       setState(() {
         _snapshot = rows;
+        _readFailed = false;
+        _reading = false;
       });
-    return rows;
+    }
+
+    try {
+      if (widget.groupDownloads) {
+        List<Map<String, dynamic>> atSource(List<Map<String, dynamic>> rows) =>
+            rows.where((row) => row['source'] == source).toList();
+        final read = DownloadCenterResources.readVideoPhases();
+        publish(atSource(await read.verified));
+        unawaited(
+          read.enriched.then(
+            (rows) => publish(atSource(rows)),
+            onError: (Object _, StackTrace _) {},
+          ),
+        );
+      } else {
+        publish(
+          sourcePlayableVideoRows(await VideoLocalResources.read(), source),
+        );
+      }
+    } catch (_) {
+      if (!mounted || epoch != _readEpoch) return;
+      setState(() {
+        _readFailed = true;
+        _reading = false;
+      });
+    }
   }
 
   List<DownloadCenterDisplayItem> _entries(List<Map<String, dynamic>> rows) {
@@ -181,14 +204,13 @@ class _SourceDownloadedVideosPageState
     fields: item.facetFields,
   );
   Future<void> _editFilters() async {
-    if (_openingFilters || _busy) return;
+    final rows = _snapshot;
+    if (_openingFilters || _busy || rows == null) return;
     _openingFilters = true;
     _openSwipe.value = null;
     _searchFocus.unfocus();
     final source = widget.source;
     try {
-      final rows = await _rows;
-      if (!mounted || source != widget.source) return;
       final selection = await showDownloadFilterSheet(
         context,
         entries: sourceVideoDownloadItems(
@@ -212,7 +234,7 @@ class _SourceDownloadedVideosPageState
   }
 
   List<DownloadCenterItem> get _visibleItems => _entries(
-    _snapshot,
+    _snapshot ?? const [],
   ).expand((entry) => entry.work?.episodes ?? [entry.item]).toList();
   void _toggleItems(List<DownloadCenterItem> items) => setState(() {
     final keys = items.map((item) => item.key).toSet();
@@ -238,7 +260,7 @@ class _SourceDownloadedVideosPageState
         setState(() {
           _selected.clear();
           _managing = false;
-          _rows = _read();
+          unawaited(_read());
         });
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -313,7 +335,7 @@ class _SourceDownloadedVideosPageState
   }
 
   void _changed() {
-    if (mounted) setState(() => _rows = _read());
+    if (mounted) setState(() => unawaited(_read()));
   }
 
   @override
@@ -354,6 +376,7 @@ class _SourceDownloadedVideosPageState
         title: _managing
             ? BookshelfSelectionToolbar(
                 keyPrefix: 'source-downloads.selection',
+                inTitleBar: true,
                 selectedCount: _visibleItems
                     .where((item) => _selected.contains(item.key))
                     .length,
@@ -400,196 +423,192 @@ class _SourceDownloadedVideosPageState
                 },
               ),
       ),
-      body: _selectionBody(
-        Column(
-          children: [
-            if (widget.groupDownloads && !_managing)
-              FutureBuilder<List<Map<String, dynamic>>>(
-                future: _rows,
-                builder: (context, snapshot) => SourceVideoResultsToolbar(
-                  keyPrefix: 'source-downloads',
-                  count: snapshot.hasData
-                      ? t.videoLibrary.results(
-                          count: _entries(snapshot.data!).length,
-                        )
-                      : snapshot.hasError
-                      ? t.common.unknown
-                      : t.common.loading,
-                  sort: _sort,
-                  sortOptions: {
-                    'recent': t.videoPersonal.recent,
-                    'title': t.videoLibrary.titleOrder,
-                  },
-                  showSortValue: true,
-                  onSort: _busy || !snapshot.hasData
-                      ? null
-                      : (value) => setState(() => _sort = value),
-                  filter: SourceChromeIconButton(
-                    key: const ValueKey('source-downloads.filters'),
-                    tooltip: t.videoFilters.title,
-                    symbol: CollectionCommandIcons.filter.symbol,
-                    selected: _facets.isActive,
-                    onPressed: _openingFilters || _busy || !snapshot.hasData
-                        ? null
-                        : _editFilters,
-                    icon: CollectionCommandIcons.filter.icon,
-                  ),
-                ),
-              ),
-            Expanded(
-              child: FutureBuilder<List<Map<String, dynamic>>>(
-                future: _rows,
-                builder: (context, snapshot) {
-                  if (snapshot.hasError)
-                    return Center(
-                      child: TextButton(
-                        onPressed: _changed,
-                        child: Text(t.common.retry),
-                      ),
-                    );
-                  if (!snapshot.hasData)
-                    return const Center(child: CircularProgressIndicator());
-                  if (widget.groupDownloads) {
-                    final entries = _entries(snapshot.data!);
-                    if (entries.isEmpty)
-                      return Center(child: Text(t.common.empty));
-                    return CollectionCoverPrivacyScope(
-                      child: ListView.separated(
-                        key: PageStorageKey(
-                          'source-downloads.${widget.source}'
-                          '${_query.trim().isEmpty ? '' : '.lookup'}',
-                        ),
-                        padding: EdgeInsets.fromLTRB(
-                          16,
-                          4,
-                          16,
-                          _managing
-                              ? BookshelfFloatingSelectionActions
-                                    .contentBottomPadding
-                              : 24,
-                        ),
-                        itemCount: entries.length,
-                        separatorBuilder: (_, _) =>
-                            const WorkListDivider(height: 8),
-                        itemBuilder: (context, index) {
-                          final entry = entries[index],
-                              work = entries[index].work;
-                          if (work == null)
-                            return SourceDownloadedEpisodeRow(
-                              item: entry.item,
-                              openSwipe: _openSwipe,
-                              enabled: !_busy,
-                              hanimeFacts: _hanimeFacts,
-                              selecting: _managing,
-                              selected: _selected.contains(entry.item.key),
-                              onSelect: () => _toggleItems([entry.item]),
-                              onManage: () => _manageItems([entry.item]),
-                            );
-                          return SourceDownloadedWorkCard(
-                            key: ValueKey('source-download-work.${work.key}'),
-                            work: work,
-                            openSwipe: _openSwipe,
-                            hanimeFacts: _hanimeFacts,
-                            selecting: _managing,
-                            selected: _selected.containsAll(
-                              work.episodes.map((item) => item.key),
-                            ),
-                            enabled: !_busy,
-                            onOpen: () => _managing
-                                ? _toggleItems(work.episodes)
-                                : unawaited(
-                                    openSourceDownloadedWork(context, work),
-                                  ),
-                            onManage: () => _manageItems(work.episodes),
-                            onRemove: () =>
-                                unawaited(_deleteItems(work.episodes)),
-                          );
-                        },
-                      ),
-                    );
-                  }
-                  final matches = keywordTitleMatcher(_query);
-                  final rows = snapshot.data!.where((row) {
-                    final title = '${row['title'] ?? ''}';
-                    final public = row['publicSearchText'];
-                    return matches([
-                      title,
-                      if (!_titleOnly && public is String) public,
-                    ]);
-                  }).toList();
-                  if (rows.isEmpty) return Center(child: Text(t.common.empty));
-                  return CollectionCoverPrivacyScope(
-                    child: ListView.separated(
-                      key: PageStorageKey(
-                        'source-downloads.playable.${widget.source}'
-                        '${_query.trim().isEmpty ? '' : '.lookup'}',
-                      ),
-                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-                      itemCount: rows.length,
-                      separatorBuilder: (_, _) =>
-                          const WorkListDivider(height: 12),
-                      itemBuilder: (context, index) {
-                        final row = rows[index];
-                        return InkWell(
-                          key: ValueKey('source-download.${row['resourceId']}'),
-                          onTap: () => unawaited(
-                            openLocalVideo(
-                              context,
-                              row['resourceId'] as String,
-                            ),
-                          ),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              DownloadVideoTaskCover(
-                                row: row,
-                                localOnly: true,
-                                fallback: const Icon(Icons.play_arrow_rounded),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      '${row['title'] ?? ''}',
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: Theme.of(
-                                        context,
-                                      ).textTheme.titleSmall,
-                                    ),
-                                    if ('${row['quality'] ?? ''}'
-                                        .isNotEmpty) ...[
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        '${row['quality']}',
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.bodySmall,
-                                      ),
-                                    ],
-                                    if (_hanimeFacts != null)
-                                      HanimeCachedWorkStatistics(
-                                        facts: _hanimeFacts,
-                                        url: row['url'],
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
+      body: _buildBody(context),
     ),
   );
+
+  Widget _buildBody(BuildContext context) {
+    final rows = _snapshot;
+    final entries = widget.groupDownloads && rows != null
+        ? _entries(rows)
+        : null;
+    return Column(
+      children: [
+        if (widget.groupDownloads && !_managing)
+          SourceVideoResultsToolbar(
+            keyPrefix: 'source-downloads',
+            count: entries != null
+                ? t.videoLibrary.results(count: entries.length)
+                : _readFailed && !_reading
+                ? t.common.unknown
+                : t.common.loading,
+            sort: _sort,
+            sortOptions: {
+              'recent': t.videoPersonal.recent,
+              'title': t.videoLibrary.titleOrder,
+            },
+            showSortValue: true,
+            onSort: _busy || rows == null
+                ? null
+                : (value) => setState(() => _sort = value),
+            filter: SourceChromeIconButton(
+              key: const ValueKey('source-downloads.filters'),
+              bare: true,
+              tooltip: t.videoFilters.title,
+              symbol: CollectionCommandIcons.filter.symbol,
+              selected: _facets.isActive,
+              onPressed: _openingFilters || _busy || rows == null
+                  ? null
+                  : _editFilters,
+              icon: CollectionCommandIcons.filter.icon,
+            ),
+          ),
+        Expanded(
+          child: _selectionBody(
+            rows == null
+                ? Center(
+                    child: _readFailed && !_reading
+                        ? _retryButton()
+                        : const CircularProgressIndicator(),
+                  )
+                : _buildResults(context, rows, entries),
+          ),
+        ),
+        if (rows != null && _readFailed)
+          SafeArea(
+            top: false,
+            child: Align(
+              alignment: AlignmentDirectional.centerEnd,
+              child: _retryButton(),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _retryButton() => TextButton(
+    onPressed: _busy || _reading ? null : _changed,
+    child: Text('${t.common.loadingFailed} · ${t.common.retry}'),
+  );
+
+  Widget _buildResults(
+    BuildContext context,
+    List<Map<String, dynamic>> rows,
+    List<DownloadCenterDisplayItem>? entries,
+  ) {
+    if (entries != null) {
+      if (entries.isEmpty) return Center(child: Text(t.common.empty));
+      return CollectionCoverPrivacyScope(
+        child: ListView.separated(
+          key: PageStorageKey(
+            'source-downloads.${widget.source}'
+            '${_query.trim().isEmpty ? '' : '.lookup'}',
+          ),
+          padding: EdgeInsets.fromLTRB(
+            16,
+            4,
+            16,
+            _managing
+                ? BookshelfFloatingSelectionActions.contentBottomPadding
+                : 24,
+          ),
+          itemCount: entries.length,
+          separatorBuilder: (_, _) => const WorkListDivider(height: 8),
+          itemBuilder: (context, index) {
+            final entry = entries[index], work = entries[index].work;
+            if (work == null)
+              return SourceDownloadedEpisodeRow(
+                item: entry.item,
+                openSwipe: _openSwipe,
+                enabled: !_busy,
+                hanimeFacts: _hanimeFacts,
+                selecting: _managing,
+                selected: _selected.contains(entry.item.key),
+                onSelect: () => _toggleItems([entry.item]),
+                onManage: () => _manageItems([entry.item]),
+              );
+            return SourceDownloadedWorkCard(
+              key: ValueKey('source-download-work.${work.key}'),
+              work: work,
+              openSwipe: _openSwipe,
+              hanimeFacts: _hanimeFacts,
+              selecting: _managing,
+              selected: _selected.containsAll(
+                work.episodes.map((item) => item.key),
+              ),
+              enabled: !_busy,
+              onOpen: () => _managing
+                  ? _toggleItems(work.episodes)
+                  : unawaited(openSourceDownloadedWork(context, work)),
+              onManage: () => _manageItems(work.episodes),
+              onRemove: () => unawaited(_deleteItems(work.episodes)),
+            );
+          },
+        ),
+      );
+    }
+    final matches = keywordTitleMatcher(_query);
+    final matchesRows = rows.where((row) {
+      final title = '${row['title'] ?? ''}';
+      final public = row['publicSearchText'];
+      return matches([title, if (!_titleOnly && public is String) public]);
+    }).toList();
+    if (matchesRows.isEmpty) return Center(child: Text(t.common.empty));
+    return CollectionCoverPrivacyScope(
+      child: ListView.separated(
+        key: PageStorageKey(
+          'source-downloads.playable.${widget.source}'
+          '${_query.trim().isEmpty ? '' : '.lookup'}',
+        ),
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+        itemCount: matchesRows.length,
+        separatorBuilder: (_, _) => const WorkListDivider(height: 12),
+        itemBuilder: (context, index) {
+          final row = matchesRows[index];
+          return InkWell(
+            key: ValueKey('source-download.${row['resourceId']}'),
+            onTap: () =>
+                unawaited(openLocalVideo(context, row['resourceId'] as String)),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                DownloadVideoTaskCover(
+                  row: row,
+                  localOnly: true,
+                  fallback: const Icon(Icons.play_arrow_rounded),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${row['title'] ?? ''}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      if ('${row['quality'] ?? ''}'.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          '${row['quality']}',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                      if (_hanimeFacts != null)
+                        HanimeCachedWorkStatistics(
+                          facts: _hanimeFacts,
+                          url: row['url'],
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
 }

@@ -38,11 +38,14 @@ class PluginStoreStatusBanner extends StatelessWidget {
           leading,
           const SizedBox(width: 12),
           Expanded(
-            child: SelectableText(
-              trimmedMessage,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(color: foregroundColor),
+            child: Semantics(
+              liveRegion: true,
+              child: Text(
+                trimmedMessage,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyMedium?.copyWith(color: foregroundColor),
+              ),
             ),
           ),
         ],

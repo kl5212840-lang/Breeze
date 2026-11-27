@@ -1,6 +1,7 @@
 import 'dart:async';
 
-import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoAlertDialog;
+import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoDialogRoute;
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
@@ -13,6 +14,15 @@ void main() {
     testWidgets('the Bika catalog shows one recoverable alert in $style', (
       tester,
     ) async {
+      final messenger = tester.binding.defaultBinaryMessenger;
+      const connectivity = MethodChannel(
+        'dev.fluttercommunity.plus/connectivity',
+      );
+      const connectivityStatus = MethodChannel(
+        'dev.fluttercommunity.plus/connectivity_status',
+      );
+      messenger.setMockMethodCallHandler(connectivity, (_) async => ['wifi']);
+      messenger.setMockMethodCallHandler(connectivityStatus, (_) async => null);
       final preference = ValueNotifier(style);
       var requests = 0;
       final manualRead = Completer<void>();
@@ -47,10 +57,18 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final alert = style == 'system'
-          ? find.byType(CupertinoAlertDialog)
-          : find.byType(AlertDialog);
+      final alert = find.byType(AlertDialog);
       expect(alert, findsOneWidget);
+      final route = ModalRoute.of(tester.element(alert));
+      expect(
+        route,
+        style == 'system'
+            ? isA<CupertinoDialogRoute<bool>>()
+            : isA<DialogRoute<bool>>(),
+      );
+      final widget = tester.widget<AlertDialog>(alert);
+      expect(widget.backgroundColor?.a, 1);
+      expect(widget.surfaceTintColor, Colors.transparent);
       expect(find.text(t.sourceShell.bikaConnectionNotice), findsOneWidget);
       final retry = find.descendant(
         of: alert,

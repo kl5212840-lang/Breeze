@@ -36,37 +36,40 @@ void main() {
   }
 
   group('ComicSyncCore.mergeUnifiedData', () {
-    test('a legacy follow check cannot bring back a cancelled follow', () async {
-      final started = DateTime.utc(2026, 11, 11, 9);
-      final cancelled = DateTime.utc(2026, 11, 12, 9);
-      final lateCheck = DateTime.utc(2026, 11, 12, 10);
-      final active = createFollow('test:old-follow', started);
-      final tombstone = active.copyWith(deleted: true, updatedAt: cancelled);
-      // The old host used the observation time as the edit time, even for a
-      // poll. A check finishing later is not a request to follow again.
-      final legacyObservation = active.copyWith(
-        updatedAt: lateCheck,
-        updateTime: lateCheck,
-        detectedChapterCount: 9,
-      );
-      final box = store.box<ComicFollow>()..put(tombstone);
-      await runMerge(store, {
-        ...buildPayload(),
-        'follows': [legacyObservation.toJson()],
-      });
-      expect(box.getAll().single.deleted, isTrue);
+    test(
+      'a legacy follow check cannot bring back a cancelled follow',
+      () async {
+        final started = DateTime.utc(2026, 11, 11, 9);
+        final cancelled = DateTime.utc(2026, 11, 12, 9);
+        final lateCheck = DateTime.utc(2026, 11, 12, 10);
+        final active = createFollow('test:old-follow', started);
+        final tombstone = active.copyWith(deleted: true, updatedAt: cancelled);
+        // The old host used the observation time as the edit time, even for a
+        // poll. A check finishing later is not a request to follow again.
+        final legacyObservation = active.copyWith(
+          updatedAt: lateCheck,
+          updateTime: lateCheck,
+          detectedChapterCount: 9,
+        );
+        final box = store.box<ComicFollow>()..put(tombstone);
+        await runMerge(store, {
+          ...buildPayload(),
+          'follows': [legacyObservation.toJson()],
+        });
+        expect(box.getAll().single.deleted, isTrue);
 
-      final explicitlyFollowedAgain = legacyObservation.copyWith(
-        createdAt: lateCheck,
-        updatedAt: lateCheck,
-      );
-      await runMerge(store, {
-        ...buildPayload(),
-        'follows': [explicitlyFollowedAgain.toJson()],
-      });
-      expect(box.getAll().single.deleted, isFalse);
-      expect(box.getAll().single.createdAt.toUtc(), lateCheck);
-    });
+        final explicitlyFollowedAgain = legacyObservation.copyWith(
+          createdAt: lateCheck,
+          updatedAt: lateCheck,
+        );
+        await runMerge(store, {
+          ...buildPayload(),
+          'follows': [explicitlyFollowedAgain.toJson()],
+        });
+        expect(box.getAll().single.deleted, isFalse);
+        expect(box.getAll().single.createdAt.toUtc(), lateCheck);
+      },
+    );
 
     test('a legacy observation cannot undo an acknowledged chapter', () async {
       final started = DateTime.utc(2026, 11, 11, 9);
@@ -77,6 +80,7 @@ void main() {
         lastChapterCount: 8,
         detectedChapterCount: 8,
         updatedAt: readAt,
+        lastChapterUpdateAt: readAt,
       );
       final legacyObservation = initial.copyWith(
         detectedChapterCount: 8,
@@ -85,6 +89,7 @@ void main() {
         hasUpdate: true,
       );
       final box = store.box<ComicFollow>()..put(alreadyRead);
+      expect(alreadyRead.toJson(), isNot(contains('lastChapterUpdateAt')));
       await runMerge(store, {
         ...buildPayload(),
         'follows': [legacyObservation.toJson()],
@@ -94,60 +99,70 @@ void main() {
       expect(merged.detectedChapterCount, 8);
       expect(merged.hasUpdate, isFalse);
       expect(merged.updateTime.toUtc(), lateCheck);
+      expect(merged.lastChapterUpdateAt?.toUtc(), readAt);
     });
 
-    test('follow sync combines the newer observation with the read baseline', () async {
-      final time = DateTime.utc(2026, 11, 12, 12);
-      final local = ComicFollow(
-        uniqueKey: 'test:1',
-        source: 'test',
-        comicId: '1',
-        title: 'Tracked comic',
-        description: '',
-        cover: '',
-        creator: '',
-        titleMeta: '',
-        metadata: '',
-        lastChapterCount: 11,
-        detectedChapterCount: 11,
-        hasUpdate: false,
-        updateTime: time,
-        deleted: false,
-        createdAt: time,
-        updatedAt: time.add(const Duration(minutes: 1)),
-        schemaVersion: 1,
-      );
-      final incoming = local.copyWith(
-        lastChapterCount: 10,
-        detectedChapterCount: 12,
-        detectedChapterTitle: 'Twelfth',
-        hasUpdate: true,
-        updateTime: time.add(const Duration(minutes: 2)),
-        updatedAt: time,
-      );
-      final box = store.box<ComicFollow>();
-      box.put(local);
-      await runMerge(store, {...buildPayload(), 'follows': [incoming.toJson()]});
-      final merged = box.getAll().single;
-      expect(merged.lastChapterCount, 11);
-      expect(merged.detectedChapterCount, 12);
-      expect(merged.detectedChapterTitle, 'Twelfth');
-      expect(merged.hasUpdate, isTrue);
-      expect(merged.updatedAt.toUtc(), local.updatedAt);
+    test(
+      'follow sync combines the newer observation with the read baseline',
+      () async {
+        final time = DateTime.utc(2026, 11, 12, 12);
+        final local = ComicFollow(
+          uniqueKey: 'test:1',
+          source: 'test',
+          comicId: '1',
+          title: 'Tracked comic',
+          description: '',
+          cover: '',
+          creator: '',
+          titleMeta: '',
+          metadata: '',
+          lastChapterCount: 11,
+          detectedChapterCount: 11,
+          hasUpdate: false,
+          updateTime: time,
+          deleted: false,
+          createdAt: time,
+          updatedAt: time.add(const Duration(minutes: 1)),
+          schemaVersion: 1,
+        );
+        final incoming = local.copyWith(
+          lastChapterCount: 10,
+          detectedChapterCount: 12,
+          detectedChapterTitle: 'Twelfth',
+          hasUpdate: true,
+          updateTime: time.add(const Duration(minutes: 2)),
+          updatedAt: time,
+        );
+        final box = store.box<ComicFollow>();
+        box.put(local);
+        await runMerge(store, {
+          ...buildPayload(),
+          'follows': [incoming.toJson()],
+        });
+        final merged = box.getAll().single;
+        expect(merged.lastChapterCount, 11);
+        expect(merged.detectedChapterCount, 12);
+        expect(merged.detectedChapterTitle, 'Twelfth');
+        expect(merged.hasUpdate, isTrue);
+        expect(merged.updatedAt.toUtc(), local.updatedAt);
 
-      final removed = merged.copyWith(
-        deleted: true,
-        updatedAt: time.add(const Duration(minutes: 3)),
-      );
-      box.put(removed);
-      final observedLater = incoming.copyWith(
-        updateTime: time.add(const Duration(minutes: 4)),
-        detectedChapterCount: 13,
-      );
-      await runMerge(store, {...buildPayload(), 'follows': [observedLater.toJson()]});
-      expect(box.getAll().single.deleted, isTrue);
-      expect(box.getAll().single.detectedChapterCount, 12);
-    });
+        final removed = merged.copyWith(
+          deleted: true,
+          updatedAt: time.add(const Duration(minutes: 3)),
+        );
+        box.put(removed);
+        final observedLater = incoming.copyWith(
+          updateTime: time.add(const Duration(minutes: 4)),
+          detectedChapterCount: 13,
+        );
+        await runMerge(store, {
+          ...buildPayload(),
+          'follows': [observedLater.toJson()],
+        });
+        expect(box.getAll().single.deleted, isTrue);
+        expect(box.getAll().single.detectedChapterCount, 12);
+      },
+    );
 
     test('merges favorites by LWW', () async {
       final localUpdated = DateTime.utc(2024, 1, 1, 12, 0);
@@ -269,17 +284,25 @@ void main() {
     });
 
     test('resolves folder uniqueKey conflict with tombstone winner', () async {
-      final localFolder = createFolder(
-        'conflict',
-        syncId: 'sync_local',
-        versionVector: {'device_local': 2},
-        deletedAt: DateTime.now().toUtc().millisecondsSinceEpoch,
-      );
-      final cloudFolder = createFolder(
-        'conflict',
-        syncId: 'sync_cloud',
-        versionVector: {'device_cloud': 1},
-      );
+      final activeAt = DateTime.utc(2026, 11, 25, 12).millisecondsSinceEpoch;
+      final deletedAt = DateTime.utc(2026, 11, 25, 13).millisecondsSinceEpoch;
+      final localFolder =
+          createFolder(
+              'conflict',
+              syncId: 'sync_local',
+              versionVector: {'device_local': 2},
+              deletedAt: deletedAt,
+            )
+            ..createdAt = activeAt
+            ..updatedAt = deletedAt;
+      final cloudFolder =
+          createFolder(
+              'conflict',
+              syncId: 'sync_cloud',
+              versionVector: {'device_cloud': 1},
+            )
+            ..createdAt = activeAt
+            ..updatedAt = activeAt;
       final cloudChild = createFolder(
         'child',
         syncId: 'child_sync',

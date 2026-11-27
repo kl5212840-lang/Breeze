@@ -1,4 +1,6 @@
 import 'package:zephyr/page/video/video_personal_snapshot_store.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
+import 'package:zephyr/page/video/hanime_work_facts.dart';
 import 'package:zephyr/page/comic_list/cubit/jm_collection_snapshots.dart';
 import 'package:zephyr/service/temporary_data_cache.dart';
 import 'package:material_ui/material_ui.dart';
@@ -10,6 +12,7 @@ import 'package:zephyr/util/get_path.dart';
 import 'package:zephyr/service/cache_workspace_guard.dart';
 import 'package:zephyr/service/source_image_cache_store.dart';
 import 'package:zephyr/src/rust/api/simple.dart';
+import 'package:zephyr/src/rust/api/qjs.dart';
 
 bool shouldCleanCacheOnStartup(GlobalSettingState state, int measuredBytes) {
   final cache = state.cacheSetting;
@@ -79,8 +82,12 @@ Future<void> clearCache(String cachePath, {String? source}) =>
         }
         await _imageCache(cachePath, source: source).clear();
         TemporaryDataCaches.clear(source: source);
+        clearHostResponseCache(source: source);
         await VideoPersonalSnapshotStore.clearDisk(source: source);
         await JmCollectionSnapshots.instance.clearDisk(source: source);
+        if (source == null || source == hanimeSourceId) {
+          await HanimeWorkFactsStore.clear();
+        }
         logger.d('Reloadable image cache cleared.');
       } catch (_) {
         throw const CacheCleanupFailed();

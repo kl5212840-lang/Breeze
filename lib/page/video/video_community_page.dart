@@ -1,3 +1,4 @@
+import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'dart:async';
 
@@ -53,6 +54,14 @@ class _VideoCommunityPageState extends State<VideoCommunityPage> {
   int _requestEpoch = 0;
   bool get _editing =>
       widget.editing || MediaQuery.viewInsetsOf(context).bottom > 0;
+  bool get _showPostGate =>
+      !widget.inline &&
+      !_loading &&
+      !_canPost &&
+      _error == null &&
+      _postGate != null;
+
+  int get _emptyRowCount => _items.isEmpty && _showPostGate ? 1 : 0;
 
   @override
   void initState() {
@@ -272,12 +281,13 @@ class _VideoCommunityPageState extends State<VideoCommunityPage> {
                   leading: const SourceBackButton(),
                   title: Text(widget.replyTitle ?? t.videoCommunity.comments),
                   actions: [
-                    IconButton(
+                    SourceChromeIconButton(
                       tooltip: t.common.refresh,
+                      symbol: 'arrow.clockwise',
                       onPressed: _loading || _loadingMore || _posting
                           ? null
                           : _load,
-                      icon: const Icon(Icons.refresh_rounded),
+                      icon: Icons.refresh_rounded,
                     ),
                   ],
                 ),
@@ -286,6 +296,61 @@ class _VideoCommunityPageState extends State<VideoCommunityPage> {
 
   Widget _threadContent(Widget child) =>
       widget.inline ? child : Expanded(child: child);
+
+  Widget _emptyThread() => Center(
+    child: Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(
+          widget.replyId == null
+              ? t.videoCommunity.noComments
+              : t.videoCommunity.noReplies,
+        ),
+        if (widget.embedded && !widget.inline)
+          IconButton(
+            tooltip: t.common.refresh,
+            onPressed: _posting || _editing ? null : _load,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+      ],
+    ),
+  );
+
+  Widget _postGateNotice(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            switch (_postGate) {
+              'siteVerification' => t.videoCommunity.postVerificationOnly,
+              'login' => t.videoCommunity.loginToPost,
+              _ => t.videoCommunity.publishingUnavailable,
+            },
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        if (_postGate == 'login')
+          TextButton(
+            style: TextButton.styleFrom(minimumSize: const Size(44, 44)),
+            onPressed: widget.onLogin,
+            child: Text(t.videoCommunity.login),
+          )
+        else if (widget.onWebsite != null)
+          IconButton(
+            tooltip: t.videoPlayback.backToWeb,
+            onPressed: widget.onWebsite,
+            style: IconButton.styleFrom(
+              minimumSize: const Size.square(44),
+              visualDensity: VisualDensity.standard,
+            ),
+            icon: const Icon(Icons.open_in_new_rounded, size: 18),
+          ),
+      ],
+    );
+  }
 
   Widget _refreshable(Widget list) => widget.embedded && !widget.inline
       ? RefreshIndicator(
@@ -318,25 +383,8 @@ class _VideoCommunityPageState extends State<VideoCommunityPage> {
             ),
           if (_loading) const LinearProgressIndicator(),
           _threadContent(
-            _items.isEmpty && !_loading && _error == null
-                ? Center(
-                    child: Wrap(
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Text(
-                          widget.replyId == null
-                              ? t.videoCommunity.noComments
-                              : t.videoCommunity.noReplies,
-                        ),
-                        if (widget.embedded && !widget.inline)
-                          IconButton(
-                            tooltip: t.common.refresh,
-                            onPressed: _posting || _editing ? null : _load,
-                            icon: const Icon(Icons.refresh_rounded),
-                          ),
-                      ],
-                    ),
-                  )
+            _items.isEmpty && !_loading && _error == null && !_showPostGate
+                ? _emptyThread()
                 : _refreshable(
                     ListView.separated(
                       shrinkWrap: widget.inline,
@@ -353,11 +401,20 @@ class _VideoCommunityPageState extends State<VideoCommunityPage> {
                           : const EdgeInsets.fromLTRB(16, 8, 16, 12),
                       itemCount:
                           _items.length +
+                          _emptyRowCount +
                           (_error == null ? 0 : 1) +
-                          (_nextOffset == null ? 0 : 1),
+                          (_nextOffset == null ? 0 : 1) +
+                          (_showPostGate ? 1 : 0),
                       separatorBuilder: (_, _) =>
                           const Divider(height: 17, indent: 48),
                       itemBuilder: (context, index) {
+                        if (_showPostGate) {
+                          final end = _items.length + _emptyRowCount;
+                          if (index == end + (_nextOffset == null ? 0 : 1)) {
+                            return _postGateNotice(context);
+                          }
+                          if (index < _emptyRowCount) return _emptyThread();
+                        }
                         if (_error != null && index == 0) {
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -386,7 +443,8 @@ class _VideoCommunityPageState extends State<VideoCommunityPage> {
                             ],
                           );
                         }
-                        final itemIndex = index - (_error == null ? 0 : 1);
+                        final itemIndex =
+                            index - (_error == null ? 0 : 1) - _emptyRowCount;
                         if (itemIndex == _items.length) {
                           return Center(
                             child: TextButton.icon(
@@ -550,36 +608,6 @@ class _VideoCommunityPageState extends State<VideoCommunityPage> {
                     ),
                   ),
           ),
-          if (!widget.inline &&
-              !_loading &&
-              !_canPost &&
-              _error == null &&
-              _postGate != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(switch (_postGate) {
-                      'siteVerification' =>
-                        t.videoCommunity.postVerificationOnly,
-                      'login' => t.videoCommunity.loginToPost,
-                      _ => t.videoCommunity.publishingUnavailable,
-                    }, style: Theme.of(context).textTheme.bodySmall),
-                  ),
-                  if (_postGate == 'login')
-                    TextButton(
-                      onPressed: widget.onLogin,
-                      child: Text(t.videoCommunity.login),
-                    )
-                  else if (widget.onWebsite != null)
-                    TextButton(
-                      onPressed: widget.onWebsite,
-                      child: Text(t.videoPlayback.backToWeb),
-                    ),
-                ],
-              ),
-            ),
           if (_canPost)
             ConstrainedBox(
               constraints: BoxConstraints(

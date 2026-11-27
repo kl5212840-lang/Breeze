@@ -153,10 +153,21 @@ class FolderShelfBloc extends Bloc<FolderShelfEvent, FolderShelfState> {
   // Committed rows keep state.search until the new snapshot is ready.
   SearchStatusState? _requestedSearch;
   KeywordSearchScope _keywordScope;
-  Object? _loadedScope;
+  (
+    ShelfPageMode,
+    String,
+    SearchStatusState?,
+    ShelfFacetSelection,
+    KeywordSearchScope?,
+  )?
+  _loadedScope;
 
-  /// The rows can stay visible while another scope is loading.
-  Object? get loadedScope => _loadedScope;
+  /// A source chip changes membership inside the current viewport.
+  Object? get loadedViewportScope => switch (_loadedScope) {
+    (final mode, final path, final search, final facets, final keywordScope) =>
+      (mode, path, search?.copyWith(sources: const []), facets, keywordScope),
+    null => null,
+  };
   bool get hasCurrentSnapshot => _loadedScope == _scope;
 
   Object get _scope => (

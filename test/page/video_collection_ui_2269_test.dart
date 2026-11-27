@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/search/widget/search_field_surface.dart';
 import 'package:zephyr/page/video/api_video_collection.dart';
 import 'package:zephyr/page/video/api_video_favorites.dart';
 import 'package:zephyr/page/video/api_video_models.dart';
@@ -73,19 +74,44 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final input = tester.widget<TextField>(find.byType(TextField).first);
-      expect(input.decoration?.filled, isTrue);
+      final toggle = find.byKey(const ValueKey('omo-favorites.search-toggle'));
+      expect(find.byType(TextField), findsNothing);
+      expect(tester.getSize(toggle).height, greaterThanOrEqualTo(44));
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      final input = tester.widget<TextField>(
+        find.descendant(
+          of: find.byType(SearchFieldSurface),
+          matching: find.byType(TextField),
+        ),
+      );
+      expect(input.decoration?.filled, isFalse);
       expect(input.decoration?.border, isA<OutlineInputBorder>());
-      final manage = find.byKey(const ValueKey('omo-favorites.manage'));
-      expect(tester.widget<NativeVideoTextButton>(manage).light, isFalse);
-      expect(tester.getSize(manage).height, greaterThanOrEqualTo(44));
-      await tester.tap(manage);
+      expect(input.focusNode?.hasFocus, isTrue);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsNothing);
+
+      final more = find.byKey(const ValueKey('omo-favorites.more'));
+      expect(tester.widget<NativeVideoMenu>(more).light, isFalse);
+      expect(tester.getSize(more).height, greaterThanOrEqualTo(44));
+      await tester.tap(more);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(t.videoSource.manage));
       await tester.pumpAndSettle();
       expect(
-        find.byKey(const ValueKey('api-video.edit.aaaaaaaaaaaaaaaa')),
-        findsOneWidget,
+        tester.widget<ApiVideoCollection>(find.byType(ApiVideoCollection)).selecting,
+        isTrue,
       );
-      expect(find.text(t.common.done), findsOneWidget);
+      final cancel = find.byKey(
+        const ValueKey('omo-favorites.selection.cancel'),
+      );
+      await tester.tap(cancel);
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<ApiVideoCollection>(find.byType(ApiVideoCollection)).selecting,
+        isFalse,
+      );
       expect(tester.takeException(), isNull);
     });
   }
@@ -155,8 +181,13 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final input = tester.widget<TextField>(find.byType(TextField).first);
-      expect(input.decoration?.filled, isTrue);
+      final search = find.descendant(
+        of: find.byType(SearchFieldSurface),
+        matching: find.byType(TextField),
+      );
+      expect(search, findsOneWidget);
+      final input = tester.widget<TextField>(search);
+      expect(input.decoration?.filled, isFalse);
       expect(input.decoration?.border, isA<OutlineInputBorder>());
       final manage = find.byKey(const ValueKey('local-favorites.manage'));
       expect(tester.widget<NativeVideoTextButton>(manage).light, isFalse);

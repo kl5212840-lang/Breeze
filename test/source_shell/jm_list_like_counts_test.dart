@@ -50,6 +50,36 @@ void main() {
     expect(counts.countFor('third'), isNull);
   });
 
+  test(
+    'JM search keeps confirmed per-item likes without a page raw payload',
+    () {
+      Map<String, dynamic> item(
+        String id,
+        Object? likes, {
+        bool known = true,
+        String? rawId,
+      }) => {
+        'id': id,
+        'likesCount': likes ?? 0,
+        'raw': {'id': rawId ?? id, 'likes': likes},
+        'extern': {
+          'metricAvailability': {'totalLikes': known},
+        },
+      };
+      final data = <String, dynamic>{
+        'items': [
+          item('one', '28'),
+          item('zero', 0),
+          item('missing', null, known: false),
+          item('mismatch', 3, rawId: 'other'),
+          item('duplicate', 7),
+          item('duplicate', 8),
+        ],
+      };
+      expect(readJmSearchLikeCounts({'data': data}), {'one': 28, 'zero': 0});
+    },
+  );
+
   test('session and reload boundaries reject retired readings', () {
     final fence = PluginSessionWriteFence();
     final counts = JmListLikeCounts(sessionFence: fence);

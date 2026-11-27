@@ -18,6 +18,8 @@ import 'package:zephyr/page/comic_info/bloc/get_comic_info_bloc.dart';
 import 'package:zephyr/page/comic_info/method/get_plugin_detail.dart';
 import 'package:zephyr/page/comic_info/view/comic_info.dart';
 import 'package:zephyr/page/comic_info/widgets/eps.dart';
+import 'package:zephyr/page/comic_read/method/get_plugin_read_snapshot.dart';
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/service/reader/comic_chapter_reading_progress.dart';
 import 'package:zephyr/src/rust/qjs.dart';
@@ -34,6 +36,7 @@ class _DetailApi extends RustLibApi {
   late Completer<String> entered;
   late Completer<Map<String, dynamic>> response;
   final cancelledGroups = <String>[];
+  final readerRequests = <Map<String, dynamic>>[];
 
   void prepare() {
     entered = Completer<String>();
@@ -62,6 +65,24 @@ class _DetailApi extends RustLibApi {
   }) async {
     if (fnPath == 'init') {
       return Uint8List.fromList(utf8.encode('{"data":{"ok":true}}'));
+    }
+    if (fnPath == 'getReadSnapshot') {
+      final request = jsonDecode(argsJson) as Map<String, dynamic>;
+      readerRequests.add(request);
+      final second = request['chapterId'] == 'episode-request-2';
+      return Uint8List.fromList(
+        utf8.encode(
+          jsonEncode({
+            'chapter': {
+              'id': second ? 'episode-request-2' : 'episode-1',
+              'order': 1,
+              'pages': [
+                {'path': second ? 'second-page.jpg' : 'first-page.jpg'},
+              ],
+            },
+          }),
+        ),
+      );
     }
     expect(fnPath, 'getComicDetail');
     entered.complete(taskGroupKey);
@@ -213,7 +234,14 @@ void main() {
     final detail = _detail('Fixture tag');
     (detail['normal'] as Map)['eps'] = [
       {'id': 'episode-1', 'name': 'Online episode', 'order': 1},
-      {'id': 'episode-2', 'name': 'Unread online episode', 'order': 2},
+      {
+        'id': 'episode-request-2',
+        'logicalKey': 'episode-2',
+        'storageChapterId': 'shared-volume',
+        'name': 'Unread online episode',
+        'order': 1,
+        'extern': {'slice': 2},
+      },
     ];
     api.response.complete(detail);
     await tester.pumpAndSettle();
@@ -271,6 +299,38 @@ void main() {
     expect(launches.last.chapterId, 'episode-1');
     await router.maybePop();
     await tester.pumpAndSettle();
+    final second = find.text('Unread online episode');
+    await tester.ensureVisible(second);
+    await tester.pumpAndSettle();
+    expect(second.hitTestable(), findsOneWidget);
+    await tester.tap(second);
+    await tester.pumpAndSettle();
+    expect(launches.last.type, ComicEntryType.normal);
+    expect(launches.last.order, 1);
+    expect(launches.last.chapterId, 'episode-2');
+    expect(launches.last.logicalKey, 'episode-2');
+    expect(launches.last.requestId, 'episode-request-2');
+    expect(launches.last.storageChapterId, 'shared-volume');
+    expect(launches.last.chapterExtern['slice'], 2);
+    final route = launches.last;
+    final body = await tester.runAsync(
+      () => getPluginReadSnapshot(
+        route.comicId,
+        route.order,
+        route.from,
+        route.comicInfo,
+        route.chapterId,
+        route.requestId,
+        route.logicalKey,
+        route.storageChapterId,
+        route.chapterExtern,
+      ),
+    );
+    expect(api.readerRequests.single['chapterId'], 'episode-request-2');
+    expect(body?.epId, 'episode-2');
+    expect(body?.docs.single.path, 'second-page.jpg');
+    await router.maybePop();
+    await tester.pumpAndSettle();
     await tester.ensureVisible(shortcut);
     await tester.tap(shortcut);
     await tester.pumpAndSettle();
@@ -322,12 +382,15 @@ void main() {
     await tester.pumpAndSettle();
     expect(launches.map((args) => args.type), [
       ComicEntryType.normal,
+      ComicEntryType.normal,
       ComicEntryType.download,
       ComicEntryType.download,
     ]);
     await router.maybePop();
     await tester.pumpAndSettle();
-    await tester.pageBack();
+    final back = find.byType(SourceBackButton).hitTestable();
+    expect(back, findsOneWidget);
+    await tester.tap(back);
     await tester.pumpAndSettle();
     expect(shortcut, findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());

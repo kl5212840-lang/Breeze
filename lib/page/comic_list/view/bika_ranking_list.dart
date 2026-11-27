@@ -7,6 +7,7 @@ import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/search_result/view/source_search_detail_list.dart';
 import 'package:zephyr/page/search_result/widgets/bottom_loader.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
@@ -142,7 +143,6 @@ class _BikaRankingListState extends State<BikaRankingList> {
                 ),
                 SourceFilterIconButton(
                   key: const ValueKey('bika-ranking.filters'),
-                  bare: false,
                   tooltip: _filters.isActive
                       ? t.comicList.activeFilters
                       : t.bikaRanking.filterLoaded,
@@ -223,7 +223,6 @@ class _RankingTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final categories = entry.metadataValues('categories').join(' · ');
     final count =
         entry.raw['leaderboardCount'] ?? entry.raw['leaderboard_count'];
     final creator = entry.extern['rankingCreator'] == true;
@@ -284,63 +283,57 @@ class _RankingTile extends StatelessWidget {
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minHeight: 110),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      convertChineseForDisplay(entry.title),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
+              child: !creator
+                  ? ComicDetailedCaption(
+                      entry: entry,
+                      showViews: false,
+                      rankCount: count == null
+                          ? null
+                          : t.bikaRanking.nominationCount(
+                              count: count.toString(),
+                            ),
+                    )
+                  : ConstrainedBox(
+                      constraints: const BoxConstraints(minHeight: 110),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            convertChineseForDisplay(entry.title),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                          if (entry.primaryText.isNotEmpty) ...[
+                            const SizedBox(height: 3),
+                            Text(
+                              convertChineseForDisplay(entry.primaryText),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: colors.primary,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 10),
+                          if (entry.raw['comicsUploaded'] != null)
+                            Text(
+                              t.bikaRanking.uploadedCount(
+                                count: entry.raw['comicsUploaded'].toString(),
+                              ),
+                              style: TextStyle(
+                                color: rankColor,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                        ],
                       ),
                     ),
-                    if (entry.primaryText.isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        convertChineseForDisplay(entry.primaryText),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: colors.primary, fontSize: 12),
-                      ),
-                    ],
-                    if (categories.isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        convertChineseForDisplay(categories),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: colors.onSurfaceVariant,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 10),
-                    if (creator
-                        ? entry.raw['comicsUploaded'] != null
-                        : count != null)
-                      Text(
-                        creator
-                            ? t.bikaRanking.uploadedCount(
-                                count: entry.raw['comicsUploaded'].toString(),
-                              )
-                            : t.bikaRanking.nominationCount(
-                                count: count.toString(),
-                              ),
-                        style: TextStyle(
-                          color: rankColor,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
             ),
           ],
         ),

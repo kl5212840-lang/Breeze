@@ -5,14 +5,18 @@ import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_control_colors.dart';
 import 'package:zephyr/widgets/breeze_control_motion.dart';
+import 'package:zephyr/widgets/breeze_overlay_theme.dart';
 import 'package:zephyr/widgets/breeze_navigation_bar.dart';
+import 'package:zephyr/widgets/breeze_theme_colors.dart';
 import 'package:zephyr/widgets/touch_hover_intent.dart';
 import 'package:zephyr/widgets/tab_reselect_scope.dart';
 import 'package:zephyr/widgets/collection_press_feedback.dart';
 import 'package:zephyr/widgets/collection_command_icons.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
+import 'package:zephyr/widgets/native_material_surface.dart';
+import 'package:zephyr/widgets/android_toolbar_icon_button.dart';
 import 'dart:async';
-import 'dart:ui' show FontFeature, ImageFilter;
+import 'dart:ui' show FontFeature;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart'
@@ -207,9 +211,11 @@ class NativeVideoMenu extends StatelessWidget {
         optionBadges.isNotEmpty ||
         optionCopyText.isNotEmpty;
     final compact = hostPresentation || hasMetadata;
-    // Grouping changes commands, not the selected platform branch. System iOS
-    // uses the native compact menu; Breeze retains the shared Flutter route.
-    if (hostTriggerBuilder != null || compact && !native) {
+    // Android System choices and commands share the same anchored surface.
+    // UIKit keeps the native menu and other modes use the existing fallback.
+    if (hostTriggerBuilder != null ||
+        AppInterfaceStyleScope.usesAndroidSystem(context) ||
+        compact && !native) {
       return _HostVideoMenu(menu: this);
     }
     if (native) {
@@ -472,6 +478,7 @@ class _HostVideoMenuState extends State<_HostVideoMenu> {
       barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
       reduced: MediaQuery.disableAnimationsOf(context),
       systemStyle: AppInterfaceStyleScope.usesSystem(context),
+      androidGlass: AppInterfaceStyleScope.usesAndroidSystem(context),
       noPageDimming: menu.noPageDimming,
     );
     setState(() => _route = route);
@@ -495,100 +502,127 @@ class _HostVideoMenuState extends State<_HostVideoMenu> {
         child: builder(context, menu.options.isEmpty ? null : _open),
       );
     }
+    if (menu.hostPresentation &&
+        menu.icon != null &&
+        menu.label.isEmpty &&
+        (menu.width == VideoControlMetrics.touchExtent ||
+            menu.width == CollectionToolbarMetrics.actionExtentOf(context)) &&
+        !menu.bare &&
+        !menu.overArtwork &&
+        AppInterfaceStyleScope.usesAndroidSystem(context)) {
+      return Semantics(
+        expanded: _route != null,
+        child: AndroidToolbarIconButton(
+          selected: _route != null,
+          tooltip: menu.tooltip,
+          onPressed: menu.options.isEmpty ? null : _open,
+          icon: CollectionCommandGlyph(menu.icon!),
+        ),
+      );
+    }
     if (menu.icon == null && menu.label.isNotEmpty) {
       final breeze = !AppInterfaceStyleScope.usesSystem(context);
       final searchExtent = menu.compactTextChoice
           ? SearchToolbarScope.of(context)
           : null;
-      final radius = BorderRadius.circular(searchExtent == null ? 8 : 12);
+      final insetPlate =
+          menu.compactTextChoice && !menu.bare && searchExtent == null;
+      const plateInset = CollectionToolbarMetrics.actionPlateInset;
+      final radius = BorderRadius.circular(
+        insetPlate ? 10 : (searchExtent == null ? 8 : 12),
+      );
       final colors = Theme.of(context).colorScheme;
+      final fill = menu.bare
+          ? Colors.transparent
+          : breeze
+          ? BreezeControlColors.tool(colors)
+          : colors.surfaceContainerHigh;
+      final contentHeight = insetPlate
+          ? CollectionToolbarMetrics.actionExtentOf(context) - plateInset * 2
+          : searchExtent ?? (menu.compactTextChoice ? 36.0 : 44.0);
       return CollectionPressFeedback.builder(
         enabled: menu.options.isNotEmpty,
         pressedBuilder: (context, pressed) => TouchHoverIntent(
           identity: menu.tooltip,
-          builder: (context, hover) => Tooltip(
-            message: menu.tooltip,
-            child: Material(
-              color: menu.bare
-                  ? Colors.transparent
-                  : breeze
-                  ? BreezeControlColors.tool(colors)
-                  : colors.surfaceContainerHigh,
-              borderRadius: radius,
-              child: InkWell(
-                hoverColor: hover.hoverColor(),
-                onTap: menu.options.isEmpty ? null : _open,
-                highlightColor: breeze ? Colors.transparent : null,
-                splashFactory: breeze ? NoSplash.splashFactory : null,
+          builder: (context, hover) {
+            final label = AnimatedContainer(
+              duration: BreezeControlMotion.press(context, pressed: pressed),
+              curve: BreezeControlMotion.curve,
+              decoration: BoxDecoration(
+                color: breeze && pressed
+                    ? colors.primary.withValues(alpha: .12)
+                    : Colors.transparent,
                 borderRadius: radius,
-                child: AnimatedContainer(
-                  duration: BreezeControlMotion.press(
-                    context,
-                    pressed: pressed,
-                  ),
-                  curve: BreezeControlMotion.curve,
-                  decoration: BoxDecoration(
-                    color: breeze && pressed
-                        ? colors.primary.withValues(alpha: .12)
-                        : Colors.transparent,
-                    borderRadius: radius,
-                  ),
-                  child: SizedBox(
-                    width: menu.width,
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        minHeight:
-                            searchExtent ?? (menu.compactTextChoice ? 36 : 44),
-                      ),
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: menu.selectionIndicator ? 8 : 0,
-                        ),
-                        child: BreezePressedContent(
-                          pressed: pressed,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            mainAxisAlignment: menu.selectionIndicator
-                                ? MainAxisAlignment.end
-                                : MainAxisAlignment.center,
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  menu.label,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: menu.compactTextChoice
-                                      ? Theme.of(context).textTheme.labelMedium
-                                      : menu.selectionIndicator
-                                      ? Theme.of(
-                                          context,
-                                        ).textTheme.bodyLarge?.copyWith(
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.onSurfaceVariant,
-                                        )
-                                      : null,
-                                ),
-                              ),
-                              Icon(
-                                menu.compactTextChoice
-                                    ? Icons.keyboard_arrow_down_rounded
-                                    : menu.selectionIndicator
-                                    ? Icons.unfold_more_rounded
-                                    : Icons.arrow_drop_down,
-                                size: menu.compactTextChoice ? 14 : 20,
-                              ),
-                            ],
-                          ),
-                        ),
+              ),
+              constraints: BoxConstraints(minHeight: contentHeight),
+              padding: EdgeInsets.symmetric(
+                horizontal: 6,
+                vertical: menu.selectionIndicator ? 8 : 0,
+              ),
+              child: BreezePressedContent(
+                pressed: pressed,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: menu.selectionIndicator
+                      ? MainAxisAlignment.end
+                      : MainAxisAlignment.center,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        menu.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: menu.compactTextChoice
+                            ? Theme.of(context).textTheme.labelMedium
+                            : menu.selectionIndicator
+                            ? Theme.of(context).textTheme.bodyLarge?.copyWith(
+                                color: colors.onSurfaceVariant,
+                              )
+                            : null,
                       ),
                     ),
+                    Icon(
+                      menu.compactTextChoice
+                          ? Icons.keyboard_arrow_down_rounded
+                          : menu.selectionIndicator
+                          ? Icons.unfold_more_rounded
+                          : Icons.arrow_drop_down,
+                      size: menu.compactTextChoice ? 14 : 20,
+                    ),
+                  ],
+                ),
+              ),
+            );
+            return Tooltip(
+              message: menu.tooltip,
+              child: Material(
+                color: insetPlate ? Colors.transparent : fill,
+                borderRadius: radius,
+                child: InkWell(
+                  hoverColor: hover.hoverColor(),
+                  onTap: menu.options.isEmpty ? null : _open,
+                  highlightColor: breeze ? Colors.transparent : null,
+                  splashFactory: breeze ? NoSplash.splashFactory : null,
+                  borderRadius: radius,
+                  child: SizedBox(
+                    width: menu.width,
+                    child: insetPlate
+                        ? Padding(
+                            padding: const EdgeInsets.all(plateInset),
+                            child: Ink(
+                              decoration: BoxDecoration(
+                                color: fill,
+                                borderRadius: radius,
+                              ),
+                              child: label,
+                            ),
+                          )
+                        : label,
                   ),
                 ),
               ),
-            ),
-          ),
+            );
+          },
         ),
       );
     }
@@ -673,6 +707,7 @@ class _VideoMenuRoute extends PopupRoute<String> {
     required this.barrierLabel,
     required this.reduced,
     required this.systemStyle,
+    required this.androidGlass,
     required this.noPageDimming,
   });
   final Rect Function() anchor;
@@ -684,6 +719,7 @@ class _VideoMenuRoute extends PopupRoute<String> {
   final CapturedThemes themes;
   final bool reduced;
   final bool systemStyle;
+  final bool androidGlass;
   final bool noPageDimming;
   (BoxConstraints, MediaQueryData)? _layoutMetrics;
 
@@ -757,6 +793,10 @@ class _VideoMenuRoute extends PopupRoute<String> {
     required double badgeHorizontalPadding,
   }) {
     final colors = Theme.of(context).colorScheme;
+    final accent = BreezeThemeColors.readableOn(
+      colors.primary,
+      BreezeOverlayTheme.menuSurface(colors),
+    );
     final checked = entry.key == selected;
     final detail = optionDetails[entry.key];
     final badge = optionBadges[entry.key];
@@ -764,7 +804,7 @@ class _VideoMenuRoute extends PopupRoute<String> {
     final title = Text(
       entry.value,
       style: !systemStyle && checked
-          ? textStyle.copyWith(color: colors.primary)
+          ? textStyle.copyWith(color: accent)
           : textStyle,
       maxLines: detail != null && !stackDetails ? 1 : null,
       overflow: detail != null && !stackDetails ? TextOverflow.ellipsis : null,
@@ -797,7 +837,7 @@ class _VideoMenuRoute extends PopupRoute<String> {
                     return null;
                   }),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(minHeight: 44),
+              constraints: BoxConstraints(minHeight: androidGlass ? 48 : 44),
               child: Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 16,
@@ -869,7 +909,7 @@ class _VideoMenuRoute extends PopupRoute<String> {
                               Icon(
                                 Icons.check_rounded,
                                 size: 20,
-                                color: systemStyle ? null : colors.primary,
+                                color: systemStyle ? null : accent,
                               ),
                             ],
                           ],
@@ -898,22 +938,23 @@ class _VideoMenuRoute extends PopupRoute<String> {
         _followLaidOutAnchor(constraints, media);
         final padding = MediaQuery.paddingOf(context);
         final colors = Theme.of(context).colorScheme;
-        final translucent =
-            systemStyle &&
-            defaultTargetPlatform == TargetPlatform.iOS &&
-            !MediaQuery.highContrastOf(context);
+        final menuSurface = BreezeOverlayTheme.menuSurface(colors);
         // Match the native compact menu's existing type and actual columns.
         // A choice reserves its check at the trailing edge, never a blank
         // leading icon column or an unrelated stock-menu minimum width.
-        final textStyle = Theme.of(
-          context,
-        ).textTheme.bodyLarge!.copyWith(fontSize: 17, color: colors.onSurface);
+        final textStyle = Theme.of(context).textTheme.bodyLarge!.copyWith(
+          fontSize: 17,
+          color: BreezeThemeColors.readableOn(colors.onSurface, menuSurface),
+        );
         final hasIcons = optionIcons.isNotEmpty;
         final hasCheck = options.containsKey(selected);
         final textLeft = hasIcons ? 48.0 : 16.0;
         final detailStyle = textStyle.copyWith(
           fontSize: 14,
-          color: colors.onSurfaceVariant,
+          color: BreezeThemeColors.readableOn(
+            colors.onSurfaceVariant,
+            menuSurface,
+          ),
           fontFeatures: const [FontFeature.tabularFigures()],
         );
         final badgeStyle = Theme.of(context).textTheme.labelMedium!.copyWith(
@@ -993,6 +1034,52 @@ class _VideoMenuRoute extends PopupRoute<String> {
                     media.viewInsets.bottom.clamp(0.0, double.infinity) -
                     16)
                 .clamp(safeTop, double.infinity);
+        final content = SingleChildScrollView(
+          padding: BreezeOverlayTheme.menuPadding,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final entry in options.entries)
+                _buildRow(
+                  context,
+                  entry: entry,
+                  textStyle: textStyle,
+                  detailStyle: detailStyle,
+                  badgeStyle: badgeStyle,
+                  hasCheck: hasCheck,
+                  hasIcons: hasIcons,
+                  detailWidth: detailWidth,
+                  stackDetails: stackDetails,
+                  accessoryWidth: accessoryWidth,
+                  badgeWidth: badgeWidth,
+                  badgeHorizontalPadding: badgeHorizontalPadding,
+                ),
+            ],
+          ),
+        );
+        const panelKey = ValueKey('video-host-menu');
+        final panel = androidGlass
+            ? NativeMaterialSurface(
+                key: panelKey,
+                radius: BreezeOverlayTheme.menuRadius.topLeft.x,
+                androidGlass: true,
+                floating: true,
+                readableContent: true,
+                child: ClipRRect(
+                  borderRadius: BreezeOverlayTheme.menuRadius,
+                  child: content,
+                ),
+              )
+            : Material(
+                key: panelKey,
+                color: menuSurface,
+                elevation: 8,
+                surfaceTintColor: Colors.transparent,
+                shadowColor: colors.shadow.withValues(alpha: .32),
+                borderRadius: BreezeOverlayTheme.menuRadius,
+                clipBehavior: Clip.antiAlias,
+                child: content,
+              );
         return CustomSingleChildLayout(
           delegate: _VideoMenuLayout(
             anchor: anchor(),
@@ -1011,51 +1098,7 @@ class _VideoMenuRoute extends PopupRoute<String> {
               scale: Tween<double>(begin: reduced ? 1 : .96, end: 1).animate(
                 CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
               ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(20),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 28, sigmaY: 28),
-                  enabled: translucent,
-                  child: Material(
-                    key: const ValueKey('video-host-menu'),
-                    color: systemStyle
-                        ? colors.surfaceContainerHigh.withValues(
-                            alpha: translucent ? .92 : 1,
-                          )
-                        : colors.surfaceContainerLowest,
-                    elevation: systemStyle ? 12 : 8,
-                    surfaceTintColor: systemStyle ? null : Colors.transparent,
-                    shadowColor: systemStyle
-                        ? Colors.black38
-                        : colors.shadow.withValues(alpha: .32),
-                    borderRadius: BorderRadius.circular(20),
-                    clipBehavior: Clip.antiAlias,
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          for (final entry in options.entries)
-                            _buildRow(
-                              context,
-                              entry: entry,
-                              textStyle: textStyle,
-                              detailStyle: detailStyle,
-                              badgeStyle: badgeStyle,
-                              hasCheck: hasCheck,
-                              hasIcons: hasIcons,
-                              detailWidth: detailWidth,
-                              stackDetails: stackDetails,
-                              accessoryWidth: accessoryWidth,
-                              badgeWidth: badgeWidth,
-                              badgeHorizontalPadding: badgeHorizontalPadding,
-                            ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
+              child: panel,
             ),
           ),
         );
@@ -1178,6 +1221,7 @@ class NativeVideoIconButton extends StatelessWidget {
     this.bare = false,
     this.busy = false,
     this.selected,
+    this.pageChrome = false,
   });
   final String tooltip, symbol;
   final IconData icon;
@@ -1188,6 +1232,7 @@ class NativeVideoIconButton extends StatelessWidget {
   final bool bare;
   final bool busy;
   final bool? selected;
+  final bool pageChrome;
 
   Map<String, dynamic> _uikitArguments(BuildContext context) => {
     'tooltip': tooltip,
@@ -1252,6 +1297,14 @@ class NativeVideoIconButton extends StatelessWidget {
                   )
                 : CollectionCommandGlyph(icon, size: iconSize),
           );
+    if (pageChrome && AppInterfaceStyleScope.usesAndroidSystem(context)) {
+      return AndroidToolbarIconButton(
+        tooltip: tooltip,
+        selected: selected,
+        icon: glyph,
+        onPressed: onPressed,
+      );
+    }
     if (!AppInterfaceStyleScope.usesSystem(context)) {
       return _buildBreezePlate(context, glyph);
     }
@@ -1412,12 +1465,13 @@ class NativeVideoSegmentedControl extends StatelessWidget {
     required this.onSelected,
     this.enabled = true,
     this.dragEnabled = false,
+    this.flatTrack = false,
   });
   final Map<String, String> options;
   final String selected;
   final ValueChanged<String>? onSelected;
   final bool enabled;
-  final bool dragEnabled;
+  final bool dragEnabled, flatTrack;
 
   static const _fontSize = 13.0;
 
@@ -1483,7 +1537,9 @@ class NativeVideoSegmentedControl extends StatelessWidget {
             ? constraints.maxWidth
             : requiredWidth;
         final fits = singleLine && width >= requiredWidth;
-        if (breeze) {
+        if (breeze ||
+            flatTrack ||
+            AppInterfaceStyleScope.usesAndroidSystem(context)) {
           return SizedBox(
             width: width,
             child: BreezeSectionSelector<String>(
@@ -1492,6 +1548,7 @@ class NativeVideoSegmentedControl extends StatelessWidget {
               direction: fits ? Axis.horizontal : Axis.vertical,
               enabled: interactive,
               dragEnabled: dragEnabled,
+              flatTrack: flatTrack,
               onSelected: select,
             ),
           );

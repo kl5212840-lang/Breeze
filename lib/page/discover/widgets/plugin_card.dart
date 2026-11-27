@@ -311,6 +311,7 @@ class PluginCard extends StatelessWidget {
               if (searchAvailable)
                 'search': NativeVideoIconButton(
                   tooltip: t.sourceShell.search,
+                  bare: true,
                   onPressed: search,
                   icon: Icons.search,
                   symbol: 'magnifyingglass',
@@ -318,6 +319,7 @@ class PluginCard extends StatelessWidget {
                 ),
               'settings': NativeVideoIconButton(
                 tooltip: t.discover.settings,
+                bare: true,
                 onPressed: settings,
                 icon: Icons.settings_outlined,
                 symbol: 'gearshape',
@@ -330,12 +332,14 @@ class PluginCard extends StatelessWidget {
         if (searchAvailable)
           SourceChromeIconButton(
             tooltip: t.sourceShell.search,
+            bare: true,
             onPressed: search,
             icon: Icons.search,
             symbol: 'magnifyingglass',
           ),
         SourceChromeIconButton(
           tooltip: t.discover.settings,
+          bare: true,
           onPressed: settings,
           icon: Icons.settings_outlined,
           symbol: 'gearshape',

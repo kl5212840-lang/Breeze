@@ -16,6 +16,7 @@ import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/coreml_model_config.dart';
 import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/widgets/breeze_switch.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 final Map<int, String> _concurrencyLabels = {
   1: '1',
@@ -193,22 +194,12 @@ class _RealSrSettingPageState extends State<RealSrSettingPage> {
   }
 
   Future<void> _deleteModel() async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await confirmShortAlert(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(t.realSr.deleteModel),
-        content: Text(t.realSr.deleteModelConfirm),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(t.common.cancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(t.common.delete),
-          ),
-        ],
-      ),
+      title: Text(t.realSr.deleteModel),
+      content: Text(t.realSr.deleteModelConfirm),
+      confirmLabel: t.common.delete,
+      destructive: true,
     );
 
     if (confirmed != true || !mounted) return;

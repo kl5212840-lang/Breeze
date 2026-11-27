@@ -1,4 +1,5 @@
 import 'package:zephyr/plugin/plugin_registry_service.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/network/source_network_policy.dart';
 import 'package:zephyr/page/video/api_video_models.dart';
 import 'package:zephyr/page/video/api_video_repository.dart';
@@ -68,16 +69,20 @@ abstract final class ApiVideoEpisodeDownloads {
     if (!supportsBatch(repository)) {
       throw UnsupportedError('Background browser downloads unavailable');
     }
+    final source = repository.source;
+    final generation = pluginSessionWriteFence.generation(source);
     final installation = SourceNetworkPolicies.supports(repository.source)
         ? LocalPluginInstallationState.instance
         : null;
     await installation?.load();
     final epoch = installation?.installationEpoch(repository.source);
     bool current() =>
-        installation == null ||
-        (!installation.isRemoved(repository.source) &&
-            !installation.isInstalling(repository.source) &&
-            installation.installationEpoch(repository.source) == epoch);
+        !pluginSessionWriteFence.isChanging(source) &&
+        pluginSessionWriteFence.generation(source) == generation &&
+        (installation == null ||
+            (!installation.isRemoved(source) &&
+                !installation.isInstalling(source) &&
+                installation.installationEpoch(source) == epoch));
     if (!current()) throw const PluginLifecycleChanged();
     for (final card in episodes) {
       final page = videoPlaybackIdentity(card.watchUrl);
@@ -97,7 +102,8 @@ abstract final class ApiVideoEpisodeDownloads {
     SourceNetworkLease? lease;
     OmoNetworkContext? network;
     Future<void> Function()? releaseBrowser;
-    Future<void> releaseOwners() async {
+    Future<void>? released;
+    Future<void> releaseOwners() => released ??= () async {
       try {
         await releaseBrowser?.call();
       } finally {
@@ -107,7 +113,7 @@ abstract final class ApiVideoEpisodeDownloads {
           await lease?.close();
         }
       }
-    }
+    }();
 
     try {
       await VideoDownloadedDetails.saveItem(
@@ -138,6 +144,7 @@ abstract final class ApiVideoEpisodeDownloads {
       final retained = browser.repository.withNetwork(Future.value(network));
       return await VideoEpisodeDownloadQueue.enqueue(
         userInitiated: true,
+        canAdmit: current,
         source: repository.source,
         cooperativeResolution: repository.cancellableDownloadTransport,
         retryItemId: item.id,

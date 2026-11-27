@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:zephyr/page/comic_info/models/comic_metric_availability.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/util/json/shelf_metadata_fields.dart';
@@ -34,6 +35,54 @@ abstract class UnifiedComicListItem with _$UnifiedComicListItem {
       _$UnifiedComicListItemFromJson(json);
 
   String get from => source.trim();
+
+  int? get publicLikesCount =>
+      _publicCount('totalLikes', likesCount, raw['likesCount']);
+
+  int? get publicViewsCount => _publicCount(
+    'totalViews',
+    viewsCount,
+    raw['totalViews'] ?? raw['viewsCount'],
+  );
+
+  int? get publicPageCount {
+    final received = parsePublicComicCount(raw['pagesCount']);
+    if (received != null && received > 0) return received;
+    for (final (prefix, value) in publicStoredTitleFacts) {
+      if (prefix != '页数') continue;
+      final count = parsePublicComicCount(value);
+      if (count != null && count > 0) return count;
+    }
+    return null;
+  }
+
+  Iterable<(String, String)> get publicStoredTitleFacts sync* {
+    final titleMeta = raw['titleMeta'];
+    if (titleMeta is! String) return;
+    for (final item in decodeJsonListOfMaps(titleMeta)) {
+      final name = item['name'];
+      if (name is! String) continue;
+      final separator = name.indexOf('：');
+      if (separator < 0) continue;
+      final label = name.substring(0, separator).trim();
+      final value = name.substring(separator + 1).trim();
+      if (value.isNotEmpty &&
+          const {'页数', '章节数', '更新时间', '更新'}.contains(label)) {
+        yield (label, value);
+      }
+    }
+  }
+
+  int? _publicCount(String key, int value, Object? sourceValue) {
+    if (value < 0) return null;
+    final availability = extern[comicMetricAvailabilityKey];
+    if (availability is Map && availability[key] == false) return null;
+    if (comicMetricIsKnown(extern, key, value) ||
+        value == 0 && parsePublicComicCount(sourceValue) == 0) {
+      return value;
+    }
+    return null;
+  }
 
   List<Object> metadataValues(String type) {
     for (final item in metadata) {
@@ -78,21 +127,72 @@ abstract class UnifiedComicListItem with _$UnifiedComicListItem {
 
   String get updatedAtText => updatedAt.trim();
 
+  static const _publicDetailTypes = {
+    'author',
+    'category',
+    'categories',
+    'tag',
+    'tags',
+    'team',
+    'chineseteam',
+    'year',
+    'area',
+    'language',
+    'works',
+    'actors',
+    'aliases',
+    'status',
+    'latest',
+    'popularity',
+  };
+
+  List<({String type, String label, List<String> values})>
+  publicDetailMetadata({bool localRecord = false}) {
+    final rawMetadata = raw['metadata'];
+    final rows = localRecord && rawMetadata is String
+        ? decodeJsonListOfMaps(rawMetadata)
+        : localRecord && rawMetadata is List
+        ? rawMetadata.whereType<Map>().toList()
+        : metadata.map((group) => group.toJson()).toList();
+    final groups = <({String type, String label, List<String> values})>[];
+    for (final group in rows) {
+      final type = group['type']?.toString().trim().toLowerCase() ?? '';
+      if (type.isEmpty || localRecord && !_publicDetailTypes.contains(type)) {
+        continue;
+      }
+      final rawValue = group['value'];
+      final values = (rawValue is List ? rawValue : [rawValue])
+          .map((value) => value is Map ? value['name'] : value)
+          .where((value) => value is String || value is num)
+          .map((value) => value.toString().trim())
+          .where((value) => value.isNotEmpty)
+          .toSet()
+          .toList();
+      if (values.isEmpty) continue;
+      final name = group['name'];
+      groups.add((
+        type: type,
+        label: name is String && name.trim().isNotEmpty ? name.trim() : type,
+        values: values,
+      ));
+    }
+    return groups;
+  }
+
   ComicSimplifyEntryInfo toSimplifyEntryInfo({
     PictureType pictureType = PictureType.cover,
   }) {
     // Persisted rows retain the original metadata in raw. Prefer it so malformed
     // object values cannot become labels through the general list mapper.
     final rawMetadata = raw['metadata'];
-    final fields = shelfFacetFieldsFromMetadata(
-      rawMetadata is String
-          ? rawMetadata
-          : jsonEncode(
-              rawMetadata is List
-                  ? rawMetadata
-                  : metadata.map((item) => item.toJson()).toList(),
-            ),
-    );
+    final metadataJson = rawMetadata is String
+        ? rawMetadata
+        : jsonEncode(
+            rawMetadata is List
+                ? rawMetadata
+                : metadata.map((item) => item.toJson()).toList(),
+          );
+    final fields = shelfFacetFieldsFromMetadata(metadataJson);
     final detailMetadata = <String>[
       for (final (field, _) in const [
         ('author', '作者'),
@@ -100,6 +200,16 @@ abstract class UnifiedComicListItem with _$UnifiedComicListItem {
         ('tags', '标签'),
       ])
         if (fields[field]?.isNotEmpty == true) fields[field]!.join(' / '),
+      for (final group in publicDetailMetadata(localRecord: true))
+        if (!const {
+          'author',
+          'category',
+          'categories',
+          'tag',
+          'tags',
+        }.contains(group.type))
+          '${group.label} ${group.values.join(' / ')}',
+      for (final (label, value) in publicStoredTitleFacts) '$label $value',
     ].join(' · ');
     var detailPopularity = 0;
     final rawTitleMeta = raw['titleMeta'];

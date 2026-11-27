@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/util/context/context_extensions.dart';
+import 'package:zephyr/widgets/breeze_overlay_theme.dart';
 
 /// A single entry in a fluent popup menu.
 class FluentPopupMenuItem<T> {
@@ -628,13 +629,13 @@ class _MenuPanel<T> extends StatelessWidget {
 
     return Material(
       type: MaterialType.transparency,
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BreezeOverlayTheme.menuRadius,
       child: Container(
         width: menuWidth,
         constraints: const BoxConstraints(maxHeight: 320),
         decoration: BoxDecoration(
-          color: colorScheme.surface,
-          borderRadius: BorderRadius.circular(16),
+          color: BreezeOverlayTheme.menuSurface(colorScheme),
+          borderRadius: BreezeOverlayTheme.menuRadius,
           border: Border.all(
             color: colorScheme.outline.withValues(alpha: 0.25),
           ),
@@ -647,7 +648,7 @@ class _MenuPanel<T> extends StatelessWidget {
           ],
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BreezeOverlayTheme.menuRadius,
           child: ListView.builder(
             shrinkWrap: true,
             padding: const EdgeInsets.all(8),

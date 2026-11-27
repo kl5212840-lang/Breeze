@@ -12,7 +12,15 @@ import 'package:zephyr/page/video/video_download_availability.dart';
 import 'package:zephyr/page/video/video_export_records.dart';
 import 'package:zephyr/page/video/video_local_resources.dart';
 import 'package:zephyr/page/video/video_download_failure.dart';
+import 'package:zephyr/page/video/video_download_choice.dart';
+import 'package:zephyr/page/video/video_download_resolution.dart';
 import 'package:zephyr/page/video/video_episode_ranges.dart';
+
+typedef VideoEpisodeDownloadEnqueue =
+    Future<List<String>> Function(
+      List<NativeVideoCard> episodes, {
+      VideoEpisodeDownloadQuality? quality,
+    });
 
 /// Returns public episode cards in source order. No media is resolved here.
 Future<List<NativeVideoCard>?> showVideoEpisodeDownloadPicker(
@@ -24,7 +32,10 @@ Future<List<NativeVideoCard>?> showVideoEpisodeDownloadPicker(
   String workId = '',
   String namespace = '',
   bool? systemStyle,
-  Future<List<String>> Function(List<NativeVideoCard>)? onEnqueue,
+  bool sitePlaylist = false,
+  VideoEpisodeDownloadEnqueue? onEnqueue,
+  Future<Set<VideoEpisodeDownloadQuality>> Function(List<NativeVideoCard>)?
+  readQualities,
   Future<List<String>> Function(NativeVideoCard, Map<String, dynamic>)? onRetry,
 }) => showVideoTaskSheet<List<NativeVideoCard>>(
   context: context,
@@ -39,7 +50,9 @@ Future<List<NativeVideoCard>?> showVideoEpisodeDownloadPicker(
       source: source,
       workId: workId,
       namespace: namespace,
+      sitePlaylist: sitePlaylist,
       onEnqueue: onEnqueue,
+      readQualities: readQualities,
       onRetry: onRetry,
     ),
   ),
@@ -54,14 +67,21 @@ class VideoEpisodeDownloadPicker extends StatefulWidget {
     this.source = '',
     this.workId = '',
     this.namespace = '',
+    this.sitePlaylist = false,
     this.onEnqueue,
+    this.readQualities,
     this.onRetry,
-  });
+  }) : assert(readQualities == null || onEnqueue != null);
   final List<NativeVideoCard> episodes;
   final Uri currentWatch;
   final Map<String, String> lineLabels;
   final String source, workId, namespace;
-  final Future<List<String>> Function(List<NativeVideoCard>)? onEnqueue;
+  final bool sitePlaylist;
+  final VideoEpisodeDownloadEnqueue? onEnqueue;
+  final Future<Set<VideoEpisodeDownloadQuality>> Function(
+    List<NativeVideoCard>,
+  )?
+  readQualities;
   final Future<List<String>> Function(NativeVideoCard, Map<String, dynamic>)?
   onRetry;
 
@@ -85,6 +105,11 @@ class _VideoEpisodeDownloadPickerState
   VideoDownloadAvailability _availability = const VideoDownloadAvailability();
   bool _readingAvailability = false, _availabilityFailed = false;
   String _taskStructure = '';
+  List<NativeVideoCard>? _qualityEpisodes;
+  VideoDownloadResolutionOwner? _qualityRead;
+  Set<VideoEpisodeDownloadQuality> _qualities = const {};
+  VideoEpisodeDownloadQuality? _quality;
+  bool _qualityReadFailed = false;
 
   @override
   void initState() {
@@ -97,11 +122,17 @@ class _VideoEpisodeDownloadPickerState
   }
 
   void _tasksChanged() {
+    final watches = widget.episodes
+        .map((card) => card.watchUrl.toString())
+        .toSet();
     final structure = VideoExportRecords.sessionTaskSnapshot()
-        .where((row) => row['source'] == widget.source)
+        .where(
+          (row) =>
+              row['source'] == widget.source && watches.contains(row['url']),
+        )
         .map(
           (row) =>
-              '${row['key']}|${row['status']}|${row['attempt']}|${row['quality']}|${row['format']}|${row['resourceId']}',
+              '${row['key']}|${row['status']}|${row['attempt']}|${row['quality']}|${row['format']}|${row['resourceId']}|${row['failureReason']}',
         )
         .join('\n');
     if (structure == _taskStructure) return;
@@ -119,6 +150,9 @@ class _VideoEpisodeDownloadPickerState
         watch: widget.currentWatch,
         workId: widget.workId,
         namespace: widget.namespace,
+        additionalWatches: widget.workId.isEmpty
+            ? widget.episodes.map((card) => card.watchUrl).toSet()
+            : const {},
       ).timeout(const Duration(seconds: 8));
       if (!mounted || epoch != _availabilityEpoch) return;
       setState(() {
@@ -162,6 +196,7 @@ class _VideoEpisodeDownloadPickerState
       _selected.clear();
       _range = null;
       _queuedKeys = const {};
+      _resetQualities();
       unawaited(_readLineHistory());
       unawaited(_readAvailability());
     }
@@ -172,6 +207,7 @@ class _VideoEpisodeDownloadPickerState
     _historyEpoch++;
     _availabilityEpoch++;
     _scopeEpoch++;
+    _resetQualities();
     VideoExportRecords.changes.removeListener(_tasksChanged);
     VideoLocalResources.changes.removeListener(_readAvailability);
     super.dispose();
@@ -184,8 +220,62 @@ class _VideoEpisodeDownloadPickerState
         : null;
   }
 
+  void _stopQualityRead() {
+    final owner = _qualityRead;
+    _qualityRead = null;
+    unawaited(owner?.stop().catchError((Object _) {}));
+  }
+
+  void _resetQualities() {
+    _stopQualityRead();
+    _qualityEpisodes = null;
+    _qualities = const {};
+    _quality = null;
+    _qualityReadFailed = false;
+  }
+
+  Future<void> _loadQualities(List<NativeVideoCard> episodes) async {
+    _stopQualityRead();
+    final owner = VideoDownloadResolutionOwner(widget.source);
+    setState(() {
+      _qualityEpisodes = episodes;
+      _qualityRead = owner;
+      _qualityReadFailed = false;
+    });
+    try {
+      final available = await owner
+          .run(() => widget.readQualities!(episodes))
+          .timeout(
+            const Duration(seconds: 25),
+            onTimeout: () {
+              unawaited(owner.stop().catchError((Object _) {}));
+              throw TimeoutException('Episode download qualities timed out');
+            },
+          );
+      if (mounted && identical(_qualityRead, owner)) {
+        setState(() => _qualities = available);
+      }
+    } catch (_) {
+      if (mounted && identical(_qualityRead, owner)) {
+        setState(() => _qualityReadFailed = true);
+      }
+    } finally {
+      if (owner.cancelled) {
+        unawaited(
+          owner.stop().whenComplete(owner.close).catchError((Object _) {}),
+        );
+      } else {
+        owner.close();
+      }
+      if (mounted && identical(_qualityRead, owner)) {
+        setState(() => _qualityRead = null);
+      }
+    }
+  }
+
   Future<void> _submit() async {
     if (_queueing ||
+        _qualityEpisodes != null ||
         _selected.isEmpty ||
         _readingAvailability ||
         _availabilityFailed)
@@ -201,13 +291,24 @@ class _VideoEpisodeDownloadPickerState
       Navigator.pop(context, selected);
       return;
     }
+    if (selected.isEmpty) return;
+    if (widget.readQualities != null) {
+      await _loadQualities(List.unmodifiable(selected));
+      return;
+    }
+    await _enqueue(() => enqueue(selected));
+  }
+
+  Future<void> _enqueue(Future<List<String>> Function() submit) async {
+    if (_queueing) return;
     setState(() {
+      _resetQualities();
       _queueing = true;
       _queueFailed = false;
     });
     final epoch = _scopeEpoch;
     try {
-      final keys = await enqueue(selected);
+      final keys = await submit();
       if (mounted && epoch == _scopeEpoch)
         setState(() {
           _queuedKeys = keys.toSet();
@@ -216,7 +317,10 @@ class _VideoEpisodeDownloadPickerState
     } catch (_) {
       if (mounted && epoch == _scopeEpoch) setState(() => _queueFailed = true);
     } finally {
-      if (mounted && epoch == _scopeEpoch) setState(() => _queueing = false);
+      if (mounted && epoch == _scopeEpoch) {
+        setState(() => _queueing = false);
+        unawaited(_readAvailability());
+      }
     }
   }
 
@@ -273,9 +377,11 @@ class _VideoEpisodeDownloadPickerState
 
   String? _episodeStatus(NativeVideoCard card) {
     final state = _availability.episode(card.watchUrl);
-    if (state.downloaded)
+    if (state.downloaded && !state.downloading)
       return '${t.download.alreadyDownloaded} · ${state.files.map((row) => '${row['quality']} ${videoDownloadFormat(row).toUpperCase()}').toSet().join(' / ')}';
-    final row = state.latestTask;
+    final row =
+        state.tasks.where(videoDownloadIsActive).firstOrNull ??
+        state.latestTask;
     if (row == null) return null;
     return switch (row['status']) {
       'preparing' => t.download.videoQueued,
@@ -292,8 +398,84 @@ class _VideoEpisodeDownloadPickerState
     };
   }
 
+  Widget _qualityPanel(BuildContext context, List<NativeVideoCard> episodes) {
+    final loading = _qualityRead != null;
+    final choices = <VideoEpisodeDownloadQuality?>[null, ..._qualities];
+    return PopScope<List<NativeVideoCard>>(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _qualityEpisodes != null) setState(_resetQualities);
+      },
+      child: VideoDownloadPanel(
+        title: t.videoDownload.chooseQuality,
+        onClose: () => Navigator.pop(context),
+        actions: Wrap(
+          spacing: 12,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            TextButton(
+              key: const ValueKey('download-episodes.back'),
+              onPressed: () => setState(_resetQualities),
+              child: Text(t.videoDownload.backToEpisodes),
+            ),
+            FilledButton(
+              key: const ValueKey('download-episodes.start'),
+              onPressed: () {
+                if (!identical(_qualityEpisodes, episodes)) return;
+                final quality = _quality;
+                unawaited(
+                  _enqueue(() => widget.onEnqueue!(episodes, quality: quality)),
+                );
+              },
+              child: Text(t.download.startDownload),
+            ),
+          ],
+        ),
+        child: ListView(
+          primary: false,
+          shrinkWrap: true,
+          children: [
+            if (loading) const LinearProgressIndicator(),
+            if (_qualityReadFailed)
+              Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: TextButton.icon(
+                  onPressed: () => unawaited(_loadQualities(episodes)),
+                  icon: const Icon(Icons.refresh_rounded),
+                  label: Text(t.videoDownload.reload),
+                ),
+              )
+            else if (!loading && _qualities.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Text(t.videoDownload.noCommonQuality),
+              ),
+            for (final choice in choices)
+              ListTile(
+                key: ValueKey(('download-episodes.quality', choice)),
+                selected: _quality == choice,
+                leading: Icon(
+                  _quality == choice
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_off,
+                ),
+                title: Text(choice?.label ?? t.videoDownload.sourceQuality),
+                subtitle: choice == null
+                    ? null
+                    : Text(choice.format.toUpperCase()),
+                onTap: () => setState(() => _quality = choice),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_qualityEpisodes case final episodes?) {
+      return _qualityPanel(context, episodes);
+    }
     final lines = <String, String>{
       for (final entry in widget.lineLabels.entries)
         if (entry.value.trim().isNotEmpty &&
@@ -327,15 +509,17 @@ class _VideoEpisodeDownloadPickerState
         .toSet();
     final allSelected =
         selectable.isNotEmpty && selectable.every(_selected.contains);
+    final chinese = Localizations.localeOf(context).languageCode == 'zh';
+    final count = _selected.length;
+    final hasActiveTasks = VideoExportRecords.sessionTaskSnapshot().any(
+      (row) => _queuedKeys.contains(row['key']) && videoDownloadIsActive(row),
+    );
     return VideoDownloadPanel(
-      title: t.videoPlayback.downloadEpisodes,
+      title: widget.sitePlaylist
+          ? (chinese ? '下载播放列表视频' : 'Download playlist videos')
+          : t.videoPlayback.downloadEpisodes,
       onClose: () => Navigator.pop(context),
-      continuing:
-          _queueing ||
-          VideoExportRecords.sessionTaskSnapshot().any(
-            (row) =>
-                _queuedKeys.contains(row['key']) && videoDownloadIsActive(row),
-          ),
+      continuing: _queueing || hasActiveTasks,
       actions: _queuedKeys.isNotEmpty
           ? TextButton(
               onPressed: () => Navigator.pop(context),
@@ -362,9 +546,11 @@ class _VideoEpisodeDownloadPickerState
                       ? null
                       : _submit,
                   child: Text(
-                    t.videoPlayback.downloadEpisodeCount(
-                      count: _selected.length,
-                    ),
+                    widget.readQualities != null
+                        ? t.videoDownload.selectQuality
+                        : widget.sitePlaylist
+                        ? (chinese ? '下载 $count 个视频' : 'Download $count videos')
+                        : t.videoPlayback.downloadEpisodeCount(count: count),
                   ),
                 ),
               ],
@@ -376,7 +562,14 @@ class _VideoEpisodeDownloadPickerState
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(t.videoPlayback.downloadQueued),
+                  if (hasActiveTasks) Text(t.videoPlayback.downloadQueued),
+                  if (_queueFailed) Text(t.videoDownload.failed),
+                  if (_availabilityFailed)
+                    TextButton.icon(
+                      onPressed: _readAvailability,
+                      icon: const Icon(Icons.refresh),
+                      label: Text(t.common.loadingFailed),
+                    ),
                   VideoDownloadCurrentTasks(
                     taskKeys: _queuedKeys,
                     allowSourceNavigation: false,
@@ -451,9 +644,13 @@ class _VideoEpisodeDownloadPickerState
                           crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             Text(
-                              t.videoPlayback.downloadEpisodesSelected(
-                                count: _selected.length,
-                              ),
+                              widget.sitePlaylist
+                                  ? (chinese
+                                        ? '已选择 $count 个视频'
+                                        : '$count videos selected')
+                                  : t.videoPlayback.downloadEpisodesSelected(
+                                      count: count,
+                                    ),
                             ),
                             TextButton(
                               key: const ValueKey(

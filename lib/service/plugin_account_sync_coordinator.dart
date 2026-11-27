@@ -125,7 +125,7 @@ class PluginAccountSyncCoordinator {
     }
     if (!current()) throw const PluginSessionChanged();
     if (proof == null) {
-      if (requireFresh) throw StateError('Account identity unavailable');
+      if (requireFresh) throw PluginAccountIdentityUnavailable();
       return PluginAccountIdentities.current(source);
     }
     final sameSource = proof.atOrigin(registration.origin.origin);
@@ -470,9 +470,7 @@ class PluginAccountSyncCoordinator {
       if (snapshot == null ||
           !current() ||
           registration.identity != null &&
-              (beforeCookies == null ||
-                  beforeCookies.sessionFingerprint !=
-                      snapshot.sessionFingerprint))
+              !snapshot.matchesAuthenticatedRead(beforeCookies, source))
         continue;
       final saved = await registration.service.read();
       if (!current()) continue;
@@ -543,6 +541,25 @@ class PluginAccountSyncCoordinator {
       _live(source, _registrations[source]) &&
       _registrations[source]?.identity != null;
 
+  Future<void> _requireReversibleSessionChange(
+    _AccountRegistration registration,
+    VideoAccountBackup? before,
+    void Function() guard,
+  ) async {
+    guard();
+    if (before != null) return;
+    try {
+      await registration.identity!();
+    } on PluginAccountAuthenticationRejected {
+      guard();
+      return;
+    }
+    // A live or unconfirmed session without portable cookies cannot be
+    // restored if the next identity check fails.
+    guard();
+    throw const PluginAccountNeedsLogin();
+  }
+
   /// Apply only to the currently registered exact source store. A failed fresh
   /// identity check restores the old cookie values only if our candidate is
   /// still the live value; a newer login/visit must never be overwritten.
@@ -575,6 +592,9 @@ class PluginAccountSyncCoordinator {
       registration.origin,
       source: source,
     );
+    await _requireReversibleSessionChange(registration, before, () {
+      if (!current()) throw const PluginSessionChanged();
+    });
     if (!current()) throw const PluginSessionChanged();
     try {
       await registration.service.restore(snapshot, canApply: current);
@@ -602,7 +622,7 @@ class PluginAccountSyncCoordinator {
         );
         if (current() &&
             actual != null &&
-            actual.sessionFingerprint == snapshot.sessionFingerprint) {
+            actual.matchesAuthenticatedRead(snapshot, source)) {
           if (before != null)
             await registration.service.restore(before, canApply: current);
           else
@@ -672,18 +692,8 @@ class PluginAccountSyncCoordinator {
           origin,
           source: source,
         );
+        await _requireReversibleSessionChange(registration, before, guard);
         guard();
-        if (before == null) {
-          var signedOut = false;
-          try {
-            await registration.identity!();
-          } on PluginAccountAuthenticationRejected {
-            signedOut = true;
-          }
-          guard();
-          // Unknown or nonportable sessions cannot be cleared reversibly.
-          if (!signedOut) throw const PluginAccountNeedsLogin();
-        }
         try {
           await registration.service.clearSession(canApply: current);
           guard();
@@ -739,8 +749,9 @@ class PluginAccountSyncCoordinator {
             source: source,
           );
           guard();
-          if (beforeIdentity?.sessionFingerprint !=
-              snapshot?.sessionFingerprint) {
+          if (snapshot == null
+              ? beforeIdentity != null
+              : !snapshot.matchesAuthenticatedRead(beforeIdentity, source)) {
             throw const PluginAccountSwitchFailed();
           }
           final draft = activePluginAccountSnapshot(
@@ -809,7 +820,8 @@ class PluginAccountSyncCoordinator {
                   initial.origin,
                 ) ==
                 null &&
-            !PluginAccountProfiles.requiresWebLogin(profile)))
+            !PluginAccountProfiles.requiresWebLogin(profile) &&
+            !(profile.kind == 'web' && profile.serverIdentity.isNotEmpty)))
       throw const PluginAccountNeedsLogin();
     var registration = initial;
     final origin = registration.origin;
@@ -835,18 +847,8 @@ class PluginAccountSyncCoordinator {
       origin,
       source: source,
     );
+    await _requireReversibleSessionChange(registration, before, guard);
     guard();
-    // Do not destroy a current session whose allowed cookies cannot be restored.
-    if (before == null) {
-      PluginAccountAuthentication? previous;
-      try {
-        previous = await registration.identity!();
-      } on PluginAccountAuthenticationRejected {
-        /* Already signed out. */
-      }
-      guard();
-      if (previous != null) throw const PluginAccountNeedsLogin();
-    }
     try {
       await registration.service.clearSession(canApply: current);
       guard();
@@ -887,8 +889,7 @@ class PluginAccountSyncCoordinator {
       );
       guard();
       if (snapshot != null) {
-        if (beforeIdentity == null ||
-            beforeIdentity.sessionFingerprint != snapshot.sessionFingerprint)
+        if (!snapshot.matchesAuthenticatedRead(beforeIdentity, source))
           throw const PluginSessionChanged();
         // A verified switch owns the host transaction. Ordinary host writes
         // correctly remain blocked while that same session boundary is open.

@@ -24,6 +24,8 @@ void main() {
   testWidgets(
     'narrow custom artwork conceals red original at every frame edge',
     (tester) async {
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetDevicePixelRatio);
       final directory = (await tester.runAsync(
         () => Directory.systemTemp.createTemp('cover-privacy-pixels-'),
       ))!;
@@ -35,12 +37,21 @@ void main() {
         await tester.runAsync(() async {
           await file.writeAsBytes(await _greenImage(8, 120));
         });
-        // Resolve IO before the image enters the test's fake-async widget zone.
+        // Warm the same resized cache key used by the 120px artwork frame.
         await tester.pumpWidget(const MaterialApp(home: SizedBox()));
         await tester.runAsync(
           () => precacheImage(
-            FileImage(file),
+            ResizeImage(
+              FileImage(file),
+              width: 256,
+              height: 256,
+              policy: ResizeImagePolicy.fit,
+            ),
             tester.element(find.byType(SizedBox).first),
+            onError: (error, stack) => Error.throwWithStackTrace(
+              error,
+              stack ?? StackTrace.current,
+            ),
           ).timeout(const Duration(seconds: 3)),
         );
         controller.state.value = const CollectionCoverPrivacySettings(
@@ -51,6 +62,9 @@ void main() {
         controller.localImagePath.value = file.path;
         await tester.pumpWidget(
           MaterialApp(
+            theme: ThemeData(
+              colorScheme: const ColorScheme.light(surface: Color(0xff0000ff)),
+            ),
             home: Center(
               child: RepaintBoundary(
                 key: const ValueKey('privacy-frame'),
@@ -84,6 +98,7 @@ void main() {
           (1, 1),
           (78, 1),
           (1, 60),
+          (40, 60),
           (78, 60),
           (1, 118),
           (78, 118),

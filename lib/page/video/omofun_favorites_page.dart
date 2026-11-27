@@ -24,6 +24,7 @@ import 'package:zephyr/page/bookshelf/models/shelf_facets.dart';
 import 'package:zephyr/page/bookshelf/service/shelf_facet_adapters.dart';
 import 'package:zephyr/page/bookshelf/service/video_bookshelf_index.dart';
 import 'package:zephyr/page/bookshelf/widgets/shelf_filter_sheet.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 class OmoSiteFavoritesPage extends StatefulWidget {
   const OmoSiteFavoritesPage({
@@ -329,22 +330,12 @@ class _OmoSiteFavoritesPageState extends State<OmoSiteFavoritesPage> {
         .toList();
     final client = widget.client, identity = widget.client.account?.id;
     var revision = widget.client.revision;
-    final yes = await showDialog<bool>(
+    final yes = await confirmShortAlert(
       context: context,
-      builder: (dialog) => AlertDialog(
-        title: Text(t.videoSource.unfollowSite),
-        content: Text(t.videoSource.unfollowHint),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialog, false),
-            child: Text(t.common.cancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialog, true),
-            child: Text(t.common.confirm),
-          ),
-        ],
-      ),
+      title: Text(t.videoSource.unfollowSite),
+      content: Text(t.videoSource.unfollowHint),
+      confirmLabel: t.common.confirm,
+      destructive: true,
     );
     if (yes != true ||
         !mounted ||
@@ -574,7 +565,6 @@ class _OmoSiteFavoritesPageState extends State<OmoSiteFavoritesPage> {
               },
         filter: SourceFilterIconButton(
           key: const ValueKey('omo-favorites.filter'),
-          bare: false,
           tooltip: _facets.isActive
               ? t.videoFilters.active
               : t.bookshelf.facets.title,
@@ -606,6 +596,7 @@ class _OmoSiteFavoritesPageState extends State<OmoSiteFavoritesPage> {
           children: [
             BookshelfSelectionToolbar(
               keyPrefix: 'omo-favorites.selection',
+              inTitleBar: widget.standalone,
               selectedCount: _selected.length,
               allSelected:
                   visible.isNotEmpty &&

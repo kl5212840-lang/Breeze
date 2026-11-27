@@ -1,35 +1,51 @@
 import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search_result/view/source_list_categories.dart';
+import 'package:zephyr/page/search/cubit/search_cubit.dart';
+import 'package:zephyr/page/source_shell/source_experience_preferences.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+
+bool isBikaRandomResult(SearchStates search) =>
+    isBikaExperienceSource(search.from) &&
+    Uri.tryParse(search.pluginExtern['url']?.toString() ?? '')?.path ==
+        '/comics/random';
 
 /// Plugin schemes own the meaning of sort values. Never label every source
 /// with the Bika order: JM uses the same numbers for different sort modes.
 final _fieldCache =
-    <String, ({int owner, Future<List<Map<String, dynamic>>> fields})>{};
+    <
+      (String, String?),
+      ({int owner, Future<List<Map<String, dynamic>>> fields})
+    >{};
 
-Future<List<Map<String, dynamic>>> sourceAdvancedFields(String source) {
+Future<List<Map<String, dynamic>>> sourceAdvancedFields(
+  String source, {
+  String? browseUrl,
+}) {
   final id = normalizePluginId(source);
   if (id.isEmpty) return Future.value(const []);
   final owner = pluginSessionWriteFence.generation(id);
-  final cached = _fieldCache[id];
+  final key = (id, browseUrl);
+  final cached = _fieldCache[key];
   if (cached != null && cached.owner == owner) return cached.fields;
 
-  final fields = _loadAdvancedFields(id, owner);
-  _fieldCache[id] = (owner: owner, fields: fields);
+  final fields = _loadAdvancedFields(key, owner);
+  _fieldCache[key] = (owner: owner, fields: fields);
   return fields;
 }
 
 Future<List<Map<String, dynamic>>> _loadAdvancedFields(
-  String id,
+  (String, String?) key,
   int owner,
 ) async {
+  final (id, browseUrl) = key;
   try {
     final response = await callUnifiedComicPlugin(
       pluginId: id,
       fnPath: 'getAdvancedSearchScheme',
       core: const <String, dynamic>{},
-      extern: const <String, dynamic>{},
+      extern: <String, dynamic>{'url': ?browseUrl},
       notifyUnauthorized: false,
     );
     if (pluginSessionWriteFence.generation(id) != owner) return const [];
@@ -43,7 +59,7 @@ Future<List<Map<String, dynamic>>> _loadAdvancedFields(
         .toList();
   } catch (_) {
     // An earlier runtime failure must not evict the replacement's schema.
-    if (_fieldCache[id]?.owner == owner) _fieldCache.remove(id);
+    if (_fieldCache[key]?.owner == owner) _fieldCache.remove(key);
     return const [];
   }
 }
@@ -54,9 +70,15 @@ List<Map<String, dynamic>> uniqueAdvancedFields(
 ) {
   final hasQuickCategories = sourceQuickCategories(source).isNotEmpty;
   final scope = sourceSearchScope(fields);
+  final jmDiscovery = jmSearchDiscoveryFunction(source) != null;
   return fields.where((field) {
     final key = field['key']?.toString();
+    if (isBikaExperienceSource(source) &&
+        const {'categories', 'blockedCategories'}.contains(key)) {
+      return false;
+    }
     if (scope != null && key == scope.field) return false;
+    if (jmDiscovery && key == 'search_type') return false;
     return !hasQuickCategories ||
         (key != 'sortBy' && key != 'blockedCategories');
   }).toList();

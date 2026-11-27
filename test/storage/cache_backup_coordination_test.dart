@@ -36,6 +36,9 @@ class _Paths extends PathProviderPlatform {
 
 class _CacheApi extends RustLibApi {
   @override
+  void crateApiQjsClearHostResponseCache({String? source}) {}
+
+  @override
   String crateApiSimpleEncodePath({required String path}) =>
       path == 'other-source-fixture' ? 'f_202' : 'f_101';
   @override

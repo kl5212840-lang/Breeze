@@ -185,7 +185,7 @@ class _RetryHost {
   ApiVideoBrowserSession? browser;
   OverlayEntry? entry;
   InAppWebViewController? web;
-  final ready = Completer<void>();
+  final ready = Completer<bool>();
   Future<Map<String, dynamic>>? bootstrap;
   Completer<void>? interaction;
   StreamSubscription<PluginSessionBoundary>? subscription;
@@ -283,6 +283,15 @@ class _RetryHost {
     notify();
   }
 
+  Future<void> _loadDocument(InAppWebViewController controller) async {
+    if (!current) return;
+    try {
+      await controller.loadUrl(urlRequest: URLRequest(url: WebUri('$home')));
+    } catch (_) {
+      if (!ready.isCompleted) ready.complete(false);
+    }
+  }
+
   Widget _view(BuildContext context) {
     if (browser != null)
       return Material(
@@ -330,17 +339,29 @@ class _RetryHost {
                 source: source,
                 networkContext: network?.token,
                 configuration: InAppWebView(
-                  initialUrlRequest: URLRequest(url: WebUri(home.toString())),
                   initialSettings: InAppWebViewSettings(
                     javaScriptEnabled: true,
                     domStorageEnabled: true,
                     useShouldOverrideUrlLoading: true,
                   ),
                   onWebViewCreated: (controller) {
+                    if (!current) return;
                     web = controller;
+                    // The iOS platform view creates a browser before any
+                    // navigation. Start it in the same way on both platforms.
+                    unawaited(_loadDocument(controller));
                   },
-                  onLoadStop: (_, __) {
-                    if (!ready.isCompleted) ready.complete();
+                  onLoadStop: (controller, url) {
+                    if (identical(web?.platform, controller.platform) &&
+                        url?.origin == home.origin &&
+                        !ready.isCompleted) {
+                      ready.complete(true);
+                    }
+                  },
+                  onReceivedError: (_, request, _) {
+                    if (request.isForMainFrame == true && !ready.isCompleted) {
+                      ready.complete(false);
+                    }
                   },
                   shouldOverrideUrlLoading: (_, action) async =>
                       allowVideoSiteNavigation(
@@ -412,8 +433,9 @@ class _RetryHost {
         rethrow;
       }
     }
-    await ready.future.timeout(const Duration(seconds: 25));
+    final loaded = await ready.future.timeout(const Duration(seconds: 25));
     check();
+    if (!loaded) throw const VideoDownloadRetryFailure('network');
     final selectors = asJsonMap(
       payload['selectors'],
     ).map((key, value) => MapEntry(key, '$value'));
@@ -454,6 +476,8 @@ class _RetryHost {
       visible = false;
       needsInteraction = false;
       notify();
+      await network?.prepare();
+      check();
       return VideoDownloadRetryResolution(
         choices: result.value!,
         networkContext: network?.token,
@@ -490,7 +514,7 @@ class _RetryHost {
     entry?.remove();
     entry?.dispose();
     entry = null;
-    if (!ready.isCompleted) ready.complete();
+    if (!ready.isCompleted) ready.complete(false);
     if (interaction?.isCompleted == false) interaction!.complete();
     await subscription?.cancel();
     await releaseTransport();

@@ -141,6 +141,12 @@ class ChapterTransitionCard extends StatelessWidget {
             ),
           ),
         );
+      case SeamlessTransitionStatus.waitingForNetwork:
+        return _TransitionStatusMeta(
+          message: t.download.waitingForNetwork,
+          canTap: false,
+          leading: const Icon(Icons.wifi_off_outlined, size: 16),
+        );
       case SeamlessTransitionStatus.ready:
         return _TransitionStatusMeta(
           message: t.reader.transitionLoaded,

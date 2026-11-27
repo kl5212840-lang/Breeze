@@ -59,7 +59,7 @@ class _ColumnModeWidgetState extends State<ColumnModeWidget> {
         ? widget.parentPhysics!.applyTo(const AlwaysScrollableScrollPhysics())
         : const AlwaysScrollableScrollPhysics();
     final physics = widget.disableScroll
-        ? const NeverScrollableScrollPhysics()
+        ? NeverScrollableScrollPhysics(parent: basePhysics)
         : basePhysics;
 
     return LayoutBuilder(

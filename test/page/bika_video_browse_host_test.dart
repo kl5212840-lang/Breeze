@@ -1,3 +1,4 @@
+import 'package:zephyr/page/search_result/widgets/source_page_jump.dart';
 import 'dart:async';
 
 import 'package:flutter/services.dart';
@@ -19,7 +20,9 @@ import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:zephyr/page/video/video_search_page.dart';
 import 'package:zephyr/page/video/video_search_history.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
+import 'package:zephyr/page/search/method/search_scope_preferences.dart';
 import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
+import 'package:zephyr/page/search/widget/search_field_decoration.dart';
 import 'package:zephyr/page/search/widget/search_input_dialog.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 
@@ -88,10 +91,201 @@ void main() {
     await TestObjectBoxHelper.setUpTestObjectBox();
   });
   tearDownAll(TestObjectBoxHelper.tearDownTestObjectBox);
+  test(
+    'direct paging requires the remote page and total without a cursor',
+    () async {
+      final response = <String, dynamic>{
+        'items': [],
+        'categories': [],
+        'page': 1,
+        'pageCount': 5,
+        'total': 90,
+      };
+      final repo = ApiVideoRepository(
+        source: 'paging-protocol',
+        home: Uri.parse(_movieHome),
+        catalogFn: 'catalog',
+        detailFn: 'detail',
+        playbackFn: 'play',
+        pluginCall: (_, _) async => {'data': response},
+      );
+      Future<int?> directCount({Map<String, dynamic>? cursor}) async {
+        int? count;
+        await repo.page(
+          cursor: cursor,
+          onDirectPageCount: (value) => count = value,
+        );
+        return count;
+      }
+
+      expect(await directCount(), 5);
+      expect(await directCount(cursor: {'opaque': true}), isNull);
+      response['nextCursor'] = {'opaque': true};
+      expect(await directCount(), isNull);
+      response.remove('nextCursor');
+      response['totalKnown'] = false;
+      expect(await directCount(), isNull);
+      response.remove('totalKnown');
+      response.remove('total');
+      expect(await directCount(), isNull);
+      response['total'] = 90;
+      response.remove('page');
+      expect(await directCount(), isNull);
+    },
+  );
+
+  for (final source in [_bika, 'compatible-video-fixture']) {
+    testWidgets(
+      'numbered catalog jump loads the exact page and resumes after it ($source)',
+      (tester) async {
+        SharedPreferences.setMockInitialValues({});
+        await tester.binding.setSurfaceSize(const Size(320, 720));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        final pages = <int>[];
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SourceVideoContent(
+                source: source,
+                leading: const Icon(Icons.chevron_left),
+                actions: [_module('animate', search: 'none')],
+                pluginCall: (fn, args) async {
+                  if (fn == 'detail') {
+                    return {
+                      'data': _row(args['id'].toString(), home: _animeHome),
+                    };
+                  }
+                  final page = args['page'] as int;
+                  pages.add(page);
+                  return {
+                    'data': {
+                      'items': [
+                        for (var index = 0; index < 18; index++)
+                          _row('page-$page-$index', home: _animeHome),
+                      ],
+                      'categories': [],
+                      'page': page,
+                      'pageCount': 5,
+                      'total': 90,
+                    },
+                  };
+                },
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final progress = find.byKey(
+          const ValueKey('api-catalog.page-progress'),
+        );
+        expect(
+          tester.widget<SourcePageJumpButton>(progress).label,
+          t.searchResult.pageProgress(page: 1, pages: 5),
+        );
+
+        await tester.tap(progress);
+        await tester.pumpAndSettle();
+        final pageInput = find.widgetWithText(TextField, '1');
+        expect(pageInput, findsOneWidget);
+        await tester.enterText(pageInput, '4');
+        await tester.tap(find.text(t.common.ok));
+        await tester.pumpAndSettle();
+        expect(pages, [1, 4]);
+        expect(
+          tester.widget<SourcePageJumpButton>(progress).label,
+          t.searchResult.pageProgress(page: 4, pages: 5),
+        );
+        final catalog = find.byType(ApiVideoCollection);
+        expect(
+          tester.widget<ApiVideoCollection>(catalog).items.first.id,
+          'page-4-0',
+        );
+        final scroll = tester
+            .widget<CustomScrollView>(
+              find.descendant(
+                of: catalog,
+                matching: find.byType(CustomScrollView),
+              ),
+            )
+            .controller!;
+        scroll.jumpTo(scroll.position.maxScrollExtent);
+        await tester.pumpAndSettle();
+        expect(pages, [1, 4, 5]);
+        expect(
+          tester.widget<ApiVideoCollection>(catalog).items.last.id,
+          'page-5-17',
+        );
+        scroll.jumpTo(scroll.position.maxScrollExtent);
+        await tester.pumpAndSettle();
+        expect(
+          tester.widget<SourcePageJumpButton>(progress).label,
+          t.searchResult.pageProgress(page: 5, pages: 5),
+        );
+        expect(progress.hitTestable(), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  for (final hasCategories in [false, true]) {
+    testWidgets('Bika catalog waits for taxonomy and count ($hasCategories)', (
+      tester,
+    ) async {
+      SharedPreferences.setMockInitialValues({});
+      final response = Completer<Map<String, dynamic>>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SourceVideoContent(
+              source: _bika,
+              leading: const Icon(Icons.chevron_left),
+              actions: [_module('animate', search: 'none')],
+              pluginCall: (_, _) => response.future,
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 250));
+      final count = find.byKey(const ValueKey('api-catalog.local-scope'));
+      final categories = find.text(t.videoLibrary.moreCategories);
+      expect(count, findsNothing);
+      expect(categories, findsNothing);
+      expect(find.text(t.videoLibrary.noResults), findsNothing);
+
+      response.complete({
+        'data': {
+          'items': [],
+          'categories': [
+            if (hasCategories)
+              {'id': 'cat', 'name': 'Fixture category', 'parentId': '0'},
+          ],
+          'page': 1,
+          'pageCount': 1,
+          'total': 0,
+        },
+      });
+      await tester.pumpAndSettle();
+      expect(count, findsOneWidget);
+      expect(find.text(t.videoLibrary.noResults), findsOneWidget);
+      expect(categories, hasCategories ? findsOneWidget : findsNothing);
+      expect(
+        find.text('Fixture category'),
+        hasCategories ? findsOneWidget : findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets(
     'Bika search keeps its results and returns to the original directory',
     (tester) async {
       SharedPreferences.setMockInitialValues({});
+      await SearchScopePreferences.save(
+        source: _bika,
+        surface: SearchScopePreferences.video,
+        value: KeywordSearchScope.title.name,
+        supported: defaultKeywordSearchScopes.map((scope) => scope.name),
+      );
       for (final word in ['older one', 'older two', 'older three']) {
         await VideoSearchHistory.add(_bika, word);
       }
@@ -101,9 +295,18 @@ void main() {
       final lateSearch = Completer<Map<String, dynamic>>();
       final requests = <({String home, String query, bool refresh})>[];
 
-      Map<String, dynamic> catalog(String id, {String home = _movieHome}) {
+      Map<String, dynamic> catalog(
+        String id, {
+        String home = _movieHome,
+        String keyword = '',
+      }) {
         final rows = [
-          for (final suffix in ['one', 'two']) _row('$id-$suffix', home: home),
+          for (final suffix in ['one', 'two'])
+            _row(
+              '$id-$suffix',
+              home: home,
+              title: keyword.isNotEmpty && suffix == 'one' ? keyword : '作品',
+            ),
           if (id == 'initial')
             for (var i = 0; i < 24; i++) _row('movie-$i', home: home),
         ];
@@ -149,7 +352,10 @@ void main() {
                   throw StateError('fixture HTTP 502');
                 }
                 if (keyword.isEmpty) return catalog('initial');
-                return catalog(refresh ? 'recovered' : 'search');
+                return catalog(
+                  refresh ? 'recovered' : 'search',
+                  keyword: keyword,
+                );
               },
             ),
           ),
@@ -187,13 +393,21 @@ void main() {
       expect(find.byType(VideoNativeNavigation), findsNothing);
       expect(find.byType(ApiVideoCollection), findsNothing);
       expect(tester.testTextInput.isVisible, isTrue);
-      expect(
-        tester.widget<KeywordScopeMenu>(scopeMenu).scope,
-        KeywordSearchScope.all,
-      );
+      expect(scopeMenu, findsNothing);
       expect(requests, [(home: _movieHome, query: '', refresh: false)]);
       final historyPanel = find.byType(CatalogSearchOverlay);
       expect(tester.widget<CatalogSearchOverlay>(historyPanel).inPage, isTrue);
+      final magnifier = find.byType(SearchFieldSubmitButton);
+      expect(find.descendant(of: entry, matching: magnifier), findsOneWidget);
+      expect(
+        tester.getRect(magnifier).left,
+        closeTo(tester.getRect(input).left, .5),
+      );
+      final submitButton = find.descendant(
+        of: magnifier,
+        matching: find.byType(IconButton),
+      );
+      expect(tester.widget<IconButton>(submitButton).onPressed, isNull);
       expect(
         find.descendant(
           of: historyPanel,
@@ -207,19 +421,6 @@ void main() {
       for (final word in ['older one', 'older two', 'older three']) {
         expect(find.text(word), findsOneWidget);
       }
-      tester
-          .widget<KeywordScopeMenu>(scopeMenu)
-          .onChanged(KeywordSearchScope.title);
-      await tester.pumpAndSettle();
-      expect(
-        tester.widget<KeywordScopeMenu>(scopeMenu).scope,
-        KeywordSearchScope.title,
-      );
-      tester
-          .widget<KeywordScopeMenu>(scopeMenu)
-          .onChanged(KeywordSearchScope.all);
-      await tester.pumpAndSettle();
-
       Future<void> submit(String keyword) async {
         if (input.evaluate().isEmpty) {
           await tester.tap(queryTitle);
@@ -231,28 +432,49 @@ void main() {
         await tester.pump(const Duration(milliseconds: 400));
       }
 
-      await submit(query);
+      await tester.enterText(input, query);
+      await tester.pump();
+      expect(tester.widget<IconButton>(submitButton).onPressed, isNotNull);
+      await tester.tap(submitButton);
       await tester.pumpAndSettle();
-      expect(visibleIds(), ['search-one', 'search-two']);
+      expect(visibleIds(), ['search-one']);
       expect(tester.widget<VideoSearchResultTitle>(queryTitle).query, query);
       expect(input, findsNothing);
+      expect(find.byType(SourceMoreButton).hitTestable(), findsNothing);
+      final resultsFilter = find.byKey(const ValueKey('api-library.filters'));
+      expect(
+        tester.widget<SourceChromeIconButton>(resultsFilter).bare,
+        isFalse,
+      );
+      expect(resultsFilter.hitTestable(), findsOneWidget);
       expect(find.text(t.search.history), findsNothing);
       expect(find.widgetWithText(InputChip, query), findsNothing);
-      expect(find.text(t.videoLibrary.results(count: 2)), findsOneWidget);
+      expect(
+        find.text(t.videoLibrary.localCatalogUnknownTotal(loaded: 2, shown: 1)),
+        findsOneWidget,
+      );
       expect(
         find.byKey(const ValueKey('api-catalog.local-scope')),
-        findsNothing,
+        findsOneWidget,
       );
 
+      await SearchScopePreferences.save(
+        source: _bika,
+        surface: SearchScopePreferences.video,
+        value: KeywordSearchScope.all.name,
+        supported: defaultKeywordSearchScopes.map((scope) => scope.name),
+      );
       await tester.tap(queryTitle);
       await tester.pumpAndSettle();
+      expect(magnifier, findsOneWidget);
+      expect(scopeMenu, findsNothing);
       await tester.enterText(input, 'discard edit');
       await tester.tap(
         find.descendant(of: entry, matching: find.byTooltip(t.common.close)),
       );
       await tester.pumpAndSettle();
       expect(tester.widget<VideoSearchResultTitle>(queryTitle).query, query);
-      expect(visibleIds(), ['search-one', 'search-two']);
+      expect(visibleIds(), ['search-one']);
 
       await submit(failedQuery);
       await tester.pumpAndSettle();
@@ -260,7 +482,7 @@ void main() {
       expect(find.text(t.videoLibrary.results(count: 0)), findsNothing);
       await tester.tap(find.text(t.common.retry));
       await tester.pumpAndSettle();
-      expect(visibleIds(), ['recovered-one', 'recovered-two']);
+      expect(visibleIds(), ['recovered-one']);
 
       await submit(pendingQuery);
       expect(
@@ -274,6 +496,15 @@ void main() {
       expect(visibleIds().take(2), ['initial-one', 'initial-two']);
       expect(directoryScroll.offset, 120);
       expect(input, findsNothing);
+
+      await tester.tap(openSearch);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(query));
+      await tester.pumpAndSettle();
+      expect(visibleIds(), ['search-one']);
+      await tester.tap(find.byTooltip(t.common.back));
+      await tester.pumpAndSettle();
+
       tester.widget<NativeVideoSegmentedControl>(modulePicker).onSelected!(
         _animeHome,
       );
@@ -294,6 +525,7 @@ void main() {
         (home: _movieHome, query: failedQuery, refresh: false),
         (home: _movieHome, query: failedQuery, refresh: true),
         (home: _movieHome, query: pendingQuery, refresh: false),
+        (home: _movieHome, query: query, refresh: false),
         (home: _animeHome, query: '', refresh: false),
       ]);
     },
@@ -438,15 +670,41 @@ void main() {
               matching: find.byType(NativeVideoMenu),
             ),
           );
+          expect(more.bare, isFalse);
+          final movieFilter = find.byKey(const ValueKey('api-library.filters'));
+          expect(
+            tester.widget<SourceChromeIconButton>(movieFilter).bare,
+            isFalse,
+          );
           expect(more.options, isNot(contains('search-loaded')));
           expect(more.options, isNot(contains('display')));
           final view = find.byKey(const ValueKey('api-catalog.view-mode'));
           CustomScrollView catalogScroll() => tester.widget<CustomScrollView>(
-            find.ancestor(of: view, matching: find.byType(CustomScrollView)),
+            find.descendant(
+              of: find.byType(ApiVideoCollection),
+              matching: find.byType(CustomScrollView),
+            ),
           );
 
           Future<void> checkViewToggle(double offset) async {
-            final heading = find.text(t.videoLibrary.updatedFirst);
+            final heading = find.byKey(
+              const ValueKey('api-catalog.page-progress'),
+            );
+            final summary = find.byKey(
+              const ValueKey('api-catalog.local-scope'),
+            );
+            final size = tester.getSize(summary);
+            expect(size.width, greaterThan(0));
+            expect(
+              tester.getRect(summary).overlaps(tester.getRect(heading)),
+              isFalse,
+            );
+            if (MediaQuery.textScalerOf(tester.element(view)).scale(14) == 14) {
+              expect(
+                tester.getCenter(summary).dy,
+                closeTo(tester.getCenter(view).dy, 1),
+              );
+            }
             final scroll = catalogScroll().controller!;
             scroll.jumpTo(offset);
             await tester.pumpAndSettle();
@@ -482,7 +740,7 @@ void main() {
           }
 
           await checkViewToggle(0);
-          await checkViewToggle(12);
+          await checkViewToggle(8);
           final movieStorageKey = catalogScroll().key;
           expect(movieStorageKey, isA<PageStorageKey<String>>());
           expect(
@@ -542,6 +800,14 @@ void main() {
             findsOneWidget,
           );
           final query = find.byKey(const ValueKey('shelf-filter-work-query'));
+          final options = find.byKey(const ValueKey('shelf-facet-search'));
+          final tags = find.byKey(const ValueKey('shelf-facet-tags'));
+          final works = find.byKey(const ValueKey('shelf-facet-title'));
+          expect(options, findsOneWidget);
+          expect(query, findsNothing);
+          await tester.tap(works);
+          await tester.pumpAndSettle();
+          expect(options, findsNothing);
           expect(query, findsOneWidget);
           expect(find.text(t.videoLibrary.loadedResultScope), findsOneWidget);
           expect(
@@ -555,6 +821,25 @@ void main() {
           await tester.pumpAndSettle();
           final apply = find.byKey(const ValueKey('shelf-filter-apply'));
           expect(find.text(t.bookshelf.facets.resultTitle(count: 1)), findsOne);
+          await tester.tap(tags);
+          await tester.pumpAndSettle();
+          expect(options, findsOneWidget);
+          expect(query, findsNothing);
+          expect(find.text(t.bookshelf.facets.resultTitle(count: 1)), findsOne);
+          await tester.tap(works);
+          await tester.pumpAndSettle();
+          expect(
+            tester
+                .widget<TextField>(
+                  find.descendant(of: query, matching: find.byType(TextField)),
+                )
+                .controller!
+                .text,
+            'one',
+          );
+          await tester.ensureVisible(apply);
+          await tester.pumpAndSettle();
+          expect(apply.hitTestable(), findsOneWidget);
           await tester.tap(apply);
           await tester.pumpAndSettle();
           expect(
@@ -577,10 +862,44 @@ void main() {
             find.byKey(const ValueKey('api-catalog.local-query')),
             findsOneWidget,
           );
+          final localSearch = find.byKey(
+            const ValueKey('api-catalog.local-query'),
+          );
+          final localScope = find.byType(KeywordScopeMenu);
+          expect(
+            find.descendant(of: localSearch, matching: localScope),
+            findsOneWidget,
+          );
+          expect(localScope.hitTestable(), findsOneWidget);
+          expect(tester.getSize(localScope).width, greaterThanOrEqualTo(44));
+          expect(
+            tester.getRect(localSearch).contains(tester.getCenter(localScope)),
+            isTrue,
+          );
+          final animationMore = find.byType(SourceMoreButton);
+          final animationMenu = tester.widget<NativeVideoMenu>(
+            find.descendant(
+              of: animationMore,
+              matching: find.byType(NativeVideoMenu),
+            ),
+          );
+          expect(animationMenu.bare, isFalse);
+          expect(animationMenu.options, more.options);
+          final localFilter = find.byKey(const ValueKey('api-library.filters'));
+          expect(
+            tester.widget<SourceChromeIconButton>(localFilter).bare,
+            isFalse,
+          );
+          expect(tester.getSize(animationMore), const Size.square(44));
+          expect(tester.getSize(localFilter), const Size.square(44));
+          expect(
+            tester.getCenter(localSearch).dy,
+            closeTo(tester.getCenter(animationMore).dy, 1),
+          );
           expect(catalogScroll().key, isA<PageStorageKey<String>>());
           expect(catalogScroll().key, isNot(movieStorageKey));
           await checkViewToggle(0);
-          await checkViewToggle(12);
+          await checkViewToggle(8);
           expect(catalogs, [
             'https://movie.fixture/',
             'https://animate.fixture/',

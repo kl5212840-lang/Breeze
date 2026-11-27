@@ -1,12 +1,15 @@
 import 'dart:convert';
 
 import 'package:zephyr/main.dart';
+import 'package:zephyr/network/http/plugin/qjs_network_route.dart'
+    show canonicalQjsSource;
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/object_box/objectbox.g.dart';
 import 'package:zephyr/network/sync/plugin_config_merge.dart';
 import 'package:zephyr/network/sync/plugin_portable_scope.dart';
 import 'package:zephyr/network/sync/plugin_record_scope.dart';
 import 'package:zephyr/network/sync/portable_preferences.dart';
+import 'package:zephyr/page/search/method/search_history_entries.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/service/local_plugin_installation_state.dart';
 
@@ -181,6 +184,39 @@ Map<String, dynamic> projectPluginSettingsData(
           Map<String, dynamic>.from(row),
     ],
   };
+}
+
+/// Use the selected side for combined search and participating source history,
+/// and keep the destination's rows for sources outside this round.
+List<String> projectComicSearchHistory(
+  Iterable<String> selected,
+  Iterable<String> retained,
+  Set<String> sources,
+) {
+  final participating = sources.map(canonicalQjsSource).toSet();
+  final seen = <(String?, String)>{};
+  final result = <String>[];
+  void add(Iterable<String> rows, {required bool takeSelected}) {
+    for (final raw in rows) {
+      final entry = SearchHistoryEntries.decode(raw);
+      final scope = entry?.scope;
+      final owner = scope == null || scope.isEmpty
+          ? null
+          : PluginPortableScope(
+              canonicalQjsSource(scope),
+              PluginDataScope.records,
+            );
+      final selectedRow = owner == null || participating.contains(owner.source);
+      if (selectedRow == takeSelected &&
+          seen.add((scope, entry?.query ?? raw))) {
+        result.add(raw);
+      }
+    }
+  }
+
+  add(selected, takeSelected: true);
+  add(retained, takeSelected: false);
+  return result;
 }
 
 VideoLibrarySnapshot projectPluginVideoData(

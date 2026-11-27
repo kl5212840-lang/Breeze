@@ -65,7 +65,7 @@ class BreezeNavigationBar extends StatelessWidget {
                   children: [
                     for (final (index, tab) in destinations.indexed)
                       Expanded(
-                        child: _BreezeTab(
+                        child: BreezeNavigationTab(
                           tab: tab,
                           selected: index == selectedIndex,
                           foreground: index == selectedIndex
@@ -85,66 +85,94 @@ class BreezeNavigationBar extends StatelessWidget {
   }
 }
 
-class _BreezeTab extends StatelessWidget {
-  const _BreezeTab({
+/// Full destination semantics and press feedback, independent of the bar.
+class BreezeNavigationTab extends StatelessWidget {
+  const BreezeNavigationTab({
+    super.key,
     required this.tab,
     required this.selected,
     required this.foreground,
     required this.onTap,
+    this.glass = false,
+    this.semanticsLabel,
   });
 
   final NavigationDestination tab;
   final bool selected;
   final Color foreground;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
+  final bool glass;
+  final String? semanticsLabel;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final enabled = tab.enabled && onTap != null;
+    final content = ExcludeSemantics(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          IconTheme.merge(
+            data: IconThemeData(size: glass ? 24 : 23, color: foreground),
+            child: selected ? tab.selectedIcon ?? tab.icon : tab.icon,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            tab.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: foreground,
+              fontWeight: selected && glass ? FontWeight.w600 : FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
     return Tooltip(
       message: tab.tooltip ?? '',
       excludeFromSemantics: true,
       child: Semantics(
         role: SemanticsRole.tab,
         selected: selected,
-        enabled: tab.enabled,
-        label: tab.label,
+        enabled: enabled,
+        label: semanticsLabel ?? tab.label,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          padding: glass
+              ? EdgeInsets.zero
+              : const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
           child: Material(
             color: Colors.transparent,
-            child: _BreezeNavigationPress(
-              enabled: tab.enabled,
-              radius: 12,
-              builder: (context, hover, content) => InkWell(
-                borderRadius: BorderRadius.circular(12),
-                hoverColor: hover.hoverColor(),
-                splashFactory: NoSplash.splashFactory,
-                highlightColor: Colors.transparent,
-                onTap: tab.enabled ? onTap : null,
-                child: content,
-              ),
-              child: ExcludeSemantics(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    IconTheme.merge(
-                      data: IconThemeData(size: 23, color: foreground),
-                      child: selected ? tab.selectedIcon ?? tab.icon : tab.icon,
+            child: glass
+                ? InkWell(
+                    borderRadius: BorderRadius.circular(23),
+                    splashFactory: NoSplash.splashFactory,
+                    highlightColor: Colors.transparent,
+                    hoverColor: theme.colorScheme.onSurface.withValues(
+                      alpha: .04,
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      tab.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: foreground,
-                        fontWeight: FontWeight.w500,
-                      ),
+                    focusColor: theme.colorScheme.onSurface.withValues(
+                      alpha: MediaQuery.highContrastOf(context) ? .23 : .12,
                     ),
-                  ],
-                ),
-              ),
-            ),
+                    onTap: enabled ? onTap : null,
+                    child: CollectionPressFeedback(
+                      enabled: enabled,
+                      child: content,
+                    ),
+                  )
+                : _BreezeNavigationPress(
+                    enabled: enabled,
+                    radius: 12,
+                    builder: (context, hover, content) => InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      hoverColor: hover.hoverColor(),
+                      splashFactory: NoSplash.splashFactory,
+                      highlightColor: Colors.transparent,
+                      onTap: enabled ? onTap : null,
+                      child: content,
+                    ),
+                    child: content,
+                  ),
           ),
         ),
       ),
@@ -161,24 +189,33 @@ class BreezeSectionSelector<T> extends StatelessWidget {
     this.enabled = true,
     this.dragEnabled = false,
     this.direction = Axis.horizontal,
+    this.flatTrack = false,
   });
 
   final Map<T, String> options;
   final T selected;
   final ValueChanged<T>? onSelected;
   final bool enabled;
-  final bool dragEnabled;
+  final bool dragEnabled, flatTrack;
   final Axis direction;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final track = BreezeControlColors.track(theme);
-    final selection = BreezeControlColors.sectionSelection(
-      theme,
-      track: track,
-      highContrast: MediaQuery.highContrastOf(context),
-    );
+    final highContrast = MediaQuery.highContrastOf(context);
+    final android = BreezeControlColors.androidContentSelectionOf(context);
+    final track =
+        android?.track ??
+        (flatTrack
+            ? theme.scaffoldBackgroundColor
+            : BreezeControlColors.track(theme));
+    final selection = android != null
+        ? (fill: android.fill, foreground: android.foreground)
+        : BreezeControlColors.sectionSelection(
+            theme,
+            track: track,
+            highContrast: highContrast,
+          );
     final entries = options.entries.toList(growable: false);
     final onSelected = this.onSelected;
     void select(T value) {
@@ -190,16 +227,17 @@ class BreezeSectionSelector<T> extends StatelessWidget {
     return RepaintBoundary(
       child: Stack(
         children: [
-          Positioned.fill(
-            top: horizontal ? inset : 0,
-            bottom: horizontal ? inset : 0,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                color: track,
-                borderRadius: BorderRadius.circular(12),
+          if (!flatTrack || android != null)
+            Positioned.fill(
+              top: horizontal ? inset : 0,
+              bottom: horizontal ? inset : 0,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: track,
+                  borderRadius: BorderRadius.circular(12),
+                ),
               ),
             ),
-          ),
           Material(
             type: MaterialType.transparency,
             child: Padding(

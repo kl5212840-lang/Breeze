@@ -211,6 +211,21 @@ class CommentsCubit extends Cubit<CommentsViewState> {
       state.topItems.any((item) => item.id == id) ||
       state.items.any((item) => item.id == id);
 
+  bool needsReplyPreview(CommentItem item) =>
+      state.replyMode != 'embedded' &&
+      item.id.isNotEmpty &&
+      item.replyCount > 0 &&
+      item.replies.isEmpty &&
+      !state.replyItems.containsKey(item.id) &&
+      !state.expandedIds.contains(item.id) &&
+      state.replyLoading[item.id] != true &&
+      replyError(item.id) == null;
+
+  Future<void> loadReplyPreview(CommentItem item) async {
+    if (!needsReplyPreview(item)) return;
+    await _loadReplies(item: item, page: 1, reset: true);
+  }
+
   Future<void> toggleReplies(CommentItem item) async {
     if (isClosed || !_hasParent(item.id)) return;
     if (state.expandedIds.contains(item.id)) {
@@ -240,7 +255,7 @@ class CommentsCubit extends Cubit<CommentsViewState> {
       return;
     }
 
-    if (state.replyItems.containsKey(item.id)) {
+    if (state.replyItems.containsKey(item.id) || replyError(item.id) != null) {
       return;
     }
     await _loadReplies(item: item, page: 1, reset: true);

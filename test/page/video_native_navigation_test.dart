@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/widgets/android_glass_plate.dart';
 import 'package:zephyr/widgets/breeze_navigation_bar.dart';
 import 'package:zephyr/widgets/breeze_theme_colors.dart';
 
@@ -167,27 +168,50 @@ void main() {
       }
 
       await tester.pumpWidget(view(Colors.pink, Brightness.light));
-      final bar = find.byType(NavigationBar);
-      expect(tester.getSize(bar).height, 92);
-      expect(tester.widget<NavigationBar>(bar).selectedIndex, 0);
-      final pink = tester.widget<NavigationBar>(bar).indicatorColor;
+      final bar = find.byType(VideoNativeNavigation);
+      final plate = find.byKey(const ValueKey('android-navigation-selection'));
+      Color selectionFill() =>
+          (tester.widget<DecoratedBox>(plate).decoration as BoxDecoration)
+              .color!;
+      expect(tester.getSize(bar).height, 100);
+      expect(tester.widget<VideoNativeNavigation>(bar).currentIndex, 0);
+      final pink = selectionFill();
+      final pinkScheme = Theme.of(tester.element(bar)).colorScheme;
+      expect(pink, pinkScheme.secondaryContainer);
+      expect(
+        pink.computeLuminance(),
+        greaterThan(AndroidGlassPlate.track(pinkScheme).computeLuminance()),
+      );
       expect(find.byType(UiKitView), findsNothing);
       await tester.tap(find.text('Me'));
       expect(selected, 1);
+      await tester.pumpWidget(view(Colors.teal, Brightness.light));
+      await tester.pumpAndSettle();
+      expect(
+        selectionFill(),
+        Theme.of(tester.element(bar)).colorScheme.secondaryContainer,
+      );
+      expect(selectionFill(), isNot(pink));
       await tester.pumpWidget(view(Colors.teal, Brightness.dark));
       await tester.pumpAndSettle();
-      final teal = tester.widget<NavigationBar>(bar);
-      expect(teal.selectedIndex, 1);
-      expect(teal.indicatorColor, isNot(pink));
-      final theme = NavigationBarTheme.of(tester.element(bar));
-      final icon = theme.iconTheme!.resolve({WidgetState.selected})!.color!;
+      expect(tester.widget<VideoNativeNavigation>(bar).currentIndex, 1);
+      final teal = selectionFill();
+      expect(teal, isNot(pink));
+      final theme = Theme.of(tester.element(bar));
+      expect(teal, theme.colorScheme.secondaryContainer);
       expect(
-        BreezeThemeColors.contrast(icon, teal.indicatorColor!),
-        greaterThan(4.5),
+        teal.computeLuminance(),
+        greaterThan(
+          AndroidGlassPlate.track(theme.colorScheme).computeLuminance(),
+        ),
       );
+      final icon = tester
+          .widget<BreezeNavigationTab>(find.byType(BreezeNavigationTab).last)
+          .foreground;
+      expect(BreezeThemeColors.contrast(icon, teal), greaterThanOrEqualTo(4.5));
       appearance.value = 'breeze';
       await tester.pumpAndSettle();
-      expect(bar, findsNothing);
+      expect(plate, findsNothing);
       expect(find.byType(BreezeNavigationBar), findsOneWidget);
       expect(tester.takeException(), isNull);
     },

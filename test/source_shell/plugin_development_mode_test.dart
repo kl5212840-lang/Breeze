@@ -5,6 +5,7 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/plugin_settings/cubit/plugin_settings_cubit.dart';
 import 'package:zephyr/page/plugin_settings/widgets/plugin_settings_content.dart';
 import 'package:zephyr/page/source_shell/source_diagnostic_tools_tile.dart';
+import 'package:zephyr/widgets/task_dialog.dart';
 
 void main() {
   testWidgets('development mode cannot be enabled without a development URL', (
@@ -48,7 +49,7 @@ void main() {
     await tester.ensureVisible(find.text(t.plugin.debugMode));
     await tester.tap(find.text(t.plugin.debugMode));
     await tester.pumpAndSettle();
-    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.byType(TaskDialog), findsOneWidget);
     expect(find.text(t.plugin.debugAddress), findsWidgets);
     expect(calls, isEmpty);
     await tester.tap(find.text(t.common.cancel));

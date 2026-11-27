@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
+import 'package:zephyr/page/video/video_download_choice.dart';
+import 'package:zephyr/page/video/video_download_resolution.dart';
 import 'package:zephyr/page/video/video_episode_download_picker.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 
@@ -28,6 +32,91 @@ void main() {
       coverUrl: null,
     ),
   ];
+  testWidgets(
+    'quality is read only after selection and stale reads cannot enqueue',
+    (tester) async {
+      const oldQuality = (label: '1080p', format: 'mp4');
+      const newQuality = (label: '720p', format: 'mp4');
+      final reads = <List<NativeVideoCard>>[];
+      final pending = <Completer<Set<VideoEpisodeDownloadQuality>>>[];
+      final owners = <VideoDownloadResolutionOwner>[];
+      final submitted =
+          <(List<NativeVideoCard>, VideoEpisodeDownloadQuality?)>[];
+      final admissions = Completer<List<String>>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => showVideoEpisodeDownloadPicker(
+                  context,
+                  episodes: episodes.take(3).toList(),
+                  currentWatch: episodes.first.watchUrl,
+                  sitePlaylist: true,
+                  readQualities: (selection) {
+                    reads.add(selection);
+                    owners.add(VideoDownloadResolutionOwner.current!);
+                    pending.add(Completer<Set<VideoEpisodeDownloadQuality>>());
+                    return pending.last.future;
+                  },
+                  onEnqueue: (selection, {quality}) {
+                    submitted.add((selection, quality));
+                    return admissions.future;
+                  },
+                ),
+                child: const Text('open'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(reads, isEmpty);
+      Finder card(int index) => find.byKey(
+        ValueKey('download-episodes.item.${episodes[index].watchUrl}'),
+      );
+      final next = find.byKey(const ValueKey('download-episodes.submit'));
+      await tester.tap(card(0));
+      await tester.pump();
+      expect(reads, isEmpty);
+      await tester.tap(next);
+      await tester.pump();
+      expect(reads, [
+        [episodes[0]],
+      ]);
+      expect(submitted, isEmpty);
+      await tester.tap(find.byKey(const ValueKey('download-episodes.back')));
+      await tester.pumpAndSettle();
+      expect(owners.first.cancelled, isTrue);
+      expect(tester.widget<CheckboxListTile>(card(0)).value, isTrue);
+      await tester.tap(card(0));
+      await tester.tap(card(1));
+      await tester.pump();
+      await tester.tap(next);
+      await tester.pump();
+      expect(reads.last, [episodes[1]]);
+      pending.first.complete({oldQuality});
+      await tester.pump();
+      expect(find.text(oldQuality.label), findsNothing);
+      pending.last.complete({newQuality});
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(newQuality.label));
+      await tester.pump();
+      final confirm = tester.widget<FilledButton>(
+        find.byKey(const ValueKey('download-episodes.start')),
+      );
+      confirm.onPressed!();
+      confirm.onPressed!();
+      expect(submitted, hasLength(1));
+      expect(submitted.single.$1, [episodes[1]]);
+      expect(submitted.single.$2, newQuality);
+      admissions.complete(const []);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   for (final style in ['system', 'breeze']) {
     testWidgets(
       '$style narrow large-text sheet selects actual episodes and cancels without submission',

@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -96,6 +98,15 @@ void main() {
   testWidgets(
     'cloud list restores facets and stops indexing when they are reset',
     (tester) async {
+      final messenger = tester.binding.defaultBinaryMessenger;
+      const connectivity = MethodChannel(
+        'dev.fluttercommunity.plus/connectivity',
+      );
+      const connectivityStatus = MethodChannel(
+        'dev.fluttercommunity.plus/connectivity_status',
+      );
+      messenger.setMockMethodCallHandler(connectivity, (_) async => ['wifi']);
+      messenger.setMockMethodCallHandler(connectivityStatus, (_) async => null);
       final cache = JmCollectionSnapshots.instance;
       final key = cache.key(
         fixture.source,
@@ -188,14 +199,12 @@ void main() {
       expect(filter.entries.map((row) => row.id), ['one', 'two']);
       expect(filter.complete, isFalse);
       expect(filter.requireCompleteFacets, isFalse);
-      expect(
-        tester
-            .widget<SourceChromeIconButton>(
-              find.byKey(const ValueKey('source-loaded.filters')),
-            )
-            .onPressed,
-        isNotNull,
+      expect(filter.flatCollectionControls, isTrue);
+      final filterButton = tester.widget<SourceChromeIconButton>(
+        find.byKey(const ValueKey('source-loaded.filters')),
       );
+      expect(filterButton.bare, isTrue);
+      expect(filterButton.onPressed, isNotNull);
       expect(find.byKey(const ValueKey('source-loaded.reset')), findsOneWidget);
       expect(
         pages,

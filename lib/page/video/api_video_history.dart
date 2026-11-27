@@ -30,6 +30,7 @@ import 'package:zephyr/page/video/video_cover_overlay.dart';
 import 'package:zephyr/page/video/source_video_list_header.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_selection_toolbar.dart';
 import 'package:zephyr/page/bookshelf/widgets/bookshelf_floating_selection_actions.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 ApiVideoItem apiVideoHistoryItem(
   VideoWatchRecord row, {
@@ -480,18 +481,18 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
     final confirmed = await showDialog<bool>(
       context: context,
       useRootNavigator: true,
-      builder: (dialog) => AlertDialog(
-        scrollable: true,
+      builder: (dialog) => ShortAlert(
         title: Text(clear ? t.videoLibrary.clearHistory : t.common.delete),
         content: Text(
           '${shelfDeletePrompt(mode: ShelfPageMode.history, folders: 0, comics: paths.length)}\n\n${t.videoLibrary.localHistoryRemovalHint}',
         ),
         actions: [
-          TextButton(
+          ShortAlertAction(
             onPressed: () => Navigator.pop(dialog, false),
             child: Text(t.common.cancel),
           ),
-          TextButton(
+          ShortAlertAction(
+            destructive: true,
             onPressed: () => Navigator.pop(dialog, true),
             child: Text(t.common.delete),
           ),
@@ -555,7 +556,6 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
   Widget _filterButton(bool empty, List<VideoWatchRecord> candidates) =>
       SourceFilterIconButton(
         key: const ValueKey('api-history.filter'),
-        bare: false,
         tooltip: _facets.isActive
             ? t.videoFilters.active
             : t.bookshelf.facets.title,
@@ -761,6 +761,7 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
                   child: _selecting
                       ? BookshelfSelectionToolbar(
                           keyPrefix: 'api-history.selection',
+                          inTitleBar: true,
                           selectedCount: visibleSelected.length,
                           allSelected:
                               visiblePaths.isNotEmpty &&
@@ -1047,7 +1048,10 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
                           posterAspectRatio: widget.posterAspectRatio,
                           loadDetail: widget.loadDetail,
                           compactDetails: _isHanime,
-                          statisticsBuilder: !_isHanime || _hanimeFacts.isEmpty
+                          statisticsBuilder:
+                              !_isHanime ||
+                                  (widget.mode != ApiVideoView.list &&
+                                      _hanimeFacts.isEmpty)
                               ? null
                               : (context, item) => hanimeWorkStatistics(
                                   context,
@@ -1057,6 +1061,7 @@ class _ApiVideoHistoryState extends State<ApiVideoHistory> {
                                   widget.mode == ApiVideoView.list
                                       ? HanimeCatalogLayout.detail
                                       : HanimeCatalogLayout.compact,
+                                  workUrl: item.detailUrl,
                                 ),
                           recordNoteBuilder: (initial) => initial.remarks,
                           onDetailLoaded: widget.onDetailLoaded,

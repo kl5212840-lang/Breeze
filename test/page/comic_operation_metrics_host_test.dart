@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -12,14 +11,19 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart' show eventBus;
 import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
 import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart';
+import 'package:zephyr/page/comic_info/models/comic_detail_presentation.dart';
 import 'package:zephyr/page/comic_info/models/comic_like.dart';
 import 'package:zephyr/page/comic_info/widgets/comic_operation.dart';
+import 'package:zephyr/page/comic_info/widgets/particulars.dart';
+import 'package:zephyr/page/search_result/view/source_search_detail_list.dart';
 import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/service/comic_like_updates.dart';
 import 'package:zephyr/service/jm_list_like_counts.dart';
 import 'package:zephyr/service/plugin_account_authentication.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_theme_colors.dart';
+import 'package:zephyr/widgets/comic_entry/models/models.dart';
 import 'package:zephyr/widgets/toast.dart';
 
 import '../test_helper.dart';
@@ -47,6 +51,31 @@ void main() {
     await TestObjectBoxHelper.setUpTestObjectBox();
   });
   tearDownAll(TestObjectBoxHelper.tearDownTestObjectBox);
+
+  test('JM never dispatches a vote even with an older bundle', () async {
+    for (final source in [
+      JmListLikeCounts.source,
+      'bf99008d-010b-4f17-ac7c-61a9b57dc3d9',
+    ]) {
+      var requests = 0;
+      for (final liked in [false, true]) {
+        await expectLater(
+          toggleCloudComicLike(
+            from: source,
+            comicId: '51',
+            currentStatus: liked,
+            invoke: (_, _) async {
+              requests++;
+              return {'liked': !liked, 'verified': true, 'totalLikes': 42};
+            },
+          ),
+          throwsStateError,
+        );
+      }
+      expect(requests, isZero);
+    }
+  });
+
   testWidgets('like submits once and discards a previous session result', (
     tester,
   ) async {
@@ -80,6 +109,8 @@ void main() {
     await tester.tap(like);
     await tester.tap(like); // The handler also guards before the next frame.
     await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byIcon(Icons.favorite_border), findsOneWidget);
     await tester.tap(like);
     expect(requests, [false]);
 
@@ -122,6 +153,16 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.byIcon(Icons.favorite_border));
+    pending.last.completeError(
+      const PluginLoginRequiredException(
+        UnauthorizedPayload(pluginId: source, message: 'login required'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byIcon(Icons.favorite_border), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.favorite_border));
     await tester.pumpWidget(const SizedBox.shrink());
     pending.last.complete((liked: true, totalLikes: 28));
     await tester.pumpAndSettle();
@@ -129,9 +170,14 @@ void main() {
   });
 
   testWidgets(
-    'Bika shows progress and only displays numbers returned by the site',
+    'Bika retains the current vote display until the site confirms a change',
     (tester) async {
       final detail = _detail(true).copyWith(totalLikes: 227);
+      addTearDown(
+        () => pluginSessionWriteFence.advance(
+          PluginAccountAuthenticationService.bika.single,
+        ),
+      );
       final replies = <Completer<ComicLikeResult>>[];
       await tester.pumpWidget(
         BlocProvider(
@@ -159,7 +205,8 @@ void main() {
       await tester.pump();
       expect(count(227), findsOneWidget);
       expect(find.byIcon(Icons.favorite), findsNothing);
-      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byIcon(Icons.favorite_border), findsOneWidget);
       await tester.tap(count(227));
       expect(replies, hasLength(1));
       replies.last.complete((liked: true, totalLikes: null));
@@ -191,10 +238,12 @@ void main() {
   );
 
   testWidgets(
-    'an unchanged vote retains the last known count without a success notice',
+    'an unchanged vote stays unconfirmed until the site reports the new selection',
     (tester) async {
       final detail = _detail(true).copyWith(totalLikes: 20);
       final messages = <String>[];
+      var writes = 0;
+      var reads = 0;
       final notices = eventBus.on<ToastEvent>().listen(
         (e) => messages.add(e.message),
       );
@@ -209,7 +258,14 @@ void main() {
                 from: 'unconfirmed-like-fixture',
                 comicInfo: detail,
                 showCollectAction: false,
-                cloudLikeAction: (_) async => (liked: false, totalLikes: null),
+                cloudLikeAction: (_) async {
+                  writes++;
+                  return (liked: false, totalLikes: null);
+                },
+                cloudLikeRead: () async {
+                  reads++;
+                  return (liked: false, totalLikes: null);
+                },
               ),
             ),
           ),
@@ -218,158 +274,448 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text(t.comicInfo.likes(count: 20)));
       await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.text(t.comicInfo.likes(count: 20)), findsOneWidget);
+      expect(messages, isEmpty);
+      expect((writes, reads), (1, 2));
+      await tester.tap(find.text(t.comicInfo.likes(count: 20)));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 350));
       expect(find.text(t.comicInfo.likes(count: 20)), findsOneWidget);
       expect(find.byIcon(Icons.favorite_border), findsOneWidget);
-      expect(messages, contains(t.comicInfo.likeUnconfirmed));
-      expect(messages, isNot(contains(t.comicInfo.unlikeSuccess)));
-      expect(messages, isNot(contains(t.comicInfo.likeSuccess)));
+      expect((writes, reads), (2, 5));
+
+      final likes = ComicLikeUpdates.instance;
+      final work = comicLikeWork('unconfirmed-like-fixture', '51');
+      expect(likes.needsCheck(work), isTrue);
+      likes.observeDetail(work, likes.markRead(work), (
+        liked: true,
+        totalLikes: 21,
+      ));
+      await tester.pump();
+      expect(find.text(t.comicInfo.likes(count: 21)), findsOneWidget);
+      expect(find.byIcon(Icons.favorite), findsOneWidget);
+      expect(likes.needsCheck(work), isFalse);
     },
   );
 
-  testWidgets('JM shows a typed unconfirmed write without reporting failure', (
+  testWidgets('JM displays the count as a non-interactive detail metric', (
     tester,
   ) async {
-    final messages = <ToastEvent>[];
-    final notices = eventBus.on<ToastEvent>().listen(messages.add);
-    addTearDown(notices.cancel);
-    final detail = _detail(true).copyWith(totalLikes: 20);
-    final replies = [
-      AnyhowException(
-        '[bundle:jm.cjs] Error: {"type":"comic_like_unconfirmed",'
-        '"diagnostic":{"submit":{"result":"readable","http":200},'
-        '"readback":{"result":"business-rejected","http":200}}}',
-      ),
-      AnyhowException('request was explicitly rejected'),
-    ];
+    final detail = _detail(true).copyWith(totalLikes: 19, isLiked: true);
+    final presentation = comicInfoForDetailPresentation(
+      detail,
+      showReadOnlyLikes: true,
+    );
+    var requests = 0;
     await tester.pumpWidget(
       BlocProvider(
         create: (_) => GlobalSettingCubit(),
         child: MaterialApp(
           home: Scaffold(
-            body: ComicOperationWidget(
-              normalInfo: detail,
-              from: JmListLikeCounts.source,
-              comicInfo: detail,
-              showCollectAction: false,
-              cloudLikeAction: (liked) => toggleCloudComicLike(
-                from: JmListLikeCounts.source,
-                comicId: '51',
-                currentStatus: liked,
-                previousTotalLikes: 20,
-                invoke: (function, payload) async {
-                  expect(function, 'toggleLike');
-                  expect(payload['includeLikeDiagnostic'], true);
-                  expect(payload['previousTotalLikes'], 20);
-                  throw replies.removeAt(0);
-                },
+            body: Column(
+              children: [
+                ComicMetadataCopyPill(item: presentation.titleMeta.single),
+                ComicOperationWidget(
+                  normalInfo: detail,
+                  from: JmListLikeCounts.source,
+                  comicInfo: detail,
+                  showCollectAction: false,
+                  cloudLikeAction: (_) async {
+                    requests++;
+                    return (liked: false, totalLikes: 18);
+                  },
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    final count = find.text(t.comicInfo.likes(count: 19));
+    final pill = tester.widget<InkWell>(
+      find.descendant(
+        of: find.byType(ComicMetadataCopyPill),
+        matching: find.byType(InkWell),
+      ),
+    );
+    expect(pill.onTap, isNull);
+    expect(pill.onLongPress, isNull);
+    expect(count, findsOneWidget);
+    expect(find.byIcon(Icons.favorite), findsNothing);
+    expect(find.byIcon(Icons.mode_comment_outlined), findsOneWidget);
+    await tester.tap(count);
+    await tester.pumpAndSettle();
+    expect(requests, isZero);
+    expect(count, findsOneWidget);
+  });
+
+  testWidgets(
+    'Bika refreshes even when a confirmed receipt repeats the old total',
+    (tester) async {
+      final detail = _detail(true).copyWith(totalLikes: 3928);
+      final source = PluginAccountAuthenticationService.bika.single;
+      addTearDown(() => pluginSessionWriteFence.advance(source));
+      final readback = Completer<int>();
+      var writes = 0;
+      var reads = 0;
+      await tester.pumpWidget(
+        BlocProvider(
+          create: (_) => GlobalSettingCubit(),
+          child: MaterialApp(
+            home: Scaffold(
+              body: ComicOperationWidget(
+                normalInfo: detail,
+                from: source,
+                comicInfo: detail,
+                showCollectAction: false,
+                cloudLikeAction: (liked) => toggleCloudComicLike(
+                  from: source,
+                  comicId: '51',
+                  currentStatus: liked,
+                  previousTotalLikes: 3928,
+                  invoke: (fn, input) async {
+                    expect(fn, 'toggleLike');
+                    expect(input['currentLiked'], isFalse);
+                    writes++;
+                    return {
+                      'liked': true,
+                      'verified': true,
+                      'totalLikes': 3928,
+                    };
+                  },
+                ),
+                cloudLikeRead: () => readCloudComicLike(
+                  from: source,
+                  comicId: '51',
+                  invoke: (fn, _) async {
+                    expect(fn, 'getComicDetail');
+                    final count = ++reads == 1 ? 3928 : await readback.future;
+                    return {
+                      'source': source,
+                      'comicId': '51',
+                      'data': {
+                        'normal': {
+                          'comicInfo': {'id': '51'},
+                          'totalLikes': count,
+                          'extern': {
+                            'metricAvailability': {'totalLikes': true},
+                          },
+                        },
+                        'raw': {
+                          'comicInfo': {'isLiked': true, 'likesCount': count},
+                        },
+                      },
+                    };
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(t.comicInfo.likes(count: 3928)));
+      await tester.pump();
+      expect(find.byIcon(Icons.favorite), findsOneWidget);
+      expect(find.text(t.comicInfo.likes(count: 3929)), findsOneWidget);
+      await tester.pump(const Duration(seconds: 1));
+      readback.complete(3931);
+      await tester.pumpAndSettle();
+      expect(find.text(t.comicInfo.likes(count: 3931)), findsOneWidget);
+      expect((writes, reads), (1, 2));
+    },
+  );
+
+  testWidgets('reopening does not replace a vote with the old site tally', (
+    tester,
+  ) async {
+    var elapsed = Duration.zero;
+    final likes = ComicLikeUpdates.withClock(() => elapsed);
+    addTearDown(likes.dispose);
+    final work = comicLikeWork('reopen-tally-fixture', '51');
+    final owner = likes.beginWrite(work)!;
+    const oldTally = (liked: true, totalLikes: 196);
+    likes.accept(
+      work,
+      owner: owner,
+      before: (liked: false, totalLikes: 196),
+      receipt: oldTally,
+      read: () async => oldTally,
+    );
+    likes.finishWrite(work, owner);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    elapsed = const Duration(minutes: 1);
+    likes.observeDetail(work, likes.markRead(work), oldTally);
+    expect(likes.valueFor(work), (liked: true, totalLikes: 197));
+
+    likes.observeDetail(work, likes.markRead(work), (
+      liked: true,
+      totalLikes: 198,
+    ));
+    expect(likes.valueFor(work), (liked: true, totalLikes: 198));
+    likes.observeDetail(work, likes.markRead(work), oldTally);
+    expect(likes.valueFor(work), oldTally);
+  });
+
+  test('a later authenticated detail confirms a write with a lost receipt', () {
+    final likes = ComicLikeUpdates.withClock(() => Duration.zero);
+    addTearDown(likes.dispose);
+    final work = comicLikeWork('lost-receipt-fixture', '52');
+    final early = likes.markRead(work);
+    final owner = likes.beginWrite(work)!;
+    likes.finishWrite(
+      work,
+      owner,
+      unconfirmedBefore: (liked: false, totalLikes: 100),
+    );
+    const read = (liked: true, totalLikes: 100);
+    likes.observeDetail(work, early, read);
+    expect(likes.valueFor(work), isNull);
+    likes.observeDetail(work, likes.markRead(work), read);
+    expect(likes.valueFor(work), (liked: true, totalLikes: 101));
+    expect(likes.needsCheck(work), isFalse);
+  });
+
+  testWidgets('likes reach the open list and reconcile after leaving detail', (
+    tester,
+  ) async {
+    const source = 'like-list-fixture';
+    final detail = _detail(true).copyWith(totalLikes: 257);
+    final row = UnifiedComicListItem.fromJson({
+      'id': '51',
+      'source': source,
+      'title': 'list work',
+      'cover': {'id': '51', 'url': '', 'name': ''},
+      'likesCount': 257,
+    });
+    final receipt = Completer<ComicLikeResult>();
+    final readback = Completer<ComicLikeResult>();
+    var reads = 0;
+    var writes = 0;
+    await tester.pumpWidget(
+      BlocProvider(
+        create: (_) => GlobalSettingCubit(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => Column(
+                children: [
+                  SourceSearchDetailTile(entry: row),
+                  SourceSearchDetailTile(entry: row.copyWith(source: 'other')),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).push<void>(
+                      MaterialPageRoute(
+                        builder: (_) => Scaffold(
+                          appBar: AppBar(),
+                          body: ComicOperationWidget(
+                            normalInfo: detail,
+                            from: source,
+                            comicInfo: detail,
+                            showCollectAction: false,
+                            cloudLikeAction: (_) async {
+                              writes++;
+                              return receipt.future;
+                            },
+                            cloudLikeRead: () async => ++reads == 1
+                                ? (liked: true, totalLikes: 257)
+                                : readback.future,
+                          ),
+                        ),
+                      ),
+                    ),
+                    child: const Text('Open detail'),
+                  ),
+                ],
               ),
             ),
           ),
         ),
       ),
     );
-    final count = find.text(t.comicInfo.likes(count: 20));
     await tester.pumpAndSettle();
-    await tester.tap(count);
+    expect(find.text('257'), findsNWidgets(2));
+    await tester.tap(find.text('Open detail'));
     await tester.pumpAndSettle();
-    expect(messages.single.message, t.comicInfo.likeUnconfirmed);
-    expect(find.byIcon(Icons.favorite_border), findsOneWidget);
-    expect(count, findsOneWidget);
+    await tester.tap(find.text(t.comicInfo.likes(count: 257)));
+    await tester.pump();
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('257'), findsNWidgets(2));
+    await tester.tap(find.text('Open detail'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.tap(find.text(t.comicInfo.likes(count: 257)));
+    expect(writes, 1);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    receipt.complete((liked: true, totalLikes: 257));
+    await tester.pumpAndSettle();
+    expect(find.text('258'), findsOneWidget);
+    expect(find.text('257'), findsOneWidget);
 
-    messages.clear();
-    await tester.tap(count);
+    await tester.pump(const Duration(milliseconds: 400));
+    readback.complete((liked: true, totalLikes: 259));
     await tester.pumpAndSettle();
-    expect(
-      messages.single.message,
-      t.comicInfo.likeFailed(error: 'request was explicitly rejected'),
-    );
-    expect(replies, isEmpty);
+    expect(find.text('259'), findsOneWidget);
+    expect(find.text('257'), findsOneWidget);
+    await tester.tap(find.text('Open detail'));
+    await tester.pumpAndSettle();
+    expect(find.text(t.comicInfo.likes(count: 259)), findsOneWidget);
+    expect(find.byIcon(Icons.favorite), findsOneWidget);
+    expect((writes, reads), (1, 2));
+    pluginSessionWriteFence.advance(source);
   });
 
-  Map<String, dynamic> jmDetail({bool liked = false, String id = '51'}) => {
-    'source': JmListLikeCounts.source,
-    'comicId': id,
-    'data': {
-      'normal': {
-        'comicInfo': {'id': id},
-        'isLiked': liked,
-        'totalLikes': 42,
-        'extern': {
-          'metricAvailability': {'totalLikes': true},
-        },
-      },
-    },
-  };
-
-  test(
-    'legacy JM acknowledgement is rejected without exact positive readback',
-    () async {
-      for (final reply in [jmDetail(), jmDetail(liked: true, id: '52')]) {
-        final calls = <String>[];
-        await expectLater(
-          toggleCloudComicLike(
-            from: JmListLikeCounts.source,
-            comicId: '51',
-            currentStatus: false,
-            invoke: (fn, _) async {
-              calls.add(fn);
-              return fn == 'toggleLike' ? {'liked': true} : reply;
-            },
+  testWidgets(
+    'confirmed selection beats an older detail and updates its count',
+    (tester) async {
+      const source = 'like-detail-fixture';
+      final likes = ComicLikeUpdates.instance;
+      final work = comicLikeWork(source, '51');
+      final oldRead = likes.markRead(work);
+      addTearDown(() => pluginSessionWriteFence.advance(source));
+      final oldDetail = _detail(true).copyWith(totalLikes: 20);
+      final mutation = Completer<ComicLikeResult>();
+      final countRead = Completer<ComicLikeResult>();
+      Widget host(NormalComicAllInfo detail) => BlocProvider(
+        create: (_) => GlobalSettingCubit(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: ComicOperationWidget(
+              normalInfo: detail,
+              from: source,
+              comicInfo: detail,
+              showCollectAction: false,
+              cloudLikeAction: (_) => mutation.future,
+              cloudLikeRead: () => countRead.future,
+            ),
           ),
-          throwsFormatException,
-        );
-        expect(calls, ['toggleLike', 'getComicDetail']);
-      }
+        ),
+      );
+      await tester.pumpWidget(host(oldDetail));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(t.comicInfo.likes(count: 20)));
+      mutation.complete((liked: true, totalLikes: null));
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.favorite), findsOneWidget);
+      expect(find.text(t.comicInfo.likes(count: 21)), findsOneWidget);
+
+      likes.observeDetail(work, oldRead, (liked: false, totalLikes: 19));
+      await tester.pumpWidget(host(oldDetail.copyWith(totalLikes: 19)));
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.favorite), findsOneWidget);
+      expect(find.text(t.comicInfo.likes(count: 21)), findsOneWidget);
+      countRead.complete((liked: true, totalLikes: 21));
+      await tester.pumpAndSettle();
+      expect(find.text(t.comicInfo.likes(count: 21)), findsOneWidget);
+
+      likes.observeDetail(work, likes.markRead(work), (
+        liked: true,
+        totalLikes: 18,
+      ));
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.favorite), findsOneWidget);
+      expect(find.text(t.comicInfo.likes(count: 18)), findsOneWidget);
     },
   );
 
-  testWidgets('JM confirmed count updates its cover with no duplicate read', (
-    tester,
-  ) async {
-    const source = JmListLikeCounts.source;
-    addTearDown(() => pluginSessionWriteFence.advance(source));
-    final calls = <String>[];
-    final result = await toggleCloudComicLike(
-      from: source,
-      comicId: '51',
-      currentStatus: false,
-      invoke: (fn, _) async {
-        calls.add(fn);
-        return {'liked': true, 'verified': true, 'totalLikes': 42};
+  for (final unlike in [false, true]) {
+    testWidgets(
+      'accepted comic vote settles silently after readback (unlike: $unlike)',
+      (tester) async {
+        final source = 'vote-readback-fixture-$unlike';
+        addTearDown(() => pluginSessionWriteFence.advance(source));
+        final detail = _detail(true).copyWith(isLiked: unlike, totalLikes: 20);
+        final messages = <ToastEvent>[];
+        final notices = eventBus.on<ToastEvent>().listen(messages.add);
+        addTearDown(notices.cancel);
+        var writes = 0;
+        var reads = 0;
+        await tester.pumpWidget(
+          BlocProvider(
+            create: (_) => GlobalSettingCubit(),
+            child: MaterialApp(
+              home: Scaffold(
+                body: ComicOperationWidget(
+                  normalInfo: detail,
+                  from: source,
+                  comicInfo: detail,
+                  showCollectAction: false,
+                  cloudLikeAction: (current) async {
+                    expect(current, unlike);
+                    writes++;
+                    return (liked: !unlike, totalLikes: 20);
+                  },
+                  cloudLikeRead: () async {
+                    reads++;
+                    // The first write never persisted. The cancellation did,
+                    // but the site's aggregate still has its pre-write value.
+                    return (liked: false, totalLikes: 20);
+                  },
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(t.comicInfo.likes(count: 20)));
+        await tester.pump();
+        expect(
+          find.text(t.comicInfo.likes(count: unlike ? 19 : 21)),
+          findsOneWidget,
+        );
+        expect(
+          find.byIcon(unlike ? Icons.favorite_border : Icons.favorite),
+          findsOneWidget,
+        );
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pumpAndSettle();
+        expect(
+          find.text(t.comicInfo.likes(count: unlike ? 19 : 20)),
+          findsOneWidget,
+        );
+        expect(find.byIcon(Icons.favorite_border), findsOneWidget);
+        expect(messages, isEmpty);
+        expect((writes, reads), (1, 2));
       },
     );
-    expect(result, (liked: true, totalLikes: 42));
-    expect(calls, ['toggleLike']);
-    expect(JmListLikeCounts.instance.countFor('51'), 42);
-    pluginSessionWriteFence.advance(source);
-    expect(JmListLikeCounts.instance.countFor('51'), isNull);
-  });
+  }
 
   test(
     'legacy Bika takes the fresh same-work state and explicit zero',
     () async {
-      final source = PluginAccountAuthenticationService.bika.single;
-      final result = await toggleCloudComicLike(
-        from: source,
-        comicId: '51',
-        currentStatus: true,
-        invoke: (fn, _) async => fn == 'toggleLike'
-            ? {'liked': false}
-            : {
-                'source': source,
-                'comicId': '51',
-                'data': {
-                  'normal': {
-                    'comicInfo': {'id': '51'},
-                    'totalLikes': 0,
-                  },
-                  'raw': {
-                    'comicInfo': {'isLiked': false, 'likesCount': '0'},
-                  },
+      for (final source in [
+        PluginAccountAuthenticationService.bika.single,
+        '0a0e5858-a467-4702-994a-79e608a4589d',
+      ]) {
+        final calls = <String>[];
+        final result = await toggleCloudComicLike(
+          from: source,
+          comicId: '51',
+          currentStatus: true,
+          invoke: (fn, _) async {
+            calls.add(fn);
+            if (fn == 'toggleLike') return {'liked': false};
+            return {
+              'source': source,
+              'comicId': '51',
+              'data': {
+                'normal': {
+                  'comicInfo': {'id': '51'},
+                  'totalLikes': 0,
+                },
+                'raw': {
+                  'comicInfo': {'isLiked': false, 'likesCount': '0'},
                 },
               },
-      );
-      expect(result, (liked: false, totalLikes: 0));
+            };
+          },
+        );
+        expect(result, (liked: false, totalLikes: 0));
+        expect(calls, ['toggleLike', 'getComicDetail']);
+      }
     },
   );
   for (final style in ['system', 'breeze']) {

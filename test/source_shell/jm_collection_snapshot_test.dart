@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zephyr/page/comic_list/cubit/jm_collection_snapshots.dart';
 import 'package:zephyr/page/comic_list/cubit/plugin_paged_comic_list_cubit.dart';
 import 'package:zephyr/page/comic_list/cubit/plugin_paged_comic_list_state.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/page/source_shell/source_experience_preferences.dart';
+import 'package:zephyr/service/jm_list_like_counts.dart';
 
 Map<String, dynamic> packet(
   String source,
@@ -50,6 +53,7 @@ PluginPagedComicListCubit collection(
   String sort = 'mr',
   String function = 'getCloudFavoriteData',
   bool reverseKeys = false,
+  Duration refreshBudget = const Duration(seconds: 22),
 }) => PluginPagedComicListCubit(
   pluginId: source,
   fnPath: function,
@@ -66,6 +70,7 @@ PluginPagedComicListCubit collection(
   requestPage: request,
   privateCollection: true,
   jmSnapshotCache: true,
+  refreshBudget: refreshBudget,
 );
 Future<void> fill(PluginPagedComicListCubit cubit) async {
   await cubit.loadInitial();
@@ -98,6 +103,45 @@ void main() {
     expect(current.state.list, hasLength(267));
     expect(current.state.page, 14);
     await current.close();
+  });
+
+  testWidgets('temporary failure keeps cloud favorites and recovers the list', (
+    tester,
+  ) async {
+    var failOnce = false;
+    final pages = <int>[];
+    final cubit = collection('jm-transient-favorite-read', (
+      source,
+      _,
+      core,
+      extern,
+    ) async {
+      final page = core['page'] as int;
+      pages.add(page);
+      if (page == 2 && failOnce) {
+        failOnce = false;
+        throw AnyhowException(
+          '[bundle:jm fn:getCloudFavoriteData] HTTP 500\n'
+          '[stack-hook] Error: HTTP 500\n'
+          '    at request (webpack:///axios/lib/cancel/CancelToken.js:45:9)',
+        );
+      }
+      return packet(source, page, total: 21);
+    })..setReadActive(true);
+    addTearDown(cubit.close);
+    await fill(cubit);
+    pages.clear();
+    failOnce = true;
+    expect(await cubit.refresh(), isFalse);
+    expect(cubit.state.list, hasLength(21));
+    expect(cubit.refreshError, contains('HTTP 500'));
+
+    await tester.pump(const Duration(milliseconds: 900));
+    expect(pages, [1, 2, 1, 2]);
+    expect(cubit.refreshError, isNull);
+    expect(cubit.state.list, hasLength(21));
+    await tester.pump(const Duration(seconds: 4));
+    expect(pages, [1, 2, 1, 2]);
   });
 
   test(
@@ -231,6 +275,58 @@ void main() {
       await current.close();
     },
   );
+
+  for (final explicitPull in [false, true]) {
+    testWidgets('warm Bika retains readable works after a visibility timeout '
+        '(explicit pull: $explicitPull)', (tester) async {
+      final gate = Completer<Map<String, dynamic>>();
+      final pages = <int>[];
+      final current = PluginPagedComicListCubit(
+        pluginId: bikaPlusSourceId,
+        fnPath: 'getFavoriteData',
+        privateCollection: true,
+        jmSnapshotCache: true,
+        coreBuilder: (page) => {'page': page},
+        externBuilder: (_) => const {'source': 'cloudFavorite', 'sort': 'dd'},
+        requestPage: (source, _, core, _) async {
+          final page = core['page'] as int;
+          pages.add(page);
+          if (pages.length == 2) return gate.future;
+          return packet(source, page, total: 579);
+        },
+      )..setReadActive(true);
+      addTearDown(current.close);
+      await current.loadInitial();
+      final before = current.state;
+      final ordinaryCheck = current.checkForUpdates(automatic: true);
+      final pull = explicitPull ? current.refresh() : null;
+      gate.completeError(
+        explicitPull
+            ? TimeoutException('fixture visibility timeout')
+            : AnyhowException('[bundle:bika] Error: 无法连接哔咔，请检查网络后重试'),
+      );
+      expect(await ordinaryCheck, isFalse);
+      if (pull != null) expect(await pull, isFalse);
+
+      expect(pages, [1, 1]);
+      expect(current.state.list, before.list);
+      expect(current.state.knownTotal, 579);
+      expect(
+        current.refreshError,
+        explicitPull ? contains('fixture visibility timeout') : isNull,
+      );
+      if (explicitPull) {
+        await tester.pump(const Duration(milliseconds: 900));
+        expect(pages, [1, 1, 1]);
+        expect(current.refreshError, isNull);
+      } else {
+        expect(current.state.result, before.result);
+        await current.loadMore();
+        expect(pages, [1, 1, 2]);
+        expect(current.state.list, hasLength(40));
+      }
+    });
+  }
 
   for (final changed in [false, true]) {
     test(
@@ -583,9 +679,9 @@ void main() {
     );
   }
   test(
-    'declared terminal duplicate is respected; known zero refresh is a real empty replacement',
+    'JM rejects a terminal duplicate that contradicts its total and accepts proven zero',
     () async {
-      const source = 'jm-terminal';
+      const source = JmListLikeCounts.source;
       var zero = false;
       final cubit = collection(
         source,
@@ -601,14 +697,49 @@ void main() {
       );
       await cubit.loadInitial();
       await cubit.loadMore();
-      expect(cubit.state.hasReachedMax, isTrue);
+      expect(cubit.state.hasReachedMax, isFalse);
       expect(cubit.state.list, hasLength(20));
       expect(cubit.state.knownTotal, 40);
+      expect(cubit.state.status, PluginPagedComicListStatus.loadingMoreFailure);
       zero = true;
       expect(await cubit.refresh(), isTrue);
       expect(cubit.state.list, isEmpty);
       expect(cubit.state.knownTotal, 0);
       await cubit.close();
+    },
+  );
+  test(
+    'deadline retains the committed range and the next pull resumes staged pages',
+    () async {
+      final requested = <int>[];
+      final pending = Completer<Map<String, dynamic>>();
+      var version = 'old', hold = false;
+      final cubit = collection('jm-refresh-budget', (source, _, core, _) async {
+        final page = core['page'] as int;
+        requested.add(page);
+        return hold && page == 3
+            ? pending.future
+            : packet(source, page, total: 60, version: version);
+      }, refreshBudget: const Duration(milliseconds: 100));
+      addTearDown(cubit.close);
+      await fill(cubit);
+      hold = true;
+      version = 'new';
+      requested.clear();
+      expect(await cubit.refresh(), isFalse);
+      expect(requested, [1, 2, 3]);
+      expect(cubit.state.list.first.id, 'old-0');
+      expect(cubit.state.list, hasLength(60));
+      hold = false;
+      requested.clear();
+      expect(await cubit.refresh(), isTrue);
+      expect(requested, [1, 3]);
+      expect(cubit.state.list.first.id, 'new-0');
+      pending.complete(
+        packet('jm-refresh-budget', 3, total: 60, version: 'late'),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(cubit.state.list.last.id, 'new-59');
     },
   );
   test(

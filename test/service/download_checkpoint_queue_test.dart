@@ -160,6 +160,63 @@ void main() {
   );
 
   test(
+    'bulk enqueue preserves chapter ownership and reuses settled rows',
+    () async {
+      DownloadTaskJson chapter(String key) => payload.copyWith(
+        stateCode: 'queued',
+        chapterRef: DownloadChapterTaskRef(logicalKey: key),
+      );
+      final active = chapter('active');
+      final activeId = repository.putPayload(DownloadTask(), active);
+      final completedId = repository.putPayload(
+        DownloadTask(),
+        active.copyWith(stateCode: 'completed'),
+        isCompleted: true,
+      );
+      final cancelled = chapter('cancelled');
+      final cancelledId = repository.putPayload(
+        DownloadTask(),
+        cancelled.copyWith(stateCode: 'cancelled', phaseCode: 'cancelled'),
+        isCompleted: true,
+      );
+      final failed = chapter('failed');
+      final failedId = repository.putPayload(
+        DownloadTask(),
+        failed.copyWith(stateCode: 'failed'),
+      );
+      final fresh = List.generate(100, (index) => chapter('fresh-$index'));
+
+      DownloadQueueManager.instance.addTasks([
+        active,
+        cancelled,
+        failed,
+        ...fresh,
+        fresh.first,
+      ]);
+      await Future<void>.delayed(Duration.zero);
+
+      final rows = repository.getAll();
+      expect(rows, hasLength(fresh.length + 4));
+      expect(
+        objectbox.downloadTaskBox.get(activeId)!.taskInfo!.stateCode,
+        'queued',
+      );
+      expect(objectbox.downloadTaskBox.get(completedId)!.isCompleted, isTrue);
+      for (final id in [cancelledId, failedId]) {
+        final row = objectbox.downloadTaskBox.get(id)!;
+        expect(row.isCompleted, isFalse);
+        expect(row.taskInfo!.phaseCode, 'retry');
+      }
+      for (final task in fresh) {
+        expect(
+          rows.where((row) => row.taskInfo?.taskKey == task.taskKey),
+          hasLength(1),
+        );
+      }
+    },
+  );
+
+  test(
     'startup drops only older settled cancellation for the same identity',
     () {
       final cancelled = payload.copyWith(

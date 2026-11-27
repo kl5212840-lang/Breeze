@@ -1,3 +1,4 @@
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -5,11 +6,37 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_download_panel.dart';
 import 'package:zephyr/page/video/video_episode_download_picker.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
+import 'package:zephyr/page/video/native_site_episode_downloads.dart';
 import 'package:zephyr/page/video/video_export_records.dart';
 import 'package:zephyr/page/video/video_download.dart';
 import 'package:zephyr/page/video/video_local_resources.dart';
 import 'dart:convert';
 import '../download_fixture.dart';
+
+class _EpisodeQualityWeb extends Fake implements InAppWebViewController {
+  final options = <String, List<String>>{};
+  final requests = <String>[];
+
+  @override
+  Future<dynamic> evaluateJavascript({
+    required String source,
+    ContentWorld? contentWorld,
+  }) async {
+    final watch = options.keys.singleWhere(source.contains);
+    requests.add(watch);
+    return {
+      'status': 'ok',
+      'choices': [
+        for (final label in options[watch]!)
+          {
+            'label': label,
+            'format': 'mp4',
+            'url': 'https://cdn.fixture.test/$label.mp4?signature=fixture',
+          },
+      ],
+    };
+  }
+}
 
 void main() {
   setUp(() async {
@@ -356,21 +383,16 @@ void main() {
         final terminal = (await VideoExportRecords.readTaskSnapshot()).single;
         final restarted = await VideoExportRecords.restartTransfer(terminal);
         replacement = restarted!['attempt'] as int;
-        VideoSystemDownload.registerQueuedTask(
-          key,
-          source,
-          () async {
-            cancellations++;
-            await VideoExportRecords.updateTransfer(
-              key,
-              received: null,
-              status: 'cancelled',
-              terminal: true,
-              expectedAttempt: replacement,
-            );
-          },
-          attempt: replacement,
-        );
+        VideoSystemDownload.registerQueuedTask(key, source, () async {
+          cancellations++;
+          await VideoExportRecords.updateTransfer(
+            key,
+            received: null,
+            status: 'cancelled',
+            terminal: true,
+            expectedAttempt: replacement,
+          );
+        }, attempt: replacement);
       });
 
       // A FutureBuilder may retain the old row until its read resolves.
@@ -390,6 +412,144 @@ void main() {
       expect(cancellations, 1);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.runAsync(VideoExportRecords.flush);
+    },
+  );
+
+  test('native site playlist scope keeps only verified public entries', () {
+    NativeVideoCard card(String url) => NativeVideoCard(
+      title: 'Video',
+      watchUrl: Uri.parse(url),
+      coverUrl: null,
+    );
+    final current = card('https://fixture.test/watch?v=17');
+    final other = card('https://fixture.test/watch?v=18');
+    final query = card('https://fixture.test/watch?v=19&list=private');
+    final foreign = card('https://other.test/watch?v=20');
+    final related = card('https://fixture.test/watch?v=21');
+    final session = NativePlaybackSession(
+      title: current.title,
+      watchUrl: current.watchUrl,
+      sources: const [],
+      description: '',
+      tags: const [],
+      sitePlaylist: [other, current, other, query, foreign],
+      related: [related],
+    );
+    expect(nativeSiteDownloadEntries(session), [other, current]);
+    final unrelatedSession = NativePlaybackSession(
+      title: current.title,
+      watchUrl: current.watchUrl,
+      sources: const [],
+      description: '',
+      tags: const [],
+      related: [current, other],
+    );
+    expect(nativeSiteDownloadEntries(unrelatedSession), isEmpty);
+  });
+
+  test(
+    'only real choices shared by every selected episode are offered',
+    () async {
+      final web = _EpisodeQualityWeb();
+      final episodes = [
+        for (final id in [41, 42, 43])
+          NativeVideoCard(
+            title: 'Episode $id',
+            coverUrl: null,
+            watchUrl: Uri.parse('https://fixture.test/watch?v=$id'),
+          ),
+      ];
+      web.options.addAll({
+        '${episodes[0].watchUrl}': ['1080p', '720p', '480p'],
+        '${episodes[1].watchUrl}': ['720p'],
+        '${episodes[2].watchUrl}': ['480p'],
+      });
+      Future<Set<({String label, String format})>> read(int count) =>
+          readNativeSiteEpisodeQualities(
+            web: web,
+            episodes: episodes.take(count).toList(),
+            current: () => true,
+          );
+      expect(await read(2), {(label: '720p', format: 'mp4')});
+      expect(web.requests, [
+        for (final episode in episodes.take(2)) '${episode.watchUrl}',
+      ]);
+      expect(await read(3), isEmpty);
+    },
+  );
+
+  testWidgets(
+    'playlist picker reads a verified file from a separate watch page',
+    (tester) async {
+      const source = 'playlist-availability-fixture';
+      final current = NativeVideoCard(
+        title: 'Current watch',
+        coverUrl: null,
+        watchUrl: Uri.parse('https://fixture.test/watch?v=41'),
+      );
+      final saved = NativeVideoCard(
+        title: 'Saved watch',
+        coverUrl: null,
+        watchUrl: Uri.parse('https://fixture.test/watch?v=42'),
+      );
+      await tester.runAsync(() async {
+        final id = VideoLocalResources.identity(source, saved.watchUrl, '720p');
+        final file = await VideoLocalResources.file(id);
+        await file.parent.create(recursive: true);
+        await file.writeAsBytes([
+          0,
+          0,
+          0,
+          24,
+          102,
+          116,
+          121,
+          112,
+          ...List.filled(16, 0),
+        ]);
+        await VideoLocalResources.saved(
+          resourceId: id,
+          bytes: 24,
+          source: source,
+          video: saved.watchUrl,
+          title: saved.title,
+          quality: '720p',
+          taskKey: 'playlist-file',
+        );
+        await VideoLocalResources.read();
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => showVideoEpisodeDownloadPicker(
+                  context,
+                  source: source,
+                  episodes: [current, saved],
+                  currentWatch: current.watchUrl,
+                  sitePlaylist: true,
+                ),
+                child: const Text('Open playlist'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open playlist'));
+      final stored = find.textContaining(t.download.alreadyDownloaded);
+      final elapsed = Stopwatch()..start();
+      while (stored.evaluate().isEmpty &&
+          elapsed.elapsed < const Duration(seconds: 5)) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(find.text('Download playlist videos'), findsOneWidget);
+      expect(stored, findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
     },
   );
 
@@ -429,7 +589,7 @@ void main() {
             body: VideoEpisodeDownloadPicker(
               episodes: [card],
               currentWatch: card.watchUrl,
-              onEnqueue: (selected) async {
+              onEnqueue: (selected, {quality}) async {
                 enqueues++;
                 expect(selected.single.watchUrl, card.watchUrl);
                 const source = 'b28da416-f2d4-4208-a85e-8b4c7c648e48';

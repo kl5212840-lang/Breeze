@@ -70,7 +70,8 @@ void main() {
         ),
         throwsA(isA<FileSystemException>()),
       );
-      expect(checks, 2); // Worker and first attempt, no second attempt.
+      expect(checks, 3); // Batch preflight, worker claim and first attempt.
+      expect(retryChecks, 0); // A local file error never reaches the retry policy.
       expect(await cached.readAsString(), 'valid cached image bytes');
     },
   );

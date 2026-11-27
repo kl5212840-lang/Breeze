@@ -157,7 +157,9 @@ class PortablePreferencesSnapshot {
       return key.startsWith(PortablePreferences.searchPrefix) &&
           value is String &&
           value.trim().isNotEmpty &&
-          value.length <= 500;
+          (value.length <= 500 ||
+              value.length <= 1024 &&
+                  VideoSearchHistory.decode(value)?.scope != null);
     }
     if (kind == 'export') {
       return key == VideoExportRecords.storageKey &&
@@ -569,10 +571,13 @@ abstract final class PortablePreferences {
         if (value is! List) {
           throw const FormatException('Invalid search history');
         }
+        final seen = <String>{};
         for (var i = 0; i < value.length; i++) {
           final word = value[i];
-          if (word is String && word.trim().isNotEmpty) {
-            put(key, 'search', word, word, now - i);
+          if (word is! String) continue;
+          final entry = VideoSearchHistory.decode(word);
+          if (entry != null && seen.add(entry.query)) {
+            put(key, 'search', word, entry.query, now - i);
           }
         }
       } else if (key == VideoExportRecords.storageKey) {

@@ -61,7 +61,7 @@ class VideoDownloadPanel extends StatelessWidget {
             if (continuing)
               Text(
                 !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS
-                    ? t.download.videoForegroundNoteIos
+                    ? t.download.helpContinueIos
                     : t.download.videoForegroundNote,
                 style: Theme.of(context).textTheme.bodySmall,
               ),

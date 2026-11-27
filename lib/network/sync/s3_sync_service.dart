@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:minio/minio.dart';
@@ -12,10 +14,14 @@ import 'package:zephyr/network/sync/sync_failure.dart';
 class S3SyncService
     implements
         ComicSyncRemoteAdapter,
+        BoundedSyncFileReader,
         LegacyPluginPurgeTransport,
         FullCloudReplaceTransport {
-  S3SyncService(this._settings, {this.archive = SyncArchiveContext.current})
-    : _minio = _createMinio(_settings) {
+  S3SyncService(
+    this._settings, {
+    this.archive = SyncArchiveContext.current,
+    this.operationTimeout = const Duration(minutes: 2),
+  }) : _minio = _createMinio(_settings) {
     if (!isConfigured(_settings)) {
       throw Exception('S3 配置不完整');
     }
@@ -23,12 +29,25 @@ class S3SyncService
 
   final GlobalSettingState _settings;
   final SyncArchiveContext archive;
+  final Duration operationTimeout;
   String get _root => archive.root;
   void _writable() {
     if (archive.readOnly) throw const LegacyArchiveReadOnly();
   }
 
   final Minio _minio;
+
+  Future<T> _request<T>(Future<T> Function() action) async {
+    final scope = _S3HttpScope(HttpOverrides.current);
+    try {
+      return await HttpOverrides.runWithHttpOverrides(
+        () => Future<T>.sync(action).timeout(operationTimeout),
+        scope,
+      );
+    } finally {
+      scope.close();
+    }
+  }
 
   static bool isConfigured(GlobalSettingState settings) {
     return settings.syncSetting.s3Setting.endpoint.trim().isNotEmpty &&
@@ -39,8 +58,8 @@ class S3SyncService
 
   @override
   Future<void> testConnection() async {
-    final exists = await _minio.bucketExists(
-      _settings.syncSetting.s3Setting.bucket,
+    final exists = await _request(
+      () => _minio.bucketExists(_settings.syncSetting.s3Setting.bucket),
     );
     if (!exists) {
       throw Exception(
@@ -56,11 +75,7 @@ class S3SyncService
   Future<String> downloadRemoteMd5() async {
     for (final candidate in _md5ObjectKeyCandidates) {
       try {
-        final stream = await _minio.getObject(
-          _settings.syncSetting.s3Setting.bucket,
-          candidate,
-        );
-        final bytes = await _collectStream(stream);
+        final bytes = await _readObject(candidate, 1024);
         final value = utf8.decode(bytes).trim();
         if (value.isNotEmpty) {
           return value;
@@ -78,49 +93,57 @@ class S3SyncService
     _writable();
     final bytes = utf8.encode(value);
     final data = Uint8List.fromList(bytes);
-    await _minio.putObject(
-      _settings.syncSetting.s3Setting.bucket,
-      _md5ObjectKey,
-      Stream<Uint8List>.value(data),
-      size: bytes.length,
+    await _request(
+      () => _minio.putObject(
+        _settings.syncSetting.s3Setting.bucket,
+        _md5ObjectKey,
+        Stream<Uint8List>.value(data),
+        size: bytes.length,
+      ),
     );
   }
 
   @override
-  Future<List<String>> listRemoteDataFiles() async {
-    final files = <String>[];
-    final seen = <String>{};
-    for (final prefix in _listPrefixes) {
-      final result = await _minio.listAllObjects(
+  Future<List<String>> listRemoteDataFiles() => _request(() async {
+    final files = <String>{};
+    final markers = <String>{};
+    String? marker;
+    while (true) {
+      final page = await _minio.listObjectsQuery(
         _settings.syncSetting.s3Setting.bucket,
-        prefix: prefix,
-        recursive: true,
+        _syncRootPrefix,
+        marker,
+        '',
+        1000,
       );
-      for (final object in result.objects) {
-        final key = object.key;
-        if (key == null || key.isEmpty) {
-          continue;
-        }
-
-        final normalized = _normalizeObjectKey(key);
-        if (!seen.add(normalized)) {
-          continue;
-        }
-        files.add(normalized);
+      final keys = <String>[
+        for (final object in page.contents ?? [])
+          if (object.key case final String key when key.isNotEmpty) key,
+      ];
+      files.addAll(keys.map(_normalizeObjectKey));
+      if (page.isTruncated == false) return files.toList();
+      final next = page.nextMarker ?? (keys.isEmpty ? null : keys.last);
+      if (page.isTruncated == null ||
+          next == null ||
+          next.isEmpty ||
+          !markers.add(next)) {
+        throw const FormatException('Cloud listing could not be completed');
       }
+      marker = next;
     }
-    return files;
-  }
+  });
 
   @override
-  Future<List<int>> downloadRemoteFile(String remotePath) async {
-    final objectKey = _toManagedObjectKey(remotePath);
+  Future<List<int>> downloadRemoteFile(String remotePath) =>
+      downloadBoundedFile(remotePath, syncArchiveWireMaxBytes);
+
+  @override
+  Future<List<int>> downloadBoundedFile(String remotePath, int maxBytes) async {
     try {
-      final stream = await _minio.getObject(
-        _settings.syncSetting.s3Setting.bucket,
-        objectKey,
+      return await _readObject(
+        _toManagedObjectKey(remotePath),
+        maxBytes.clamp(0, syncArchiveWireMaxBytes),
       );
-      return await _collectStream(stream);
     } on MinioS3Error catch (error) {
       if (_isMissingObject(error)) throw const SyncRemoteFileNotFound();
       rethrow;
@@ -136,11 +159,13 @@ class S3SyncService
     _writable();
     final remoteObject = _toManagedObjectKey(remotePath);
 
-    await _minio.putObject(
-      _settings.syncSetting.s3Setting.bucket,
-      remoteObject,
-      Stream<Uint8List>.value(Uint8List.fromList(data)),
-      size: data.length,
+    await _request(
+      () => _minio.putObject(
+        _settings.syncSetting.s3Setting.bucket,
+        remoteObject,
+        Stream<Uint8List>.value(Uint8List.fromList(data)),
+        size: data.length,
+      ),
     );
   }
 
@@ -152,11 +177,13 @@ class S3SyncService
     List<int> data,
   ) async {
     final path = validateLegacyPluginPurgePath(archive, physicalPath);
-    await _minio.putObject(
-      _settings.syncSetting.s3Setting.bucket,
-      path,
-      Stream<Uint8List>.value(Uint8List.fromList(data)),
-      size: data.length,
+    await _request(
+      () => _minio.putObject(
+        _settings.syncSetting.s3Setting.bucket,
+        path,
+        Stream<Uint8List>.value(Uint8List.fromList(data)),
+        size: data.length,
+      ),
     );
   }
 
@@ -168,7 +195,9 @@ class S3SyncService
         .map((path) => validateFullReplaceLegacyPath(archive, path))
         .toList();
     for (final path in paths) {
-      await _minio.removeObject(_settings.syncSetting.s3Setting.bucket, path);
+      await _request(
+        () => _minio.removeObject(_settings.syncSetting.s3Setting.bucket, path),
+      );
     }
   }
 
@@ -191,7 +220,10 @@ class S3SyncService
 
     for (final path in normalizedPaths) {
       try {
-        await _minio.removeObject(_settings.syncSetting.s3Setting.bucket, path);
+        await _request(
+          () =>
+              _minio.removeObject(_settings.syncSetting.s3Setting.bucket, path),
+        );
       } on MinioS3Error catch (e) {
         if (_isMissingObject(e)) continue;
         throw Exception('S3 文件删除失败: ${e.message}');
@@ -205,8 +237,6 @@ class S3SyncService
   };
 
   String get _syncRootPrefix => '$_root/';
-
-  List<String> get _listPrefixes => [_syncRootPrefix];
 
   String get _md5ObjectKey =>
       '$_syncRootPrefix${ComicSyncCore.comicMd5FileName}';
@@ -231,12 +261,50 @@ class S3SyncService
     return key.replaceFirst(RegExp(r'^/+'), '');
   }
 
-  Future<List<int>> _collectStream(Stream<List<int>> stream) async {
-    final data = <int>[];
-    await for (final chunk in stream) {
-      data.addAll(chunk);
+  Future<List<int>> _readObject(String key, int maxBytes) => _request(() async {
+    final stream = await _minio.getObject(
+      _settings.syncSetting.s3Setting.bucket,
+      key,
+    );
+    if ((stream.contentLength ?? 0) > maxBytes) {
+      throw const SyncRemoteFileTooLarge();
     }
-    return data;
+    final data = BytesBuilder(copy: false);
+    await for (final chunk in stream.timeout(const Duration(seconds: 30))) {
+      if (chunk.length > maxBytes - data.length) {
+        throw const SyncRemoteFileTooLarge();
+      }
+      data.add(chunk);
+    }
+    return data.takeBytes();
+  });
+}
+
+// Minio creates its own HTTP clients. Keep the deadline and socket ownership
+// local to this operation, including any subsequent SDK pagination requests.
+class _S3HttpScope extends HttpOverrides {
+  _S3HttpScope(this.parent);
+
+  final HttpOverrides? parent;
+  final _clients = <HttpClient>{};
+  bool _closed = false;
+
+  @override
+  HttpClient createHttpClient(SecurityContext? context) {
+    if (_closed) throw TimeoutException('Cloud request ended');
+    final client =
+        parent?.createHttpClient(context) ?? super.createHttpClient(context);
+    client.connectionTimeout = const Duration(seconds: 10);
+    _clients.add(client);
+    return client;
+  }
+
+  void close() {
+    _closed = true;
+    for (final client in _clients) {
+      client.close(force: true);
+    }
+    _clients.clear();
   }
 }
 

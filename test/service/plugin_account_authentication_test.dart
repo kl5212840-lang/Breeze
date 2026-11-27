@@ -1,9 +1,12 @@
+import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../test_helper.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
+import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/service/plugin_account_authentication.dart';
 import 'package:zephyr/service/plugin_account_profiles.dart';
 
@@ -22,6 +25,102 @@ void main() {
     await TestObjectBoxHelper.setUpTestObjectBox();
   });
   tearDownAll(TestObjectBoxHelper.tearDownTestObjectBox);
+  test('a declared fresh identity reader can verify a new plugin without a source adapter', () async {
+    const source = '91bf813e-eec4-4489-8e2d-f5ff7281453e';
+    await PluginRegistryService.I.init();
+    final now = DateTime.utc(2026);
+    await PluginRegistryService.I.upsert(PluginInfo(
+      uuid: source,
+      version: 'fixture',
+      originScript: 'synthetic-plugin',
+      insertedAt: now,
+      updatedAt: now,
+      isEnabled: true,
+      isDeleted: false,
+      debug: false,
+      lastLoadSuccess: true,
+      getInfoJson: jsonEncode({
+        'accountIdentity': {'version': 1, 'readFn': 'readAccountIdentity'},
+      }),
+    ));
+    var verifyFresh = false;
+    final service = PluginAccountAuthenticationService(source, call: (fn, _) async {
+      expect(fn, 'readAccountIdentity');
+      return {
+        'data': {
+          'available': verifyFresh,
+          'accountId': 'account-fixture-42',
+          'name': 'Declared member',
+        },
+      };
+    });
+    expect(service.hasApiVerification, isTrue);
+    await expectLater(service.verify(), throwsA(isA<PluginAccountSwitchFailed>()));
+    verifyFresh = true;
+    expect((await service.verify()).serverIdentity, 'account-fixture-42');
+    expect(PluginAccountIdentities.current(source)?.label, 'Declared member');
+  });
+  test('an unrelated plugin authorization error leaves the current account verified', () async {
+    const rejected = PluginLoginRequiredException(
+      UnauthorizedPayload(pluginId: 'other-source', message: 'Other account'),
+    );
+    const receipt = PluginAccountAuthentication(serverIdentity: 'same-account');
+    final generation = pluginSessionWriteFence.generation(_copySource);
+    PluginAccountIdentities.confirm(_copySource, receipt, generation: generation);
+    final service = PluginAccountAuthenticationService(_copySource, call: (_, _) async => throw rejected);
+    await expectLater(service.verify(), throwsA(same(rejected)));
+    expect(parseUnauthorizedPayload(rejected, fallbackPluginId: _copySource), isNull);
+    expect(PluginAccountIdentities.current(_copySource), same(receipt));
+    pluginSessionWriteFence.advance(_copySource);
+  });
+  test('wrapped legacy errors from another source never request sign-in', () {
+    final service = PluginAccountAuthenticationService(_copySource);
+    expect(
+      () => service.fromServerResponse({
+        'data': {
+          'title': '登录已失效',
+          'lines': [
+            '[bundle:fixture.cjs] Error: {"type":"unauthorized","source":"different-plugin"}',
+          ],
+        },
+      }),
+      throwsA(isA<PluginAccountSwitchFailed>()),
+    );
+  });
+  test('a legacy display card by itself cannot confirm a saved session', () async {
+    const source = '5ee50423-f3b9-4eb4-a9a6-ddd4001a5280';
+    final profile = PluginAccountProfile(
+      id: 'fixture',
+      revision: 1,
+      deleted: false,
+      identity: 'fixture-user',
+      bundle: const {
+        'auth.username': 'fixture-user',
+        'auth.token': 'fixture-session',
+      },
+    );
+    replaceActivePluginAccount(source, profile.bundle);
+    final auth = PluginAccountAuthenticationService(source, call: (fn, _) async {
+      expect(fn, 'getUserInfoBundle');
+      return {
+        'scheme': {'type': 'userInfo'},
+        'data': {
+          'title': 'fixture-user',
+          'avatar': {'id': 'avatar'},
+        },
+      };
+    });
+    await expectLater(auth.authenticate(profile), throwsA(isA<PluginAccountNeedsLogin>()));
+    await expectLater(
+      auth.verifyNativeLogin(
+        {'data': {'ok': true}},
+        account: 'fixture-user',
+        previousSession: auth.legacySession(),
+      ),
+      throwsA(isA<PluginAccountNeedsLogin>()),
+    );
+    expect(PluginAccountIdentities.current(source), isNull);
+  });
   test(
     'JM requires real useredit response rather than its cached account card',
     () async {
@@ -139,6 +238,64 @@ void main() {
         'getUserInfoBundle',
       ]);
       expect('$proof', isNot(contains('synthetic')));
+    },
+  );
+  test(
+    'Copy renews a saved login after a legacy 401 envelope and retries only the identity read',
+    () async {
+      var reads = 0, submits = 0;
+      final service = PluginAccountAuthenticationService(
+        _copySource,
+        call: (fn, values) async {
+          if (fn == 'getUserInfoBundle') {
+            switch (++reads) {
+              case 1:
+                return {'status': 401, 'data': {'available': false}};
+              case 2:
+                throw StateError('Fixture network request timed out');
+              default:
+                return {
+                  'data': {
+                    'extern': {'userId': 'copy-fixture-id', 'username': 'Saved member'},
+                  },
+                };
+            }
+          }
+          if (fn == 'getLoginBundle') {
+            return {
+              'scheme': {
+                'submitFnPath': 'loginWithPassword',
+                'fields': [
+                  {'key': 'username', 'kind': 'text'},
+                  {'key': 'password', 'kind': 'password'},
+                ],
+              },
+            };
+          }
+          expect(fn, 'loginWithPassword');
+          expect(values['savedCredentialOrigin'], 'https://api.copy202602.com');
+          submits++;
+          return {'data': {'username': 'fixture-member'}};
+        },
+      );
+      final proof = await service.authenticate(const PluginAccountProfile(
+        id: 'copy-fixture',
+        revision: 1,
+        deleted: false,
+        identity: 'fixture-member',
+        serverIdentity: 'copy-fixture-id',
+        bundle: {
+          'account.credentials': {
+            'version': 1,
+            'deleted': false,
+            'account': 'fixture-member',
+            'password': 'synthetic-only',
+            'origin': 'https://api.copy202602.com',
+          },
+        },
+      ));
+      expect(proof.serverIdentity, 'copy-fixture-id');
+      expect((reads, submits), (3, 1));
     },
   );
   test(

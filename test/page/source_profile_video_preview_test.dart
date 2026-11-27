@@ -148,18 +148,52 @@ void main() {
       });
     }
   }
-  testWidgets('generic portrait records use per-row height instead of longest note', (tester) async {
-    final items = List.generate(3, (index) => ApiVideoItem(
-      id: '$index', title: 'Work $index', detailUrl: Uri.parse('https://example.com/$index')));
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: ApiVideoCollection(
-      items: items, mode: ApiVideoView.list, onOpen: (_) {}, storageKey: 'compact-profile-records',
-      recordNoteBuilder: (item) => item.id == '1' ? List.filled(24, 'Record date').join('\n') : '2026-11-06',
-    ))));
-    await tester.pump();
-    final first = tester.getSize(find.byKey(const ValueKey('api-video.0')));
-    final long = tester.getSize(find.byKey(const ValueKey('api-video.1')));
-    expect(first.height, 136);
-    expect(long.height, greaterThan(first.height));
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    'long record notes keep portrait rows compact and open in full',
+    (tester) async {
+      final items = List.generate(
+        3,
+        (index) => ApiVideoItem(
+          id: '$index',
+          title: 'Work $index',
+          detailUrl: Uri.parse('https://example.com/$index'),
+        ),
+      );
+      final note = List.filled(24, 'Record date').join('\n');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ApiVideoCollection(
+              items: items,
+              mode: ApiVideoView.list,
+              onOpen: (_) {},
+              storageKey: 'compact-profile-records',
+              recordNoteBuilder: (item) => item.id == '1' ? note : '2026-11-06',
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final first = find.byKey(const ValueKey('api-video.0'));
+      final long = find.byKey(const ValueKey('api-video.1'));
+      expect(tester.getSize(first).height, 136);
+      expect(tester.getSize(long).height, tester.getSize(first).height);
+      expect(tester.widget<Text>(find.text(note)).maxLines, 2);
+      await tester.tap(
+        find.descendant(
+          of: long,
+          matching: find.byTooltip(t.download.workDetails),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is Text && widget.data == note && widget.maxLines == null,
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

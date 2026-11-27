@@ -32,6 +32,7 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/service/local_plugin_installation_state.dart';
 import 'package:zephyr/service/local_import_recovery.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 export 'package:zephyr/service/download/download_task_deletion.dart'
     show ComicTaskDeletionReceipt;
@@ -1081,7 +1082,12 @@ class DownloadQueueManager {
             if (at != null && at > now) {
               // A clock correction must not strand a saved backoff indefinitely.
               final cap = now + const Duration(minutes: 5).inMilliseconds;
-              if (at <= cap) {
+              final serverBackoff =
+                  payload.lastErrorCode ==
+                      ComicDownloadRetryReason.rateLimited.name ||
+                  payload.lastErrorCode ==
+                      ComicDownloadRetryReason.sourceUnavailable.name;
+              if (at <= cap || serverBackoff) {
                 if (nextRetryAt == null || at < nextRetryAt!) nextRetryAt = at;
                 return false;
               }
@@ -1103,10 +1109,18 @@ class DownloadQueueManager {
     _retryTimer =
         retryAt == null || _watchSubscription == null || _admission.queuePaused
         ? null
-        : Timer(Duration(milliseconds: retryAt - now), () {
-            _retryTimer = null;
-            unawaited(_processQueue());
-          });
+        : Timer(
+            Duration(
+              milliseconds: (retryAt - now).clamp(
+                0,
+                const Duration(minutes: 5).inMilliseconds,
+              ),
+            ),
+            () {
+              _retryTimer = null;
+              unawaited(_processQueue());
+            },
+          );
     return runnable;
   }
 
@@ -1583,7 +1597,7 @@ class DownloadQueueManager {
             Theme.of(context).dialogTheme.barrierColor ??
             Colors.black54,
         traversalEdgeBehavior: TraversalEdgeBehavior.closedLoop,
-        builder: (dialogContext) => AlertDialog(
+        builder: (dialogContext) => ShortAlert(
           title: Text(t.download.notificationFailedTitle),
           content: Text(message),
           actions: [
@@ -1630,8 +1644,11 @@ class DownloadQueueManager {
   /// 同一章节已有未完成任务时直接返回；已有失败任务时自动重置为排队。
   /// 任务会被持久化到 ObjectBox，随后 [watchTasks] 的 query watcher 会触发
   /// [_processQueue] 开始执行。
-  void addTask(DownloadTaskJson task) {
-    final cancelling = _inactiveCancellationStops[task.taskKey];
+  void addTask(DownloadTaskJson task) => _addTask(task);
+
+  void _addTask(DownloadTaskJson task, {DownloadTaskKeySnapshot? snapshot}) {
+    final taskKey = task.taskKey;
+    final cancelling = _inactiveCancellationStops[taskKey];
     if (cancelling != null) {
       unawaited(cancelling.future.then((_) => addTask(task)));
       return;
@@ -1647,11 +1664,10 @@ class DownloadQueueManager {
       unawaited(removal.released.then((_) => addTask(task)));
       return;
     }
-    final existing = _taskRepository.findByChapterKey(
-      from: task.from,
-      comicId: task.comicId,
-      chapterKey: task.chapterKey,
+    final existing = _taskRepository.findByTaskKey(
+      taskKey,
       incompleteOnly: true,
+      snapshot: snapshot,
     );
     if (existing != null) {
       final payload = _taskRepository.readPayload(existing);
@@ -1667,11 +1683,11 @@ class DownloadQueueManager {
       return;
     }
 
-    final previous = _taskRepository.findByTaskKey(task.taskKey);
+    final previous = _taskRepository.findByTaskKey(taskKey, snapshot: snapshot);
     final previousPayload = previous == null
         ? null
         : _taskRepository.readPayload(previous);
-    final stopping = _taskStops[task.taskKey];
+    final stopping = _taskStops[taskKey];
     if (previousPayload?.phaseCode == 'cancelling' && stopping != null) {
       unawaited(stopping.future.then((_) => addTask(task)));
       return;
@@ -1695,14 +1711,25 @@ class DownloadQueueManager {
       );
 
     final id = box.put(downloadTask);
-    logger.d('addTask: 已添加任务 id=$id, taskKey=${task.taskKey}');
+    snapshot?[taskKey] = (latest: downloadTask, incomplete: downloadTask);
+    logger.d('addTask: 已添加任务 id=$id, taskKey=$taskKey');
   }
 
-  /// 批量添加单章节任务（多选下载）。逐个走 [addTask] 的判重逻辑。
+  /// 批量添加单章节任务（多选下载）。
   void addTasks(List<DownloadTaskJson> tasks) {
-    for (final task in tasks) {
-      addTask(task);
+    if (tasks.isEmpty) return;
+    if (tasks.length == 1) {
+      addTask(tasks.single);
+      return;
     }
+    objectbox.store.runInTransaction(TxMode.write, () {
+      final snapshot = _taskRepository.indexTaskKeys({
+        for (final task in tasks) task.taskKey,
+      });
+      for (final task in tasks) {
+        _addTask(task, snapshot: snapshot);
+      }
+    });
   }
 
   /// 手动继续或重试一个章节任务。

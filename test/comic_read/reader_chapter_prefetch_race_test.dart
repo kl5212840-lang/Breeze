@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/page/comic_read/widgets/transition/chapter_transition_card.dart';
@@ -9,6 +11,8 @@ import 'package:zephyr/page/comic_read/cubit/image_size_cubit.dart';
 import 'package:zephyr/page/comic_read/model/seamless_transition_state.dart';
 import 'package:zephyr/page/comic_read/model/normal_comic_ep_info.dart';
 import 'package:zephyr/page/comic_read/json/common_ep_info_json/common_ep_info_json.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/service/image_recovery.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/page/comic_read/widgets/layout/read_layout.dart';
 import 'package:zephyr/page/comic_read/widgets/modes/read_mode_utils.dart';
@@ -32,6 +36,179 @@ Map<String, Object> savedChapter(int order, {bool saved = true}) => {
 };
 
 void main() {
+  for (final oldBoundaryTap in [false, true]) {
+    test(
+      'replacement session owns the next chapter (old tap: $oldBoundaryTap)',
+      () async {
+        const source = 'chapter-session-replacement';
+        final record = createTestDownload('$source:work')
+          ..chapters = jsonEncode([savedChapter(11), savedChapter(12)]);
+        final previous = Completer<NormalComicEpInfo>();
+        final current = Completer<NormalComicEpInfo>();
+        final reads = <int>[];
+        final cubit = ReaderSeamlessCubit(
+          comicId: 'work',
+          from: source,
+          type: ComicEntryType.normal,
+          comicInfo: record,
+          initialOrder: 11,
+          readChapter: (order) {
+            reads.add(order);
+            return reads.length == 1 ? previous.future : current.future;
+          },
+        );
+        addTearDown(cubit.close);
+        const settings = ReadSettingState(preloadChapterCount: 1);
+        if (oldBoundaryTap) cubit.configurePrefetch(count: 1, active: false);
+        cubit.bootstrap(chapter(11), 11, settings);
+        final previousTap = oldBoundaryTap
+            ? cubit.onTransitionAction(12, settings, 1)
+            : null;
+        expect(reads, [12]);
+        final session = pluginSessionWriteFence.beginSessionChange(source);
+        pluginSessionWriteFence.seal(source, session);
+
+        final replacementTap = cubit.onTransitionAction(12, settings, 1);
+        expect(reads, [12, 12]);
+        final oldInfo = chapter(12);
+        oldInfo.docs = [
+          oldInfo.docs.single.copyWith(path: 'retired-session.webp'),
+        ];
+        previous.complete(oldInfo);
+        final retired = await previousTap;
+        expect(retired?.targetGlobalSlot, isNull);
+        await Future<void>.delayed(Duration.zero);
+        expect(cubit.state.loadedChapters.map((entry) => entry.order), [11]);
+        expect(cubit.state.loadingChapterOrders, {12});
+        expect(
+          cubit.state.transitionStatusByNextOrder[12],
+          SeamlessTransitionStatus.loading,
+        );
+
+        current.complete(chapter(12));
+        expect((await replacementTap).didLoad, isTrue);
+        expect(cubit.state.loadedChapters.map((entry) => entry.order), [
+          11,
+          12,
+        ]);
+        expect(
+          cubit.state.loadedChapters.last.epInfo.docs.single.path,
+          '12.jpg',
+        );
+        expect(cubit.state.loadingChapterOrders, isEmpty);
+      },
+    );
+  }
+
+  for (final transient in [true, false]) {
+    testWidgets(
+      'chapter boundary classifies failures and retries only while observed '
+      '(transient=$transient)',
+      (tester) async {
+        final record = createTestDownload('source:work')
+          ..chapters = jsonEncode([savedChapter(11), savedChapter(12)]);
+        final initial = chapter(11);
+        initial.docs = List.filled(3, initial.docs.single);
+        initial.length = initial.docs.length;
+        final hub = ImageRecoveryHub(listenToPlatform: false);
+        var reads = 0;
+        final pending = Completer<NormalComicEpInfo>();
+        final cubit = ReaderSeamlessCubit(
+          comicId: 'work',
+          from: 'source',
+          type: ComicEntryType.normal,
+          comicInfo: record,
+          initialOrder: 11,
+          recoveryHub: hub,
+          readChapter: (order) async {
+            reads++;
+            if (reads == 1) {
+              if (transient) throw const SocketException('Connection reset');
+              throw const FormatException('No chapter pages');
+            }
+            if (reads == 2 && transient) return pending.future;
+            return chapter(order);
+          },
+        );
+        const settings = ReadSettingState(preloadChapterCount: 1);
+        var slot = 0;
+        ReaderBoundaryAnchor readAnchor() => (slot: slot, setting: settings);
+        cubit.bindBoundaryRecovery((order) async {
+          await cubit.retryObservedBoundary(
+            order,
+            readAnchor(),
+            readAnchor: readAnchor,
+          );
+        });
+        cubit.setBoundaryRecoveryActive(true);
+        cubit.bootstrap(initial, 11, settings);
+        await tester.pump();
+        expect(reads, 1);
+        expect(
+          cubit.state.transitionStatusByNextOrder[12],
+          SeamlessTransitionStatus.error,
+        );
+
+        slot = 3;
+        for (var i = 0; i < 3; i++) {
+          await cubit.onGlobalSlotObserved(slot, settings);
+        }
+        expect(reads, 1);
+        expect(
+          cubit.state.transitionStatusByNextOrder[12],
+          transient
+              ? SeamlessTransitionStatus.loading
+              : SeamlessTransitionStatus.error,
+        );
+
+        if (!transient) {
+          hub.updateConnectivity([ConnectivityResult.none]);
+          hub.updateConnectivity([ConnectivityResult.wifi]);
+          await tester.pump(const Duration(seconds: 10));
+          expect(reads, 1);
+        } else {
+          // Moving away before the timer fires cancels the scheduled read.
+          slot = 0;
+          await cubit.onGlobalSlotObserved(slot, settings);
+          await tester.pump(const Duration(seconds: 10));
+          expect(reads, 1);
+
+          hub.updateConnectivity([ConnectivityResult.none]);
+          slot = 3;
+          await cubit.onGlobalSlotObserved(slot, settings);
+          expect(
+            cubit.state.transitionStatusByNextOrder[12],
+            SeamlessTransitionStatus.waitingForNetwork,
+          );
+          await tester.pump(const Duration(seconds: 10));
+          expect(reads, 1);
+          hub.updateConnectivity([ConnectivityResult.wifi]);
+          await tester.pump(const Duration(milliseconds: 800));
+          expect(reads, 2);
+          // A response after moving away cannot append or move progress.
+          slot = 0;
+          await cubit.onGlobalSlotObserved(slot, settings);
+          pending.complete(chapter(12));
+          await tester.pump();
+          expect(cubit.state.loadedChapters.map((item) => item.order), [11]);
+          expect(cubit.currentChapterOrder, 11);
+
+          slot = 3;
+          await cubit.onGlobalSlotObserved(slot, settings);
+          await tester.pump(const Duration(milliseconds: 2400));
+          expect(reads, 3);
+          expect(cubit.state.loadedChapters.map((item) => item.order), [
+            11,
+            12,
+          ]);
+          expect(cubit.currentChapterOrder, 11);
+        }
+        await tester.runAsync(cubit.close);
+        await hub.dispose();
+      },
+    );
+  }
+
   testWidgets(
     'local transition displays two chapter names and a tappable arrow',
     (tester) async {
@@ -280,6 +457,108 @@ void main() {
     },
   );
 
+  test(
+    'entering chapter two does not resolve its initial leading card',
+    () async {
+      final record = createTestDownload('source:work')
+        ..chapters = jsonEncode([savedChapter(1), savedChapter(2)]);
+      final reads = <int>[];
+      final cubit = ReaderSeamlessCubit(
+        comicId: 'work',
+        from: 'source',
+        type: ComicEntryType.normal,
+        comicInfo: record,
+        initialOrder: 2,
+        readChapter: (order) async {
+          reads.add(order);
+          return chapter(order);
+        },
+      );
+      addTearDown(cubit.close);
+      const settings = ReadSettingState();
+      cubit.bootstrap(chapter(2), 2, settings);
+      expect(cubit.transitionNextOrderByGlobalSlot(0, settings), 2);
+
+      final initial = await cubit.onGlobalSlotObserved(0, settings);
+      expect(initial.targetGlobalSlot, isNull);
+      expect(reads, isEmpty);
+      expect(cubit.state.currentChapterOrder, 2);
+
+      await cubit.onGlobalSlotObserved(1, settings);
+      final returned = await cubit.onGlobalSlotObserved(0, settings);
+      expect(returned.didLoad, isTrue);
+      expect(reads, [1]);
+    },
+  );
+
+  test(
+    'entry restore still points to chapter two after chapter one is loaded',
+    () async {
+      final record = createTestDownload('source:work')
+        ..chapters = jsonEncode([savedChapter(1), savedChapter(2)]);
+      final cubit = ReaderSeamlessCubit(
+        comicId: 'work',
+        from: 'source',
+        type: ComicEntryType.normal,
+        comicInfo: record,
+        initialOrder: 2,
+        readChapter: (order) async => chapter(order),
+      );
+      addTearDown(cubit.close);
+      const settings = ReadSettingState();
+      final current = chapter(2);
+      current.docs = List.filled(3, current.docs.single);
+      current.length = current.docs.length;
+      cubit.bootstrap(current, 2, settings);
+
+      final previous = await cubit.onTransitionAction(2, settings, 0);
+      expect(previous.didLoad, isTrue);
+      final entry = cubit.resolveEntryDefaultGlobalSlot(settings);
+      final saved = cubit.resolveHistoryGlobalSlot(2, settings);
+      expect(
+        cubit.resolveHistorySlotImages(entry, settings)?.$1.chapterOrder,
+        2,
+      );
+      final savedImage = cubit.resolveHistorySlotImages(saved, settings)?.$1;
+      expect((savedImage?.chapterOrder, savedImage?.chapterPageIndex), (2, 2));
+    },
+  );
+
+  test('pulling at the leading card keeps that card anchored', () async {
+    final record = createTestDownload('source:work')
+      ..chapters = jsonEncode([savedChapter(1), savedChapter(2)]);
+    final cubit = ReaderSeamlessCubit(
+      comicId: 'work',
+      from: 'source',
+      type: ComicEntryType.normal,
+      comicInfo: record,
+      initialOrder: 2,
+      readChapter: (order) async => chapter(order),
+    );
+    addTearDown(cubit.close);
+    const setting = ReadSettingState();
+    cubit.bootstrap(chapter(2), 2, setting);
+    expect(cubit.transitionNextOrderByGlobalSlot(0, setting), 2);
+
+    final result = await cubit.triggerBoundary(
+      previous: true,
+      readSetting: setting,
+      readAnchor: () => (slot: 0, setting: setting),
+    );
+
+    expect(result.didLoad, isTrue);
+    final anchor = result.targetGlobalSlot!;
+    expect(cubit.transitionNextOrderByGlobalSlot(anchor, setting), 2);
+    expect(
+      cubit.resolveHistorySlotImages(anchor - 1, setting)?.$1.chapterOrder,
+      1,
+    );
+    expect(
+      cubit.resolveHistorySlotImages(anchor + 1, setting)?.$1.chapterOrder,
+      2,
+    );
+  });
+
   test('a late previous chapter follows the latest visible slot', () async {
     final record = createTestDownload('source:work')
       ..chapters = jsonEncode([savedChapter(1), savedChapter(2)]);
@@ -314,6 +593,13 @@ void main() {
     final shifted = await append;
     expect(shifted.prependedSlotCount, greaterThan(0));
     expect(shifted.targetGlobalSlot, visibleSlot + shifted.prependedSlotCount);
+    expect(
+      cubit
+          .resolveHistorySlotImages(shifted.targetGlobalSlot!, settings)
+          ?.$1
+          .chapterOrder,
+      2,
+    );
   });
 
   test(

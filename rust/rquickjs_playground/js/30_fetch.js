@@ -541,6 +541,7 @@
             ? null
             : Number(input._bodyNativeBufferId);
         this.timeout = input.timeout;
+        this._breezeReadScope = input._breezeReadScope;
         this.signal = input.signal || null;
       } else {
         this.url = String(input);
@@ -548,6 +549,7 @@
         this.headers = new Headers();
         this._initBody("", { offloaded: false, nativeBody: false });
         this.timeout = null;
+        this._breezeReadScope = null;
         this.signal = null;
       }
 
@@ -584,6 +586,11 @@
         const timeoutRaw = Object.prototype.hasOwnProperty.call(init, "timeoutMs") ? init.timeoutMs : init.timeout;
         const timeout = Number(timeoutRaw);
         this.timeout = Number.isFinite(timeout) && timeout > 0 ? Math.floor(timeout) : null;
+      }
+      if (Object.prototype.hasOwnProperty.call(init, "breezeReadScope")) {
+        this._breezeReadScope = typeof init.breezeReadScope === "string"
+          ? init.breezeReadScope
+          : null;
       }
 
       const body = init.body;
@@ -712,6 +719,7 @@
           headers: new Headers(this.headers),
           signal: this.signal,
           timeout: this.timeout,
+          breezeReadScope: this._breezeReadScope,
           credentials: this.credentials,
           mode: this.mode,
           redirect: this.redirect,
@@ -736,6 +744,7 @@
         headers: new Headers(this.headers),
         signal: this.signal,
         timeout: this.timeout,
+        breezeReadScope: this._breezeReadScope,
         credentials: this.credentials,
         mode: this.mode,
         redirect: this.redirect,
@@ -988,6 +997,7 @@
   }
 
   function fetch(input, init = {}) {
+    const startedAt = Date.now();
     let request;
     try {
       if (input instanceof Request) {
@@ -997,186 +1007,88 @@
       } else {
         request = new Request(input, init);
       }
+      if (request._hasBody) request._lockBody();
     } catch (err) {
       return Promise.reject(err);
     }
 
-    try {
-      if (request._hasBody) {
-        request._lockBody();
-      }
-    } catch (err) {
-      return Promise.reject(err);
+    const signal = request.signal;
+    const readScope = request.method === "GET" || request.method === "HEAD"
+      ? request._breezeReadScope
+      : null;
+    const duration = Math.min(request.timeout ?? 30000, 24 * 60 * 60 * 1000);
+    const deadline = startedAt + duration;
+    let requestId = null;
+    let timer = null;
+    let aborted = null;
+    let rejectAbort;
+    const cancellation = new Promise((_, reject) => { rejectAbort = reject; });
+
+    function abortError(reason, timedOut = false) {
+      const detail = typeof reason === "object" && reason
+        ? String(reason.message || "").trim()
+        : typeof reason === "string" ? reason.trim() : "";
+      const isTimeout = timedOut ||
+        (reason && (
+          reason.name === "TimeoutError" ||
+          reason.code === "ETIMEDOUT" ||
+          reason.code === "ECONNABORTED"
+        )) ||
+        /timeout|超时/i.test(detail);
+      const error = new Error(detail || (isTimeout ? "请求超时" : "请求已取消"));
+      error.name = isTimeout ? "TimeoutError" : "AbortError";
+      return error;
     }
 
-    const waitBodyInit = request && request._bodyInitPromise
-      ? request._bodyInitPromise
-      : Promise.resolve();
-
-    return waitBodyInit.then(async () => {
-      let requestId = null;
-      let timeoutId = null;
-      let timeoutFired = false;
-      let signal = request.signal;
-      let cleanupRequestSignal = null;
-      let cleanupSignal = null;
-
-      const clearTimeoutIfNeeded = () => {
-        if (timeoutId === null) return;
-        clearTimeout(timeoutId);
-        timeoutId = null;
-      };
-
-      const cleanupSignalListeners = () => {
-        if (typeof cleanupRequestSignal === "function") {
-          cleanupRequestSignal();
-          cleanupRequestSignal = null;
-        }
-        if (typeof cleanupSignal === "function") {
-          cleanupSignal();
-          cleanupSignal = null;
-        }
-      };
-
-      const isTimeoutAbortReason = (reason) => {
-        if (timeoutFired) return true;
-        if (reason === null || reason === undefined) return false;
-
-        if (typeof reason === "string") {
-          const text = reason.toLowerCase();
-          return text.includes("timeout") || text.includes("超时");
-        }
-
-        if (typeof reason === "object") {
-          const name = String(reason.name || "");
-          const code = String(reason.code || "");
-          const message = String(reason.message || "").toLowerCase();
-          return (
-            name === "TimeoutError" ||
-            code === "ETIMEDOUT" ||
-            code === "ECONNABORTED" ||
-            message.includes("timeout") ||
-            message.includes("超时")
-          );
-        }
-
-        return false;
-      };
-
-      const buildAbortError = () => {
-        const reason = signal ? signal.reason : null;
-        const isTimeout = isTimeoutAbortReason(reason);
-
-        let message = isTimeout ? "请求超时" : "请求已取消";
-        if (typeof reason === "string" && reason.trim()) {
-          message = reason;
-        } else if (reason && typeof reason === "object") {
-          const reasonMessage = String(reason.message || "").trim();
-          if (reasonMessage) {
-            message = reasonMessage;
-          }
-        }
-
-        const err = new Error(message);
-        err.name = isTimeout ? "TimeoutError" : "AbortError";
-        return err;
-      };
-
-      if (request.timeout !== null) {
-        if (typeof AbortController === "function") {
-          const timeoutController = new AbortController();
-          const prevSignal = signal;
-          signal = timeoutController.signal;
-
-          if (prevSignal) {
-            const forwardAbort = () => {
-              timeoutController.abort(prevSignal.reason);
-            };
-            prevSignal.addEventListener("abort", forwardAbort);
-            cleanupRequestSignal = () => {
-              prevSignal.removeEventListener("abort", forwardAbort);
-            };
-
-            if (prevSignal.aborted) {
-              forwardAbort();
-            }
-          }
-
-          timeoutId = setTimeout(() => {
-            timeoutFired = true;
-            timeoutController.abort("请求超时");
-          }, request.timeout);
-        } else {
-          timeoutId = setTimeout(() => {
-            timeoutFired = true;
-            if (requestId !== null) {
-              try {
-                globalThis.__http_request_cancel(requestId);
-              } catch (_err) {
-              }
-            }
-          }, request.timeout);
-        }
+    function abort(error) {
+      if (aborted) return;
+      aborted = error;
+      if (requestId !== null) {
+        try {
+          globalThis.__http_request_cancel(requestId);
+        } catch (_err) {}
       }
+      rejectAbort(error);
+    }
 
-      if (signal && signal.aborted) {
-        cleanupSignalListeners();
-        clearTimeoutIfNeeded();
-        throw buildAbortError();
-      }
-
-      checkBlockedPort(request.url);
-
+    const onAbort = () => abort(abortError(signal.reason));
+    const onTimeout = () => abort(abortError(null, true));
+    const bodyInit = request._bodyInitPromise || Promise.resolve();
+    const operation = bodyInit.then(async () => {
       try {
+        if (Date.now() >= deadline) onTimeout();
+        if (readScope && !globalThis.__http_read_scope_active(readScope)) {
+          abort(abortError());
+        }
+        if (aborted) throw aborted;
+        checkBlockedPort(request.url);
         const promise = globalThis.__http_request_promise(
           request.method,
           request.url,
           JSON.stringify(request.headers.toObject()),
           request._bodyText || null,
-          request._bodyNativeBufferId === null || request._bodyNativeBufferId === undefined
-            ? null
-            : Number(request._bodyNativeBufferId),
+          request._bodyNativeBufferId ?? null,
           request.redirect,
+          Math.max(1, deadline - Date.now()),
+          ...(readScope ? [readScope] : []),
         );
         requestId = Number(promise.__hostRequestId);
-
-        const onAbort = () => {
-          if (requestId !== null) {
-            try {
-              globalThis.__http_request_cancel(requestId);
-            } catch (_err) {
-            }
-          }
-        };
-        if (signal) {
-          signal.addEventListener("abort", onAbort);
-          cleanupSignal = () => {
-            signal.removeEventListener("abort", onAbort);
-          };
-
-          if (signal.aborted) {
-            onAbort();
-            cleanupSignalListeners();
-            clearTimeoutIfNeeded();
-            throw buildAbortError();
-          }
-        }
-
         const payloadRaw = await promise;
-        cleanupSignalListeners();
-        clearTimeoutIfNeeded();
+        const payload = JSON.parse(String(payloadRaw || "{}"));
 
-        let payload;
-        try {
-          payload = JSON.parse(String(payloadRaw || "{}"));
-        } catch (err) {
-          throw err;
+        if (Date.now() >= deadline) onTimeout();
+        if (readScope && !globalThis.__http_read_scope_active(readScope)) {
+          abort(abortError());
         }
-
-        if (!payload.ok) {
-          if (payload.canceled === true) {
-            throw buildAbortError();
+        if (aborted) {
+          if (payload.nativeBufferId != null) {
+            globalThis.__native_buffer_free(payload.nativeBufferId);
           }
+          throw aborted;
+        }
+        if (!payload.ok) {
+          if (payload.timedOut) throw abortError(null, true);
+          if (payload.canceled) throw abortError(signal?.reason);
           throw new TypeError(payload.error || "网络请求失败");
         }
 
@@ -1190,9 +1102,22 @@
           offloadedBytes: payload.offloadedBytes,
         });
       } finally {
-        cleanupSignalListeners();
-        clearTimeoutIfNeeded();
+        if (requestId === null && request._bodyNativeBufferId != null) {
+          globalThis.__native_buffer_free(request._bodyNativeBufferId);
+        }
       }
+    });
+    const result = Promise.race([operation, cancellation]);
+    if (signal) {
+      signal.addEventListener("abort", onAbort);
+      if (signal.aborted) onAbort();
+    }
+    if (!aborted) {
+      timer = setTimeout(onTimeout, Math.max(0, deadline - Date.now()));
+    }
+    return result.finally(() => {
+      if (signal) signal.removeEventListener("abort", onAbort);
+      if (timer !== null) clearTimeout(timer);
     });
   }
 

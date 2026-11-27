@@ -1,11 +1,16 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_community_page.dart';
 import 'package:zephyr/page/video/video_comment_drafts.dart';
 import 'package:zephyr/page/video/video_engagement.dart';
+import 'package:zephyr/page/video/video_card_metadata.dart';
+import 'package:zephyr/page/video/video_public_metadata.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
+import 'package:zephyr/page/video/hanime_work_facts.dart';
 import 'package:zephyr/page/video/video_site_action_models.dart';
 import 'package:zephyr/page/video/video_playlist_editor.dart';
 import 'package:zephyr/page/video/video_site_operations.dart';
@@ -15,9 +20,9 @@ import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
 
 class _Operations extends VideoSiteOperations {
-  _Operations(this.respond, {super.drafts})
+  _Operations(this.respond, {super.drafts, int work = 42})
     : super(
-        page: Uri.parse('https://hanime1.me/watch?v=42'),
+        page: Uri.parse('https://hanime1.me/watch?v=$work'),
         evaluate: (_) async => null,
       );
   final Future<Map<String, dynamic>> Function(String, Map<String, dynamic>)
@@ -28,6 +33,7 @@ class _Operations extends VideoSiteOperations {
   Future<Map<String, dynamic>> run(
     String operation, [
     Map<String, dynamic> payload = const {},
+    void Function(VideoInteractionState)? onVoteAccepted,
   ]) {
     calls.add(operation);
     payloads.add(Map<String, dynamic>.from(payload));
@@ -239,6 +245,19 @@ void main() {
   testWidgets(
     'comments append only the matching revision and retain unsent input',
     (tester) async {
+      final messenger = tester.binding.defaultBinaryMessenger;
+      const connectivity = MethodChannel(
+        'dev.fluttercommunity.plus/connectivity',
+      );
+      const connectivityStatus = MethodChannel(
+        'dev.fluttercommunity.plus/connectivity_status',
+      );
+      messenger.setMockMethodCallHandler(connectivity, (_) async => ['wifi']);
+      messenger.setMockMethodCallHandler(connectivityStatus, (_) async => null);
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(connectivity, null);
+        messenger.setMockMethodCallHandler(connectivityStatus, null);
+      });
       final operations = _Operations(
         (_, payload) async => {
           'status': 'ok',
@@ -552,7 +571,7 @@ void main() {
       await tester.tap(find.text(t.videoCommunity.like));
       await tester.pumpAndSettle();
       expect(operations.payloads.last, {'enabled': true});
-      expect(find.text(t.videoCommunity.liked), findsOneWidget);
+      expect(find.byIcon(Icons.thumb_up), findsOneWidget);
     },
   );
 
@@ -599,40 +618,35 @@ void main() {
     expect(operations.calls, ['state']);
   });
 
-  testWidgets(
-    'uncertain like keeps its old value and requires a confirmed refresh before another write',
-    (tester) async {
-      final operations = _Operations(
-        (operation, _) async => switch (operation) {
-          'like' => {'status': 'unconfirmed', 'writeUnconfirmed': true},
-          'refreshState' => interaction(liked: true),
-          _ => interaction(),
-        },
-      );
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: _Engagement(operations: operations, onLogin: () {}),
-          ),
+  testWidgets('uncertain like keeps its old value and checks on the next tap', (
+    tester,
+  ) async {
+    final operations = _Operations(
+      (operation, _) async => switch (operation) {
+        'like' => {'status': 'unconfirmed', 'writeUnconfirmed': true},
+        'refreshState' => interaction(liked: true),
+        _ => interaction(),
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: _Engagement(operations: operations, onLogin: () {}),
         ),
-      );
-      await tester.pumpAndSettle();
-      await tester.tap(find.text(t.videoCommunity.like));
-      await tester.pumpAndSettle();
-      expect(find.text(t.videoCommunity.liked), findsNothing);
-      expect(find.text(t.videoCommunity.unconfirmed), findsOneWidget);
-      await tester.tap(find.text(t.videoCommunity.like));
-      await tester.pumpAndSettle();
-      expect(
-        operations.calls.where((operation) => operation == 'like').length,
-        1,
-      );
-      await tester.tap(find.text(t.common.retry));
-      await tester.pumpAndSettle();
-      expect(find.text(t.videoCommunity.liked), findsOneWidget);
-      expect(find.text(t.videoCommunity.unconfirmed), findsNothing);
-    },
-  );
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(t.videoCommunity.like));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.thumb_up), findsNothing);
+    expect(find.text(t.videoCommunity.unconfirmed), findsNothing);
+    expect(find.text(t.common.retry), findsNothing);
+    await tester.tap(find.text(t.videoCommunity.like));
+    await tester.pumpAndSettle();
+    expect(operations.calls, ['state', 'like', 'refreshState']);
+    expect(find.byIcon(Icons.thumb_up), findsOneWidget);
+    expect(find.text(t.videoCommunity.unconfirmed), findsNothing);
+  });
 
   testWidgets(
     'two rapid action calls produce one request even before the next frame',
@@ -662,7 +676,7 @@ void main() {
       );
       pending.complete(interaction(liked: true));
       await tester.pumpAndSettle();
-      expect(find.text(t.videoCommunity.liked), findsOneWidget);
+      expect(find.byIcon(Icons.thumb_up), findsOneWidget);
     },
   );
 
@@ -683,7 +697,7 @@ void main() {
       await tester.pumpAndSettle();
       pending.complete({'status': 'network'});
       await tester.pumpAndSettle();
-      expect(find.text(t.videoCommunity.liked), findsOneWidget);
+      expect(find.byIcon(Icons.thumb_up), findsOneWidget);
       expect(find.text(t.videoCommunity.network), findsNothing);
     },
   );
@@ -1213,6 +1227,99 @@ void main() {
     );
   });
 
+  testWidgets(
+    'vote failures and account rechecks leave only the selection and count',
+    (tester) async {
+      final pending = Completer<Map<String, dynamic>>();
+      final operations = _Operations((operation, _) async {
+        return switch (operation) {
+          'like' => pending.future,
+          'refreshState' => {'status': 'ok', 'actor': 'signedOut'},
+          _ => {...interaction(), 'positiveVotes': 7},
+        };
+      }, work: 4270);
+      var logins = 0;
+      addTearDown(operations.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: _Engagement(operations: operations, onLogin: () => logins++),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final like = find.byKey(const ValueKey('video-like'));
+      final follow = find.byKey(const ValueKey('video-follow'));
+      final voteCount = find.descendant(of: like, matching: find.text('7'));
+      final voteIcon = find.descendant(
+        of: like,
+        matching: find.byIcon(Icons.thumb_up_outlined),
+      );
+      void expectOnlyVoteState() {
+        expect(voteCount, findsOneWidget);
+        expect(voteIcon, findsOneWidget);
+        expect(find.byType(CircularProgressIndicator), findsNothing);
+        expect(find.byType(LinearProgressIndicator), findsNothing);
+        expect(find.byIcon(Icons.hourglass_empty_rounded), findsNothing);
+        expect(find.text(t.videoCommunity.unconfirmed), findsNothing);
+        expect(find.text(t.videoCommunity.loginRequired), findsNothing);
+        expect(find.text(t.common.retry), findsNothing);
+        expect(logins, 0);
+      }
+
+      await tester.tap(like);
+      await tester.pump();
+      expectOnlyVoteState();
+      await tester.tap(like);
+      expect(operations.calls, ['state', 'like']);
+      pending.complete({'status': 'unconfirmed', 'writeUnconfirmed': true});
+      await tester.pumpAndSettle();
+      expectOnlyVoteState();
+
+      await tester.tap(like);
+      await tester.pumpAndSettle();
+      expectOnlyVoteState();
+      expect(operations.calls, ['state', 'like', 'refreshState']);
+      await tester.tap(like);
+      await tester.pumpAndSettle();
+      expectOnlyVoteState();
+
+      await tester.tap(follow);
+      await tester.pumpAndSettle();
+      expect(logins, 1);
+    },
+  );
+
+  test(
+    'vote writes are deduplicated while account and vote state are checked',
+    () async {
+      final preflight = Completer<Map<String, dynamic>>();
+      final operations = _Operations((operation, _) async {
+        if (operation == 'refreshState') return preflight.future;
+        return {...interaction(liked: true), 'positiveVotes': 8};
+      }, work: 4264);
+      final controller = VideoEngagementController(
+        operations: operations,
+        onLogin: () {},
+      );
+      addTearDown(controller.dispose);
+      addTearDown(operations.dispose);
+
+      final write = controller.set(VideoSiteAction.like, true);
+      expect(controller.working, isTrue);
+      expect(controller.state.liked, isNull);
+      expect(controller.state.positiveVotes, isNull);
+      await controller.set(VideoSiteAction.like, true);
+      expect(operations.calls, ['refreshState']);
+
+      preflight.complete({...interaction(), 'positiveVotes': 7});
+      await write;
+      expect(operations.calls, ['refreshState', 'like']);
+      expect(controller.state.liked, isTrue);
+      expect(controller.state.positiveVotes, 8);
+    },
+  );
+
   test(
     'pending and rejected votes never alter the last confirmed tally',
     () async {
@@ -1221,6 +1328,7 @@ void main() {
         (operation, _) async => operation == 'like'
             ? pending.future
             : {...interaction(), 'positiveVotes': 7},
+        work: 4265,
       );
       final controller = VideoEngagementController(
         operations: operations,
@@ -1231,14 +1339,14 @@ void main() {
       await controller.load();
       final write = controller.set(VideoSiteAction.like, true);
       await Future<void>.delayed(Duration.zero);
-      expect(controller.pendingVote, VideoSiteAction.like);
       expect(controller.state.liked, false);
       expect(controller.state.positiveVotes, 7);
+      expect(controller.error, isNull);
+      expect(controller.unconfirmedAction, isNull);
       await controller.set(VideoSiteAction.like, true);
       expect(operations.calls, ['state', 'like']);
       pending.complete({'status': 'rejected'});
       await write;
-      expect(controller.pendingVote, isNull);
       expect(controller.state.liked, false);
       expect(controller.state.positiveVotes, 7);
     },
@@ -1271,6 +1379,273 @@ void main() {
       controller.dispose();
     },
   );
+
+  testWidgets(
+    'accepted video vote updates existing lists and rolls back silently',
+    (tester) async {
+      var writes = 0;
+      var refreshed = 0;
+      var polls = 0;
+      final finish = Completer<Map<String, dynamic>>();
+      final operations = VideoSiteOperations(
+        page: Uri.parse('https://hanime1.me/watch?v=4260'),
+        evaluate: (script) async {
+          if (script.contains('if (true)')) return {'status': 'cancelled'};
+          if (script.contains('operation = "state"')) {
+            return {...interaction(), 'positiveVotes': 7};
+          }
+          if (script.contains('operation = "refreshState"')) {
+            refreshed++;
+            return {
+              ...interaction(liked: true),
+              'positiveVotes': 9,
+              'refreshed': true,
+            };
+          }
+          if (script.contains('operation = "like"')) {
+            writes++;
+            return {'status': 'pending', 'id': 'vote'};
+          }
+          if (++polls == 1) {
+            return {
+              'status': 'pending',
+              'voteAccepted': {
+                ...interaction(liked: true),
+                'positiveVotes': 8,
+                'voteCountEstimated': true,
+              },
+            };
+          }
+          return finish.future;
+        },
+      );
+      final controller = VideoEngagementController(
+        operations: operations,
+        onLogin: () {},
+      );
+      addTearDown(controller.dispose);
+      addTearDown(operations.dispose);
+      await controller.load();
+      const metadata = VideoPublicMetadata(
+        positiveVotes: 7,
+        ratingPercentRaw: '98%',
+      );
+      final listUrl = Uri.parse('https://hanime1.me/watch?v=4260&ref=playlist');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                VideoCardFacts(metadata: metadata, workUrl: listUrl),
+                Builder(
+                  builder: (context) => hanimeWorkStatistics(
+                    context,
+                    metadata,
+                    HanimeCatalogLayout.detail,
+                    workUrl: listUrl,
+                  ),
+                ),
+                VideoCardFacts(
+                  metadata: const VideoPublicMetadata(positiveVotes: 58),
+                  workUrl: Uri.parse('https://hanime1.me/watch?v=4261'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      Finder likes(int count) =>
+          find.textContaining(t.videoMetadata.positiveVotes(count: count));
+      final rating = find.textContaining(t.videoMetadata.rating(value: '98%'));
+      expect(likes(7), findsNWidgets(2));
+      expect(rating, findsNWidgets(2));
+      final vote = controller.set(VideoSiteAction.like, true);
+      await tester.pump();
+      expect(controller.state.positiveVotes, 7);
+      await tester.pump(const Duration(milliseconds: 160));
+      expect(controller.state.liked, true);
+      expect(controller.state.positiveVotes, 8);
+      await tester.pump();
+      expect(likes(8), findsNWidgets(2));
+      expect(likes(58), findsOneWidget);
+      expect(rating, findsNothing);
+      expect(controller.working, isTrue);
+      finish.complete({'status': 'unconfirmed', 'writeUnconfirmed': true});
+      await tester.pump(const Duration(milliseconds: 160));
+      await vote;
+      expect(controller.state.liked, false);
+      expect(controller.state.positiveVotes, 7);
+      await tester.pump();
+      expect(likes(7), findsNWidgets(2));
+      expect(rating, findsNWidgets(2));
+      expect(controller.error, isNull);
+      expect(controller.unconfirmedAction, isNull);
+
+      await controller.set(VideoSiteAction.like, true);
+      expect(controller.state.liked, true);
+      expect(controller.state.positiveVotes, 9);
+      await tester.pump();
+      expect(likes(9), findsNWidgets(2));
+      expect(rating, findsNothing);
+      expect((writes, refreshed), (1, 1));
+    },
+  );
+
+  testWidgets(
+    'a confirmed vote updates the displayed count without dislike state',
+    (tester) async {
+      var liked = false;
+      final operations = _Operations((operation, payload) async {
+        if (operation == 'like') {
+          liked = payload['enabled'] as bool;
+          return {
+            ...interaction(liked: liked),
+            'canDislike': false,
+            'positiveVotes': liked ? 371 : 372,
+          };
+        }
+        return {
+          ...interaction(liked: liked),
+          'canDislike': false,
+          if (liked) 'positiveVotes': 371,
+        };
+      }, work: 4265);
+      final controller = VideoEngagementController(
+        operations: operations,
+        onLogin: () {},
+      );
+      addTearDown(operations.dispose);
+      addTearDown(controller.dispose);
+      await controller.load();
+      const metadata = VideoPublicMetadata(
+        positiveVotes: 371,
+        negativeVotes: 2,
+        totalVotes: 373,
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                VideoEngagement(
+                  publicMetadata: metadata,
+                  controller: controller,
+                  onFavorite: () {},
+                  onShare: (_) {},
+                ),
+                VideoCardFacts(metadata: metadata, workUrl: operations.page),
+              ],
+            ),
+          ),
+        ),
+      );
+      final like = find.byKey(const ValueKey('video-like'));
+      Finder listCount(int count) =>
+          find.textContaining(t.videoMetadata.positiveVotes(count: count));
+      expect(find.text('371'), findsOneWidget);
+      expect(listCount(371), findsOneWidget);
+      await tester.tap(like);
+      await tester.pumpAndSettle();
+      expect(controller.state.liked, isTrue);
+      expect(controller.state.positiveVotes, 372);
+      expect(controller.state.totalVotes, 374);
+      expect(find.text('372'), findsOneWidget);
+      expect(listCount(372), findsOneWidget);
+      await controller.load();
+      await tester.pump();
+      expect(find.text('372'), findsOneWidget);
+      expect(listCount(372), findsOneWidget);
+      await tester.tap(like);
+      await tester.pumpAndSettle();
+      expect(controller.state.liked, isFalse);
+      expect(controller.state.positiveVotes, 371);
+      expect(controller.state.totalVotes, 373);
+      expect(find.text('371'), findsOneWidget);
+      expect(listCount(371), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2));
+    },
+  );
+
+  for (final cancel in [false, true]) {
+    test(
+      'reopening preserves the vote tally until the site catches up (cancel=$cancel)',
+      () async {
+        final work = cancel ? 4262 : 4263;
+        Map<String, dynamic> votes(
+          int positive, {
+          required bool liked,
+          bool projected = false,
+        }) => {
+          ...interaction(liked: liked),
+          'canDislike': true,
+          'disliked': false,
+          'positiveVotes': positive,
+          'negativeVotes': 2,
+          'totalVotes': positive + 2,
+          'voteCountEstimated': projected,
+        };
+        final first = _Operations(
+          (operation, _) async => operation == 'like'
+              ? votes(100, liked: true)
+              : votes(100, liked: false),
+          work: work,
+        );
+        final controller = VideoEngagementController(
+          operations: first,
+          onLogin: () {},
+        );
+        addTearDown(first.dispose);
+        await controller.load();
+        final lateRead = Completer<Map<String, dynamic>>();
+        final old = _Operations((_, _) => lateRead.future, work: work);
+        final stale = VideoEngagementController(
+          operations: old,
+          onLogin: () {},
+        );
+        addTearDown(stale.dispose);
+        addTearDown(old.dispose);
+        final reading = stale.load();
+        await controller.set(VideoSiteAction.like, true);
+        expect(controller.state.positiveVotes, 101);
+        controller.dispose();
+
+        lateRead.complete(votes(99, liked: false));
+        await reading;
+        expect(stale.state.liked, false);
+        expect(stale.state.positiveVotes, 101);
+
+        final next = _Operations(
+          (operation, _) async => switch (operation) {
+            'like' => votes(99, liked: false, projected: true),
+            'refreshState' => {...votes(107, liked: true), 'refreshed': true},
+            _ => votes(100, liked: true),
+          },
+          work: work,
+        );
+        final reopened = VideoEngagementController(
+          operations: next,
+          onLogin: () {},
+        );
+        addTearDown(next.dispose);
+        addTearDown(reopened.dispose);
+        await reopened.load();
+        expect(reopened.state.liked, true);
+        expect(reopened.state.positiveVotes, 101);
+
+        if (cancel) {
+          await reopened.set(VideoSiteAction.like, false);
+          expect(reopened.state.liked, false);
+          expect(reopened.state.positiveVotes, 100);
+          expect(reopened.state.totalVotes, 102);
+        } else {
+          await reopened.load(refresh: true);
+          expect(reopened.state.liked, true);
+          expect(reopened.state.positiveVotes, 107);
+          expect(reopened.state.voteCountEstimated, false);
+        }
+      },
+    );
+  }
 
   testWidgets(
     'OTP publishing gate leaves comments and replies readable without automatic login',
@@ -1322,11 +1697,12 @@ void main() {
       expect(find.text('Readable reply'), findsOneWidget);
       expect(find.text(t.videoCommunity.postVerificationOnly), findsOneWidget);
       expect(find.text(t.videoCommunity.publishingUnavailable), findsNothing);
-      final website = find.widgetWithText(
-        TextButton,
-        t.videoPlayback.backToWeb,
+      final website = find.descendant(
+        of: find.byType(ListView),
+        matching: find.byTooltip(t.videoPlayback.backToWeb),
       );
       expect(website, findsOneWidget);
+      expect(tester.getSize(website).height, greaterThanOrEqualTo(44));
       expect(find.byType(TextField), findsNothing);
       expect(operations.calls, ['comments', 'replies']);
       await tester.tap(website);

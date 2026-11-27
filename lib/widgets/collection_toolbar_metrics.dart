@@ -8,6 +8,7 @@ abstract final class CollectionToolbarMetrics {
   static const actionPlateExtent = actionExtent - actionPlateInset * 2;
   static const searchControlGap = 8.0;
   static const sourceContentInset = 16.0;
+  static const searchResultContentInset = 14.0;
   static const contentPadding = EdgeInsetsDirectional.symmetric(
     horizontal: sourceContentInset,
   );
@@ -25,13 +26,14 @@ abstract final class CollectionToolbarMetrics {
   static EdgeInsetsDirectional contentPaddingOf(
     BuildContext context, {
     double inset = sourceContentInset,
+    double? startInset,
     double top = 0,
     double bottom = 0,
   }) {
     final safe = MediaQuery.paddingOf(context);
     final rtl = Directionality.of(context) == TextDirection.rtl;
     return EdgeInsetsDirectional.fromSTEB(
-      inset + (rtl ? safe.right : safe.left),
+      (startInset ?? inset) + (rtl ? safe.right : safe.left),
       top,
       inset + (rtl ? safe.left : safe.right),
       bottom,

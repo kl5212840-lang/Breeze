@@ -1,3 +1,5 @@
+import 'package:zephyr/page/search_result/widgets/source_page_jump.dart';
+import 'package:zephyr/widgets/source_page_divider.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -18,10 +20,52 @@ import 'package:zephyr/page/video/video_playback_identity.dart';
 import 'package:zephyr/widgets/collection_record_time.dart';
 import 'package:zephyr/widgets/collection_press_feedback.dart';
 import 'package:zephyr/widgets/collection_selection_mark.dart';
+import 'package:zephyr/widgets/detailed_metadata.dart';
 import 'package:zephyr/widgets/work_list_divider.dart';
 import 'package:zephyr/widgets/tab_reselect_scope.dart';
 
 enum ApiVideoView { grid, list }
+
+List<({String label, String value})> apiVideoListDetails(
+  ApiVideoItem item, {
+  bool anime = false,
+}) => [
+  for (final (label, value) in [
+    (t.videoLibrary.alternateTitle, item.alternateTitle),
+    (t.videoLibrary.genres, item.genres),
+    (t.videoLibrary.language, item.language),
+    (t.videoLibrary.director, item.directors),
+    (t.videoLibrary.writers, item.writers),
+    (anime ? t.videoLibrary.voiceCast : t.videoLibrary.starring, item.actors),
+    (t.videoLibrary.released, item.releaseDate),
+    (t.videoSource.sourceAddedAt, item.sourceAddedAt),
+    (t.videoSource.sourceDuration, item.sourceDuration),
+    (t.videoSource.sourceVersion, item.sourceVersion),
+    (t.videoSource.sourceStatus, item.sourceStatus),
+  ])
+    if (value.isNotEmpty) (label: label, value: value),
+];
+
+List<String> apiVideoListStatistics(
+  ApiVideoItem item, {
+  ApiVideoItem? fallback,
+}) {
+  final views = item.sourceViews == null ? fallback ?? item : item;
+  final rating = item.sourceRating == null ? fallback ?? item : item;
+  return [
+    if (views.sourceViews case final count?)
+      views.sourceViewsAreClicks
+          ? t.videoLibrary.sourceClicks(count: count)
+          : t.videoLibrary.sourceViews(count: count),
+    if (rating.sourceRating case final score?)
+      switch (rating.sourceRatingDisplayCount) {
+        final count? => t.videoLibrary.sourceRating(score: score, count: count),
+        null => t.videoLibrary.sourceRatingOnly(score: score),
+      },
+    if (item.doubanScore ?? fallback?.doubanScore case final score?)
+      t.videoLibrary.doubanRating(score: score),
+  ];
+}
 
 class ApiVideoCollection extends StatefulWidget {
   const ApiVideoCollection({
@@ -30,7 +74,11 @@ class ApiVideoCollection extends StatefulWidget {
     required this.mode,
     required this.onOpen,
     required this.storageKey,
+    this.scrollController,
     this.onLongPress,
+    this.pageBreaks = const {},
+    this.sourcePages = const [],
+    this.onVisibleSourcePageChanged,
     this.selected = const {},
     this.selecting = false,
     this.editing = false,
@@ -68,11 +116,15 @@ class ApiVideoCollection extends StatefulWidget {
     this.statisticsBuilder,
     this.compactDetails = false,
     this.leadingItems = const [],
+    this.preserveItemElements = false,
     this.leadingListExtent = 132,
     this.posterRadius = 10,
     this.posterAspectRatio = 2 / 3,
   }) : assert(posterAspectRatio > 0);
   final List<ApiVideoItem> items;
+  final Set<int> pageBreaks;
+  final List<int?> sourcePages;
+  final ValueChanged<int?>? onVisibleSourcePageChanged;
   final ApiVideoView mode;
   final ValueChanged<ApiVideoItem> onOpen;
   final ValueChanged<ApiVideoItem>? onLongPress;
@@ -81,6 +133,7 @@ class ApiVideoCollection extends StatefulWidget {
   final bool editing;
   final String editLabel;
   final String storageKey;
+  final ScrollController? scrollController;
   final VoidCallback? onNearEnd;
   final Widget? footer;
   final Map<String, String> badges;
@@ -106,6 +159,7 @@ class ApiVideoCollection extends StatefulWidget {
   final Widget? Function(BuildContext, ApiVideoItem)? statisticsBuilder;
   final bool compactDetails;
   final List<Widget> leadingItems;
+  final bool preserveItemElements;
 
   /// Called for visible detailed rows and grid cards without a source poster.
   final Future<ApiVideoItem> Function(ApiVideoItem)? loadDetail;
@@ -154,6 +208,10 @@ class ApiVideoGridCoverCache {
   void clear() => _loads.clear();
 }
 
+class _ApiVideoItemKey extends ValueKey<String> {
+  const _ApiVideoItemKey(super.value);
+}
+
 class _ApiVideoCollectionState extends State<ApiVideoCollection> {
   late final _localGridCoverCache = ApiVideoGridCoverCache();
   ApiVideoGridCoverCache get _gridCoverCache =>
@@ -162,7 +220,8 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
   Future<ApiVideoItem> _loadGridCover(ApiVideoItem item) =>
       _gridCoverCache._load(item, widget.loadDetail!);
 
-  final _scroll = ScrollController();
+  final _ownedScroll = ScrollController();
+  ScrollController get _scroll => widget.scrollController ?? _ownedScroll;
   final _headerSliverKey = GlobalKey();
   final _listSliverKey = GlobalKey();
   SliverObserverController? _anchorObserver;
@@ -203,6 +262,21 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
     binding.ensureVisualUpdate();
   }
 
+  bool _observingPage = false;
+
+  void _observeVisibleSourcePage() {
+    if (widget.onVisibleSourcePageChanged == null || _observingPage) return;
+    _observingPage = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _observingPage = false;
+      if (mounted) {
+        widget.onVisibleSourcePageChanged?.call(
+          topVisibleSourcePage(_listSliverKey, widget.sourcePages),
+        );
+      }
+    });
+  }
+
   void _checkShortPage() {
     if (widget.continuationKey == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -216,16 +290,29 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
   void initState() {
     super.initState();
     _checkShortPage();
-    _scroll.addListener(() {
-      if (_scroll.hasClients && _scroll.position.extentAfter < 500) {
-        widget.onNearEnd?.call();
-      }
-    });
+    _observeVisibleSourcePage();
+    _scroll.addListener(_onScroll);
+  }
+
+  void _onScroll() {
+    _observeVisibleSourcePage();
+    if (widget.onNearEnd case final onNearEnd?
+        when _scroll.hasClients && _scroll.position.extentAfter < 500) {
+      onNearEnd();
+    }
   }
 
   @override
   void didUpdateWidget(covariant ApiVideoCollection oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.scrollController != widget.scrollController) {
+      (oldWidget.scrollController ?? _ownedScroll).removeListener(_onScroll);
+      _scroll.addListener(_onScroll);
+    }
+    if (oldWidget.sourcePages != widget.sourcePages ||
+        oldWidget.mode != widget.mode) {
+      _observeVisibleSourcePage();
+    }
     if (oldWidget.continuationKey != widget.continuationKey) _checkShortPage();
     if (oldWidget.detailGeneration != widget.detailGeneration ||
         (widget.retryMissingCoverDetailsOnRefresh &&
@@ -295,7 +382,8 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
   @override
   void dispose() {
     _invalidateAnchor();
-    _scroll.dispose();
+    _scroll.removeListener(_onScroll);
+    _ownedScroll.dispose();
     super.dispose();
   }
 
@@ -434,6 +522,18 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
           grid &&
           widget.loadDetail != null &&
           widget.items.any((item) => item.coverUrl == null);
+      final itemIndices = widget.preserveItemElements && !skeleton
+          ? <Key, int>{
+              if (grid)
+                for (final (index, item) in widget.leadingItems.indexed)
+                  if (item.key case final key?) key: index,
+              for (final (index, item) in widget.items.indexed)
+                _ApiVideoItemKey(item.id):
+                    index + (grid ? widget.leadingItems.length : 0),
+            }
+          : null;
+      int? findItemIndex(Key key) => itemIndices?[key];
+
       Widget tile(int index) {
         if (skeleton) return _skeleton(context, width, grid, index);
         if (grid && index < widget.leadingItems.length) {
@@ -481,23 +581,26 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
             ),
           ),
         );
-        if (widget.loadDetail != null && (!grid || initial.coverUrl == null)) {
-          return _ApiVideoDetailedRow(
-            key: ValueKey(
-              'api-detail.${widget.storageKey}.${initial.id}.'
-              '${widget.detailGeneration}.${grid && widget.retryMissingCoverDetailsOnRefresh ? widget.imageRefreshToken : 0}',
-            ),
-            item: initial,
-            active:
-                widget.detailsActive &&
-                (ModalRoute.isCurrentOf(context) ?? true),
-            loadDetail: grid ? _loadGridCover : widget.loadDetail!,
-            onDetailLoaded: widget.onDetailLoaded,
-            builder: (item, status, retry) =>
-                content(item, status: status, retry: retry),
-          );
-        }
-        return content(initial);
+        final row =
+            widget.loadDetail != null && (!grid || initial.coverUrl == null)
+            ? _ApiVideoDetailedRow(
+                key: ValueKey(
+                  'api-detail.${widget.storageKey}.${initial.id}.'
+                  '${widget.detailGeneration}.${grid && widget.retryMissingCoverDetailsOnRefresh ? widget.imageRefreshToken : 0}',
+                ),
+                item: initial,
+                active:
+                    widget.detailsActive &&
+                    (ModalRoute.isCurrentOf(context) ?? true),
+                loadDetail: grid ? _loadGridCover : widget.loadDetail!,
+                onDetailLoaded: widget.onDetailLoaded,
+                builder: (item, status, retry) =>
+                    content(item, status: status, retry: retry),
+              )
+            : content(initial);
+        return itemIndices == null
+            ? row
+            : KeyedSubtree(key: _ApiVideoItemKey(initial.id), child: row);
       }
 
       final scroll = CustomScrollView(
@@ -542,6 +645,9 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
                   : widget.contentPadding,
               sliver: grid
                   ? SliverGrid(
+                      key: widget.onVisibleSourcePageChanged == null
+                          ? null
+                          : _listSliverKey,
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: _columns,
                         mainAxisExtent: _extent,
@@ -550,6 +656,9 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
                       ),
                       delegate: SliverChildBuilderDelegate(
                         (_, index) => tile(index),
+                        findChildIndexCallback: itemIndices == null
+                            ? null
+                            : findItemIndex,
                         childCount: skeleton
                             ? _columns * 3
                             : widget.items.length + widget.leadingItems.length,
@@ -560,16 +669,37 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
                       delegate: SliverChildBuilderDelegate(
                         (_, index) {
                           final row = tile(index);
-                          return WorkListRow(
-                            key: row.key == null ? null : ValueKey(row.key),
+                          final key = itemIndices != null
+                              ? row.key
+                              : row.key == null
+                              ? null
+                              : ValueKey(row.key);
+                          final work = WorkListRow(
+                            key: key,
                             divided:
-                                !skeleton && index + 1 < widget.items.length,
+                                !skeleton &&
+                                index + 1 < widget.items.length &&
+                                !widget.pageBreaks.contains(index + 1),
                             bottomSpacing: widget.listSeparatorHeight,
                             child: widget.listItemExtent == null
                                 ? row
                                 : SizedBox(height: _extent, child: row),
                           );
+                          if (skeleton ||
+                              index == 0 ||
+                              !widget.pageBreaks.contains(index)) {
+                            return work;
+                          }
+                          return Column(
+                            key: key,
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [const SourcePageDivider(), work],
+                          );
                         },
+                        findChildIndexCallback: itemIndices == null
+                            ? null
+                            : findItemIndex,
                         childCount: skeleton
                             ? _columns * 3
                             : widget.items.length,
@@ -900,15 +1030,34 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
     final poster = _listPosterSize(availableWidth);
     final statistics = widget.statisticsBuilder?.call(context, item);
     final recordNote = widget.recordNoteBuilder?.call(initial) ?? '';
-    final summary = [
+    final summary = {
       ...item.summary,
+      if (item.genres.isNotEmpty) item.genres,
+      if (item.language.isNotEmpty) item.language,
       if (item.sourceVersion.isNotEmpty && item.sourceVersion != item.remarks)
         item.sourceVersion,
       if (recordNote.isEmpty &&
           item.remarks.isNotEmpty &&
           clockVideoDurationText(item.remarks).isEmpty)
         item.remarks,
-    ].join(' · ');
+      if (item.sourceStatus.isNotEmpty && item.sourceStatus != item.remarks)
+        item.sourceStatus,
+    }.join(' · ');
+    final sourceStatistics = apiVideoListStatistics(item, fallback: initial);
+    final showCompactSynopsis =
+        widget.compactDetails &&
+        description.isNotEmpty &&
+        recordNote.isEmpty &&
+        statistics == null &&
+        sourceStatistics.isEmpty;
+    final fields = [
+      if (summary.isNotEmpty) (label: '', value: summary),
+      ...apiVideoListDetails(item, anime: widget.compactAnime),
+      if (recordNote.isNotEmpty) (label: '', value: recordNote),
+      if (description.isNotEmpty)
+        (label: t.comicInfo.description, value: description),
+      for (final statistic in sourceStatistics) (label: '', value: statistic),
+    ];
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -927,147 +1076,169 @@ class _ApiVideoCollectionState extends State<ApiVideoCollection> {
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  item.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.titleSmall?.copyWith(height: 1.3),
-                ),
-                if (summary.isNotEmpty) ...[
-                  const SizedBox(height: 5),
+            child: DetailedMetadata(
+              title: item.title,
+              fields: widget.selecting || widget.editing ? const [] : fields,
+              additional: widget.selecting || widget.editing
+                  ? null
+                  : statistics == null
+                  ? null
+                  : (context) => Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: widget.statisticsBuilder!(context, item),
+                    ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
                   Text(
-                    summary,
+                    item.title,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: colors.onSurfaceVariant,
-                      height: 1.35,
-                    ),
+                    style: theme.textTheme.titleSmall?.copyWith(height: 1.3),
                   ),
-                ],
-                if (recordNote.isNotEmpty) ...[
-                  const SizedBox(height: 7),
-                  CollectionRecordTimeLine(text: recordNote),
-                ],
-                if (widget.compactDetails && description.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    description,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: colors.onSurfaceVariant,
+                  if (summary.isNotEmpty) ...[
+                    const SizedBox(height: 5),
+                    Text(
+                      summary,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                        height: 1.35,
+                      ),
                     ),
-                  ),
-                ],
-                if (!widget.compactDetails &&
-                    (description.isNotEmpty ||
-                        status == _DetailRowStatus.ready ||
-                        status == _DetailRowStatus.loading ||
-                        status == _DetailRowStatus.failed)) ...[
-                  const SizedBox(height: 7),
-                  SizedBox(
-                    height: math.max(
-                      44,
-                      MediaQuery.textScalerOf(
-                            context,
-                          ).scale(theme.textTheme.bodySmall?.fontSize ?? 12) *
-                          2.8,
+                  ],
+                  if (recordNote.isNotEmpty) ...[
+                    const SizedBox(height: 7),
+                    Text(
+                      recordNote,
+                      style: collectionRecordTimeStyle(context),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    child: description.isNotEmpty
-                        ? Text(
-                            description,
-                            maxLines: 2,
+                  ],
+                  if (statistics != null) ...[
+                    SizedBox(height: widget.compactDetails ? 4 : 5),
+                    statistics,
+                  ] else if (widget.statisticsBuilder == null &&
+                      sourceStatistics.isNotEmpty) ...[
+                    const SizedBox(height: 5),
+                    Wrap(
+                      spacing: 9,
+                      runSpacing: 2,
+                      children: [
+                        for (final statistic in sourceStatistics)
+                          Text(
+                            statistic,
+                            maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              height: 1.4,
-                            ),
-                          )
-                        : status == _DetailRowStatus.loading
-                        ? Semantics(
-                            liveRegion: true,
-                            child: Row(
-                              children: [
-                                if (MediaQuery.disableAnimationsOf(context))
-                                  const Icon(
-                                    Icons.hourglass_empty_rounded,
-                                    size: 16,
-                                  )
-                                else
-                                  const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    t.common.loading,
-                                    style: theme.textTheme.bodySmall,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          )
-                        : status == _DetailRowStatus.failed
-                        ? Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  t.common.loadingFailed,
-                                  maxLines: 2,
-                                  style: theme.textTheme.bodySmall,
-                                ),
-                              ),
-                              TextButton.icon(
-                                key: ValueKey('api-detail.retry.${item.id}'),
-                                onPressed: retry,
-                                style: TextButton.styleFrom(
-                                  minimumSize: const Size(44, 44),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                  ),
-                                ),
-                                icon: const Icon(
-                                  Icons.refresh_rounded,
-                                  size: 18,
-                                ),
-                                label: Text(t.common.retry),
-                              ),
-                            ],
-                          )
-                        : Text(
-                            t.videoLibrary.noSynopsis,
-                            style: theme.textTheme.bodySmall?.copyWith(
+                            style: theme.textTheme.labelSmall?.copyWith(
                               color: colors.onSurfaceVariant,
                             ),
                           ),
-                  ),
-                ],
-                if (statistics != null) ...[
-                  SizedBox(height: widget.compactDetails ? 4 : 5),
-                  statistics,
-                ] else if (widget.statisticsBuilder == null &&
-                    item.sourceViews != null) ...[
-                  const SizedBox(height: 5),
-                  Text(
-                    item.sourceViewsAreClicks
-                        ? t.videoLibrary.sourceClicks(count: item.sourceViews!)
-                        : t.videoLibrary.sourceViews(count: item.sourceViews!),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: colors.onSurfaceVariant,
+                      ],
                     ),
-                  ),
+                  ],
+                  if (showCompactSynopsis) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      description,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                  if (!widget.compactDetails &&
+                      (description.isNotEmpty ||
+                          status == _DetailRowStatus.ready ||
+                          status == _DetailRowStatus.loading ||
+                          status == _DetailRowStatus.failed)) ...[
+                    const SizedBox(height: 7),
+                    SizedBox(
+                      height: math.max(
+                        44,
+                        MediaQuery.textScalerOf(
+                              context,
+                            ).scale(theme.textTheme.bodySmall?.fontSize ?? 12) *
+                            2.8,
+                      ),
+                      child: description.isNotEmpty
+                          ? Text(
+                              description,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                height: 1.4,
+                              ),
+                            )
+                          : status == _DetailRowStatus.loading
+                          ? Semantics(
+                              liveRegion: true,
+                              child: Row(
+                                children: [
+                                  if (MediaQuery.disableAnimationsOf(context))
+                                    const Icon(
+                                      Icons.hourglass_empty_rounded,
+                                      size: 16,
+                                    )
+                                  else
+                                    const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      t.common.loading,
+                                      style: theme.textTheme.bodySmall,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            )
+                          : status == _DetailRowStatus.failed
+                          ? Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    t.common.loadingFailed,
+                                    maxLines: 2,
+                                    style: theme.textTheme.bodySmall,
+                                  ),
+                                ),
+                                TextButton.icon(
+                                  key: ValueKey('api-detail.retry.${item.id}'),
+                                  onPressed: retry,
+                                  style: TextButton.styleFrom(
+                                    minimumSize: const Size(44, 44),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                    ),
+                                  ),
+                                  icon: const Icon(
+                                    Icons.refresh_rounded,
+                                    size: 18,
+                                  ),
+                                  label: Text(t.common.retry),
+                                ),
+                              ],
+                            )
+                          : Text(
+                              t.videoLibrary.noSynopsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colors.onSurfaceVariant,
+                              ),
+                            ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ],

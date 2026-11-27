@@ -85,4 +85,37 @@ void main() {
       }
     },
   );
+
+  test('bottom navigation appearance survives settings reload', () async {
+    final original = objectbox.userSettingBox.get(1)!;
+    final originalData = original.globalSettingData;
+    final settings = GlobalSettingCubit();
+    final reopened = GlobalSettingCubit();
+    try {
+      final defaults = GlobalSettingState.fromJson({});
+      expect(defaults.navigationHidesOnScroll, isFalse);
+      expect(defaults.navigationTransparency, 6);
+      expect(
+        GlobalSettingState.fromJson({
+          'navigationTransparency': 60,
+        }).navigationTransparency,
+        50,
+      );
+      await settings.initBox();
+      settings.updateState(
+        (state) => state.copyWith(
+          navigationHidesOnScroll: true,
+          navigationTransparency: 13,
+        ),
+      );
+      await reopened.initBox();
+      expect(reopened.state.navigationHidesOnScroll, isTrue);
+      expect(reopened.state.navigationTransparency, 13);
+    } finally {
+      original.globalSettingData = originalData;
+      objectbox.userSettingBox.put(original);
+      await settings.close();
+      await reopened.close();
+    }
+  });
 }

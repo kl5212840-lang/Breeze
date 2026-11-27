@@ -52,6 +52,8 @@ const String _settingsBlockMetaPrefsKey = 'sync.settings.block.meta.v3';
 const String _appearanceBlockName = 'appearance';
 const String _navigationBlockName = 'mainNavigation';
 const String _libraryBlockName = 'library';
+const String _comicConcurrencyField = 'comicDownloadConcurrency';
+const String _readerStatusBarField = 'showSystemStatusBar';
 const String _readerBlockName = 'reader';
 const String _pluginsBlockName = 'plugins';
 const String _videoBlockName = 'video';
@@ -320,6 +322,7 @@ List<PluginInfo> planMissingPluginRestore(
 Future<SettingsArchiveData?> readSettingsArchiveData(
   ComicSyncRemoteAdapter adapter, {
   SettingsSyncCodec codec = const SettingsSyncCodec(),
+  bool localBackup = false,
 }) async {
   await LocalPluginInstallationState.instance.load();
   final files = (await adapter.listRemoteDataFiles())
@@ -338,6 +341,7 @@ Future<SettingsArchiveData?> readSettingsArchiveData(
     remote.bytes,
     fallbackSyncTime: remote.timestamp,
     codec: codec,
+    localBackup: localBackup,
   );
   return SettingsArchiveData._(
     snapshot,
@@ -357,10 +361,12 @@ class SettingsArchiveImportPlan {
     this._direction = SyncDirection.merge,
     this._baselinePluginData = const {},
     this._remote,
+    this._localBackup = false,
   ]);
   final SyncDirection _direction;
   final Map<String, dynamic> _baselinePluginData;
   final SettingsArchiveData? _remote;
+  final bool _localBackup;
   final GlobalSettingState initial;
   final _SettingsMergeResult _result;
   final bool applySettings, applyPlugins;
@@ -407,8 +413,14 @@ class SettingsArchiveImportPlan {
     final current = user.globalSetting;
     final blocks = <String, _SettingsBlockPayload>{};
     if (applySettings) {
-      final now = _extractSyncableSettingsBlocks(current);
-      final before = _extractSyncableSettingsBlocks(initial);
+      final now = _extractSyncableSettingsBlocks(
+        current,
+        includeDevicePreferences: _localBackup,
+      );
+      final before = _extractSyncableSettingsBlocks(
+        initial,
+        includeDevicePreferences: _localBackup,
+      );
       for (final name in [
         _appearanceBlockName,
         _navigationBlockName,
@@ -538,6 +550,7 @@ Future<SettingsArchiveImportPlan> prepareSettingsArchiveImport(
   SyncPluginParticipation? participation,
   bool? importSettings,
   bool? importPlugins,
+  bool localBackup = false,
 }) async {
   final effective = includeAll
       ? state.copyWith(
@@ -554,6 +567,7 @@ Future<SettingsArchiveImportPlan> prepareSettingsArchiveImport(
     participation: participation,
     includeSettings: importSettings,
     includePlugins: importPlugins,
+    localBackup: localBackup,
   );
   final merged = await _mergeSettingsSnapshots(
     effective,
@@ -574,6 +588,7 @@ Future<SettingsArchiveImportPlan> prepareSettingsArchiveImport(
     direction,
     local.blocks[_pluginsBlockName]?.data ?? const {},
     remote,
+    localBackup,
   );
 }
 
@@ -1231,6 +1246,7 @@ Future<_SettingsSnapshot> _buildLocalSettingsSnapshot(
   SyncPluginParticipation? participation,
   bool? includeSettings,
   bool? includePlugins,
+  bool localBackup = false,
 }) async {
   await LocalPluginInstallationState.instance.load();
   final existingMeta = await _loadLocalSettingsBlockMeta();
@@ -1244,18 +1260,31 @@ Future<_SettingsSnapshot> _buildLocalSettingsSnapshot(
 
   if (includeSettings ??
       (includeAll || globalSetting.syncSetting.syncSettings)) {
-    final blockData = _extractSyncableSettingsBlocks(globalSetting);
+    final blockData = _extractSyncableSettingsBlocks(
+      globalSetting,
+      includeDevicePreferences: localBackup,
+    );
     blockData[_videoBlockName] = {
       'version': 1,
       'values': (await VideoPlaybackPreferences.read()).toValues(),
     };
     final videoModifiedAt = await VideoPlaybackPreferences.modifiedAt();
-    final defaults = _extractSyncableSettingsBlocks(const GlobalSettingState());
+    final defaults = _extractSyncableSettingsBlocks(
+      const GlobalSettingState(),
+      includeDevicePreferences: localBackup,
+    );
     for (final entry in blockData.entries) {
       final blockName = entry.key;
       final data = entry.value;
       final hash = _calculateStructuredMd5(data);
       final previous = existingMeta[blockName];
+      var cloudHash = hash;
+      if (localBackup &&
+          (blockName == _libraryBlockName || blockName == _readerBlockName)) {
+        final cloudData = Map<String, dynamic>.of(data);
+        _removeDevicePreferences(blockName, cloudData);
+        cloudHash = _calculateStructuredMd5(cloudData);
+      }
       final updatedAt = blockName == _videoBlockName
           ? (previous?.hash == hash
                 ? previous!.updatedAt
@@ -1266,7 +1295,14 @@ Future<_SettingsSnapshot> _buildLocalSettingsSnapshot(
           ? _calculateStructuredMd5(defaults[blockName] ?? const {}) == hash
                 ? 1
                 : baseTimestamp
-          : previous.hash == hash
+          : previous.hash == hash ||
+                previous.hash == cloudHash ||
+                (!localBackup &&
+                    _matchesPrereleaseBlockHash(
+                      blockName,
+                      globalSetting,
+                      previous.hash,
+                    ))
           ? _normalizeTimestamp(previous.updatedAt, fallback: baseTimestamp)
           : nowMs;
       final payload = _SettingsBlockPayload(
@@ -1321,6 +1357,7 @@ Future<_SettingsSnapshot> _decodeSettingsPayload(
   List<int> payloadBytes, {
   required int fallbackSyncTime,
   SettingsSyncCodec codec = const SettingsSyncCodec(),
+  bool localBackup = false,
 }) async {
   final raw = await codec.decode(payloadBytes);
   final dynamic payloadRaw;
@@ -1332,6 +1369,7 @@ Future<_SettingsSnapshot> _decodeSettingsPayload(
   return _snapshotFromPayload(
     _toJsonMap(payloadRaw),
     fallbackSyncTime: fallbackSyncTime,
+    localBackup: localBackup,
   );
 }
 
@@ -1357,6 +1395,7 @@ Future<void> _applyVideoBlock(
 _SettingsSnapshot _snapshotFromPayload(
   Map<String, dynamic> payload, {
   required int fallbackSyncTime,
+  required bool localBackup,
 }) {
   _validateSettingsPayload(payload);
   final blocksJson = _toJsonMap(payload['blocks']);
@@ -1369,6 +1408,7 @@ _SettingsSnapshot _snapshotFromPayload(
   for (final entry in blocksJson.entries) {
     final blockJson = _toJsonMap(entry.value);
     final data = _toJsonMap(blockJson['data']);
+    if (!localBackup) _removeDevicePreferences(entry.key, data);
     if (entry.key == _pluginsBlockName && data.containsKey('pluginConfigs')) {
       data['pluginConfigs'] = _portablePluginConfigRows(data['pluginConfigs']);
     }
@@ -1391,7 +1431,10 @@ _SettingsSnapshot _snapshotFromPayload(
     final globalSettingJson = _toJsonMap(payload['globalSetting']);
     if (globalSettingJson.isNotEmpty) {
       final remoteGlobal = GlobalSettingState.fromJson(globalSettingJson);
-      final legacyBlocks = _extractSyncableSettingsBlocks(remoteGlobal);
+      final legacyBlocks = _extractSyncableSettingsBlocks(
+        remoteGlobal,
+        includeDevicePreferences: localBackup,
+      );
       for (final entry in legacyBlocks.entries) {
         blocks[entry.key] = _SettingsBlockPayload(
           name: entry.key,
@@ -1462,7 +1505,12 @@ void _validateSettingsPayload(Map<String, dynamic> payload) {
     payload['globalSetting'],
     _materializeJsonMap(const GlobalSettingState().toJson()),
   );
-  final supported = _extractSyncableSettingsBlocks(const GlobalSettingState());
+  // Accept archives already published by prerelease builds. The fields are
+  // discarded before merging, so neither device preference flows through sync.
+  final supported = _extractSyncableSettingsBlocks(
+    const GlobalSettingState(),
+    includeDevicePreferences: true,
+  );
   supported[_videoBlockName] = {
     'version': 1,
     'values': VideoPlaybackPreferences.defaults,
@@ -1544,14 +1592,27 @@ Future<_SettingsMergeResult> _mergeSettingsSnapshots(
         continue;
       }
       final remoteBlock = remoteSnapshot.blocks[blockName];
+      final restore = direction == SyncDirection.restore;
+      final selectedData = restore ? remoteBlock?.data : localBlock.data;
+      final retainedData = restore ? localBlock.data : remoteBlock?.data;
+      final data = _overlaySettings(retainedData ?? {}, selectedData ?? {});
+      final history = selectedData?['searchHistory'];
+      if (participation != null &&
+          blockName == _libraryBlockName &&
+          (direction == SyncDirection.upload || restore) &&
+          history is List) {
+        data['searchHistory'] = projectComicSearchHistory(
+          history.cast<String>(),
+          (retainedData?['searchHistory'] as List? ?? const []).cast<String>(),
+          participation.sources,
+        );
+      }
       final mergedBlock = direction == SyncDirection.merge
           ? _pickPreferredBlock(localBlock, remoteBlock)!
           : _SettingsBlockPayload(
               name: blockName,
               updatedAt: max(localBlock.updatedAt, remoteBlock?.updatedAt ?? 0),
-              data: direction == SyncDirection.restore
-                  ? _overlaySettings(localBlock.data, remoteBlock?.data ?? {})
-                  : _overlaySettings(remoteBlock?.data ?? {}, localBlock.data),
+              data: data,
             );
       mergedBlocks[blockName] = mergedBlock;
       nextMeta[blockName] = _LocalSettingsBlockMeta.fromBlock(mergedBlock);
@@ -1670,8 +1731,9 @@ Future<_SettingsMergeResult> _mergeSettingsSnapshots(
 }
 
 Map<String, Map<String, dynamic>> _extractSyncableSettingsBlocks(
-  GlobalSettingState state,
-) {
+  GlobalSettingState state, {
+  bool includeDevicePreferences = false,
+}) {
   final json = normalizeLegacyNavigationJson(
     _materializeJsonMap(state.toJson()),
   );
@@ -1697,7 +1759,8 @@ Map<String, Map<String, dynamic>> _extractSyncableSettingsBlocks(
       'disableBika': json['disableBika'],
       'updateAccelerate': json['updateAccelerate'],
       'retryDownloadUntilSuccess': json['retryDownloadUntilSuccess'],
-      'comicDownloadConcurrency': json['comicDownloadConcurrency'],
+      if (includeDevicePreferences)
+        _comicConcurrencyField: json[_comicConcurrencyField],
       'videoDownloadConcurrency': json['videoDownloadConcurrency'],
       'downloadWifiOnly': json['downloadWifiOnly'],
       'downloadCompletionNotice': json['downloadCompletionNotice'],
@@ -1711,8 +1774,46 @@ Map<String, Map<String, dynamic>> _extractSyncableSettingsBlocks(
       'chineseConvertMode': json['chineseConvertMode'],
       'searchHistory': json['searchHistory'],
     },
-    _readerBlockName: _toJsonMap(json['readSetting']),
+    _readerBlockName: _toJsonMap(json['readSetting'])
+      ..removeWhere(
+        (key, _) => !includeDevicePreferences && key == _readerStatusBarField,
+      ),
   };
+}
+
+void _removeDevicePreferences(String block, Map<String, dynamic> data) {
+  if (block == _libraryBlockName) data.remove(_comicConcurrencyField);
+  if (block == _readerBlockName) data.remove(_readerStatusBarField);
+}
+
+bool _matchesPrereleaseBlockHash(
+  String block,
+  GlobalSettingState state,
+  String hash,
+) {
+  final (field, values) = switch (block) {
+    _libraryBlockName => (
+      _comicConcurrencyField,
+      [
+        for (var value = 1; value <= maxComicDownloadConcurrency; value++)
+          value,
+      ],
+    ),
+    _readerBlockName => (_readerStatusBarField, [false, true]),
+    _ => (null, const []),
+  };
+  if (field == null) return false;
+  // The hash includes key order. Recreate the prerelease layout before
+  // checking whether its only differences were device preferences.
+  final data = _extractSyncableSettingsBlocks(
+    state,
+    includeDevicePreferences: true,
+  )[block]!;
+  for (final value in values) {
+    data[field] = value;
+    if (_calculateStructuredMd5(data) == hash) return true;
+  }
+  return false;
 }
 
 Map<String, dynamic> _buildPluginBlockData({

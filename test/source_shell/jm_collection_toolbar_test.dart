@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/collection_results_row.dart';
 import 'package:zephyr/widgets/source_choice_menu.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter_test/flutter_test.dart';
@@ -176,7 +177,7 @@ void main() {
               ),
               home: Scaffold(
                 appBar: AppBar(title: Text(title), actions: [navigation()]),
-                body: JmCollectionResultsRow(
+                body: CollectionResultsRow(
                   countLabel: '267 部作品',
                   sortAction: JmCollectionSortAction(
                     key: const ValueKey('jm-collection.sort'),

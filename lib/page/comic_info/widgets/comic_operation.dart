@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
@@ -10,17 +12,16 @@ import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart';
 import 'package:zephyr/page/comic_info/models/collect_comic.dart';
 import 'package:zephyr/page/comic_info/models/plugin_action_login.dart';
 import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
-import 'package:zephyr/network/http/plugin/qjs_network_route.dart';
 import 'package:zephyr/page/comic_follow/cubit/comic_follow_cubit.dart';
 import 'package:zephyr/util/context/context_extensions.dart';
 import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/i18n/strings.g.dart';
-import 'package:zephyr/service/jm_list_like_counts.dart';
-import 'package:zephyr/service/plugin_account_authentication.dart';
+import 'package:zephyr/service/comic_like_updates.dart';
 
 import 'package:zephyr/widgets/dialog.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 bool preferCloudComicFavorite({
   required bool preferred,
@@ -40,6 +41,8 @@ class ComicOperationWidget extends StatefulWidget {
   final Future<bool> Function(bool currentStatus)? cloudFavoriteAction;
   @visibleForTesting
   final Future<ComicLikeResult> Function(bool currentStatus)? cloudLikeAction;
+  @visibleForTesting
+  final Future<ComicLikeResult> Function()? cloudLikeRead;
 
   const ComicOperationWidget({
     super.key,
@@ -52,6 +55,7 @@ class ComicOperationWidget extends StatefulWidget {
     this.onLoginRefresh,
     this.cloudFavoriteAction,
     this.cloudLikeAction,
+    this.cloudLikeRead,
   });
 
   @override
@@ -63,37 +67,34 @@ class _ComicOperationWidgetState extends State<ComicOperationWidget> {
   NormalComicAllInfo get normalInfo => widget.normalInfo;
   ComicInfo get comicInfoView => normalInfo.comicInfo;
   bool isCollected = false;
-  bool isLiked = false;
-  int? _totalLikes;
+  final _likes = ComicLikeUpdates.instance;
+  ComicLikeWork get _likeWork => comicLikeWork(widget.from, comicInfoView.id);
+  ComicLikeResult get _like =>
+      _likes.valueFor(_likeWork) ??
+      (
+        liked: normalInfo.isLiked,
+        totalLikes:
+            comicMetricIsKnown(
+              normalInfo.extern,
+              'totalLikes',
+              normalInfo.totalLikes,
+            )
+            ? normalInfo.totalLikes
+            : null,
+      );
+  bool get isLiked => _like.liked;
   bool isCloudCollected = false;
   bool _localFavoriteBusy = false;
   bool _cloudFavoriteBusy = false;
-  Object? _cloudLikeOwner;
-  bool get _cloudLikeBusy => _cloudLikeOwner != null;
-  bool get _usesInlineLikeProgress {
-    final source = canonicalQjsSource(widget.from);
-    return source == JmListLikeCounts.source ||
-        PluginAccountAuthenticationService.bika.contains(source);
-  }
+  bool get _likeNeedsCheck => _likes.needsCheck(_likeWork);
+  bool get _cloudLikeBusy => _likes.isWriting(_likeWork);
 
-  bool get _canUnlike =>
-      canonicalQjsSource(widget.from) != JmListLikeCounts.source &&
-      normalInfo.extern['canUnlike'] != false;
-
-  void _syncLike() {
-    isLiked = normalInfo.isLiked;
-    _totalLikes =
-        comicMetricIsKnown(
-          normalInfo.extern,
-          'totalLikes',
-          normalInfo.totalLikes,
-        )
-        ? normalInfo.totalLikes
-        : null;
-  }
+  bool get _canLike =>
+      normalInfo.allowLike && !isJmComicLikeSource(widget.from);
+  bool get _canUnlike => normalInfo.extern['canUnlike'] != false;
 
   String _likeLabel() {
-    final count = _totalLikes;
+    final count = _like.totalLikes;
     if (count == null) {
       return t.comicInfo.likeAction;
     }
@@ -104,7 +105,6 @@ class _ComicOperationWidgetState extends State<ComicOperationWidget> {
   void initState() {
     super.initState();
     _syncLocalCollectStatus();
-    _syncLike();
     isCloudCollected = normalInfo.isFavourite;
   }
 
@@ -114,13 +114,11 @@ class _ComicOperationWidgetState extends State<ComicOperationWidget> {
     final workChanged =
         oldWidget.from != widget.from ||
         oldWidget.normalInfo.comicInfo.id != comicInfoView.id;
-    if (workChanged) _cloudLikeOwner = null;
-    if (workChanged || !identical(oldWidget.normalInfo, normalInfo)) {
-      if (!_cloudLikeBusy) _syncLike();
-      isCloudCollected = normalInfo.isFavourite;
-    }
     if (workChanged) {
       _syncLocalCollectStatus();
+    }
+    if (workChanged || !identical(oldWidget.normalInfo, normalInfo)) {
+      isCloudCollected = normalInfo.isFavourite;
     }
   }
 
@@ -157,7 +155,14 @@ class _ComicOperationWidgetState extends State<ComicOperationWidget> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => _canLike
+      ? ListenableBuilder(
+          listenable: _likes,
+          builder: (context, _) => _buildOperations(context),
+        )
+      : _buildOperations(context);
+
+  Widget _buildOperations(BuildContext context) {
     // 开启「优先云端收藏」后，收藏按钮执行云端收藏，原逻辑与菜单项互换
     final cloudFavoritePreferred = preferCloudComicFavorite(
       preferred: context
@@ -189,17 +194,13 @@ class _ComicOperationWidgetState extends State<ComicOperationWidget> {
             onTap: _localFavoriteBusy ? null : _toggleLocalFavorite,
           );
     final actions = [
-      if (normalInfo.allowLike)
+      if (_canLike)
         _OperationItemData(
           icon: isLiked ? Icons.favorite : Icons.favorite_border,
           text: _likeLabel(),
           highlighted: isLiked,
           accentColor: Colors.red,
-          enabled: !_cloudLikeBusy,
-          busyLabel: _usesInlineLikeProgress && _cloudLikeBusy
-              ? (isLiked ? t.comicInfo.unliking : t.comicInfo.liking)
-              : null,
-          onTap: _cloudLikeBusy || (isLiked && !_canUnlike)
+          onTap: _cloudLikeBusy || (!_likeNeedsCheck && isLiked && !_canUnlike)
               ? null
               : _toggleCloudLike,
         ),
@@ -421,15 +422,17 @@ class _ComicOperationWidgetState extends State<ComicOperationWidget> {
     final result = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
-        return AlertDialog(
+        return ShortAlert(
           title: Text(t.comicInfo.confirmUncollectTitle),
           content: Text(t.comicInfo.confirmUncollectContent),
           actions: [
-            TextButton(
+            ShortAlertAction(
               onPressed: () => Navigator.of(dialogContext).pop(false),
               child: Text(t.common.cancel),
             ),
-            FilledButton(
+            ShortAlertAction(
+              destructive: true,
+              filled: true,
               onPressed: () => Navigator.of(dialogContext).pop(true),
               child: Text(t.common.confirm),
             ),
@@ -441,86 +444,79 @@ class _ComicOperationWidgetState extends State<ComicOperationWidget> {
   }
 
   Future<void> _toggleCloudLike() async {
-    if (_cloudLikeBusy || (isLiked && !_canUnlike)) return;
-    if (!normalInfo.allowLike) {
-      final reason = normalInfo.allowLikeReason.trim();
-      showInfoToast(reason.isNotEmpty ? reason : t.comicInfo.likeDisabled);
-      return;
-    }
-    final info = normalInfo;
+    if (!_canLike) return;
+    if (_cloudLikeBusy || (!_likeNeedsCheck && isLiked && !_canUnlike)) return;
     final source = widget.from;
-    final sessionSource = canonicalQjsSource(source);
-    if (pluginSessionWriteFence.isChanging(sessionSource)) return;
-    final session = pluginSessionWriteFence.generation(sessionSource);
-    final route = ModalRoute.of(context);
-    final wasLiked = isLiked;
-    final owner = Object();
-    bool isCurrent() =>
-        mounted &&
-        identical(_cloudLikeOwner, owner) &&
-        comicInfoView.id == info.comicInfo.id &&
-        widget.from == source &&
-        !pluginSessionWriteFence.isChanging(sessionSource) &&
-        pluginSessionWriteFence.generation(sessionSource) == session;
-    bool canNotify() => isCurrent() && (route?.isCurrent ?? true);
+    final work = _likeWork;
+    final checkFirst = _likeNeedsCheck;
+    var before = _like;
+    final wasLiked = before.liked;
+    final owner = _likes.beginWrite(work);
+    if (owner == null) return;
+    bool isCurrent() => _likes.ownsWrite(work, owner);
+    final readLike = widget.cloudLikeRead;
+    final writeLike = widget.cloudLikeAction;
+    final canRead = readLike != null || writeLike == null;
+    const readTimeout = Duration(seconds: 4);
+    Future<ComicLikeResult> readState() =>
+        readLike?.call() ?? readCloudComicLike(from: source, comicId: work.id);
 
-    setState(() => _cloudLikeOwner = owner);
+    var unconfirmed = checkFirst;
+    var submitted = false;
     try {
-      if (!_usesInlineLikeProgress) {
-        showInfoToast(wasLiked ? t.comicInfo.unliking : t.comicInfo.liking);
-      }
-      final next =
-          await (widget.cloudLikeAction?.call(wasLiked) ??
-              toggleCloudComicLike(
-                from: source,
-                comicId: info.comicInfo.id,
-                currentStatus: wasLiked,
-                previousTotalLikes: _totalLikes,
-              ));
-      if (!isCurrent()) return;
-      setState(() {
-        isLiked = next.liked;
-        // The total is optional even when the site confirms the action.
-        // Keep the last observed total until the site gives us another one.
-        if (next.totalLikes != null) {
-          _totalLikes = next.totalLikes;
-        }
-      });
-      if (canNotify()) {
-        if (next.liked == wasLiked) {
-          showInfoToast(t.comicInfo.likeUnconfirmed);
-        } else {
-          showSuccessToast(
-            next.liked ? t.comicInfo.likeSuccess : t.comicInfo.unlikeSuccess,
+      if (checkFirst) {
+        final checked = await readState().timeout(readTimeout);
+        if (!isCurrent()) return;
+        unconfirmed = false;
+        if (checked.liked != wasLiked) {
+          _likes.accept(
+            work,
+            owner: owner,
+            before: before,
+            receipt: checked,
+            read: readState,
+            readTimeout: readTimeout,
           );
+          return;
         }
-      }
-    } on PluginLoginRequiredException {
-      if (mounted && canNotify()) {
-        await requestPluginActionLogin(
-          context,
-          source: source,
-          refresh: widget.onLoginRefresh ?? () async {},
+        before = (
+          liked: wasLiked,
+          totalLikes: checked.totalLikes ?? before.totalLikes,
         );
       }
-    } on ComicLikeUnconfirmed {
-      if (canNotify()) showInfoToast(t.comicInfo.likeUnconfirmed);
-    } catch (error) {
-      if (!canNotify()) return;
-      showErrorToast(
-        t.comicInfo.likeFailed(
-          error: userFacingErrorMessage(quickJsErrorMessage(error) ?? error),
-        ),
-        duration: const Duration(seconds: 5),
+      submitted = true;
+      final next =
+          await (writeLike?.call(wasLiked) ??
+              toggleCloudComicLike(
+                from: source,
+                comicId: work.id,
+                currentStatus: wasLiked,
+                previousTotalLikes: before.totalLikes,
+              ));
+      if (!isCurrent()) return;
+      if (next.liked == wasLiked) throw const ComicLikeUnconfirmed();
+      _likes.accept(
+        work,
+        owner: owner,
+        before: before,
+        receipt: next,
+        read: canRead ? readState : null,
+        readTimeout: readTimeout,
       );
+    } on ComicLikeUnconfirmed {
+      unconfirmed = true;
+    } on PluginSessionChanged {
+      // A changed account owns its own detail reads.
+    } catch (_) {
+      // A rejected write leaves the previous selection and count in place.
     } finally {
-      if (mounted && identical(_cloudLikeOwner, owner)) {
-        final sessionChanged = !isCurrent();
-        setState(() {
-          _cloudLikeOwner = null;
-          if (sessionChanged) _syncLike();
-        });
-      }
+      _likes.finishWrite(
+        work,
+        owner,
+        unconfirmedBefore: unconfirmed ? before : null,
+        readUnconfirmed: submitted && canRead ? readState : null,
+        readTimeout: readTimeout,
+      );
     }
   }
 }
@@ -532,7 +528,6 @@ class _OperationItemData {
     this.onTap,
     this.enabled = true,
     this.highlighted = false,
-    this.busyLabel,
     this.accentColor,
   });
 
@@ -541,7 +536,6 @@ class _OperationItemData {
   final VoidCallback? onTap;
   final bool enabled;
   final bool highlighted;
-  final String? busyLabel;
   final Color? accentColor;
 }
 
@@ -581,16 +575,7 @@ class _OperationCard extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              if (item.busyLabel case final label?)
-                SizedBox.square(
-                  dimension: compact ? 18 : 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    semanticsLabel: label,
-                  ),
-                )
-              else
-                Icon(item.icon, size: compact ? 18 : 20, color: foreground),
+              Icon(item.icon, size: compact ? 18 : 20, color: foreground),
               const SizedBox(width: 8),
               Flexible(
                 child: Text(

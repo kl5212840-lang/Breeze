@@ -7,6 +7,7 @@ import 'package:zephyr/service/comic_follow/comic_follow_foreground_scheduler.da
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/comic_follow/cubit/comic_follow_cubit.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/service/comic_follow/comic_follow_chapter_reader.dart';
 import 'package:zephyr/service/comic_follow/comic_follow_service.dart';
 import 'package:zephyr/service/reader/reader_history_service.dart';
@@ -272,6 +273,52 @@ void main() {
       expect(repo.notifications, [
         {row.uniqueKey: 11},
       ]);
+    },
+  );
+
+  test(
+    'route change prevents old follow failures from reaching the new check',
+    () async {
+      final now = DateTime.utc(2026, 11, 2, 12);
+      final row = _follow('1', now, source: 'follow-route-switch');
+      final old = Completer<ComicFollowDetection?>();
+      final repo = _Repository([row]);
+      repo.detect = (_) => repo.calls.length == 1
+          ? old.future
+          : Future.value(
+              const ComicFollowDetection(
+                chapterCount: 11,
+                latestChapterTitle: 'Current route',
+              ),
+            );
+      final cubit = ComicFollowCubit(repository: repo, now: () => now);
+      addTearDown(cubit.close);
+      cubit.setAutomaticCheckingActive(true);
+      final first = cubit.checkUpdateForItem(row);
+      final revision = beginPluginEndpointUpdate(row.source)!;
+      try {
+        expect(
+          await cubit
+              .checkUpdateForItem(row)
+              .timeout(const Duration(milliseconds: 150)),
+          isFalse,
+        );
+      } finally {
+        finishPluginEndpointUpdate(row.source, revision, refreshSettings: true);
+      }
+      final retry = cubit.checkUpdateForItem(row);
+      expect(repo.calls, [row.uniqueKey]);
+      old.complete(
+        const ComicFollowDetection.failed(
+          ComicFollowCheckFailure.sourceUnavailable,
+        ),
+      );
+      expect(await first, isFalse);
+      expect(await retry, isTrue);
+      expect(repo.calls, [row.uniqueKey, row.uniqueKey]);
+      expect(repo.writes, 1);
+      expect(cubit.state.checkErrors, isEmpty);
+      expect(cubit.state.items.single.detectedChapterTitle, 'Current route');
     },
   );
 
@@ -688,13 +735,155 @@ void main() {
   );
 
   test(
+    'single read acknowledgement persists through the ObjectBox repository',
+    () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      await TestObjectBoxHelper.setUpTestObjectBox();
+      addTearDown(TestObjectBoxHelper.tearDownTestObjectBox);
+      final readAt = DateTime.utc(2026, 11, 22);
+      final now = DateTime.utc(2026, 11, 23, 12);
+      final row = _follow('1', readAt).copyWith(
+        id: 0,
+        detectedChapterCount: 12,
+        hasUpdate: true,
+        lastChapterUpdateAt: now,
+      );
+      final history = _history(row, 'chapter-5', readAt)..pageIndex = 8;
+      final service = ComicFollowService.instance;
+      service.putFollow(row);
+      objectbox.unifiedHistoryBox.put(history);
+      final before = service
+          .getActiveHistoryByUniqueKey(row.uniqueKey)!
+          .toJson();
+      final cubit = ComicFollowCubit(repository: service, now: () => now);
+      addTearDown(cubit.close);
+      expect(await cubit.markAsRead(cubit.state.items.single), isTrue);
+
+      final saved = service.getFollowByUniqueKey(row.uniqueKey)!;
+      expect(saved.lastChapterCount, 12);
+      expect(saved.hasUpdate, isFalse);
+      expect(saved.lastChapterUpdateAt!.isAtSameMomentAs(now), isTrue);
+      expect(
+        service.getActiveHistoryByUniqueKey(row.uniqueKey)!.toJson(),
+        before,
+      );
+      final reloaded = ComicFollowCubit(repository: service);
+      addTearDown(reloaded.close);
+      expect(reloaded.state.updateCount, 0);
+      expect(reloaded.state.historyFor(row)!.chapterId, 'chapter-5');
+      expect(reloaded.state.historyFor(row)!.pageIndex, 8);
+    },
+  );
+
+  test(
+    'mark one update read preserves history and accepts later growth',
+    () async {
+      final now = DateTime.utc(2026, 11, 23, 12);
+      final earlier = now.subtract(const Duration(days: 1));
+      final row = _follow('1', earlier).copyWith(
+        detectedChapterCount: 12,
+        hasUpdate: true,
+        lastChapterUpdateAt: earlier,
+      );
+      final other = _follow(
+        '2',
+        earlier,
+      ).copyWith(detectedChapterCount: 11, hasUpdate: true);
+      final history = _history(row, 'chapter-4', earlier)..pageIndex = 7;
+      final pending = Completer<ComicFollowDetection?>();
+      final repo = _Repository([row, other])
+        ..histories[row.uniqueKey] = history
+        ..histories[other.uniqueKey] = _history(other, 'chapter-1', now)
+        ..detect = (_) => pending.future;
+      final cubit = ComicFollowCubit(repository: repo, now: () => now);
+      addTearDown(cubit.close);
+      cubit.setAutomaticCheckingActive(true);
+
+      List<String> visibleIds() => [
+        for (final item in cubit.state.visibleItems) item.uniqueKey,
+      ];
+      final initialOrder = visibleIds();
+      final checking = cubit.checkUpdateForItem(row);
+      expect(await cubit.markAsRead(row), isTrue);
+      final saved = repo.rows[row.uniqueKey]!;
+      expect(saved.lastChapterCount, 12);
+      expect(saved.detectedChapterCount, row.detectedChapterCount);
+      expect(saved.detectedChapterTitle, row.detectedChapterTitle);
+      expect(saved.updateTime, row.updateTime);
+      expect(saved.lastChapterUpdateAt, row.lastChapterUpdateAt);
+      expect(saved.updatedAt, now);
+      expect(identical(cubit.state.historyFor(row), history), isTrue);
+      expect(repo.histories[row.uniqueKey]!.chapterId, 'chapter-4');
+      expect(repo.histories[row.uniqueKey]!.pageIndex, 7);
+      expect(repo.histories[row.uniqueKey]!.lastReadAt, earlier);
+      expect(repo.rows[other.uniqueKey]!.hasUpdate, isTrue);
+      expect(visibleIds(), initialOrder);
+      cubit.setFilter(ComicFollowFilter.unread);
+      expect(visibleIds(), [other.uniqueKey]);
+      expect(await cubit.markAsRead(row), isFalse);
+      expect(repo.writes, 1);
+
+      pending.complete(
+        const ComicFollowDetection(
+          chapterCount: 13,
+          latestChapterTitle: 'Later',
+        ),
+      );
+      expect(await checking, isTrue);
+      expect(repo.rows[row.uniqueKey]!.lastChapterCount, 12);
+      expect(cubit.state.unreadChapterCount(cubit.state.items.first), 1);
+      expect(visibleIds(), initialOrder);
+      expect(repo.notifications, [
+        {row.uniqueKey: 13},
+      ]);
+
+      await cubit.loadFromDatabase();
+      expect(visibleIds(), initialOrder);
+      expect(cubit.state.unreadChapterCount(cubit.state.items.first), 1);
+    },
+  );
+
+  test(
+    'marking a displayed update leaves a newer stored update unread',
+    () async {
+      final now = DateTime.utc(2026, 11, 23, 12);
+      final row = _follow(
+        '1',
+        now,
+      ).copyWith(detectedChapterCount: 12, hasUpdate: true);
+      final repo = _Repository([row]);
+      final cubit = ComicFollowCubit(repository: repo, now: () => now);
+      addTearDown(cubit.close);
+      repo.rows[row.uniqueKey] = row.copyWith(
+        detectedChapterCount: 14,
+        detectedChapterTitle: 'Later chapter',
+        updateTime: now.add(const Duration(minutes: 1)),
+      );
+      expect(await cubit.markAsRead(row), isTrue);
+      final saved = repo.rows[row.uniqueKey]!;
+      expect(saved.lastChapterCount, 12);
+      expect(saved.detectedChapterCount, 14);
+      expect(saved.detectedChapterTitle, 'Later chapter');
+      expect(saved.hasUpdate, isTrue);
+      expect(cubit.state.unreadChapterCount(cubit.state.items.single), 2);
+
+      repo.rows[row.uniqueKey] = saved.copyWith(
+        createdAt: now.add(const Duration(minutes: 1)),
+      );
+      expect(await cubit.markAsRead(cubit.state.items.single), isFalse);
+      expect(repo.writes, 1);
+    },
+  );
+
+  test(
     'mark all as read preserves the newest persisted chapter observation',
     () async {
       final time = DateTime.utc(2026, 11, 12);
-      final row = _follow(
-        '1',
-        time,
-      ).copyWith(detectedChapterCount: 11, hasUpdate: true);
+      final row = _follow('1', time).copyWith(
+        detectedChapterCount: 11,
+        hasUpdate: true,
+        lastChapterUpdateAt: time,
+      );
       final repo = _Repository([row]);
       final cubit = ComicFollowCubit(repository: repo, now: () => time);
       addTearDown(cubit.close);
@@ -708,6 +897,7 @@ void main() {
       expect(saved.detectedChapterCount, 13);
       expect(saved.lastChapterCount, 13);
       expect(saved.hasUpdate, isFalse);
+      expect(saved.lastChapterUpdateAt, time);
     },
   );
 
@@ -752,9 +942,13 @@ void main() {
       expect(repo.notifications, [
         {'fixture:1': 12, 'fixture:2': 12},
       ]);
+      final firstUpdate = now;
+      expect(repo.rows['fixture:1']!.lastChapterUpdateAt, firstUpdate);
       now = now.add(const Duration(minutes: 1));
       await cubit.checkUpdates();
       expect(repo.notifications, hasLength(1));
+      expect(repo.rows['fixture:1']!.updateTime, now);
+      expect(repo.rows['fixture:1']!.lastChapterUpdateAt, firstUpdate);
       repo.detect = (_) async => const ComicFollowDetection(
         chapterCount: 13,
         latestChapterTitle: 'Another new chapter',
@@ -762,6 +956,7 @@ void main() {
       await cubit.checkUpdateForItem(cubit.state.items.first);
       expect(repo.notifications, hasLength(2));
       expect(repo.notifications.last, {'fixture:1': 13});
+      expect(repo.rows['fixture:1']!.lastChapterUpdateAt, now);
       await cubit.checkUpdateForItem(cubit.state.items.first);
       expect(repo.notifications, hasLength(2));
     },

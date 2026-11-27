@@ -189,6 +189,28 @@ void main() {
     );
   });
 
+  test('a saved web session cannot replace unreadable live cookies', () async {
+    await capture('A');
+    final saved = PluginAccountProfiles.read(source).profiles.values.single;
+    final unportable = {..._cookie('B'), 'httpOnly': false};
+    cookies.values = [unportable];
+    unavailable = true;
+    final writes = cookies.writes;
+
+    await expectLater(
+      coordinator.activateProfile(source, saved),
+      throwsA(isA<PluginAccountNeedsLogin>()),
+    );
+    expect(cookies.values, [unportable]);
+    expect(cookies.writes, writes);
+
+    unavailable = false;
+    cookies.values = [];
+    final proof = await coordinator.activateProfile(source, saved);
+    expect(proof.serverIdentity, 'A');
+    expect(cookies.values, [_cookie('A')]);
+  });
+
   test(
     'new account starts signed out and preserves the previous profile',
     () async {

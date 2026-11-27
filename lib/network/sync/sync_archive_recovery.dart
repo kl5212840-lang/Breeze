@@ -9,8 +9,10 @@ import 'package:zephyr/network/sync/portable_preferences.dart';
 import 'package:zephyr/network/sync/sync_archive_context.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/object_box/objectbox.g.dart' show LocalStorageCommit_;
+import 'package:zephyr/page/bookshelf/service/shelf_facet_preferences.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/page/video/video_playback_preferences.dart';
+import 'package:zephyr/page/video/video_watch_history.dart';
 import 'package:zephyr/util/get_path.dart';
 
 Future<bool> writeArchivePreference(
@@ -168,6 +170,17 @@ class ArchivePreferenceTransaction {
   }
 
   Future<void> rollback() async {
+    await VideoWatchHistory.serializePortableWrite(
+      () => ShelfFacetPreferences.serializePortableWrite(_rollbackPreferences),
+    );
+    await PortablePreferences.notifyRestored(keys: _before.keys.toSet());
+    await _discard();
+  }
+
+  Future<void> _rollbackPreferences() async {
+    // A failed platform write can leave the attempted value in the Dart cache.
+    // Base compensation and retries on the backing store.
+    await prefs.reload();
     var failed = false;
     for (final entry in _before.entries) {
       final expected = _expected[entry.key]!;
@@ -208,8 +221,6 @@ class ArchivePreferenceTransaction {
       }
     }
     if (failed) throw const ArchiveRestoreFailed();
-    await PortablePreferences.notifyRestored(keys: _before.keys.toSet());
-    await _discard();
   }
 
   Future<void> _discard() async {

@@ -694,6 +694,8 @@ class LocalImportRecovery {
           () =>
               ComicChapterReadingProgress.instance.serializeRecovery(() async {
                 final prefs = await SharedPreferences.getInstance();
+                // Failed platform writes still change the in-memory cache.
+                if (onlyOwnedValues) await prefs.reload();
                 final before = <dynamic, dynamic>{
                   ...snapshot['preferences'] as Map,
                   ...?journal['preferenceBefore'] as Map?,

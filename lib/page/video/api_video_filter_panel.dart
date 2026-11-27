@@ -1,3 +1,4 @@
+import 'package:zephyr/page/bookshelf/widgets/filter_scroll_rail.dart';
 import 'package:zephyr/page/search/widget/search_field_decoration.dart';
 import 'package:zephyr/widgets/year_filter_picker.dart';
 import 'package:zephyr/widgets/selection_choice_grid.dart';
@@ -70,12 +71,14 @@ class ApiVideoFilterPanel extends StatefulWidget {
 
 class _ApiVideoFilterPanelState extends State<ApiVideoFilterPanel> {
   late VideoSearchFilters _draft = widget.initial;
+  final _optionScroll = ScrollController();
   final _categorySearch = TextEditingController();
   bool _allCategories = false, _applying = false;
   bool get _local => widget.searching && !widget.capabilities.filtersOnSearch;
 
   @override
   void dispose() {
+    _optionScroll.dispose();
     _categorySearch.dispose();
     super.dispose();
   }
@@ -383,9 +386,16 @@ class _ApiVideoFilterPanelState extends State<ApiVideoFilterPanel> {
           const SizedBox(height: 12),
           Flexible(
             fit: FlexFit.loose,
-            child: SingleChildScrollView(
-              key: const ValueKey('api-filters.scroll'),
-              child: fields,
+            child: FilterScrollRail(
+              controller: _optionScroll,
+              child: SingleChildScrollView(
+                key: const ValueKey('api-filters.scroll'),
+                controller: _optionScroll,
+                primary: false,
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.manual,
+                child: fields,
+              ),
             ),
           ),
           if (hasFields) ...[

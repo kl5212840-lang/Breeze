@@ -196,7 +196,7 @@ internal class ManagedVideoDownloads(
                 throw VideoMp4Failure("storage")
             }
             part = temp
-            job.transfer.download(temp, media, referer, headers, clock, open) {
+            job.transfer.download(temp, media, referer, headers, clock, open, retryTransient = true) {
                 val now = clock()
                 if (job.lastProgress == Long.MIN_VALUE || now - job.lastProgress >= 150) {
                     job.lastProgress = now

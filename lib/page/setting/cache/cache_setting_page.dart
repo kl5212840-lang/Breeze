@@ -12,6 +12,7 @@ import 'package:zephyr/page/source_shell/source_experience_scope.dart';
 
 import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/widgets/breeze_switch.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 const Map<int, String> _cacheLimitLabels = {
   536870912: '512 MB',
@@ -102,26 +103,14 @@ class _CacheSettingPageState extends State<CacheSettingPage> {
   Future<void> _handleClearCache(BuildContext pageContext) async {
     if (_clearing) return;
     final source = widget.source;
-    final confirmed = await showDialog<bool>(
+    final confirmed = await confirmShortAlert(
       context: pageContext,
-      builder: (context) => AlertDialog(
-        title: Text(t.cache.clearCache),
-        content: Text(
-          source == null
-              ? t.cache.clearCacheConfirm
-              : t.cache.sourceClearConfirm,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: Text(t.common.cancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(t.cache.clear),
-          ),
-        ],
+      title: Text(t.cache.clearCache),
+      content: Text(
+        source == null ? t.cache.clearCacheConfirm : t.cache.sourceClearConfirm,
       ),
+      confirmLabel: t.cache.clear,
+      destructive: true,
     );
 
     if (confirmed != true || !mounted || _clearing || source != widget.source) {

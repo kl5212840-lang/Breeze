@@ -1,14 +1,20 @@
+import 'package:flutter/foundation.dart' show setEquals;
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
-import 'package:zephyr/type/pipe.dart';
+import 'package:zephyr/page/video/video_interaction.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 
 class MultiChoiceDialogOption {
-  const MultiChoiceDialogOption({required this.label, required this.value});
+  const MultiChoiceDialogOption({
+    required this.label,
+    required this.value,
+    this.enabled = true,
+  });
 
   final String label;
   final String value;
+  final bool enabled;
 }
 
 Future<Set<String>?> showMultiChoiceListDialog(
@@ -18,12 +24,14 @@ Future<Set<String>?> showMultiChoiceListDialog(
   Iterable<String> initialSelected = const <String>[],
   String? cancelText,
   String? confirmText,
-  bool useFilledConfirmButton = false,
+  bool useFilledConfirmButton = true,
   double width = 520,
   double height = 420,
 }) {
-  return showDialog<Set<String>>(
+  return showVideoTaskSheet<Set<String>>(
     context: context,
+    useRootNavigator: true,
+    systemStyle: AppInterfaceStyleScope.usesSystem(context),
     builder: (_) => _MultiChoiceListDialog(
       title: title,
       options: options,
@@ -60,88 +68,120 @@ class _MultiChoiceListDialog extends StatefulWidget {
 }
 
 class _MultiChoiceListDialogState extends State<_MultiChoiceListDialog> {
-  late final selected = Set<String>.from(widget.initialSelected);
+  late final _initial = widget.initialSelected.toSet();
+  late final _selected = {..._initial};
   // Keep one controller for the list and scrollbar until the route's exit
   // transition actually unmounts them, rather than until its result completes.
-  final scrollController = ScrollController();
+  final _scrollController = ScrollController();
 
   @override
   void dispose() {
-    scrollController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final breeze = !AppInterfaceStyleScope.usesSystem(context);
-    final colors = Theme.of(context).colorScheme;
-    return AlertDialog(
-      backgroundColor: breeze ? colors.surfaceContainerLowest : null,
-      surfaceTintColor: breeze ? Colors.transparent : null,
-      title: Text(widget.title),
-      content: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: widget.height),
-        child: SizedBox(
-          width: widget.width,
-          child: Scrollbar(
-            controller: scrollController,
-            thumbVisibility: true,
-            child: ListView.builder(
-              controller: scrollController,
-              shrinkWrap: true,
-              itemCount: widget.options.length,
-              itemBuilder: (context, index) {
-                final option = widget.options[index];
-                final isSelected = selected.contains(option.value);
-                return CheckboxListTile(
-                  key: ValueKey(option.value),
-                  dense: true,
-                  minTileHeight: 44,
-                  selected: breeze && isSelected,
-                  selectedTileColor: breeze
-                      ? colors.surfaceContainerHigh
-                      : null,
-                  shape: breeze
-                      ? RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(9),
-                        )
-                      : null,
-                  visualDensity: VisualDensity.standard,
-                  materialTapTargetSize: MaterialTapTargetSize.padded,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  value: isSelected,
-                  title: Text(option.label.let(convertChineseForDisplay)),
-                  onChanged: (checked) {
-                    setState(() {
-                      if (checked == true) {
-                        selected.add(option.value);
-                      } else {
-                        selected.remove(option.value);
-                      }
-                    });
-                  },
-                );
-              },
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final display = watchChineseDisplayConverter(context);
+    final confirm = setEquals(_initial, _selected)
+        ? null
+        : () => Navigator.of(context).pop({..._selected});
+    final confirmation = Text(widget.confirmText ?? t.common.ok);
+    return Center(
+      heightFactor: 1,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: widget.width),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+              child: Row(
+                spacing: 12,
+                children: [
+                  Expanded(
+                    child: Semantics(
+                      header: true,
+                      child: Text(
+                        widget.title,
+                        style: theme.textTheme.titleLarge,
+                      ),
+                    ),
+                  ),
+                  if (_selected.isNotEmpty)
+                    Flexible(
+                      child: Text(
+                        t.search.selectedCount(count: _selected.length),
+                        textAlign: TextAlign.end,
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
-          ),
+            Flexible(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: widget.height),
+                child: Scrollbar(
+                  controller: _scrollController,
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    primary: false,
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    itemCount: widget.options.length,
+                    itemBuilder: (context, index) {
+                      final option = widget.options[index];
+                      return CheckboxListTile(
+                        key: ValueKey(option.value),
+                        minTileHeight: 48,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        value: _selected.contains(option.value),
+                        title: Text(display(option.label)),
+                        onChanged: !option.enabled
+                            ? null
+                            : (checked) => setState(() {
+                                if (checked == true) {
+                                  _selected.add(option.value);
+                                } else {
+                                  _selected.remove(option.value);
+                                }
+                              }),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+              child: OverflowBar(
+                spacing: 10,
+                overflowSpacing: 6,
+                alignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: Text(widget.cancelText ?? t.common.cancel),
+                  ),
+                  if (widget.useFilledConfirmButton)
+                    FilledButton(onPressed: confirm, child: confirmation)
+                  else
+                    TextButton(onPressed: confirm, child: confirmation),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(widget.cancelText ?? t.common.cancel),
-        ),
-        if (widget.useFilledConfirmButton)
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(selected),
-            child: Text(widget.confirmText ?? t.common.ok),
-          )
-        else
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(selected),
-            child: Text(widget.confirmText ?? t.common.ok),
-          ),
-      ],
     );
   }
 }

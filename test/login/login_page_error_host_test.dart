@@ -11,8 +11,12 @@ import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart';
+import 'package:zephyr/page/account/plugin_saved_accounts_page.dart';
 import 'package:zephyr/page/login/login_error_message.dart';
 import 'package:zephyr/page/login_page.dart';
+import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
+import 'package:zephyr/service/plugin_account_authentication.dart';
+import 'package:zephyr/service/plugin_account_profiles.dart';
 import 'package:zephyr/src/rust/frb_generated.dart';
 import 'package:zephyr/util/event/event.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
@@ -21,6 +25,7 @@ import '../test_helper.dart';
 import '../ui_preview_helper.dart';
 
 const _source = '78617c71-313f-42fe-9317-460d691890b2';
+const _legacySource = '017d270a-bc47-4c10-9e8d-e9b8a1125e2a';
 
 class _LoginApi extends RustLibApi {
   String accountField = 'account';
@@ -30,6 +35,10 @@ class _LoginApi extends RustLibApi {
   Map<String, dynamic>? response;
   Map<String, String> savedValues = const {};
   Completer<void>? pending;
+  String? copyMember;
+  bool legacyAccount = false;
+  bool legacyOffline = false;
+  bool legacySessionValid = false;
   int submissions = 0;
   @override
   Future<bool> crateApiQjsIsQjsRuntimeInitialized({
@@ -87,7 +96,44 @@ class _LoginApi extends RustLibApi {
       expect((args['values'] as Map)[accountField], 'fixture-user');
       await pending?.future;
       if (failure != null) throw failure!;
-      result = response ?? {'ok': false};
+      if (copyMember != null) {
+        replaceActivePluginAccount(PluginAccountAuthenticationService.copy, {
+          'auth.username': 'fixture-user',
+          'auth.token': 'new-fixture-token',
+        });
+      }
+      if (legacyAccount) {
+        replaceActivePluginAccount(_legacySource, {
+          'auth.username': 'fixture-user',
+          'auth.token': 'legacy-fixture-new-session',
+        });
+        legacySessionValid = true;
+        result = {
+          'data': {'ok': true},
+        };
+      } else {
+        result = response ?? {'ok': false};
+      }
+    } else if (fnPath == 'getUserInfoBundle' && copyMember != null) {
+      result = {
+        'data': {
+          'extern': {'userId': copyMember, 'username': 'Verified fixture user'},
+        },
+      };
+    } else if (fnPath == 'getUserInfoBundle' && legacyAccount) {
+      result = {
+        'scheme': {'type': 'userInfo'},
+        'data': {
+          'title': legacySessionValid ? 'Fixture nickname' : '登录已失效',
+          'avatar': {'id': 'avatar'},
+          'lines': [
+            if (legacyOffline)
+              'Network request timed out'
+            else if (!legacySessionValid)
+              '{"type":"unauthorized","source":"$_legacySource","message":"private fixture"}',
+          ],
+        },
+      };
     } else {
       throw StateError('Unexpected plugin function $fnPath');
     }
@@ -129,10 +175,199 @@ void main() {
     api.schemeResponse = null;
     api.response = null;
     api.pending = null;
+    api.copyMember = null;
+    api.legacyAccount = false;
+    api.legacyOffline = false;
+    api.legacySessionValid = false;
     api.submissions = 0;
     api.accountField = 'account';
     api.savedValues = const {};
   });
+  testWidgets(
+    'legacy native recovery uses the selected record and a fresh bound login',
+    (tester) async {
+      api.legacyAccount = true;
+      api.accountField = 'username';
+      api.savedValues = {
+        'username': 'other-fixture-user',
+        'password': 'other-fixture-password',
+      };
+      replaceActivePluginAccount(_legacySource, {
+        'auth.username': 'fixture-user',
+        'auth.token': 'legacy-expired-session',
+      });
+      await PluginAccountProfiles.rememberCurrent(_legacySource);
+      final target = PluginAccountProfiles.read(
+        _legacySource,
+      ).profiles.values.single;
+      const previous = {
+        'auth.username': 'other-fixture-user',
+        'auth.token': 'other-fixture-session',
+        'auth.password': 'other-fixture-password',
+      };
+      replaceActivePluginAccount(_legacySource, previous);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PluginSavedAccountsPage(
+            source: _legacySource,
+            nativeLoginSupported: true,
+            onAddAccount: () async => fail('Expected selected-account login'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final row = find.byKey(ValueKey('saved-account-${target.id}'));
+      final retry = find.byKey(const ValueKey('saved-account-retry'));
+      final recover = find.text(t.accountProfiles.continueLogin);
+      api.legacyOffline = true;
+      await tester.tap(row);
+      await tester.pumpAndSettle();
+      expect(find.text(t.login.networkUnavailable), findsOneWidget);
+      expect(recover, findsNothing);
+      expect(api.submissions, 0);
+      expect(
+        readHostPluginConfiguration(_legacySource)['auth.token'],
+        previous['auth.token'],
+      );
+
+      api.legacyOffline = false;
+      await tester.tap(retry);
+      await tester.pumpAndSettle();
+      expect(find.text(t.accountProfiles.savedSignInRequired), findsOneWidget);
+      expect(retry, findsNothing);
+      expect(find.textContaining('private fixture'), findsNothing);
+
+      await tester.tap(recover);
+      await tester.pumpAndSettle();
+      final fields = find.byType(TextField);
+      TextField field(int index) => tester.widget<TextField>(fields.at(index));
+      expect(field(0).controller!.text, 'fixture-user');
+      expect(field(0).readOnly, isTrue);
+      expect(field(1).controller!.text, isEmpty);
+      await tester.tap(find.byKey(const ValueKey('login.remember')));
+      await tester.enterText(fields.last, 'fixture-password');
+      await tester.tap(find.byKey(const ValueKey('login.submit')));
+      await tester.pumpAndSettle();
+      expect(api.submissions, 1);
+      expect(find.byType(LoginPage), findsNothing);
+      expect(find.text(t.accountProfiles.current), findsOneWidget);
+      expect(await PluginAccountProfiles.selected(_legacySource), target.id);
+      final restored = PluginAccountIdentities.current(_legacySource)!;
+      expect(restored.serverIdentity, isEmpty);
+      expect(restored.loginIdentity, 'fixture-user');
+      expect(
+        onLoadPluginConfig(_legacySource, hostRememberedPluginLoginKey, 'null'),
+        '{"ok":true,"value":null}',
+      );
+      expect(
+        onLoadPluginConfig(_legacySource, '', 'null'),
+        isNot(contains('fixture-password')),
+      );
+      expect(
+        PluginAccountProfiles.savedNativePassword(
+          PluginAccountProfiles.read(_legacySource).profiles[target.id]!,
+        ),
+        'fixture-password',
+      );
+
+      replaceActivePluginAccount(_legacySource, previous);
+      api.legacySessionValid = false;
+      await tester.pumpAndSettle();
+      await tester.tap(row);
+      await tester.pumpAndSettle();
+      await tester.tap(recover);
+      await tester.pumpAndSettle();
+      expect(field(0).controller!.text, 'fixture-user');
+      expect(field(1).controller!.text, 'fixture-password');
+      expect(field(1).obscureText, isTrue);
+      Navigator.of(tester.element(find.byType(LoginPage))).pop();
+      await tester.pumpAndSettle();
+      expect(recover, findsOneWidget);
+      expect(api.submissions, 1);
+      expect(
+        readHostPluginConfiguration(_legacySource)['auth.token'],
+        previous['auth.token'],
+      );
+    },
+  );
+  testWidgets(
+    'saved-account form verifies the requested profile before replacing the current login',
+    (tester) async {
+      const source = PluginAccountAuthenticationService.copy;
+      replaceActivePluginAccount(source, {
+        'auth.username': 'fixture-user',
+        'auth.token': 'old-fixture-token',
+      });
+      await PluginAccountProfiles.rememberCurrent(
+        source,
+        serverIdentity: 'expected-member',
+      );
+      final target = PluginAccountProfiles.read(source).profiles.values.single;
+      replaceActivePluginAccount(source, {
+        'auth.username': 'current-user',
+        'auth.token': 'current-fixture-token',
+      });
+      api.accountField = 'username';
+      api.savedValues = {
+        'username': 'current-user',
+        'password': 'other-fixture-password',
+      };
+      api.response = {'ok': true};
+      api.copyMember = 'different-member';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) {
+              return TextButton(
+                onPressed: () => openPluginAccountLoginForm(
+                  context,
+                  source: source,
+                  username: target.identity,
+                  savedAccount: (id: target.id, revision: target.revision),
+                ),
+                child: const Text('Open saved login'),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open saved login'));
+      await tester.pumpAndSettle();
+      final fields = find.byType(TextField);
+      expect(
+        tester.widget<TextField>(fields.first).controller!.text,
+        'fixture-user',
+      );
+      expect(tester.widget<TextField>(fields.last).controller!.text, isEmpty);
+      await tester.enterText(fields.last, 'fixture-password');
+      final submit = find.byKey(const ValueKey('login.submit'));
+      await tester.tap(submit);
+      await tester.pumpAndSettle();
+      expect(api.submissions, 1);
+      expect(find.byKey(const ValueKey('login.submit-error')), findsOneWidget);
+      expect(
+        readHostPluginConfiguration(source)['auth.token'],
+        'current-fixture-token',
+      );
+      expect(await PluginAccountProfiles.selected(source), isNull);
+
+      api.copyMember = 'expected-member';
+      await tester.tap(submit);
+      await tester.pumpAndSettle();
+      expect(api.submissions, 2);
+      expect(find.byType(LoginPage), findsNothing);
+      expect(await PluginAccountProfiles.selected(source), target.id);
+      expect(
+        readHostPluginConfiguration(source)['auth.token'],
+        'new-fixture-token',
+      );
+      expect(
+        PluginAccountIdentities.current(source)?.serverIdentity,
+        'expected-member',
+      );
+    },
+  );
   for (final accountField in ['username', 'account']) {
     testWidgets(
       'relogin uses only matching saved credentials for $accountField',

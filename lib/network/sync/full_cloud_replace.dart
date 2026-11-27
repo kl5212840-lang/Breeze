@@ -532,8 +532,8 @@ class FullCloudReplaceService {
       guard?.call();
       final transport = reader.transport;
       final bytes = transport is BackupProtectionSyncAdapter
-          ? await transport.readFreshForFullReplace(path)
-          : await reader.downloadRemoteFile(path);
+          ? await transport.readFreshForFullReplace(path, budget.remaining)
+          : await reader.downloadBoundedFile(path, budget.remaining);
       budget.add(bytes.length);
       view.digests[path] = _hash(bytes);
       final name = path.split('/').last;
@@ -641,8 +641,8 @@ class FullCloudReplaceService {
   ) async {
     final transport = reader.transport;
     final bytes = transport is BackupProtectionSyncAdapter
-        ? await transport.readFreshForFullReplace(path)
-        : await reader.downloadRemoteFile(path);
+        ? await transport.readFreshForFullReplace(path, _Budget.fileLimit)
+        : await reader.downloadBoundedFile(path, _Budget.fileLimit);
     if (_hash(bytes) != digest) throw const FullCloudReplaceStale();
   }
 }
@@ -690,6 +690,7 @@ void _verifyResources(
 class _Budget {
   static const limit = 128 * 1024 * 1024, fileLimit = 32 * 1024 * 1024;
   int total = 0;
+  int get remaining => (limit - total).clamp(0, fileLimit);
   void add(int size) {
     total += size;
     if (size > fileLimit || total > limit)

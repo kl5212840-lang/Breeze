@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/src/rust/api/webdav.dart' as rust_webdav;
 
@@ -8,6 +10,7 @@ import 'package:zephyr/network/sync/sync_archive_adapter.dart';
 class WebDavSyncService
     implements
         ComicSyncRemoteAdapter,
+        BoundedSyncFileReader,
         LegacyPluginPurgeTransport,
         FullCloudReplaceTransport {
   WebDavSyncService(
@@ -93,16 +96,32 @@ class WebDavSyncService
   }
 
   @override
-  Future<List<int>> downloadRemoteFile(String remotePath) {
-    return rust_webdav.webdavDownloadFile(
-      host: _settings.syncSetting.webdavSetting.host,
-      username: _settings.syncSetting.webdavSetting.username,
-      password: _settings.syncSetting.webdavSetting.password,
-      syncRootName: _root,
-      legacyDataRootName: _root,
-      legacySettingsRootName: _root,
-      remotePath: remotePath,
-    );
+  Future<List<int>> downloadRemoteFile(String remotePath) =>
+      downloadBoundedFile(remotePath, syncArchiveWireMaxBytes);
+
+  @override
+  Future<List<int>> downloadBoundedFile(String remotePath, int maxBytes) async {
+    try {
+      return await rust_webdav.webdavDownloadFile(
+        host: _settings.syncSetting.webdavSetting.host,
+        username: _settings.syncSetting.webdavSetting.username,
+        password: _settings.syncSetting.webdavSetting.password,
+        syncRootName: _root,
+        legacyDataRootName: _root,
+        legacySettingsRootName: _root,
+        remotePath: remotePath,
+        maxBytes: maxBytes.clamp(0, syncArchiveWireMaxBytes),
+      );
+    } catch (error) {
+      final message = error.toString();
+      if (message.contains('Cloud snapshot too large')) {
+        throw const SyncRemoteFileTooLarge();
+      }
+      if (message.contains('Cloud download timed out')) {
+        throw TimeoutException('Cloud download timed out');
+      }
+      rethrow;
+    }
   }
 
   @override

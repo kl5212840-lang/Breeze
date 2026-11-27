@@ -154,7 +154,7 @@ class DownloadChapterAdapter {
       id: id,
       displayName: episode.name.trim(),
       order: episode.order,
-      requestId: rawRequestId.isNotEmpty ? rawRequestId : null,
+      requestId: _firstNonEmpty([rawRequestId, rawId]),
       storageId: episode.storageChapterId.trim().isNotEmpty
           ? episode.storageChapterId.trim()
           : null,
@@ -178,7 +178,7 @@ class DownloadChapterAdapter {
       id: id,
       displayName: ref.name.trim(),
       order: ref.order,
-      requestId: rawRequestId.isNotEmpty ? rawRequestId : null,
+      requestId: _firstNonEmpty([rawRequestId, rawId]),
       storageId: ref.storageChapterId.trim().isNotEmpty
           ? ref.storageChapterId.trim()
           : null,

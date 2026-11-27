@@ -1,10 +1,14 @@
+import 'package:auto_route/auto_route.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_return_preferences.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/config/router/router.gr.dart'
+    show SearchResultRoute, SearchResultRouteArgs;
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
+import 'package:zephyr/page/search/method/search_scope_preferences.dart';
 import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
 import 'package:zephyr/page/bookshelf/widgets/folder_shelf_page.dart';
 import 'package:zephyr/page/source_shell/models/source_shell_section.dart';
@@ -23,35 +27,56 @@ void main() {
     await SourceReturnPreferences.load();
   });
 
-  testWidgets('a search-only source edits with All as the initial scope', (
+  testWidgets('a search-only source submits the default from settings', (
     tester,
   ) async {
-    await tester.pumpWidget(
-      const MaterialApp(
-        home: SourceShellPage(
-          source: 'search-only-fixture',
-          sourceName: 'Search source',
-          sections: [],
+    const source = 'search-only-fixture';
+    await SearchScopePreferences.save(
+      source: source,
+      surface: SearchScopePreferences.comic,
+      value: KeywordSearchScope.title.name,
+      supported: defaultKeywordSearchScopes.map((scope) => scope.name),
+    );
+    ({String keyword, KeywordSearchScope? scope})? result;
+    final router = RootStackRouter.build(
+      routes: [
+        NamedRouteDef(
+          name: 'FixtureHome',
+          path: '/',
+          initial: true,
+          builder: (_, _) => const SourceShellPage(
+            source: source,
+            sourceName: 'Search source',
+            sections: [],
+          ),
         ),
-      ),
+        NamedRouteDef(
+          name: SearchResultRoute.name,
+          path: '/results',
+          builder: (_, data) {
+            final state = data
+                .argsAs<SearchResultRouteArgs>()
+                .searchEvent
+                .searchStates;
+            result = (
+              keyword: state.searchKeyword,
+              scope: explicitKeywordSearchScope(state.pluginExtern),
+            );
+            return const Scaffold(body: Text('Search results'));
+          },
+        ),
+      ],
     );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router.config()));
     await tester.pumpAndSettle();
-    final input = find.byType(TextField);
-    final scopeMenu = find.byType(KeywordScopeMenu);
-    expect(
-      tester.widget<KeywordScopeMenu>(scopeMenu).scope,
-      KeywordSearchScope.all,
-    );
-    await tester.enterText(input, '片名');
-    tester
-        .widget<KeywordScopeMenu>(scopeMenu)
-        .onChanged(KeywordSearchScope.title);
+    expect(find.byType(KeywordScopeMenu), findsNothing);
+    await tester.enterText(find.byType(TextField), '片名');
+    await tester.pump();
+    await tester.tap(find.byTooltip(t.search.title));
     await tester.pumpAndSettle();
-    expect(
-      tester.widget<KeywordScopeMenu>(scopeMenu).scope,
-      KeywordSearchScope.title,
-    );
-    expect(tester.widget<TextField>(input).controller!.text, '片名');
+    expect(find.text('Search results'), findsOneWidget);
+    expect(result, (keyword: '片名', scope: KeywordSearchScope.title));
   });
 
   test('embedded folder back stays inside the folder until its root', () async {
@@ -113,7 +138,7 @@ void main() {
     expect(find.byType(SourceBackButton), findsOneWidget);
     expect(find.byTooltip(t.common.back), findsOneWidget);
 
-    await tester.tap(find.byType(NavigationDestination).last);
+    await tester.tap(find.byType(BreezeNavigationTab).last);
     await tester.pumpAndSettle();
     expect(find.byTooltip('${t.common.back} · First'), findsOneWidget);
     expect(find.byTooltip(t.common.back), findsNothing);
@@ -128,7 +153,7 @@ void main() {
     expect(find.byTooltip(t.common.back), findsOneWidget);
     expect(find.text('Launch source'), findsNothing);
 
-    await tester.tap(find.byType(NavigationDestination).last);
+    await tester.tap(find.byType(BreezeNavigationTab).last);
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip(t.sourceShell.navigationActions));
     await tester.pumpAndSettle();
@@ -172,7 +197,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byType(NavigationDestination).last);
+      await tester.tap(find.byType(BreezeNavigationTab).last);
       await tester.pumpAndSettle();
       expect(find.byTooltip('${t.common.back} · First'), findsOneWidget);
 
@@ -254,7 +279,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byType(NavigationDestination).last);
+      await tester.tap(find.byType(BreezeNavigationTab).last);
       await tester.pumpAndSettle();
       expect(find.byType(SourceVideoContent), findsOneWidget);
       expect(find.byType(ApiVideoLibraryPage), findsOneWidget);
@@ -263,7 +288,7 @@ void main() {
         findsOneWidget,
       );
       expect(find.byType(AppBar), findsOneWidget);
-      expect(find.byType(NavigationBar), findsOneWidget);
+      expect(find.byType(VideoNativeNavigation), findsOneWidget);
       expect(
         find.descendant(
           of: find.byType(ApiVideoLibraryPage),
@@ -276,7 +301,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(SourceVideoContent), findsNothing);
       expect(find.byType(AppBar), findsOneWidget);
-      await tester.tap(find.byType(NavigationDestination).last);
+      await tester.tap(find.byType(BreezeNavigationTab).last);
       await tester.pumpAndSettle();
       expect(tester.state(find.byType(ApiVideoLibraryPage)), same(state));
       expect(tester.takeException(), isNull);

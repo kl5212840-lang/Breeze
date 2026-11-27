@@ -514,10 +514,12 @@ Future<void> _unifiedDownloadTask(
           }
           throw const ComicDownloadRouteUnavailable();
         }
+        final serverDelay = comicDownloadRetryAfter(error.result.error);
         if (!failedRoute.canSwitch ||
             reason == ComicDownloadRetryReason.rateLimited ||
+            serverDelay != null ||
             excluded.length >= 2) {
-          throw ComicDownloadRouteUnavailable(null, reason);
+          throw ComicDownloadRouteUnavailable(null, reason, false, serverDelay);
         }
         previousRouteFailure = reason;
         excluded.add(failedRoute.key);
@@ -611,7 +613,14 @@ Future<void> _unifiedDownloadTask(
       };
       if (reason != null) {
         await ensureTaskRunning();
-        throw ComicDownloadRetryDeferred(reason);
+        final serverDelay = switch (error) {
+          ComicDownloadRouteUnavailable(:final retryAfter) => retryAfter,
+          DownloadImageJobException(:final result) => comicDownloadRetryAfter(
+            result.error,
+          ),
+          _ => comicDownloadRetryAfter(error),
+        };
+        throw ComicDownloadRetryDeferred(reason, serverDelay: serverDelay);
       }
     }
     rethrow;

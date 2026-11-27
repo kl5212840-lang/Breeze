@@ -54,8 +54,13 @@ void main() {
           'name': '分类',
           'value': ['短篇'],
         },
+        {
+          'type': 'tags',
+          'name': '标签',
+          'value': ['幻想'],
+        },
       ],
-      'raw': {'leaderboardCount': 39682},
+      'raw': {'leaderboardCount': 39682, 'pagesCount': 24},
       'extern': <String, dynamic>{},
     });
 
@@ -76,7 +81,9 @@ void main() {
     expect(find.text('1'), findsOneWidget);
     expect(find.text('榜单作品'), findsOneWidget);
     expect(find.text('作者甲'), findsOneWidget);
-    expect(find.text('短篇'), findsOneWidget);
+    expect(find.text('短篇 · 幻想'), findsOneWidget);
+    expect(find.text('8'), findsOneWidget);
+    expect(find.text(t.searchResult.itemPageCount(count: 24)), findsOneWidget);
     expect(find.text('指名次数  39682'), findsOneWidget);
     expect(find.textContaining('999999'), findsNothing);
     expect(tester.takeException(), isNull);

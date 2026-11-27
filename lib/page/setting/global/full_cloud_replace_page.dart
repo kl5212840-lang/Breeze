@@ -8,6 +8,7 @@ import 'package:zephyr/network/sync/sync_payload_compatibility.dart';
 import 'package:zephyr/page/setting/common/backup_protection_ui.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/service/backup_security/backup_security.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 class FullCloudReplacePage extends StatefulWidget {
   const FullCloudReplacePage({super.key, this.createService});
@@ -58,21 +59,17 @@ class _FullCloudReplacePageState extends State<FullCloudReplacePage> {
     try {
       final accepted = await showDialog<bool>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
+        builder: (dialogContext) => ShortAlert(
           title: Text(t.settings.cloudReplaceConfirmTitle),
-          content: SingleChildScrollView(
-            child: Text(t.settings.cloudReplaceConfirmHint),
-          ),
+          content: Text(t.settings.cloudReplaceConfirmHint),
           actions: [
-            TextButton(
+            ShortAlertAction(
               onPressed: () => Navigator.pop(dialogContext, false),
               child: Text(t.common.cancel),
             ),
-            TextButton(
+            ShortAlertAction(
+              destructive: true,
               key: const ValueKey('cloud-replace.final-confirm'),
-              style: TextButton.styleFrom(
-                foregroundColor: Theme.of(dialogContext).colorScheme.error,
-              ),
               onPressed: () => Navigator.pop(dialogContext, true),
               child: Text(t.settings.cloudReplaceConfirm),
             ),
@@ -134,6 +131,11 @@ class _FullCloudReplacePageState extends State<FullCloudReplacePage> {
   @override
   Widget build(BuildContext context) {
     final plan = _plan;
+    final inset = SettingSection.horizontalInsetOf(context);
+    final theme = Theme.of(context);
+    final summaryStyle = theme.textTheme.bodyMedium?.copyWith(
+      color: theme.colorScheme.onSurfaceVariant,
+    );
     final titles = {
       'comic': t.settings.cloudReplaceComic,
       'video': t.settings.cloudReplaceVideo,
@@ -145,21 +147,15 @@ class _FullCloudReplacePageState extends State<FullCloudReplacePage> {
       canPop: !_committing,
       child: SettingPageShell(
         grouped: true,
-        title: t.settings.syncAdvanced,
+        title: t.settings.cloudReplaceTitle,
         child: ListView(
           padding: const EdgeInsets.only(bottom: 24),
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-              child: Text(
-                t.settings.cloudReplaceTitle,
-                style: Theme.of(context).textTheme.titleLarge,
+            if (!_complete && plan == null)
+              Padding(
+                padding: EdgeInsets.fromLTRB(inset, 12, inset, 4),
+                child: Text(t.settings.cloudReplaceScope, style: summaryStyle),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
-              child: Text(t.settings.cloudReplaceScope),
-            ),
             if (_complete)
               Padding(
                 padding: const EdgeInsets.all(20),
@@ -170,35 +166,47 @@ class _FullCloudReplacePageState extends State<FullCloudReplacePage> {
               ),
             if (plan != null) ...[
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+                padding: EdgeInsets.fromLTRB(inset, 12, inset, 8),
                 child: Text(
                   t.settings.cloudReplaceArchives(
                     current: plan.currentFiles,
                     legacy: plan.legacyFiles,
                   ),
+                  style: summaryStyle,
                 ),
               ),
               SettingSection(
+                hasLeading: false,
+                margin: EdgeInsets.symmetric(horizontal: inset),
                 children: [
                   for (final entry in plan.counts.entries)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                    ListTile(
+                      title: Text(titles[entry.key]!),
+                      subtitle: Row(
+                        crossAxisAlignment: CrossAxisAlignment.baseline,
+                        textBaseline: TextBaseline.alphabetic,
                         children: [
-                          Text(
-                            titles[entry.key]!,
-                            style: Theme.of(context).textTheme.titleMedium,
+                          Expanded(
+                            child: Text(
+                              t.settings.cloudReplaceLocalCount(
+                                count: entry.value.local,
+                              ),
+                            ),
                           ),
-                          const SizedBox(height: 4),
-                          Text(
-                            t.settings.cloudReplaceCounts(
-                              local: entry.value.local,
-                              removed: entry.value.removed,
-                              overwritten: entry.value.overwritten,
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              t.settings.cloudReplaceRemovedCount(
+                                count: entry.value.removed,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              t.settings.cloudReplaceOverwrittenCount(
+                                count: entry.value.overwritten,
+                              ),
                             ),
                           ),
                         ],
@@ -227,23 +235,29 @@ class _FullCloudReplacePageState extends State<FullCloudReplacePage> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                     const SizedBox(width: 12),
-                    Expanded(child: Text(t.settings.syncWorking)),
+                    Expanded(
+                      child: Semantics(
+                        liveRegion: true,
+                        child: Text(
+                          _committing
+                              ? t.settings.cloudReplaceWriting
+                              : t.settings.cloudReplaceReading,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
-            if (!_complete)
+            if (!_complete && !_busy)
               Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
+                padding: EdgeInsets.symmetric(horizontal: inset, vertical: 12),
                 child: plan == null
                     ? FilledButton(
                         key: const ValueKey('cloud-replace.preview'),
                         style: FilledButton.styleFrom(
                           minimumSize: const Size.fromHeight(48),
                         ),
-                        onPressed: _busy || _confirming ? null : _preview,
+                        onPressed: _confirming ? null : _preview,
                         child: Text(t.settings.cloudReplacePreview),
                       )
                     : OutlinedButton(
@@ -252,8 +266,8 @@ class _FullCloudReplacePageState extends State<FullCloudReplacePage> {
                           minimumSize: const Size.fromHeight(48),
                           foregroundColor: Theme.of(context).colorScheme.error,
                         ),
-                        onPressed: _busy || _confirming ? null : _confirm,
-                        child: Text(t.settings.cloudReplaceTitle),
+                        onPressed: _confirming ? null : _confirm,
+                        child: Text(t.settings.cloudReplaceReview),
                       ),
               ),
           ],

@@ -120,6 +120,7 @@ Map<String, dynamic> suppressRemovedAccountProjection(
 Map<String, dynamic> visiblePluginConfig(Map<String, dynamic> data) =>
     Map<String, dynamic>.from(data)
       ..remove(pluginConfigSyncFields)
+      ..remove(hostRememberedPluginLoginKey)
       ..remove(pluginAccountProfilesKey);
 
 /// Exact host namespaces used by UUID, wrapper and legacy runtime storage.
@@ -258,10 +259,12 @@ String preserveCopyDeviceRouteSettings(
   }
   if (metadata.isNotEmpty) next[pluginConfigSyncFields] = metadata;
   final oldMode = old['api.domain'];
-  if (next['api.domain'] == 'auto' &&
+  final nextMode = next['api.domain'];
+  if ((nextMode == 'auto' || nextMode == 'auto-speed') &&
       oldMode is String &&
       oldMode.isNotEmpty &&
-      oldMode != 'auto') {
+      oldMode != 'auto' &&
+      oldMode != 'auto-speed') {
     return jsonEncode(
       updatePluginConfigField(next, _copyAutoRouteField, oldMode),
     );

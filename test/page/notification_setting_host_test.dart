@@ -92,7 +92,10 @@ void main() {
           ),
         );
         final entry = find.text(t.notification.settingsTitle);
-        await tester.ensureVisible(entry);
+        await tester.pumpAndSettle();
+        await Scrollable.ensureVisible(tester.element(entry), alignment: .45);
+        await tester.pumpAndSettle();
+        expect(entry.hitTestable(), findsOneWidget);
         await tester.tap(entry);
         await tester.pumpAndSettle();
         final page = find.byType(NotificationSettingPage);

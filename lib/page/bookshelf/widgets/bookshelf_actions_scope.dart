@@ -15,6 +15,7 @@ class BookshelfActionsScope extends InheritedWidget {
     required this.onManageSources,
     this.header,
     this.headerGeneration = 0,
+    this.headerQuery,
     this.canUseHeader,
     required super.child,
   });
@@ -25,6 +26,7 @@ class BookshelfActionsScope extends InheritedWidget {
   final VoidCallback? onManageSources;
   final BookshelfHeaderController? header;
   final int headerGeneration;
+  final Object? headerQuery;
   final bool Function()? canUseHeader;
 
   static BookshelfActionsScope? of(BuildContext context) =>
@@ -92,6 +94,7 @@ class BookshelfActionsScope extends InheritedWidget {
       oldWidget.sort != sort ||
       oldWidget.header != header ||
       oldWidget.headerGeneration != headerGeneration ||
+      oldWidget.headerQuery != headerQuery ||
       oldWidget.canUseHeader != canUseHeader ||
       oldWidget.onSort != onSort ||
       oldWidget.onManageSources != onManageSources;

@@ -10,7 +10,9 @@ import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/page/video/video_playback_identity.dart';
 import 'package:zephyr/page/video/video_playback_download_adapter.dart';
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:zephyr/page/video/video_download_choice.dart';
@@ -61,8 +63,8 @@ class _VideoDownloadWaiter {
 }
 
 /// One user-initiated native transfer, independent of its initiating sheet.
-/// Closing UI does not cancel it. Jobs are not resumable after process exit;
-/// signed media URLs and headers remain transient.
+/// Closing UI does not cancel it. A validated iOS MP4 prefix can survive a
+/// retry within the process. Signed media URLs and headers remain transient.
 class VideoSystemDownload {
   static const _channel = MethodChannel('breeze.video.download');
   static int _sequence = 0;
@@ -350,6 +352,22 @@ class VideoSystemDownload {
         TargetPlatform.android,
       ].contains(defaultTargetPlatform);
 
+  static Future<void> discardIosPartial(String resourceId) async {
+    if (defaultTargetPlatform != TargetPlatform.iOS ||
+        !VideoLocalResources.validId(resourceId)) {
+      return;
+    }
+    try {
+      await _channel.invokeMethod<void>('discardPartial', {
+        'managedId': resourceId,
+      });
+    } on MissingPluginException {
+      // Older native builds have no partial-download files.
+    } on PlatformException {
+      // The bounded native cache can expire the file independently.
+    }
+  }
+
   bool _savingRequest = false;
   Future<VideoDownloadStatus> save({
     required VideoDownloadChoice choice,
@@ -480,8 +498,13 @@ class VideoSystemDownload {
       () => _withRoute(
         source,
         networkContext,
-        (proxy) => _save(
-          androidProxy: proxy,
+        (route) => _save(
+          androidProxy:
+              defaultTargetPlatform == TargetPlatform.android &&
+                  route?.proxy.isNotEmpty == true
+              ? route!.proxy
+              : null,
+          resumeScope: _iosResumeScope(source, route, accountGeneration),
           choice: choice,
           attachment: attachment,
           headers: headers,
@@ -760,10 +783,36 @@ class VideoSystemDownload {
     }
   }
 
+  static String? _iosResumeScope(
+    String source,
+    SourceNetworkSnapshot? route,
+    int accountGeneration,
+  ) {
+    if (defaultTargetPlatform != TargetPlatform.iOS || source.isEmpty) {
+      return null;
+    }
+    final account = route == null
+        ? source
+        : VideoHlsRecovery.currentAccountScope(source);
+    if (account == null) return null;
+    return sha256
+        .convert(
+          utf8.encode(
+            jsonEncode([
+              'breeze.mp4.resume.v1',
+              account,
+              accountGeneration,
+              route?.proxy ?? '',
+            ]),
+          ),
+        )
+        .toString();
+  }
+
   Future<VideoDownloadStatus> _withRoute(
     String source,
     String? context,
-    Future<VideoDownloadStatus> Function(String?) action,
+    Future<VideoDownloadStatus> Function(SourceNetworkSnapshot?) action,
   ) async {
     SourceNetworkLease? route;
     try {
@@ -774,13 +823,7 @@ class VideoSystemDownload {
         _failureReason = 'routeUnavailable';
         return VideoDownloadStatus.routeUnavailable;
       }
-      final proxy = route?.snapshot.proxy;
-      return await action(
-        defaultTargetPlatform == TargetPlatform.android &&
-                proxy?.isNotEmpty == true
-            ? proxy
-            : null,
-      );
+      return await action(route?.snapshot);
     } catch (_) {
       _failureStage ??= 'routeSetup';
       return VideoDownloadStatus.failed;
@@ -792,6 +835,7 @@ class VideoSystemDownload {
   Future<VideoDownloadStatus> _save({
     required bool Function() sourceCurrent,
     required String? androidProxy,
+    String? resumeScope,
     VideoDownloadChoice? choice,
     AndroidManagedVideoAttempt? attachment,
     String? networkContext,
@@ -933,7 +977,7 @@ class VideoSystemDownload {
     bool? lastSaving;
     final channel = _transferChannel = hls ? VideoHlsAssets.channel : _channel;
     DownloadNetworkWait? interruptedBy;
-    DownloadNetworkWait? hlsObservedNetworkWait;
+    DownloadNetworkWait? nativeObservedNetworkWait;
     var nativeStarted = false;
     var backgroundPaused = false;
     var nativeWifiOnly = false;
@@ -944,11 +988,11 @@ class VideoSystemDownload {
       }
       if (!sourceCurrent() || interruptedBy != null) return;
       final wait = admission.networkWait;
-      if (nativeStarted && hls && defaultTargetPlatform == TargetPlatform.iOS) {
+      if (nativeStarted && defaultTargetPlatform == TargetPlatform.iOS) {
         if (nativeWifiOnly == admission.wifiOnly) {
           // iOS owns connectivity and cellular admission for this session.
           // Remember an outage only for a confirmed native failure.
-          hlsObservedNetworkWait = wait ?? hlsObservedNetworkWait;
+          nativeObservedNetworkWait = wait ?? nativeObservedNetworkWait;
           return;
         }
         // Session configuration is fixed after creation. Recreate this
@@ -971,6 +1015,7 @@ class VideoSystemDownload {
                 'id': job,
                 'transferKey': ?_androidTransferKey,
                 'scope': ?_androidScope,
+                if (!hls && resumeScope != null) 'preservePartial': true,
               })
               .catchError((Object _) {}),
         );
@@ -1177,6 +1222,7 @@ class VideoSystemDownload {
               'managedId': ?managedId,
               'transferKey': ?_androidTransferKey,
               'scope': ?_androidScope,
+              if (!hls) 'resumeScope': ?resumeScope,
               'networkContext': ?networkContext,
               'androidProxy': ?androidProxy,
               if (nativeWifiOnly) 'wifiOnly': true,
@@ -1209,12 +1255,15 @@ class VideoSystemDownload {
         hlsReceipt = result;
       }
       final nativeNetworkFailure =
-          result is Map && result['reason'] == 'network';
+          result is Map &&
+          (result['reason'] == 'network' ||
+              defaultTargetPlatform == TargetPlatform.iOS &&
+                  result['reason'] == 'timeout');
       final retryWait =
           interruptedBy ??
           ((hls || defaultTargetPlatform == TargetPlatform.iOS) &&
                   nativeNetworkFailure
-              ? admission.networkWait ?? hlsObservedNetworkWait
+              ? admission.networkWait ?? nativeObservedNetworkWait
               : null);
       if (sourceCurrent() &&
           retryWait != null &&
@@ -1428,6 +1477,14 @@ class VideoSystemDownload {
               DownloadNetworkWait.fromCode(_failureReason) != null &&
               !_cancelRequested &&
               attempt != null;
+          final refreshAddress =
+              status == VideoDownloadStatus.failed &&
+              attempt != null &&
+              sourceCurrent() &&
+              media?.hasQuery == true &&
+              (hls
+                  ? backgroundPaused && const {401, 403}.contains(_failureHttpStatus)
+                  : const {401, 403, 404, 410}.contains(_failureHttpStatus));
           if (reconnect) VideoExportRecords.retainNetworkWait(key, attempt);
           await VideoExportRecords.updateTransfer(
             key,
@@ -1462,13 +1519,8 @@ class VideoSystemDownload {
               accountGeneration: accountGeneration,
             );
           }
-          if (backgroundPaused &&
-              sourceCurrent() &&
-              !_cancelRequested &&
-              attempt != null &&
-              media?.hasQuery == true &&
-              const {401, 403}.contains(_failureHttpStatus)) {
-            VideoDownloadRetry.refreshAfterBackground(
+          if (refreshAddress) {
+            VideoDownloadRetry.refreshExpiredAddress(
               key,
               attempt: attempt,
               source: source,

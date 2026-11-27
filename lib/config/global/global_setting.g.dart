@@ -33,6 +33,10 @@ _GlobalSettingState _$GlobalSettingStateFromJson(
   mainNavigationSlots: json['mainNavigationSlots'] == null
       ? ''
       : normalizeMainNavigationSlots(json['mainNavigationSlots']),
+  navigationHidesOnScroll: json['navigationHidesOnScroll'] as bool? ?? false,
+  navigationTransparency: json['navigationTransparency'] == null
+      ? defaultNavigationTransparency
+      : normalizeNavigationTransparency(json['navigationTransparency']),
   syncSetting: json['syncSetting'] == null
       ? const SyncSettingState()
       : SyncSettingState.fromJson(json['syncSetting'] as Map<String, dynamic>),
@@ -124,6 +128,8 @@ Map<String, dynamic> _$GlobalSettingStateToJson(_GlobalSettingState instance) =>
       'localeFollowsSystem': instance.localeFollowsSystem,
       'welcomePageNum': instance.welcomePageNum,
       'mainNavigationSlots': instance.mainNavigationSlots,
+      'navigationHidesOnScroll': instance.navigationHidesOnScroll,
+      'navigationTransparency': instance.navigationTransparency,
       'syncSetting': instance.syncSetting.toJson(),
       'maskedKeywords': instance.maskedKeywords,
       'socks5ProxyEnabled': instance.socks5ProxyEnabled,
@@ -326,6 +332,10 @@ _ReadSettingState _$ReadSettingStateFromJson(Map<String, dynamic> json) =>
           ) ??
           ReaderTapPageTurnMode.rightHand,
       tapPageTurnInWebtoon: json['tapPageTurnInWebtoon'] as bool? ?? false,
+      customToolbarTapArea: json['customToolbarTapArea'] as bool? ?? false,
+      toolbarTapAreaPercent: json['toolbarTapAreaPercent'] == null
+          ? defaultToolbarTapAreaPercent
+          : normalizeToolbarTapAreaPercent(json['toolbarTapAreaPercent']),
       reverseHorizontalPageTurn:
           json['reverseHorizontalPageTurn'] as bool? ?? false,
       readerBackgroundMode:
@@ -395,6 +405,8 @@ Map<String, dynamic> _$ReadSettingStateToJson(
   'readMode': instance.readMode,
   'tapPageTurnMode': _$ReaderTapPageTurnModeEnumMap[instance.tapPageTurnMode]!,
   'tapPageTurnInWebtoon': instance.tapPageTurnInWebtoon,
+  'customToolbarTapArea': instance.customToolbarTapArea,
+  'toolbarTapAreaPercent': instance.toolbarTapAreaPercent,
   'reverseHorizontalPageTurn': instance.reverseHorizontalPageTurn,
   'readerBackgroundMode':
       _$ReaderBackgroundModeEnumMap[instance.readerBackgroundMode]!,

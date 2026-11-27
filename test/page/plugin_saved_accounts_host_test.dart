@@ -17,6 +17,7 @@ import 'package:zephyr/main.dart' show objectbox;
 import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/account/plugin_saved_accounts_page.dart';
+import 'package:zephyr/page/setting/common/plugin_account_avatar.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/service/plugin_account_authentication.dart';
@@ -37,13 +38,20 @@ class _Auth extends PluginAccountAuthenticationService {
   Future<PluginAccountAuthentication> verify({
     bool includeSummary = false,
   }) async {
-    if (pending case final pending?) return pending.future;
-    final account = readHostPluginConfiguration(_source)['auth.account'];
-    if (account is! String) throw const PluginAccountSwitchFailed();
-    return PluginAccountAuthentication(
-      serverIdentity: 'server-$account',
-      label: 'Member $account',
-    );
+    final generation = pluginSessionWriteFence.generation(_source);
+    final PluginAccountAuthentication proof;
+    if (pending case final request?) {
+      proof = await request.future;
+    } else {
+      final account = readHostPluginConfiguration(_source)['auth.account'];
+      if (account is! String) throw const PluginAccountSwitchFailed();
+      proof = PluginAccountAuthentication(
+        serverIdentity: 'server-$account',
+        label: 'Member $account',
+      );
+    }
+    PluginAccountIdentities.confirm(_source, proof, generation: generation);
+    return proof;
   }
 
   @override
@@ -101,6 +109,7 @@ void main() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   final channels = <int, String>{};
+  final acceptedTouches = <int>[];
   setUpAll(() async {
     SharedPreferences.setMockInitialValues({});
     await TestObjectBoxHelper.setUpTestObjectBox();
@@ -140,6 +149,9 @@ void main() {
           (_) async => null,
         );
       }
+      if (call.method == 'acceptGesture') {
+        acceptedTouches.add((call.arguments as Map)['id'] as int);
+      }
       return null;
     });
   });
@@ -149,8 +161,9 @@ void main() {
       messenger.setMockMethodCallHandler(MethodChannel(name), null);
     }
     channels.clear();
+    acceptedTouches.clear();
   });
-  Future<void> back(WidgetTester tester) async {
+  Future<void> back(WidgetTester tester, {bool verifyTouch = false}) async {
     final widget = find.byType(SourceBackButton);
     final views = find.descendant(of: widget, matching: find.byType(UiKitView));
     if (views.evaluate().isNotEmpty) {
@@ -164,6 +177,12 @@ void main() {
       expect(renders, hasLength(1));
       final channel = channels[renders.single.viewController.id];
       expect(channel, isNotNull);
+      if (verifyTouch) {
+        acceptedTouches.clear();
+        await tester.tap(views);
+        await tester.pump();
+        expect(acceptedTouches, contains(renders.single.viewController.id));
+      }
       tester.binding.channelBuffers.push(
         channel!,
         const StandardMethodCodec().encodeMethodCall(const MethodCall('press')),
@@ -178,8 +197,90 @@ void main() {
   }
 
   testWidgets(
+    'JM saved account uses its scoped portrait and keeps signed URLs out of storage',
+    (tester) async {
+      const source = PluginAccountAuthenticationService.jm;
+      const portrait =
+          'https://portrait.example.test/media/users/qa.jpg?temp=fixture';
+      const connectivity = MethodChannel(
+        'dev.fluttercommunity.plus/connectivity',
+      );
+      messenger.setMockMethodCallHandler(connectivity, (_) async => ['wifi']);
+      addTearDown(() => messenger.setMockMethodCallHandler(connectivity, null));
+      addTearDown(
+        () => PluginAccountIdentities.reject(
+          source,
+          generation: pluginSessionWriteFence.generation(source),
+        ),
+      );
+      replaceActivePluginAccount(source, {
+        'auth.username': 'fixture',
+        'auth.jwt': 'authenticated-fixture',
+      });
+      final functions = <String>[];
+      final authentication = PluginAccountAuthenticationService(
+        source,
+        call: (function, _) async {
+          functions.add(function);
+          return {
+            'data': function == 'getUserProfileDetails'
+                ? {
+                    'accountId': 'jm-portrait-profile',
+                    'nickname': 'Fixture portrait',
+                    'profileDataSource': 'serverUserEdit',
+                  }
+                : {
+                    'available': true,
+                    'avatar': {
+                      'id': 'jm-portrait-profile',
+                      'url': portrait,
+                      'path': 'qa.jpg',
+                    },
+                  },
+          };
+        },
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: PluginSavedAccountsPage(
+            source: source,
+            authentication: authentication,
+            onAddAccount: () async {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final avatar = tester.widget<PluginAccountAvatar>(
+        find.byType(PluginAccountAvatar),
+      );
+      expect(functions, ['getUserProfileDetails', 'getSettingsUserInfoBundle']);
+      expect(avatar.source, source);
+      expect(avatar.identity, 'jm-portrait-profile');
+      expect(avatar.url, portrait);
+      expect(avatar.path, isEmpty);
+      expect(
+        PluginAccountProfiles.read(source).profiles.values.single.avatarUrl,
+        isEmpty,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
     'Omo account details uses the existing saved-account root instead of a separate credential editor',
     (tester) async {
+      const connectivity = MethodChannel(
+        'dev.fluttercommunity.plus/connectivity',
+      );
+      const connectivityStatus = MethodChannel(
+        'dev.fluttercommunity.plus/connectivity_status',
+      );
+      messenger.setMockMethodCallHandler(connectivity, (_) async => ['wifi']);
+      messenger.setMockMethodCallHandler(connectivityStatus, (_) async => null);
+      addTearDown(() {
+        messenger.setMockMethodCallHandler(connectivity, null);
+        messenger.setMockMethodCallHandler(connectivityStatus, null);
+      });
       final root = (await tester.runAsync(
         () => Directory.systemTemp.createTemp('breeze-omo-account-host-'),
       ))!;
@@ -353,7 +454,8 @@ void main() {
       expect(find.text(t.accountProfiles.continueLogin), findsOneWidget);
       expect(manualLogins, 0);
 
-      await tester.tap(find.byKey(const ValueKey('saved-account-retry')));
+      expect(find.byKey(const ValueKey('saved-account-retry')), findsNothing);
+      await tester.tap(row);
       await tester.pumpAndSettle();
       expect(request, 4);
       expect(find.text(t.accountProfiles.current), findsOneWidget);
@@ -366,6 +468,64 @@ void main() {
   );
 
   for (final style in ['system', 'breeze']) {
+    testWidgets(
+      'saved accounts $style returns on the first tap with removal revealed',
+      (tester) async {
+        final preference = ValueNotifier(style);
+        addTearDown(preference.dispose);
+        const entry = 'Open saved accounts';
+        await tester.pumpWidget(
+          AppInterfaceStyleScope(
+            style: preference,
+            child: MaterialApp(
+              home: Builder(
+                builder: (context) => Scaffold(
+                  body: TextButton(
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => PluginSavedAccountsPage(
+                          source: _source,
+                          authentication: _Auth(),
+                          onAddAccount: () async {},
+                        ),
+                      ),
+                    ),
+                    child: const Text(entry),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.tap(find.text(entry));
+        await tester.pumpAndSettle();
+        final account = PluginAccountProfiles.read(
+          _source,
+        ).profiles.values.singleWhere((profile) => profile.identity == 'B');
+        await tester.drag(
+          find.byKey(ValueKey('saved-account-${account.id}')),
+          const Offset(-160, 0),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find
+              .byKey(
+                ValueKey('download-swipe.saved-account-${account.id}.delete'),
+              )
+              .hitTestable(),
+          findsOneWidget,
+        );
+        await back(tester, verifyTouch: true);
+        expect(find.text(entry), findsOneWidget);
+        expect(find.byType(PluginSavedAccountsPage), findsNothing);
+        expect(
+          PluginAccountProfiles.read(_source).profiles[account.id]!.deleted,
+          isFalse,
+        );
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+    );
+
     testWidgets(
       'saved accounts $style verifies before selection, retries, confirms removal and returns',
       (tester) async {

@@ -7,6 +7,7 @@ import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/video/video_picture_size.dart';
 import 'package:zephyr/page/video/video_playback_preferences.dart';
 import 'package:zephyr/widgets/breeze_switch.dart';
 
@@ -167,14 +168,16 @@ class _VideoPlaybackSettingsPageState extends State<VideoPlaybackSettingsPage> {
     String title,
     String key,
     Object value,
-    Map<Object, String> choices,
-  ) => SettingChoiceTile<Object>(
+    Map<Object, String> choices, {
+    bool valueIsFallback = false,
+  }) => SettingChoiceTile<Object>(
     title: title,
     value: value,
     items: choices,
+    valueIsFallback: valueIsFallback,
     enabled: !_saving,
     onChanged: (next) async {
-      if (next != value) await _save(key, next);
+      if (valueIsFallback || next != value) await _save(key, next);
     },
   );
 
@@ -242,7 +245,14 @@ class _VideoPlaybackSettingsPageState extends State<VideoPlaybackSettingsPage> {
       Object value,
       Map<Object, String> options, {
       String aliases = '',
-    }) => item(key, title, group, aliases, _choice(title, key, value, options));
+      bool valueIsFallback = false,
+    }) => item(
+      key,
+      title,
+      group,
+      aliases,
+      _choice(title, key, value, options, valueIsFallback: valueIsFallback),
+    );
     if (p != null) {
       final play = t.videoPlayback.playbackGroup,
           gestures = t.videoPlayback.gestureSettings,
@@ -253,6 +263,25 @@ class _VideoPlaybackSettingsPageState extends State<VideoPlaybackSettingsPage> {
         play,
         p.autoplay,
         aliases: '自动播放 autoplay',
+      );
+      toggle(
+        'autoplayNext',
+        t.videoPlayback.autoplayNext,
+        play,
+        p.repeatMode == VideoRepeatMode.none && p.autoplayNext,
+        aliases: '下一集 autoplay next',
+        enabled: p.repeatMode == VideoRepeatMode.none,
+      );
+      choice(
+        'repeatMode',
+        t.videoPlayback.repeatMode,
+        play,
+        p.repeatMode.name,
+        {
+          for (final entry in videoRepeatModeLabels().entries)
+            entry.key.name: entry.value,
+        },
+        aliases: '单集循环 列表循环 repeat loop',
       );
       choice(
         'defaultSpeed',
@@ -275,13 +304,17 @@ class _VideoPlaybackSettingsPageState extends State<VideoPlaybackSettingsPage> {
         },
         aliases: '横屏 竖屏 fullscreen',
       );
-      toggle(
-        'cover',
-        t.videoPlayback.coverVideo,
+      choice(
+        VideoPictureSize.preferenceKey,
+        t.videoPlayback.pictureSize,
         play,
-        p.cover,
-        note: t.videoPlayback.coverVideoNote,
-        aliases: '画面 裁剪 fit',
+        p.pictureSize.name,
+        {
+          for (final entry in videoPictureSizeLabels().entries)
+            entry.key.name: entry.value,
+        },
+        aliases: '画面 裁剪 铺满 比例 fit fill aspect ratio',
+        valueIsFallback: p.usesLegacyCover,
       );
       choice(
         'hideSeconds',
@@ -317,6 +350,25 @@ class _VideoPlaybackSettingsPageState extends State<VideoPlaybackSettingsPage> {
         note: t.videoPlayback.swipeSeekNote,
         aliases: '横滑 滑动 进度 seek',
       );
+      toggle(
+        'landscapeAdjustments',
+        t.videoPlayback.landscapeAdjustments,
+        gestures,
+        p.landscapeAdjustments,
+        aliases: '亮度 音量 横屏 竖滑 landscape brightness volume',
+      );
+      if (p.landscapeAdjustments)
+        choice(
+          'reverseLandscapeAdjustments',
+          t.videoPlayback.landscapeAdjustmentSides,
+          gestures,
+          p.reverseLandscapeAdjustments,
+          {
+            false: t.videoPlayback.brightnessLeftVolumeRight,
+            true: t.videoPlayback.volumeLeftBrightnessRight,
+          },
+          aliases: '亮度 音量 横屏 竖滑 landscape brightness volume',
+        );
       toggle(
         'recordHistory',
         t.videoPlayback.recordHistory,

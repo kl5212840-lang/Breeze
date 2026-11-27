@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+// ignore: depend_on_referenced_packages
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/main.dart' show objectbox;
 import 'package:zephyr/network/sync/sync_archive_context.dart';
@@ -34,6 +36,21 @@ Future<ArchivePreferenceTransaction> _stagePlayback(String identity) async {
         transaction.prepare({VideoPlaybackPreferences.snapshotKey: next}),
   );
   return transaction;
+}
+
+class _RejectPreferenceOnce extends InMemorySharedPreferencesStore {
+  _RejectPreferenceOnce(super.data) : super.withData();
+
+  String? rejectKey;
+
+  @override
+  Future<bool> setValue(String type, String key, Object value) async {
+    if (key == rejectKey) {
+      rejectKey = null;
+      return false;
+    }
+    return super.setValue(type, key, value);
+  }
 }
 
 void main() {
@@ -93,6 +110,36 @@ void main() {
       expect(await transaction.file!.exists(), isFalse);
     },
   );
+
+  test('recovery retries a rejected playback rollback from disk', () async {
+    final previous = SharedPreferencesStorePlatform.instance;
+    final backend = _RejectPreferenceOnce({});
+    SharedPreferencesStorePlatform.instance = backend;
+    addTearDown(() {
+      SharedPreferences.resetStatic();
+      SharedPreferencesStorePlatform.instance = previous;
+    });
+
+    final state = _connection('https://fixture.invalid');
+    final identity = syncArchiveIdentityForState(state)!;
+    final prefs = await SharedPreferences.getInstance();
+    final snapshotKey = VideoPlaybackPreferences.snapshotKey;
+    await VideoPlaybackPreferences.save('defaultSpeed', 1.25);
+    final original = prefs.getString(snapshotKey);
+    final transaction = await _stagePlayback(identity);
+    final incoming = prefs.getString(snapshotKey);
+    expect(incoming, isNot(original));
+
+    backend.rejectKey = 'flutter.$snapshotKey';
+    expect(await recoverStartupCloudArchive(state), isFalse);
+    expect(await transaction.file!.exists(), isTrue);
+    expect((await backend.getAll())['flutter.$snapshotKey'], incoming);
+
+    expect(await recoverStartupCloudArchive(state), isTrue);
+    expect(await transaction.file!.exists(), isFalse);
+    await prefs.reload();
+    expect(prefs.getString(snapshotKey), original);
+  });
 
   test(
     'startup keeps a committed playback apply and removes its proof',

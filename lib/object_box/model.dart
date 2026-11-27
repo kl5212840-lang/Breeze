@@ -921,6 +921,12 @@ class ComicFollow {
   @Property(type: PropertyType.date)
   DateTime updateTime;
 
+  /// When this device last observed new chapters. The v1 follow archive
+  /// keeps its original fields so older clients can still read it.
+  @Property(type: PropertyType.date)
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  DateTime? lastChapterUpdateAt;
+
   bool deleted;
 
   @Property(type: PropertyType.date)
@@ -948,6 +954,7 @@ class ComicFollow {
     required this.hasUpdate,
     this.lastCheckFailed = false,
     required this.updateTime,
+    this.lastChapterUpdateAt,
     required this.deleted,
     required this.createdAt,
     required this.updatedAt,
@@ -971,6 +978,7 @@ class ComicFollow {
     bool? hasUpdate,
     bool? lastCheckFailed,
     DateTime? updateTime,
+    DateTime? lastChapterUpdateAt,
     bool? deleted,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -993,6 +1001,7 @@ class ComicFollow {
       hasUpdate: hasUpdate ?? this.hasUpdate,
       lastCheckFailed: lastCheckFailed ?? this.lastCheckFailed,
       updateTime: updateTime ?? this.updateTime,
+      lastChapterUpdateAt: lastChapterUpdateAt ?? this.lastChapterUpdateAt,
       deleted: deleted ?? this.deleted,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,

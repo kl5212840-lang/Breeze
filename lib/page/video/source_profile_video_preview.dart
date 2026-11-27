@@ -514,20 +514,30 @@ class _SourceProfileLocalVideoPreviewsState
       }
     }());
     unawaited(() async {
-      try {
-        final rows = widget.readDownloads != null
-            ? await widget.readDownloads!()
-            : widget.groupDownloads
-            ? await DownloadCenterResources.readVideos()
-            : await VideoLocalResources.read();
+      final grouped = widget.groupDownloads;
+      void publish(List<Map<String, dynamic>> rows) {
         if (!mounted || epoch != _epoch) return;
         setState(() {
-          _downloads = widget.groupDownloads
+          _downloads = grouped
               ? rows.where((row) => row['source'] == source).toList()
               : sourcePlayableVideoRows(rows, source);
           _downloadsLoading = false;
           _downloadsFailed = false;
         });
+      }
+
+      try {
+        if (widget.readDownloads case final readDownloads?) {
+          publish(await readDownloads());
+        } else if (grouped) {
+          final read = DownloadCenterResources.readVideoPhases();
+          publish(await read.verified);
+          unawaited(
+            read.enriched.then(publish, onError: (Object _, StackTrace _) {}),
+          );
+        } else {
+          publish(await VideoLocalResources.read());
+        }
       } catch (_) {
         if (mounted && epoch == _epoch) {
           setState(() {

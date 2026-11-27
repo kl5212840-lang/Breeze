@@ -8,7 +8,7 @@ enum ComicFollowStatus { initial, loading, success, failure }
 
 enum ComicFollowFilter { all, unread }
 
-enum ComicFollowSort { lastRead, update }
+enum ComicFollowSort { lastRead, recentUpdate, update }
 
 @freezed
 abstract class ComicFollowState with _$ComicFollowState {
@@ -59,30 +59,35 @@ abstract class ComicFollowState with _$ComicFollowState {
   }
 
   int _compareItems(ComicFollow left, ComicFollow right) {
-    if (filter == ComicFollowFilter.unread) {
-      final rightUnread = hasUnreadUpdate(right);
+    final (leftTime, rightTime) = switch (sort) {
+      ComicFollowSort.lastRead => (
+        historyFor(left)?.lastReadAt,
+        historyFor(right)?.lastReadAt,
+      ),
+      ComicFollowSort.recentUpdate => (
+        left.lastChapterUpdateAt,
+        right.lastChapterUpdateAt,
+      ),
+      ComicFollowSort.update => (left.updateTime, right.updateTime),
+    };
+    if (leftTime == null && rightTime != null) return 1;
+    if (leftTime != null && rightTime == null) return -1;
+    if (leftTime != null && rightTime != null) {
+      final byTime = rightTime.compareTo(leftTime);
+      if (byTime != 0) return byTime;
+    }
+
+    // Older rows have no observation time. Put their unseen updates first
+    // without treating later routine checks as chapter arrivals.
+    if (sort == ComicFollowSort.recentUpdate && leftTime == null) {
       final leftUnread = hasUnreadUpdate(left);
-      final unreadCompare = rightUnread == leftUnread
-          ? 0
-          : (rightUnread ? 1 : -1);
-      if (unreadCompare != 0) return unreadCompare;
+      if (leftUnread != hasUnreadUpdate(right)) return leftUnread ? -1 : 1;
     }
 
-    if (sort == ComicFollowSort.lastRead) {
-      final leftTime = historyFor(left)?.lastReadAt;
-      final rightTime = historyFor(right)?.lastReadAt;
-      if (leftTime == null && rightTime != null) return 1;
-      if (leftTime != null && rightTime == null) return -1;
-      if (leftTime != null && rightTime != null) {
-        final timeCompare = rightTime.compareTo(leftTime);
-        if (timeCompare != 0) return timeCompare;
-      }
-    } else {
-      final timeCompare = right.updateTime.compareTo(left.updateTime);
-      if (timeCompare != 0) return timeCompare;
-    }
-
-    return right.createdAt.compareTo(left.createdAt);
+    final byCreated = right.createdAt.compareTo(left.createdAt);
+    return byCreated != 0
+        ? byCreated
+        : left.uniqueKey.compareTo(right.uniqueKey);
   }
 
   bool isFollowing(String source, String comicId) {

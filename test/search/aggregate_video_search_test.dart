@@ -34,14 +34,19 @@ Map<String, dynamic> info({
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   testWidgets(
-    'metadata timeout stays attached until physical preparation finishes',
+    'metadata preparation settles at its deadline and ignores late metadata',
     (tester) async {
       final metadata = Completer<Map<String, dynamic>>();
       Object? failure;
       var settled = false;
+      var delivered = false;
       final adapter = AggregateVideoSearch(info: (_) => metadata.future);
       final task = adapter
-          .prepare('source', 'keyword')
+          .prepare(
+            'source',
+            'keyword',
+            onComicMetadata: (_) => delivered = true,
+          )
           .then<void>(
             (_) {
               settled = true;
@@ -52,12 +57,12 @@ void main() {
             },
           );
       await tester.pump(const Duration(seconds: 13));
-      expect(settled, isFalse);
+      expect(settled, isTrue);
+      expect(failure, isA<TimeoutException>());
       metadata.complete({'type': 'comic'});
       await tester.pump();
       await task;
-      expect(settled, isTrue);
-      expect(failure, isA<TimeoutException>());
+      expect(delivered, isFalse);
     },
   );
 
@@ -401,7 +406,7 @@ void main() {
       expect(cubit.state.showErrors, isFalse);
       final retry = cubit.refreshSource('a');
       await Future<void>.delayed(Duration.zero);
-      await cubit.applySelectedSources({'a': false});
+      await cubit.updateAvailableSources({});
       pending.complete(['stale']);
       await retry;
       expect(cubit.state.results, isEmpty);

@@ -1,5 +1,9 @@
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/comic_read/method/get_plugin_read_snapshot.dart';
+import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart'
+    as detail;
+import 'package:zephyr/page/comic_info/method/get_plugin_detail.dart';
 import 'package:zephyr/page/comic_read/bloc/page_bloc.dart';
 import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/page/search_result/method/get_plugin_result.dart';
@@ -533,51 +537,117 @@ void main() {
     },
   );
 
+  test('a selected empty chapter never requests the comic default', () async {
+    addTearDown(() => api.invoke = null);
+    var attempts = 0;
+    api.invoke = (_, function) async {
+      if (function != 'getReadSnapshot')
+        return Uint8List.fromList(utf8.encode('{}'));
+      final empty = attempts++ == 0;
+      return Uint8List.fromList(
+        utf8.encode(
+          jsonEncode({
+            'data': {
+              'comic': {'id': 'work'},
+              'chapter': {
+                'id': empty ? 'logical-2' : 'wrong-chapter',
+                'order': 2,
+                'pages': empty
+                    ? []
+                    : [
+                        {
+                          'path': 'wrong.jpg',
+                          'url': 'https://fixture.invalid/wrong.jpg',
+                        },
+                      ],
+              },
+            },
+          }),
+        ),
+      );
+    };
+    await expectLater(
+      getPluginReadSnapshot(
+        'work',
+        2,
+        _copy,
+        null,
+        'logical-2',
+        'request-2',
+        'logical-2',
+        'shared-storage',
+        const {},
+      ),
+      throwsFormatException,
+    );
+    expect(attempts, 1);
+  });
+
   test(
-    'reader rejects fallback pages belonging to a different logical chapter',
+    'reader requires distinct chapter identity when two chapters share a request alias',
     () async {
       addTearDown(() => api.invoke = null);
-      var attempts = 0;
-      api.invoke = (_, function) async {
-        if (function != 'getReadSnapshot')
-          return Uint8List.fromList(utf8.encode('{}'));
-        final empty = attempts++ == 0;
-        return Uint8List.fromList(
-          utf8.encode(
-            jsonEncode({
-              'data': {
-                'comic': {'id': 'work'},
-                'chapter': {
-                  'id': empty ? 'logical-2' : 'wrong-chapter',
-                  'order': 2,
-                  'pages': empty
-                      ? []
-                      : [
-                          {
-                            'path': 'wrong.jpg',
-                            'url': 'https://fixture.invalid/wrong.jpg',
-                          },
-                        ],
-                },
-              },
-            }),
+      const catalog = PluginComicDetailSource(
+        from: _copy,
+        normalInfo: detail.NormalComicAllInfo(
+          comicInfo: detail.ComicInfo(
+            id: 'work',
+            title: 'Work',
+            titleMeta: [],
+            description: '',
+            cover: detail.ComicImage(id: '', url: '', name: ''),
+            metadata: [],
           ),
-        );
-      };
-      await expectLater(
-        getPluginReadSnapshot(
-          'work',
-          2,
-          _copy,
-          null,
-          'logical-2',
-          'request-2',
-          'logical-2',
-          'shared-storage',
-          const {},
+          eps: [
+            detail.Ep(
+              id: 'logical-1',
+              requestId: 'shared-request',
+              name: 'First',
+              order: 1,
+            ),
+            detail.Ep(
+              id: 'logical-2',
+              requestId: 'shared-request',
+              name: 'Second',
+              order: 1,
+            ),
+          ],
+          recommend: [],
         ),
-        throwsFormatException,
+        raw: {},
       );
+      String? logicalKey = 'logical-1';
+      api.invoke = (_, function) async => Uint8List.fromList(
+        utf8.encode(
+          jsonEncode({
+            'chapter': {
+              'id': 'shared-request',
+              if (logicalKey != null) 'logicalKey': logicalKey,
+              'requestId': 'shared-request',
+              'order': 1,
+              'pages': [
+                {'path': 'page.jpg'},
+              ],
+            },
+          }),
+        ),
+      );
+      Future<dynamic> read() => getPluginReadSnapshot(
+        'work',
+        1,
+        _copy,
+        catalog,
+        'logical-2',
+        'shared-request',
+        'logical-2',
+        'shared-storage',
+        const {'slice': 2},
+      );
+      await expectLater(read(), throwsFormatException);
+      logicalKey = null;
+      await expectLater(read(), throwsFormatException);
+      logicalKey = 'logical-2';
+      expect((await read()).epId, 'logical-2');
     },
   );
 
@@ -839,7 +909,10 @@ void main() {
       expect(transport.containsKey('blockedCategories'), isFalse);
       expect(transport.containsKey('settingsBlockedCategories'), isFalse);
       expect(result.pluginExtern['blockedCategories'], ['全彩']);
-      expect(result.pluginExtern['settingsBlockedCategories'], ['短篇']);
+      expect(
+        result.pluginExtern.containsKey('settingsBlockedCategories'),
+        isFalse,
+      );
       final cold = await getPluginSearchResult(
         const SearchEvent(
           searchStates: SearchStates(from: source, searchKeyword: 'cold query'),
@@ -847,11 +920,77 @@ void main() {
         BlocState(),
       );
       expect(
-        cold.pluginExtern['blockedCategories'],
-        isEmpty,
+        cold.pluginExtern.containsKey('blockedCategories'),
+        isFalse,
         reason:
             'A legacy settings echo must never become a page preference on first entry',
       );
+    },
+  );
+
+  test(
+    'Bika exact fields retain the ordinary category draft across echoes',
+    () async {
+      const source = 'e9f18928-3ba8-4d86-a12e-b53a62f47933';
+      await seed(source);
+      api.invoke = (_, function) async => Uint8List.fromList(
+        utf8.encode(
+          jsonEncode(
+            function == 'searchComic'
+                ? {
+                    'source': source,
+                    'data': {
+                      'items': [],
+                      'paging': {
+                        'page': 1,
+                        'pages': 1,
+                        'total': 0,
+                        'hasReachedMax': true,
+                      },
+                    },
+                    'extern': {'categories': <String, bool>{}},
+                  }
+                : {'ok': true},
+          ),
+        ),
+      );
+      addTearDown(() => api.invoke = null);
+      const exact = SearchStates(
+        from: source,
+        searchKeyword: '作品',
+        pluginExtern: {
+          keywordSearchScopeKey: 'author',
+          bikaLoadedTitleOnlyKey: true,
+          'categories': ['长篇'],
+        },
+      );
+      final result = await getPluginSearchResult(
+        const SearchEvent(searchStates: exact),
+        BlocState(),
+      );
+      Map transport() =>
+          jsonDecode(
+                api.calls
+                    .lastWhere((call) => call.function == 'searchComic')
+                    .args,
+              )['extern']
+              as Map;
+      expect(transport(), {'bikaSearchField': 'author'});
+      expect(result.pluginExtern['categories'], ['长篇']);
+      expect(result.pluginExtern.containsKey(bikaLoadedTitleOnlyKey), isFalse);
+      final ordinary = exact.copyWith(
+        pluginExtern: changeKeywordSearchScope(
+          result.pluginExtern,
+          KeywordSearchScope.all,
+        ),
+      );
+      await getPluginSearchResult(
+        SearchEvent(searchStates: ordinary),
+        BlocState(),
+      );
+      expect(transport(), {
+        'categories': ['长篇'],
+      });
     },
   );
 

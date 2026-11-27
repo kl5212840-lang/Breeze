@@ -23,6 +23,9 @@ ComicFollow? resolveFollowSyncFromDetail({
     hasUpdate: !includesKnownLatest && follow.hasUpdate,
     lastCheckFailed: false,
     updateTime: includesKnownLatest ? now : null,
+    lastChapterUpdateAt: onlineChapterCount > follow.detectedChapterCount
+        ? now
+        : null,
     updatedAt: now,
   );
 }

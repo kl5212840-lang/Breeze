@@ -1,4 +1,5 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/widgets/task_dialog.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/plugin_settings/widgets/plugin_settings_sections.dart';
 import 'package:zephyr/plugin/plugin_display_name.dart';
@@ -124,9 +125,8 @@ class _DisplayNameDialogState extends State<_DisplayNameDialog> {
   @override
   Widget build(BuildContext context) => PopScope(
     canPop: !_saving,
-    child: AlertDialog(
-      scrollable: true,
-      title: Text(t.pluginAppearance.displayNameEdit),
+    child: TaskDialog(
+      title: t.pluginAppearance.displayNameEdit,
       content: TextField(
         key: const ValueKey('plugin-display-name-input'),
         controller: _text,

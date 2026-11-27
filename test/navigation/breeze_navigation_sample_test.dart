@@ -5,6 +5,7 @@ import 'package:zephyr/page/navigation_bar.dart' as app;
 import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_navigation_bar.dart';
+import 'package:zephyr/widgets/native_material_surface.dart';
 import 'package:zephyr/widgets/breeze_theme_colors.dart';
 
 const _destinations = [
@@ -47,6 +48,170 @@ class _PageState extends State<_Page> {
 }
 
 void main() {
+  testWidgets(
+    'Android System navigation floats above all five tabs and reserves its inset once',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      tester.view.padding = const FakeViewPadding(top: 52, bottom: 24);
+      tester.view.viewPadding = const FakeViewPadding(top: 52, bottom: 24);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPadding);
+      addTearDown(tester.view.resetViewPadding);
+      addTearDown(tester.view.resetViewInsets);
+      final controller = PersistentTabController();
+      addTearDown(controller.dispose);
+      const labels = ['发现', '书架', '追更', '下载', '更多'];
+      const bodyKey = ValueKey('nav-body');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(2)),
+            child: child!,
+          ),
+          home: ListenableBuilder(
+            listenable: controller,
+            builder: (context, _) {
+              final height = VideoNativeNavigation.androidFloatingHeightOf(
+                context,
+              );
+              final media = MediaQuery.of(context);
+              return app.MainNativeTabHost(
+                controller: controller,
+                floatingNavigation: true,
+                navBarHeight: height,
+                screens: [
+                  for (final label in labels)
+                    Builder(
+                      builder: (context) => Scaffold(
+                        body: ListView(
+                          key: bodyKey,
+                          padding: EdgeInsets.only(
+                            bottom: NativeNavigationInset.scrollBottom(context),
+                          ),
+                          children: [
+                            for (var i = 0; i < 32; i++)
+                              ListTile(title: Text('$label-$i')),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+                navigation: MediaQuery(
+                  data: media,
+                  child: VideoNativeNavigation(
+                    items: [
+                      for (final label in labels)
+                        BottomNavigationBarItem(
+                          icon: label == '追更'
+                              ? const Badge(
+                                  label: Text('4'),
+                                  child: Icon(Icons.notifications),
+                                )
+                              : const Icon(Icons.home),
+                          label: label,
+                        ),
+                    ],
+                    symbols: const [],
+                    currentIndex: controller.index,
+                    onTap: controller.jumpToTab,
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final shell = find.byType(NativeMaterialSurface);
+      final list = find.byKey(bodyKey).hitTestable();
+      final nav = find.byType(VideoNativeNavigation);
+      final destinations = find.byType(BreezeNavigationTab);
+      final selection = find.byKey(
+        const ValueKey('android-navigation-selection'),
+      );
+      expect(shell, findsOneWidget);
+      expect(tester.widget<NativeMaterialSurface>(shell).androidGlass, isTrue);
+      expect(tester.widget<NativeMaterialSurface>(shell).floating, isTrue);
+      expect(
+        find.descendant(of: shell, matching: find.byType(BackdropFilter)),
+        findsNothing,
+      );
+      expect(find.byType(NavigationBar), findsNothing);
+      expect(find.byType(NavigationDestination), findsNothing);
+      expect(selection, findsOneWidget);
+      final secondDestination = destinations.at(1);
+      final destinationInk = find.descendant(
+        of: secondDestination,
+        matching: find.byWidgetPredicate((widget) => widget is InkResponse),
+      );
+      final ink = tester.widget<InkResponse>(destinationInk);
+      expect(ink.splashFactory, NoSplash.splashFactory);
+      expect(ink.highlightColor, Colors.transparent);
+      expect(ink.focusColor!.a, greaterThan(0));
+      final interrupted = await tester.startGesture(
+        tester.getCenter(secondDestination),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(controller.index, 0);
+      await interrupted.cancel();
+      await tester.pumpAndSettle();
+      expect(controller.index, 0);
+      expect(tester.getRect(shell), const Rect.fromLTRB(12, 732, 378, 812));
+      expect(tester.getRect(list).bottom, 844);
+      expect(NativeNavigationInset.of(tester.element(list)), 112);
+      expect(find.text('4'), findsOneWidget);
+      for (final (index, label) in labels.indexed) {
+        final tab = find.descendant(of: nav, matching: find.text(label));
+        expect(tab, findsOneWidget);
+        final target = tester.getRect(destinations.at(index));
+        expect(target.top, tester.getRect(shell).top);
+        expect(target.bottom, tester.getRect(shell).bottom);
+        await tester.tap(tab);
+        await tester.pumpAndSettle();
+        expect(tester.widget<VideoNativeNavigation>(nav).currentIndex, index);
+        final plate = tester.getRect(selection);
+        expect(plate.left, closeTo(target.left + 4, .01));
+        expect(plate.right, closeTo(target.right - 4, .01));
+        expect(plate.top, target.top + 5);
+        expect(plate.bottom, target.bottom - 5);
+        expect(plate.contains(tester.getCenter(tab)), isTrue);
+        expect(find.text('$label-0').hitTestable(), findsOneWidget);
+      }
+
+      final scrollable = find.descendant(
+        of: list,
+        matching: find.byType(Scrollable),
+      );
+      final position = tester.state<ScrollableState>(scrollable).position;
+      position.jumpTo(position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      final last = find.text('更多-31');
+      expect(last.hitTestable(), findsOneWidget);
+      expect(tester.getRect(last).bottom, lessThan(tester.getRect(shell).top));
+
+      tester.view.padding = const FakeViewPadding(top: 52, bottom: 48);
+      tester.view.viewPadding = const FakeViewPadding(top: 52, bottom: 48);
+      await tester.pumpAndSettle();
+      expect(tester.getRect(shell).bottom, 788);
+      expect(NativeNavigationInset.of(tester.element(list)), 136);
+      expect(tester.getRect(list).bottom, 844);
+
+      tester.view.padding = const FakeViewPadding(top: 52);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+      await tester.pumpAndSettle();
+      expect(shell.hitTestable(), findsNothing);
+      expect(NativeNavigationInset.of(tester.element(list)), 0);
+      expect(tester.takeException(), isNull);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
   testWidgets(
     'Android back respects tab modals and folder history before returning to Discover',
     (tester) async {

@@ -11,6 +11,7 @@ import 'package:video_player_platform_interface/video_player_platform_interface.
 import 'package:zephyr/page/video/native_playback_session.dart';
 import 'package:zephyr/page/video/native_video_page.dart';
 import 'package:zephyr/page/video/video_export_records.dart';
+import 'package:zephyr/page/video/video_downloaded_details.dart';
 import 'package:zephyr/page/video/video_download.dart';
 import 'package:zephyr/page/video/video_local_resources.dart';
 import 'package:zephyr/page/video/video_local_playback.dart';
@@ -160,7 +161,7 @@ void main() {
       'local route respects record=$recording resume=$resume completed=$completed',
       (tester) async {
         final cover = Uri.parse('https://cover.test/fixture.jpg');
-        await tester.runAsync(() async {
+        Future<void> prepare() async {
           await seed();
           await VideoPlaybackPreferences.save('recordHistory', recording);
           await VideoPlaybackPreferences.save('resumeProgress', resume);
@@ -178,7 +179,11 @@ void main() {
               completed: completed,
             ),
           );
-        });
+        }
+
+        await tester.runAsync(
+          () => prepare().timeout(const Duration(seconds: 15)),
+        );
         final platform = _FileVideoPlatform();
         final previous = VideoPlayerPlatform.instance;
         VideoPlayerPlatform.instance = platform;
@@ -299,7 +304,32 @@ void main() {
         } finally {
           await tester.pumpWidget(const SizedBox.shrink());
           await frames(() => platform.events.isEmpty);
-          await tester.runAsync(VideoWatchHistory.flush);
+          // Poster and storage continuations can still belong to this test's
+          // FakeAsync zone after the player has released its file.
+          var drained = false;
+          Object? drainError;
+          unawaited(
+            Future.wait<void>([
+              VideoWatchHistory.flush(),
+              VideoDownloadedDetails.ensureLocalPoster({
+                'resourceId': id,
+                'source': 'local-source',
+                'url': page.toString(),
+                'quality': '720p',
+              }).then<void>((_) {}),
+              runExclusiveStorageOperation(() async {}),
+            ]).then<void>(
+              (_) {
+                drained = true;
+              },
+              onError: (Object error, StackTrace _) {
+                drainError = error;
+                drained = true;
+              },
+            ),
+          );
+          await frames(() => drained, phase: 'offline poster and storage drain');
+          expect(drainError, isNull);
           VideoLocalResources.requireNoReadLeases();
         }
         expect(tester.takeException(), isNull);

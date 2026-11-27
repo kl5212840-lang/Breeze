@@ -21,6 +21,11 @@ import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/service/image_recovery.dart';
 import 'package:zephyr/service/page_read_tasks.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart'
+    show
+        isPluginEndpointUpdating,
+        pluginEndpointRevision,
+        settingsPluginEndpointChanges;
 
 export 'package:zephyr/page/comic_info/bloc/get_comic_info_event.dart';
 export 'package:zephyr/page/comic_info/bloc/get_comic_info_state.dart';
@@ -28,10 +33,18 @@ export 'package:zephyr/page/comic_info/bloc/get_comic_info_state.dart';
 const _throttleDuration = Duration(milliseconds: 100);
 
 class _ComicInfoLoad {
-  _ComicInfoLoad(this.event, this.scope, {this.automaticRecovery = false});
+  _ComicInfoLoad(
+    this.event,
+    this.scope, {
+    required this.endpointRevision,
+    this.automaticRecovery = false,
+    this.refresh = false,
+  });
   final GetComicInfoEvent event;
   final Object scope;
+  final int endpointRevision;
   final bool automaticRecovery;
+  final bool refresh;
   final result = Completer<bool>();
   final done = Completer<void>();
   final retired = Completer<void>();
@@ -59,14 +72,19 @@ class GetComicInfoBloc extends Bloc<GetComicInfoEvent, GetComicInfoState> {
       onChanged: _notifyRecovery,
     );
     _sessionChanges = pluginSessionWriteFence.changes.listen(_sessionChanged);
+    _endpointChanges = settingsPluginEndpointChanges.listen(
+      (change) => _endpointChanged(change.source),
+    );
     on<GetComicInfoEvent>(_fetchComicInfo, transformer: _transformLoads);
   }
 
   final Future<PluginComicDetail> Function(GetComicInfoEvent)? readDetail;
   late final ImageRecoveryController _recovery;
   late final StreamSubscription<PluginSessionBoundary> _sessionChanges;
+  late final StreamSubscription<({String source, bool refresh})>
+  _endpointChanges;
   GetComicInfoEvent? _lastEvent;
-  GetComicInfoEvent? _sessionRefresh;
+  GetComicInfoEvent? _sessionRefresh, _endpointRefresh;
   bool _recoveryActive = true;
   Object? _lastFailure;
   String? get failureDiagnosticMessage {
@@ -78,6 +96,44 @@ class GetComicInfoBloc extends Bloc<GetComicInfoEvent, GetComicInfoState> {
     _recoveryActive = value;
     _recovery.setActive(value);
     _refreshChangedSession();
+    _refreshChangedEndpoint();
+  }
+
+  int _readEndpointRevision(GetComicInfoEvent event) =>
+      event.type == ComicEntryType.download
+      ? 0
+      : pluginEndpointRevision(normalizePluginId(event.from));
+
+  void _endpointChanged(String source) {
+    if (isClosed) return;
+    final load = _active;
+    if (load != null &&
+        !load.result.isCompleted &&
+        load.event.type != ComicEntryType.download &&
+        normalizePluginId(load.event.from) == source &&
+        load.endpointRevision != _readEndpointRevision(load.event)) {
+      _replaceEndpointRead(load);
+      return;
+    }
+    _refreshChangedEndpoint();
+  }
+
+  void _replaceEndpointRead(_ComicInfoLoad load) {
+    _endpointRefresh = load.event;
+    load.retire();
+    _refreshChangedEndpoint();
+  }
+
+  void _refreshChangedEndpoint() {
+    final event = _endpointRefresh;
+    if (event == null || !_recoveryActive || isClosed) return;
+    final source = normalizePluginId(event.from);
+    if (isPluginEndpointUpdating(source) ||
+        pluginSessionWriteFence.isChanging(source)) {
+      return;
+    }
+    _endpointRefresh = null;
+    unawaited(_refresh(event.copyWith()));
   }
 
   void _refreshChangedSession() {
@@ -101,6 +157,10 @@ class GetComicInfoBloc extends Bloc<GetComicInfoEvent, GetComicInfoState> {
     bool isRemoteFromSource(GetComicInfoEvent event) =>
         event.type != ComicEntryType.download &&
         normalizePluginId(event.from) == boundary.source;
+    final endpointRefresh = _endpointRefresh;
+    if (endpointRefresh != null && isRemoteFromSource(endpointRefresh)) {
+      _endpointRefresh = null;
+    }
     final pending = _refreshLoad;
     final visible = pending != null && !pending.result.isCompleted
         ? pending.event
@@ -156,24 +216,29 @@ class GetComicInfoBloc extends Bloc<GetComicInfoEvent, GetComicInfoState> {
       return Future.value(false);
     }
     final active = _active;
+    final scope = _scope(event);
+    final endpoint = _readEndpointRevision(event);
     if (active != null &&
         !active.result.isCompleted &&
-        active.scope == _scope(event)) {
+        active.scope == scope &&
+        active.endpointRevision == endpoint) {
       return active.result.future;
     }
-    final scope = _scope(event);
     final pending = _refreshTask;
     if (pending != null &&
         _refreshScope == scope &&
+        _refreshLoad?.endpointRevision == endpoint &&
         _refreshLoad?.result.isCompleted == false) {
       return pending;
     }
     _refreshLoad?.retire();
-    if (active != null && active.scope != scope) active.retire();
+    if (active != null) active.retire();
     final load = _ComicInfoLoad(
       event,
       scope,
+      endpointRevision: endpoint,
       automaticRecovery: automaticRecovery,
+      refresh: !automaticRecovery,
     );
     _awaited[event] = load;
     final task = load.result.future;
@@ -203,7 +268,13 @@ class GetComicInfoBloc extends Bloc<GetComicInfoEvent, GetComicInfoState> {
       if (identical(_awaited[event], requested)) _awaited.remove(event);
       return;
     }
-    final load = requested ?? _ComicInfoLoad(event, _scope(event));
+    final load =
+        requested ??
+        _ComicInfoLoad(
+          event,
+          _scope(event),
+          endpointRevision: _readEndpointRevision(event),
+        );
     _active = load;
     if (requested == null) {
       _throttle?.cancel();
@@ -227,6 +298,7 @@ class GetComicInfoBloc extends Bloc<GetComicInfoEvent, GetComicInfoState> {
   Future<void> close() {
     _recovery.dispose();
     unawaited(_sessionChanges.cancel());
+    unawaited(_endpointChanges.cancel());
     _throttle?.cancel();
     for (final load in _awaited.values) {
       load.retire();
@@ -246,7 +318,11 @@ class GetComicInfoBloc extends Bloc<GetComicInfoEvent, GetComicInfoState> {
     bool sessionCurrent() =>
         generation == pluginSessionWriteFence.generation(source) &&
         !pluginSessionWriteFence.isChanging(source);
+    bool currentEndpoint() =>
+        load.endpointRevision == _readEndpointRevision(event) &&
+        !isPluginEndpointUpdating(source);
     _lastEvent = event;
+    _endpointRefresh = null;
     if (sessionCurrent()) _sessionRefresh = null;
     if (!load.automaticRecovery) _recovery.reset();
     final refreshing =
@@ -283,6 +359,10 @@ class GetComicInfoBloc extends Bloc<GetComicInfoEvent, GetComicInfoState> {
         }
         remoteRead = true;
         if (!sessionCurrent()) return;
+        if (!currentEndpoint()) {
+          _replaceEndpointRead(load);
+          return;
+        }
         final pluginResult = await Future.any<PluginComicDetail?>([
           readDetail?.call(event) ??
               load.reads.run(
@@ -291,7 +371,8 @@ class GetComicInfoBloc extends Bloc<GetComicInfoEvent, GetComicInfoState> {
                   event.comicId,
                   event.from,
                   extern: event.extern,
-                  canPublish: canCommit,
+                  refresh: load.refresh,
+                  canPublish: () => canCommit() && currentEndpoint(),
                   taskGroupKey: group,
                 ),
               ),
@@ -299,6 +380,10 @@ class GetComicInfoBloc extends Bloc<GetComicInfoEvent, GetComicInfoState> {
         ]);
         if (pluginResult == null || !canCommit()) return;
         if (!sessionCurrent()) throw const PluginSessionChanged();
+        if (!currentEndpoint()) {
+          _replaceEndpointRead(load);
+          return;
+        }
         comicInfo = pluginResult.source;
         normalComicInfo = pluginResult.normalInfo;
         resolvedComicId = pluginResult.comicId;
@@ -339,6 +424,10 @@ class GetComicInfoBloc extends Bloc<GetComicInfoEvent, GetComicInfoState> {
       load.finish(true);
     } catch (e, s) {
       if (!canCommit()) return;
+      if (remoteRead && sessionCurrent() && !currentEndpoint()) {
+        _replaceEndpointRead(load);
+        return;
+      }
       final error = remoteRead && !sessionCurrent()
           ? const PluginSessionChanged()
           : e;

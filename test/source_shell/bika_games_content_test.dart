@@ -55,6 +55,8 @@ void main() {
     expect(cover.path, 'games/fixture.jpg');
     expect(cover.from, source);
     expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 2));
   });
 
   testWidgets('games use a dedicated request and detail returns to the same retained list', (tester) async {
@@ -112,6 +114,35 @@ void main() {
     expect(list.controller!.offset, position);
     expect(find.text(t.common.retry), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('pull starts a fresh head while a stale game page is held', (tester) async {
+    final next = Completer<Map<String, dynamic>>();
+    final pages = <int>[];
+    await tester.pumpWidget(_host(BikaGamesContent(
+      source: bikaPlusSourceId,
+      load: (_, _, core) async {
+        final page = core['page'] as int;
+        pages.add(page);
+        if (page == 2) return next.future;
+        if (pages.length == 1) return _list(count: 12, more: true);
+        return _list(count: 0);
+      },
+    )));
+    await tester.pumpAndSettle();
+    final list = tester.widget<ListView>(find.byKey(const PageStorageKey('bika-games-scroll')));
+    list.controller!.jumpTo(list.controller!.position.maxScrollExtent);
+    await tester.pump();
+    expect(pages, [1, 2]);
+    final refresh = tester.widget<RefreshIndicator>(find.byType(RefreshIndicator));
+    await refresh.onRefresh();
+    await tester.pumpAndSettle();
+    expect(pages, [1, 2, 1]);
+    expect(find.text('暂无游戏'), findsOneWidget);
+    next.complete(_list(page: 2));
+    await tester.pumpAndSettle();
+    expect(find.text('暂无游戏'), findsOneWidget);
+    expect(find.text('离线游戏样本0'), findsNothing);
   });
 
   testWidgets('late data after changing sources cannot replace the new source list', (tester) async {

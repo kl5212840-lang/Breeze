@@ -140,6 +140,7 @@ class _Translations$videoSource$en_US extends Translations$videoSource$zh_CN {
 	@override String get lineUntested => 'Not tested';
 	@override String lineResolved({required Object seconds}) => 'Resolved in ${seconds} s';
 	@override String lineResolveFailed({required Object seconds}) => 'Resolution failed · ${seconds} s';
+	@override String lineResolveTimedOut({required Object seconds}) => 'Resolution timed out · ${seconds} s';
 	@override String get autoSwitching => 'Trying another source for this episode';
 	@override String get recentUpdates => 'Recent updates';
 	@override String get siteNotices => 'Site news';
@@ -270,6 +271,8 @@ class _Translations$common$en_US extends Translations$common$zh_CN {
 	@override String get reload => 'Reload';
 	@override String get confirm => 'Confirm';
 	@override String get close => 'Close';
+	@override String get expandFilterPanel => 'Expand filter panel';
+	@override String get collapseFilterPanel => 'Collapse filter panel';
 	@override String get back => 'Back';
 	@override String get help => 'Help';
 	@override String get gotIt => 'Got it';
@@ -432,14 +435,13 @@ class _Translations$settings$en_US extends Translations$settings$zh_CN {
 	@override String get maskedKeywordsSubtitle => 'Hide matching content in search results';
 	@override String get maskedKeywordsEmpty => 'No masked keywords';
 	@override String get maskedKeywordsInputHint => 'Enter new keyword...';
-	@override String get chineseConvert => 'Chinese script for comics';
-	@override String get chineseConvertSubtitle => 'Convert comic titles, summaries, chapters and comments';
+	@override String get chineseConvert => 'Comic script conversion';
+	@override String get chineseConvertSubtitle => 'Titles, summaries, chapter names, and comments';
 	@override String get chineseConvertOff => 'Off';
 	@override String get chineseConvertSimplified => 'Simplified Chinese';
 	@override String get chineseConvertTraditional => 'Traditional Chinese';
 	@override String get proxy => 'Proxy';
 	@override String get proxySubtitle => 'Configure proxy address';
-	@override String get proxyEnabledSubtitle => 'Route network requests through a proxy when enabled';
 	@override String get proxyAddress => 'Proxy address';
 	@override String get proxyHint => 'Enter proxy address (HTTP / SOCKS5)';
 	@override String proxyCurrent({required Object currentProxy}) => 'Current proxy: ${currentProxy}';
@@ -450,7 +452,6 @@ class _Translations$settings$en_US extends Translations$settings$zh_CN {
 	@override String get updateAccelerate => 'Update acceleration';
 	@override String get updateAccelerateSubtitle => 'Use proxy to accelerate GitHub update links';
 	@override String get retryDownloadUntilSuccess => 'Keep retrying comic downloads';
-	@override String get retryDownloadUntilSuccessSubtitle => 'Keep trying after temporary errors.';
 	@override String get sync => 'Sync';
 	@override String get syncConfig => 'Sync config';
 	@override String get syncConfigSubtitle => 'Enter the connection address and sign-in details';
@@ -460,7 +461,7 @@ class _Translations$settings$en_US extends Translations$settings$zh_CN {
 	@override String get syncServiceWebdav => 'WebDAV';
 	@override String get syncServiceS3 => 'S3';
 	@override String get autoSync => 'Auto sync';
-	@override String get autoSyncSubtitle => 'Merge records; “Sync plugins” also backs up accounts. No automatic account, settings or image restore.';
+	@override String get autoSyncSubtitle => 'Merges records while Breeze runs. With Sync plugins on, it also backs up accounts.';
 	@override String get syncNotify => 'Automatic sync progress';
 	@override String get syncNotifySubtitle => 'Notify when automatic sync starts and finishes';
 	@override String get syncSettings => 'Sync settings';
@@ -627,6 +628,11 @@ class _Translations$settings$en_US extends Translations$settings$zh_CN {
 	@override String get debugAddress => 'Debug address';
 	@override String get notSet => 'Not set';
 	@override String get interfaceStyle => 'Interface style';
+	@override String get bottomNavigation => 'Bottom navigation';
+	@override String get navigationVisibility => 'Visibility';
+	@override String get navigationFixed => 'Fixed';
+	@override String get navigationHideOnScroll => 'Hide on scroll';
+	@override String get navigationTransparency => 'Transparency';
 	@override late final _Translations$settings$switchStyles$en_US switchStyles = _Translations$settings$switchStyles$en_US._(_root);
 	@override String get interfaceStyleHint => 'Use one style for navigation, menus, buttons and playback. Web content stays unchanged.';
 	@override String get syncNow => 'Sync now';
@@ -660,8 +666,8 @@ class _Translations$settings$en_US extends Translations$settings$zh_CN {
 	@override String get moreDetails => 'Details';
 	@override String get syncContent => 'Sync content';
 	@override String get syncBehavior => 'Sync options';
-	@override String get syncScopeNote => 'Favorites and history always merge. Privacy artwork follows settings; downloaded files stay on this device.';
-	@override String get syncMergeNote => 'Upload uses this device’s choices; restore uses the cloud’s.';
+	@override String get syncScopeNote => 'Merges favorites, history, progress, and follows. Downloads stay on this device.';
+	@override String get syncMergeNote => 'Settings and images follow the selected direction.';
 	@override String get appearanceOptions => 'Display options';
 	@override String get categoryGridFormat => 'Grid layout';
 	@override String get categoryGridGroup => 'Display';
@@ -684,17 +690,22 @@ class _Translations$settings$en_US extends Translations$settings$zh_CN {
 	@override String appearanceGalleryConfirmHint({required Object count}) => '${count} unselected images will be removed from this device\'s gallery and Breeze cloud.';
 	@override String sectionHelp({required Object section}) => 'About ${section}';
 	@override String get syncAdvanced => 'Advanced';
-	@override String get cloudReplaceTitle => 'Replace all cloud data with this device';
-	@override String get cloudReplaceScope => 'Replace all current and older cloud archives with the data on this device, including retained data for uninstalled plugins. Cloud-only data will be deleted. Downloads and this device’s cover protection switch are excluded.';
-	@override String get cloudReplacePreview => 'Preview cloud data';
-	@override String get cloudReplaceConfirmTitle => 'Replace all cloud data?';
-	@override String get cloudReplaceConfirmHint => 'The cloud data shown in the preview will be overwritten or deleted. This cannot be undone. Do not sync other devices during this operation.';
+	@override String get cloudReplaceTitle => 'Replace cloud with this device';
+	@override String get cloudReplaceScope => 'Replace current and legacy cloud archives, including retained data from uninstalled plugins. Downloads and protection settings stay on this device.';
+	@override String get cloudReplacePreview => 'Preview cloud changes';
+	@override String get cloudReplaceReview => 'Continue to replace';
+	@override String get cloudReplaceReading => 'Reading data for preview…';
+	@override String get cloudReplaceWriting => 'Replacing cloud data with this device…';
+	@override String get cloudReplaceConfirmTitle => 'Replace cloud with this device?';
+	@override String get cloudReplaceConfirmHint => 'Changed cloud data will be overwritten. Cloud-only data will be deleted. This can’t be undone. Pause sync on other devices first.';
 	@override String get cloudReplaceConfirm => 'Replace cloud data';
-	@override String get cloudReplaceSuccess => 'Cloud data replaced';
+	@override String get cloudReplaceSuccess => 'Cloud archives replaced with this device’s data.';
 	@override String get cloudReplaceStale => 'Local or cloud data changed. Preview again.';
-	@override String get cloudReplacePartial => 'Replacement did not finish. Some cloud data may have changed. Local data is preserved. Preview again to retry.';
-	@override String cloudReplaceArchives({required Object current, required Object legacy}) => 'Replace ${current} files in current archives and ${legacy} files in older archives.';
-	@override String cloudReplaceCounts({required Object local, required Object removed, required Object overwritten}) => '${local} local items · ${removed} cloud-only items to delete · ${overwritten} items to overwrite';
+	@override String get cloudReplacePartial => 'Replacement incomplete. Cloud data may have changed. Preview again.';
+	@override String cloudReplaceArchives({required Object current, required Object legacy}) => 'Current cloud files: ${current} · Legacy: ${legacy}';
+	@override String cloudReplaceLocalCount({required Object count}) => 'Local ${count}';
+	@override String cloudReplaceRemovedCount({required Object count}) => 'Remove ${count}';
+	@override String cloudReplaceOverwrittenCount({required Object count}) => 'Overwrite ${count}';
 	@override String get cloudReplaceComic => 'Comic records';
 	@override String get cloudReplaceVideo => 'Video records';
 	@override String get cloudReplacePlugins => 'Plugin data';
@@ -702,7 +713,7 @@ class _Translations$settings$en_US extends Translations$settings$zh_CN {
 	@override String get cloudReplaceImages => 'Images';
 	@override String get bookshelfScope => 'Applies to comics and videos';
 	@override String get oldPageRollbackScope => 'Show Home and Rankings in the main navigation after restarting';
-	@override String get proxyApplyScope => 'New visits use this setting; requests already in progress keep their current route.';
+	@override String get proxyApplyScope => 'Applies to new requests';
 }
 
 // Path: bookshelf
@@ -960,7 +971,6 @@ class _Translations$comicInfo$en_US extends Translations$comicInfo$zh_CN {
 	@override String get likeSuccess => 'Liked';
 	@override String get unlikeSuccess => 'Unliked';
 	@override String get likeDisabled => 'This plugin does not support this feature';
-	@override String get likeUnconfirmed => 'Could not confirm the like status. Refresh the details and try again.';
 	@override String localCollectFailed({required Object error}) => 'Local favorite failed: ${error}';
 	@override String likeFailed({required Object error}) => 'Like failed: ${error}';
 	@override String loadFailedWithError({required Object error}) => '${error}\nLoading failed, please retry.';
@@ -1005,17 +1015,24 @@ class _Translations$reader$en_US extends Translations$reader$zh_CN {
 	@override String get topHalfNext => 'Top half: scroll down';
 	@override String get bottomHalfNext => 'Bottom half: scroll down';
 	@override String get tapPageTurnWebtoonAll => 'Anywhere: scroll down';
-	@override String get tapPageTurnAllHelp => 'The center is reserved for reader controls. Tap elsewhere for the next page.';
-	@override String get tapPageTurnSplitHelp => 'The center is reserved for reader controls. The other half turns to the previous page.';
-	@override String get tapPageTurnWebtoonAllHelp => 'The center is reserved for reader controls. Tap elsewhere to scroll down.';
-	@override String get tapPageTurnWebtoonSplitHelp => 'The center is reserved for reader controls. Tap the other half to scroll up.';
+	@override String get toolbarTapArea => 'Reader toolbar';
+	@override String get customToolbarTapArea => 'Trigger only in the center';
+	@override String get toolbarTapAreaHelp => 'The entire reading area can trigger the toolbar.';
+	@override String get toolbarTapAreaWidth => 'Area width';
+	@override String editSliderPercentage({required Object title}) => 'Edit ${title}';
+	@override String sliderPercentageRange({required Object min, required Object max}) => 'Enter a whole number from ${min}% to ${max}%.';
+	@override String get tapPageTurnNeedsCustomArea => 'Limit the toolbar to the center to use tap-to-turn.';
+	@override String get tapPageTurnAllHelp => 'Tap outside the toolbar area to go to the next page.';
+	@override String get tapPageTurnSplitHelp => 'Tap either side of the toolbar area to turn pages.';
+	@override String get tapPageTurnWebtoonAllHelp => 'Tap outside the toolbar area to scroll down.';
+	@override String get tapPageTurnWebtoonSplitHelp => 'Tap outside the toolbar area to scroll up or down.';
 	@override String get tapPageTurnWebtoonDisabled => 'Turn on webtoon tap scrolling to choose a zone.';
 	@override String get tapPageTurnWebtoonPerComicDisabled => 'Turn on webtoon tap scrolling in Gestures to choose a zone for this comic.';
 	@override String get reverseHorizontalPageTurn => 'Reverse arrow keys';
 	@override String get reverseHorizontalPageTurnSubtitle => 'Swap left/right arrow keys for page turning, useful for right-to-left manga';
 	@override String get webtoonTapPageTurn => 'Webtoon tap scrolling';
 	@override String get enableWebtoonTapPageTurn => 'Enable tap scrolling';
-	@override String get webtoonTapPageTurnSubtitle => 'When off, the whole page is reserved for reader controls.';
+	@override String get webtoonTapPageTurnSubtitle => 'When off, tapping outside the toolbar area does not scroll.';
 	@override String get readingMode => 'Reading mode';
 	@override String get perComicReadMode => 'Enable per-comic settings';
 	@override String get perComicReadModeSubtitle => 'Only applies to the current comic';
@@ -1118,8 +1135,8 @@ class _Translations$reader$en_US extends Translations$reader$zh_CN {
 	@override String get doubleTapZoom => 'Double-tap zoom';
 	@override String get doubleTapZoomAnimation => 'Double-tap zoom animation';
 	@override String get doubleTapZoomSubtitle => 'Double-tap image to toggle zoom';
-	@override String get doubleTapOpenMenu => 'Double-tap to open menu';
-	@override String get doubleTapOpenMenuSubtitle => 'Double-tap page to open menu (exclusive with zoom)';
+	@override String get doubleTapOpenMenu => 'Double-tap to open toolbar';
+	@override String get doubleTapOpenMenuSubtitle => 'Open the toolbar with a double tap. This replaces double-tap zoom.';
 	@override String get volumeKeyPageTurn => 'Volume key page turn';
 	@override String get enableVolumeKeyPageTurn => 'Enable volume key page turn';
 	@override String get volumeKeyPageTurnSubtitle => 'Use volume keys to turn pages/scroll';
@@ -1147,11 +1164,38 @@ class _Translations$plugin$en_US extends Translations$plugin$zh_CN {
 
 	// Translations
 	@override String get routeOptionInUse => 'In use';
+	@override String get routeAutomatic => 'Automatic';
+	@override String get routeUnknown => 'Untested';
+	@override String get routeAvailable => 'Available';
+	@override String get routeUnavailable => 'Unavailable';
+	@override String get routeReadOnly => 'Reading only';
+	@override String get copyOnlyReadOnlyRoutesAvailable => 'Reading only';
+	@override String get autoRouteDescription => 'Select a connection automatically.';
+	@override String get autoRouteModesDescription => 'Availability keeps the connection working. Speed uses test results.';
+	@override String get copyAutoRouteModesDescription => 'Availability prioritizes account access. Speed uses reading latency.';
+	@override String get routeAutomaticAvailable => 'Auto (availability)';
+	@override String get routeAutomaticSpeed => 'Auto (speed)';
 	@override String get store => 'Plugin Store';
 	@override String get searchHint => 'Search plugins by name or feature...';
 	@override String get localInstall => 'Local install';
 	@override String get networkInstall => 'Network install';
 	@override String get cloudComponents => 'Cloud components';
+	@override String get cloudUpdateAll => 'Update all';
+	@override String get cloudInstallAll => 'Install all';
+	@override String get cloudNoUpdates => 'No updates';
+	@override String get cloudNoInstalls => 'Nothing to install';
+	@override String cloudUpdateCount({required Object count}) => '${count} available';
+	@override String cloudInstallCount({required Object count}) => '${count} available';
+	@override String confirmCloudUpdateAll({required Object count}) => 'Update ${count} installed plugins with compatible newer versions in the full store catalog?';
+	@override String confirmCloudInstallAll({required Object count}) => 'Install ${count} compatible plugins from the full store catalog that are not installed on this device?';
+	@override String cloudBatchUpdating({required Object name, required Object current, required Object total}) => 'Updating ${name} (${current}/${total})';
+	@override String cloudBatchInstalling({required Object name, required Object current, required Object total}) => 'Installing ${name} (${current}/${total})';
+	@override String cloudBatchUpdated({required Object count}) => 'Updated ${count}';
+	@override String cloudBatchInstalled({required Object count}) => 'Installed ${count}';
+	@override String cloudBatchFailed({required Object count}) => 'Failed ${count}';
+	@override String cloudBatchSkipped({required Object count}) => 'Skipped ${count}';
+	@override String cloudPluginUpdated({required Object name}) => '${name} updated';
+	@override String get cloudBatchFailureTitle => 'Plugins that failed';
 	@override String get loginSuccess => 'Please sign in on the website.';
 	@override String get chromiumFallbackUnsupported => 'External Chromium auto-login fallback is not supported on this platform';
 	@override String get switchingToExternalBrowser => 'Built-in WebView login is limited, switching to external browser...';
@@ -1207,34 +1251,35 @@ class _Translations$plugin$en_US extends Translations$plugin$zh_CN {
 	@override String get installingFromNetwork => 'Downloading network plugin...';
 	@override String cloudDownloadFailed({required Object error}) => 'Cloud download failed: ${error}';
 	@override String networkDownloadFailed({required Object error}) => 'Network plugin download failed: ${error}';
-	@override String get remoteAssetNotFound => 'Remote plugin file not found (404). It may have been removed or the version updated. Please check the update URL or retry later';
-	@override String get githubRateLimited => 'GitHub access is rate limited (likely IP-based). Please retry later or switch networks; a truly missing plugin still reports 404';
-	@override String get remoteReturnedWebPage => 'Remote returned a web page instead of a plugin file. The remote file may be missing or the link expired. Please check the plugin update URL';
-	@override String get remoteEmptyResponse => 'Remote returned empty content. Please retry later or check the update URL';
-	@override String remoteAccessDenied({required Object status}) => 'Remote access denied (HTTP ${status}). Please check your network or retry later';
-	@override String remoteServerError({required Object status}) => 'Remote server error (HTTP ${status}). Please retry later';
-	@override String remoteHttpError({required Object status}) => 'Remote request failed (HTTP ${status}). Please retry later';
-	@override String get downloadedScriptInvalid => 'Downloaded file is not a valid plugin script (looks like a web or error page). Please verify the remote file exists and retry';
-	@override String get downloadedScriptCorrupted => 'Downloaded plugin file is corrupted or failed to decompress. Please retry later';
+	@override String get remoteAssetNotFound => 'Plugin file unavailable. Refresh and try again';
+	@override String get githubRateLimited => 'Too many download requests. Try again later';
+	@override String get remoteReturnedWebPage => 'This link doesn\'t point to a plugin file';
+	@override String get remoteEmptyResponse => 'Can\'t download the plugin right now. Try again later';
+	@override String get remoteAccessDenied => 'Can\'t access the plugin file. Try again later';
+	@override String get remoteServerError => 'Download service unavailable. Try again later';
+	@override String get remoteHttpError => 'Download failed. Try again later';
+	@override String get downloadedScriptInvalid => 'Can\'t install this file. Check that you selected a plugin file';
+	@override String get downloadedScriptCorrupted => 'Plugin file is damaged. Download it again';
 	@override String get networkUnstableRetry => 'Unstable network, download failed. Please check your connection and retry';
 	@override String cloudVersion({required Object version}) => 'Cloud ${version}';
 	@override String localVersion({required Object version}) => 'Local ${version}';
 	@override String loginTitle({required Object name}) => '${name} Login';
-	@override String get cookieSynced => 'Login cookie synced';
-	@override String get lineTestSuccess => 'Connection tests passed';
-	@override String get lineTestPartial => 'Some connections failed. Check the line results.';
+	@override String get cookieSynced => 'Sign-in information synced';
+	@override String get lineTestSuccess => 'All connections passed the test';
+	@override String get lineTestPartial => 'Some connections are available';
 	@override String get lineTestFailure => 'No working connection found. Try again later.';
+	@override String get lineTestCancelled => 'Connection test cancelled';
 	@override String get executeSuccess => 'Executed successfully';
 	@override String get userInfoTitle => 'User info';
-	@override String get userInfoLoadFailed => 'Failed to load user info';
+	@override String get userInfoLoadFailed => 'Can’t load account details right now';
 	@override String get unnamedAction => 'Unnamed action';
 	@override String get pluginSettingsLoading => 'Loading plugin settings...';
 	@override String get pluginSettingsLoadFailed => 'Failed to load plugin settings';
-	@override String get actionNotExecutable => 'Action not executable: missing fnPath';
+	@override String get actionNotExecutable => 'This action is currently unavailable';
 	@override String get saved => 'Saved';
 	@override String get close => 'Close';
 	@override String get sync => 'Sync';
-	@override String get syncSubtitle => 'Check and update via npm / updateUrl';
+	@override String get syncSubtitle => 'Check for plugin updates';
 	@override String get syncing => 'Syncing plugin...';
 	@override String get syncSuccess => 'Sync successful';
 	@override String syncFailed({required Object error}) => 'Sync failed: ${error}';
@@ -1245,7 +1290,7 @@ class _Translations$plugin$en_US extends Translations$plugin$zh_CN {
 	@override String get updating => 'Updating plugin...';
 	@override String get updateSuccess => 'Update successful';
 	@override String updateFailed({required Object error}) => 'Update failed: ${error}';
-	@override String get uuidMismatch => 'Plugin id mismatch, install rejected';
+	@override String get uuidMismatch => 'This file is for a different plugin. Choose the matching file';
 	@override String currentVersion({required Object version}) => 'Current version ${version}';
 	@override String get debugAddress => 'Development server URL';
 	@override String get developmentDebugHint => 'Load the plugin from the specified development URL.';
@@ -1654,9 +1699,16 @@ class _Translations$search$en_US extends Translations$search$zh_CN {
 	final TranslationsEnUs _root; // ignore: unused_field
 
 	// Translations
+	@override String get defaultScope => 'Default search scope';
+	@override String get noScopeSources => 'No plugins support configurable search scope';
 	@override String get title => 'Search';
 	@override String get searchHint => 'Search';
 	@override String get enterKeyword => 'Enter a search term';
+	@override String get jmPopularTopics => 'Popular topics';
+	@override String get jmRandomRecommendations => 'Random picks';
+	@override String get jmMoreRecommendations => 'Shuffle';
+	@override String jmSearchYear({required Object year}) => '${year}';
+	@override String get jmDateFilter => 'Filter by date';
 	@override String get selectSource => 'Select Source';
 	@override String get advancedSearchNotSupported => 'Current plugin does not support advanced search';
 	@override String get advancedSearchOptions => 'Advanced Search Options';
@@ -1793,6 +1845,34 @@ class _Translations$sourceProfile$en_US extends Translations$sourceProfile$zh_CN
 	final TranslationsEnUs _root; // ignore: unused_field
 
 	// Translations
+	@override String jmFolderAvailable({required Object name}) => 'Found folder “${name}”';
+	@override String get jmFolderLimit => 'Your folders are full. Delete one to create another.';
+	@override String jmFolderLimitDetail({required Object count}) => 'You already have ${count} folders. Delete one to create another.';
+	@override String get jmFolderMissing => 'This folder no longer exists.';
+	@override String get jmSiteWatchHistory => 'Site reading history';
+	@override String get jmMoveToFolder => 'Move to folder';
+	@override String jmMovedToFolder({required Object name}) => 'Moved to “${name}”';
+	@override String get jmFolderUnconfirmed => 'The change could not be confirmed. Refresh your folders to check.';
+	@override String get jmFolderRenamed => 'Folder renamed';
+	@override String get jmFolderDeleted => 'Folder deleted';
+	@override String jmDeleteFolder({required Object name}) => 'Delete “${name}”?';
+	@override String get jmRefreshFolders => 'Refresh folders';
+	@override String get jmAccountFavorites => 'JM account favorites';
+	@override String get jmFollowSeries => 'Follow series updates';
+	@override String get jmFavoriteTags => 'Favorite tags';
+	@override String get jmTagCollection => 'Saved tags';
+	@override String get jmFollowCollection => 'Tracked comics';
+	@override String get jmAddTag => 'Add tag';
+	@override String get jmTagName => 'Tag name';
+	@override String get jmTagExists => 'This tag is already saved';
+	@override String get jmTagInvalid => 'Enter one tag without commas';
+	@override String get jmRemoveTag => 'Remove tag';
+	@override String jmRemoveTagConfirm({required Object name}) => 'Remove “${name}” from saved tags?';
+	@override String get jmTagAdded => 'Tag saved';
+	@override String get jmTagRemoved => 'Tag removed';
+	@override String get jmTagWriteFailed => 'Couldn’t update the tag. Try again later';
+	@override String get jmTagsEmpty => 'No saved tags yet';
+	@override String get jmFollowsEmpty => 'No tracked comics yet';
 	@override String get websiteCheckinUnavailable => 'Could not verify website check-in. Try again later.';
 	@override String websiteCheckedIn({required Object date}) => '${date} · Website confirms check-in';
 	@override String websiteNotCheckedIn({required Object date}) => '${date} · Website shows no check-in';
@@ -1863,6 +1943,8 @@ class _Translations$sourceShell$en_US extends Translations$sourceShell$zh_CN {
 	@override String get searchScopeAll => 'All fields';
 	@override String get searchScopeTitle => 'Title';
 	@override String get searchScopeTeam => 'Translation group';
+	@override String get searchScopeOriginalWork => 'Original work';
+	@override String get searchScopeCharacter => 'Character';
 	@override String get searchScopeTags => 'Tags';
 	@override String get searchScopeAuthor => 'Author';
 	@override String collectionLoadingCount({required Object loaded, required Object total}) => '${loaded} / ${total} loaded';
@@ -1987,6 +2069,29 @@ class _Translations$searchResult$en_US extends Translations$searchResult$zh_CN {
 	final TranslationsEnUs _root; // ignore: unused_field
 
 	// Translations
+	@override String get blockCategories => 'Hide categories';
+	@override String get categories => 'Categories';
+	@override String get bikaContentBlocking => 'Content blocking';
+	@override String get bikaContentBlockingScope => 'Applies to Bika results in source search, combined search, categories, and random works.';
+	@override String get bikaBlockedTitles => 'Title contains';
+	@override String get bikaBlockedTags => 'Exact tag match';
+	@override String get bikaBlockedAuthors => 'Exact author match';
+	@override String get bikaBlockRuleInput => 'Enter one rule';
+	@override String get bikaBlockRuleDuplicate => 'This rule already exists';
+	@override String bikaBlockRulesCount({required Object count}) => '${count} set';
+	@override String bikaRemoveBlockRule({required Object rule}) => 'Remove “${rule}”';
+	@override String get bikaBlockedCategories => 'Hide works by category';
+	@override String get bikaHiddenHomeCategories => 'Hide categories from Home';
+	@override String get bikaFilterSiteCategories => 'Site categories';
+	@override String get bikaFilterLoadedWorks => 'Loaded works';
+	@override String get bikaFilterTitleContains => 'Title contains';
+	@override String get bikaFilterTranslationTeam => 'Translation team';
+	@override String get bikaFilterCategoryHiddenBySettings => 'Restore this category in the plugin’s Content Blocking settings.';
+	@override String get bikaFilterCategoryHiddenByQuickBar => 'Tap the category in the bar to restore it.';
+	@override String get shuffle => 'Shuffle';
+	@override String get randomWorks => 'Random works';
+	@override String get noVisibleRandomWorks => 'No works to show in this batch';
+	@override String get resultNavigation => 'Navigate results';
 	@override String get enterPageNumber => 'Enter page number';
 	@override String get pleaseEnterNumber => 'Please enter a number';
 	@override String get returnToTop => 'Return to top';
@@ -1994,6 +2099,9 @@ class _Translations$searchResult$en_US extends Translations$searchResult$zh_CN {
 	@override String get jump => 'Jump';
 	@override String pageProgress({required Object page, required Object pages}) => 'Page ${page} / ${pages}';
 	@override String pageOnly({required Object page}) => 'Page ${page}';
+	@override String get findingMatches => 'Finding matching works…';
+	@override String get noMatchesYet => 'No matches yet';
+	@override String get noMatchingWorks => 'No matching works';
 	@override String pageOutOfRange({required Object pages}) => 'Enter a page between 1 and ${pages}';
 	@override String get pageMustBePositive => 'Enter a page greater than zero';
 	@override String itemPageCount({required Object count}) => '${count} pages';
@@ -2074,12 +2182,14 @@ class _Translations$comicFollow$en_US extends Translations$comicFollow$zh_CN {
 	@override String get sort => 'Sort';
 	@override String get lastRead => 'Last read';
 	@override String get lastUpdate => 'Latest check';
+	@override String get recentUpdate => 'Recent updates';
 	@override String checkTime({required Object time}) => 'Check time: ${time}';
 	@override String lastCheckAttempt({required Object time}) => 'Last attempt: ${time}';
 	@override String get notRead => 'Not read yet';
 	@override String lastReadChapter({required Object chapter}) => 'Read to: ${chapter}';
 	@override String latestChapter({required Object count, required Object chapter}) => 'Latest: ${count} / ${chapter}';
 	@override String knownChapter({required Object count, required Object chapter}) => 'Last known: ${count} / ${chapter}';
+	@override String chapterSummary({required Object count, required Object chapter}) => '${count} chapters · ${chapter}';
 	@override String get noUnread => 'No unseen updates';
 	@override String get showAll => 'Show all';
 	@override String get latestChapterFailed => 'Failed to get latest chapter';
@@ -2089,10 +2199,10 @@ class _Translations$comicFollow$en_US extends Translations$comicFollow$zh_CN {
 	@override String knownCount({required Object count}) => 'Last known: ${count} chapters';
 	@override String get fetchFailed => 'Fetch failed';
 	@override String newChaptersShort({required Object diff}) => '${diff} new';
+	@override String get updateBadge => 'New';
 	@override String newUnreadChaptersShort({required Object diff}) => '${diff} unread';
 	@override String get update => 'Update';
 	@override String get retry => 'Retry';
-	@override String readProgress({required Object read, required Object total}) => '${read} of ${total} read';
 	@override String readProgressUnknown({required Object total}) => '${total} total';
 	@override String get updatedJustNow => 'Just checked';
 	@override String updatedMinutesAgo({required Object minutes}) => 'Checked ${minutes} min ago';
@@ -2115,11 +2225,11 @@ class _Translations$comicFollow$en_US extends Translations$comicFollow$zh_CN {
 	@override String get checkFailedReason => 'Couldn\'t check for updates';
 	@override String get checkNetworkUnavailable => 'Can\'t reach the source';
 	@override String get checkSourceUnavailable => 'Source temporarily unavailable';
-	@override String get checkInvalidResponse => 'The source didn\'t return usable chapter information';
-	@override String get checkSignInRequired => 'Sign in to the source, then retry';
-	@override String get checkComicNotFound => 'The source couldn\'t find this comic';
-	@override String get checkPluginDisabled => 'Enable the source plugin to check for updates';
-	@override String get checkPluginMissing => 'Install the source plugin to check for updates';
+	@override String get checkInvalidResponse => 'Chapter data unavailable';
+	@override String get checkSignInRequired => 'Sign in to the source';
+	@override String get checkComicNotFound => 'Comic unavailable at source';
+	@override String get checkPluginDisabled => 'Enable the source plugin';
+	@override String get checkPluginMissing => 'Install the source plugin';
 	@override String lastSuccessfulCheck({required Object time}) => 'Last successful check: ${time}';
 	@override String lastReadAt({required Object time}) => 'Last read: ${time}';
 	@override String get mediaComic => 'Comics';
@@ -2228,6 +2338,7 @@ class _Translations$videoPlayback$en_US extends Translations$videoPlayback$zh_CN
 	@override String get subscriptionsEmpty => 'No subscription videos available';
 	@override String get inlinePlaybackNote => 'Playing in Breeze; return to view the original details';
 	@override String get episodes => 'Episodes';
+	@override String get chooseEpisode => 'Episodes';
 	@override String get related => 'You may also like';
 	@override String get searchVideos => 'Search videos';
 	@override String get closeSearch => 'Close search';
@@ -2240,9 +2351,15 @@ class _Translations$videoPlayback$en_US extends Translations$videoPlayback$zh_CN
 	@override String get settingsSaveFailed => 'Could not save settings. Please try again.';
 	@override String get settingsLoadFailed => 'Video settings could not be loaded';
 	@override String get autoplay => 'Autoplay';
+	@override String get autoplayNext => 'Autoplay next';
+	@override String get repeatMode => 'Repeat';
+	@override String get repeatSingle => 'Repeat one';
+	@override String get repeatPlaylist => 'Repeat playlist';
+	@override String get repeatOff => 'Off';
+	@override String get mirrorVideo => 'Mirror video';
 	@override String get resumeProgress => 'Resume playback';
 	@override String get recordHistory => 'Save watch history';
-	@override String get recordHistoryNote => 'Turning this off stops saving watch history and automatic resume. Existing records are kept.';
+	@override String get recordHistoryNote => 'Stops automatic resume. Keeps existing history.';
 	@override String get watchHistory => 'Watch history';
 	@override String get historyEmpty => 'No watch history yet';
 	@override String get historyEmptyNote => 'Native videos appear here after 5 seconds of playback or completion. Tap a record to watch again';
@@ -2262,8 +2379,10 @@ class _Translations$videoPlayback$en_US extends Translations$videoPlayback$zh_CN
 	@override String fastForwardRate({required Object rate}) => 'Playing at ${rate}×';
 	@override String get controlsTimeout => 'Auto-hide controls';
 	@override String seconds({required Object value}) => '${value} seconds';
-	@override String get coverVideo => 'Fill frame';
-	@override String get coverVideoNote => 'Landscape may crop edges. Portrait keeps the full frame.';
+	@override String get pictureSize => 'Picture size';
+	@override String get pictureFit => 'Fit';
+	@override String get pictureStretch => 'Stretch';
+	@override String get pictureFill => 'Fill';
 	@override String get doubleTapAction => 'Double-tap action';
 	@override String get doubleTapSeek => 'Center: play/pause; sides: back/forward 10 seconds';
 	@override String get doubleTapPlay => 'Play or pause';
@@ -2273,6 +2392,12 @@ class _Translations$videoPlayback$en_US extends Translations$videoPlayback$zh_CN
 	@override String get breezeControls => 'Breeze controls';
 	@override String get controlsStyleNote => 'Shared with Breeze appearance settings. Changes apply immediately.';
 	@override String get swipeSeekNote => 'Drag to preview; release to seek.';
+	@override String get landscapeAdjustments => 'Swipe vertically for brightness and volume';
+	@override String get adjustBrightness => 'Brightness';
+	@override String get adjustVolume => 'Volume';
+	@override String get landscapeAdjustmentSides => 'Swipe zones';
+	@override String get brightnessLeftVolumeRight => 'Brightness left · Volume right';
+	@override String get volumeLeftBrightnessRight => 'Volume left · Brightness right';
 	@override String get lockControls => 'Lock player controls';
 	@override String get unlockControls => 'Unlock player controls';
 	@override String get expandDescription => 'Show description';
@@ -2336,6 +2461,7 @@ class _Translations$videoPlayback$en_US extends Translations$videoPlayback$zh_CN
 	@override String get episodeSwitching => 'Preparing episode';
 	@override String get episodeOrderUnavailable => 'Current video is absent from the episode list. Choose an episode manually.';
 	@override String get episodeAscending => 'Ascending';
+	@override String get episodeListOrder => 'Display order';
 	@override String get episodeDescending => 'Descending';
 	@override String get episodeSite => 'Site order';
 	@override String get episodeManual => 'Custom';
@@ -2351,6 +2477,7 @@ class _Translations$videoPlayback$en_US extends Translations$videoPlayback$zh_CN
 	@override String get episodeMoveUp => 'Move up';
 	@override String get episodeMoveDown => 'Move down';
 	@override String get episodeWaiting => 'Loading the selected video…';
+	@override String episodeWaitingFor({required Object episode}) => 'Switching to “${episode}”…';
 	@override String get settingsSearch => 'Search video settings';
 	@override String get settingsScopeCommon => 'All video sources';
 	@override String get settingsScopeSource => 'This source only';
@@ -2521,24 +2648,24 @@ class _Translations$download$en_US extends Translations$download$zh_CN {
 	@override String get durationLong => '30–60 minutes';
 	@override String get durationHour => '1 hour or longer';
 	@override String get lastSuccessfulLine => 'Last successful download';
-	@override String get concurrentComicImages => 'Simultaneous comic images';
-	@override String get concurrentComicImagesHint => 'Download up to 10 images at once per chapter. Changes apply from the next chapter. Lower plugin limits apply automatically.';
-	@override String get concurrentVideos => 'Concurrent video downloads';
+	@override String get concurrentComicImages => 'Comic image downloads';
+	@override String get concurrentVideos => 'Video downloads';
 	@override String get wifiOnly => 'Download over Wi-Fi only';
 	@override String get waitingForWifi => 'Waiting for Wi-Fi';
 	@override String get waitingForNetwork => 'Waiting for network';
 	@override String get notEnoughSpace => 'Free device storage, then retry.';
 	@override String get sourceUnavailableHint => 'This record has no usable work address, so it cannot open the work directly.';
-	@override String get helpExport => 'Export saves a copy to the selected location. You can still read or play the original download in Breeze. Comic chapters export as ZIP, and regular videos can be saved to Files.';
-	@override String get helpHls => 'On iOS, HLS offline packages play only inside Breeze and cannot currently be exported.';
+	@override String get helpExport => 'Export saves a copy to the selected location. You can still read or play the original download in Breeze. Comics export as ZIP archives, and MP4 videos export as video files.';
+	@override String get helpHls => 'HLS offline packages play only in Breeze.';
 	@override String get helpDelete => 'Removing local downloads requires confirmation and does not delete the work from its source.';
 	@override String get helpContinue => 'Downloads continue when you close the download panel or leave this page.';
-	@override String get helpContinueIos => 'Downloads continue while you use Breeze. They pause when you lock the screen or switch apps, and resume when you return.';
+	@override String get helpContinueIos => 'Some tasks pause when you lock the screen or switch apps and resume when you return.';
 	@override String get exportFiles => 'Export a copy of the download';
 	@override String get exportCopySaved => 'Copy saved';
 	@override String get exportBusy => 'The file is in use. Try exporting again in a moment.';
-	@override String exportComicScope({required Object chapters, required Object pages}) => 'Export ${chapters} locally saved chapters and ${pages} images. Missing content is not downloaded.';
-	@override String exportComicMissing({required Object pages, required Object chapters}) => '${pages} images are missing; ${chapters} chapters have no local files.';
+	@override String exportComicScope({required Object chapters, required Object pages}) => 'The copy includes ${chapters} chapters and ${pages} images saved on this device.';
+	@override String exportComicMissingPages({required Object pages}) => 'Missing images (${pages}).';
+	@override String exportComicUnavailableChapters({required Object chapters}) => 'Chapters without local files (${chapters}).';
 	@override String get exportNothing => 'No local files are available to export.';
 	@override String get exportChanged => 'Downloaded files changed. Please export again.';
 	@override String get exportNoSpace => 'Not enough local space to prepare the export.';
@@ -2601,7 +2728,6 @@ class _Translations$download$en_US extends Translations$download$zh_CN {
 	@override String get videoCancelled => 'Cancelled';
 	@override String get videoInterrupted => 'Download interrupted. Open the video page to download again.';
 	@override String get videoForegroundNote => 'Downloads continue after you close this panel. View them in Downloads.';
-	@override String get videoForegroundNoteIos => 'View your tasks in Downloads. They pause when you lock the screen or switch apps, and resume when you return to Breeze.';
 	@override String get videoRecordFailed => 'The download record could not be saved and may be missing when you reopen the app.';
 	@override String get inProgress => 'In progress';
 	@override String get incomplete => 'Unfinished';
@@ -2702,6 +2828,10 @@ class _Translations$videoDownload$en_US extends Translations$videoDownload$zh_CN
 	// Translations
 	@override String get title => 'Download video';
 	@override String get chooseQuality => 'Choose a quality to download';
+	@override String get selectQuality => 'Choose quality';
+	@override String get backToEpisodes => 'Back to selection';
+	@override String get sourceQuality => 'Use site quality';
+	@override String get noCommonQuality => 'The selected videos have no quality in common';
 	@override String get loading => 'Getting download options…';
 	@override String get empty => 'No download options are available.';
 	@override String downloading({required Object quality}) => 'Downloading ${quality}';
@@ -3286,7 +3416,6 @@ class _Translations$routingRules$en_US extends Translations$routingRules$zh_CN {
 	@override String get resetRules => 'This removes rules previously added by Breeze from the config copy';
 	@override String get removalHint => 'Restoring existing rules also requires generating and selecting a new config copy.';
 	@override String get internalProxy => 'Breeze built-in proxy';
-	@override String get internalHint => 'Forward Breeze network requests through a specified proxy address';
 	@override String get internalWarning => 'Turn off the Breeze built-in proxy for these plugins before importing routing rules.';
 	@override String get notApplied => 'Breeze cannot confirm whether Shadowrocket has enabled this configuration.';
 	@override String get busy => 'Preparing config copy…';
@@ -3310,7 +3439,7 @@ class _Translations$routingRules$en_US extends Translations$routingRules$zh_CN {
 	@override String get installed => 'Installed plugins';
 	@override String get importedFiles => 'Plugins imported from files';
 	@override String get noPlugins => 'No installed plugins. Import a CJS file to extract domains.';
-	@override String get importHint => 'Read a CJS file to extract domains. The plugin is not installed.';
+	@override String get importHint => 'Pick a file, preview it, then choose how to import.';
 	@override String domainCount({required Object count}) => '${count} domains';
 	@override String get scan => 'Update domains';
 	@override String get scanning => 'Scanning plugin file…';
@@ -3469,28 +3598,30 @@ class _Translations$backupFlow$en_US extends Translations$backupFlow$zh_CN {
 
 	// Translations
 	@override String get includeFiles => 'Include downloaded files';
-	@override String get includeFilesHint => 'Comic and video downloads are excluded by default.';
+	@override String get includeFilesHint => 'Backs up favorites, records, settings, plugin data, and custom images.';
+	@override String get exportConfirmTitle => 'Export backup?';
+	@override String get exportWithoutDownloads => 'Downloads excluded';
 	@override String get protection => 'Backup protection';
 	@override String get standard => 'Standard file';
 	@override String get protected => 'Password protected';
 	@override String get standardHint => 'This file may include saved plugin accounts. Keep it private.';
-	@override String get encryptedExportHint => 'Requires a password and can include saved S3 and WebDAV accounts.';
+	@override String get encryptedExportHint => 'Password required. May include cloud sync accounts.';
 	@override String get merge => 'Keep and merge';
-	@override String get mergeHint => 'Keep local data and merge records from the backup, retaining newer changes and deletions.';
+	@override String get mergeHint => 'Merges local and backup data, keeping newer changes and deletions.';
 	@override String get restore => 'Replace local data';
-	@override String get restoreHint => 'Replace local records and the contents selected below with the backup.';
+	@override String get restoreHint => 'Replaces local records and selected data.';
 	@override String get mergeTitle => 'Merge this backup?';
 	@override String get restoreTitle => 'Replace local data?';
 	@override String get mergeConfirm => 'Merge records, retaining newer changes and deletions.';
-	@override String get restoreConfirm => 'Restore replaces current records, settings and plugins. If the backup includes local images, it replaces those too. This cannot be directly undone.';
+	@override String get restoreConfirm => 'Replace local records and the selected items. Custom images follow your selections. This cannot be directly undone.';
 	@override String createdAt({required Object value}) => 'Backup date: ${value}';
 	@override String version({required Object value}) => 'Backup version: ${value}';
 	@override String records({required Object count}) => 'Entries: ${count}';
 	@override String settingsChoice({required Object value}) => 'Settings: ${value}';
 	@override String pluginsChoice({required Object value}) => 'Plugins: ${value}';
 	@override String get downloadsIncluded => 'Includes downloaded files';
-	@override String get downloadsExcluded => 'This backup has no downloaded files. Local downloads will be kept.';
-	@override String get mergeFilesHint => 'Keep local downloads and add downloads from the backup. The import stops if they cannot be merged.';
+	@override String get downloadsExcluded => 'This backup has no downloads. Local downloads stay.';
+	@override String get mergeFilesHint => 'Merges downloads. Import stops if they can’t merge.';
 	@override String get restoreFilesHint => 'This backup includes downloaded files and will replace local downloads.';
 	@override String get mergeDone => 'Merge complete';
 	@override String get restoreDone => 'Restore complete';
@@ -3514,8 +3645,8 @@ class _Translations$backupFlow$en_US extends Translations$backupFlow$zh_CN {
 	@override String get replaceRecordsWarning => 'The backup will replace local favorites, folders, tracking, and reading or viewing records.';
 	@override String get replaceSettingsWarning => 'Settings and the private gallery will also be replaced.';
 	@override String get replacePluginsWarning => 'Plugins and account settings will also be replaced.';
-	@override String get replaceIrreversible => 'This cannot be directly undone. Your cloud connection and app lock stay unchanged.';
-	@override String get replaceIrreversibleWithCloudAccount => 'This cannot be directly undone. Your app lock stays unchanged.';
+	@override String get replaceIrreversible => 'This cannot be undone. Cloud connections and app lock stay as they are.';
+	@override String get replaceIrreversibleWithCloudAccount => 'This cannot be undone. App lock stays as it is.';
 	@override String get protectionSharedHint => 'Applies to both cloud sync and backup files.';
 }
 
@@ -3925,6 +4056,7 @@ extension on TranslationsEnUs {
 			'videoSource.lineUntested' => 'Not tested',
 			'videoSource.lineResolved' => ({required Object seconds}) => 'Resolved in ${seconds} s',
 			'videoSource.lineResolveFailed' => ({required Object seconds}) => 'Resolution failed · ${seconds} s',
+			'videoSource.lineResolveTimedOut' => ({required Object seconds}) => 'Resolution timed out · ${seconds} s',
 			'videoSource.autoSwitching' => 'Trying another source for this episode',
 			'videoSource.recentUpdates' => 'Recent updates',
 			'videoSource.siteNotices' => 'Site news',
@@ -4044,6 +4176,8 @@ extension on TranslationsEnUs {
 			'common.reload' => 'Reload',
 			'common.confirm' => 'Confirm',
 			'common.close' => 'Close',
+			'common.expandFilterPanel' => 'Expand filter panel',
+			'common.collapseFilterPanel' => 'Collapse filter panel',
 			'common.back' => 'Back',
 			'common.help' => 'Help',
 			'common.gotIt' => 'Got it',
@@ -4180,14 +4314,13 @@ extension on TranslationsEnUs {
 			'settings.maskedKeywordsSubtitle' => 'Hide matching content in search results',
 			'settings.maskedKeywordsEmpty' => 'No masked keywords',
 			'settings.maskedKeywordsInputHint' => 'Enter new keyword...',
-			'settings.chineseConvert' => 'Chinese script for comics',
-			'settings.chineseConvertSubtitle' => 'Convert comic titles, summaries, chapters and comments',
+			'settings.chineseConvert' => 'Comic script conversion',
+			'settings.chineseConvertSubtitle' => 'Titles, summaries, chapter names, and comments',
 			'settings.chineseConvertOff' => 'Off',
 			'settings.chineseConvertSimplified' => 'Simplified Chinese',
 			'settings.chineseConvertTraditional' => 'Traditional Chinese',
 			'settings.proxy' => 'Proxy',
 			'settings.proxySubtitle' => 'Configure proxy address',
-			'settings.proxyEnabledSubtitle' => 'Route network requests through a proxy when enabled',
 			'settings.proxyAddress' => 'Proxy address',
 			'settings.proxyHint' => 'Enter proxy address (HTTP / SOCKS5)',
 			'settings.proxyCurrent' => ({required Object currentProxy}) => 'Current proxy: ${currentProxy}',
@@ -4198,7 +4331,6 @@ extension on TranslationsEnUs {
 			'settings.updateAccelerate' => 'Update acceleration',
 			'settings.updateAccelerateSubtitle' => 'Use proxy to accelerate GitHub update links',
 			'settings.retryDownloadUntilSuccess' => 'Keep retrying comic downloads',
-			'settings.retryDownloadUntilSuccessSubtitle' => 'Keep trying after temporary errors.',
 			'settings.sync' => 'Sync',
 			'settings.syncConfig' => 'Sync config',
 			'settings.syncConfigSubtitle' => 'Enter the connection address and sign-in details',
@@ -4208,7 +4340,7 @@ extension on TranslationsEnUs {
 			'settings.syncServiceWebdav' => 'WebDAV',
 			'settings.syncServiceS3' => 'S3',
 			'settings.autoSync' => 'Auto sync',
-			'settings.autoSyncSubtitle' => 'Merge records; “Sync plugins” also backs up accounts. No automatic account, settings or image restore.',
+			'settings.autoSyncSubtitle' => 'Merges records while Breeze runs. With Sync plugins on, it also backs up accounts.',
 			'settings.syncNotify' => 'Automatic sync progress',
 			'settings.syncNotifySubtitle' => 'Notify when automatic sync starts and finishes',
 			'settings.syncSettings' => 'Sync settings',
@@ -4375,6 +4507,11 @@ extension on TranslationsEnUs {
 			'settings.debugAddress' => 'Debug address',
 			'settings.notSet' => 'Not set',
 			'settings.interfaceStyle' => 'Interface style',
+			'settings.bottomNavigation' => 'Bottom navigation',
+			'settings.navigationVisibility' => 'Visibility',
+			'settings.navigationFixed' => 'Fixed',
+			'settings.navigationHideOnScroll' => 'Hide on scroll',
+			'settings.navigationTransparency' => 'Transparency',
 			'settings.switchStyles.title' => 'Switch style',
 			'settings.switchStyles.classic' => 'Classic',
 			'settings.switchStyles.symbols' => 'Symbols',
@@ -4408,20 +4545,20 @@ extension on TranslationsEnUs {
 			'settings.syncTaskFinishing' => 'Finishing and verifying',
 			'settings.syncTaskWaiting' => 'Choose images to keep',
 			'settings.syncTaskFinished' => 'Sync complete',
+			_ => null,
+		} ?? switch (path) {
 			'settings.syncTaskCancelled' => 'Sync stopped. You can retry.',
 			'settings.syncTaskImagePrepare' => 'Preparing images',
 			'settings.syncTaskImageUpload' => 'Uploading and verifying images',
 			'settings.syncTaskImageProgress' => ({required Object action, required Object done, required Object total, required Object percent}) => '${action} ${done}/${total} · ${percent}%',
 			'settings.syncKeepForeground' => 'Keep the app in the foreground',
 			'settings.syncTaskForegroundHint' => 'You can visit other pages in the app. Keep the app in the foreground until sync finishes.',
-			_ => null,
-		} ?? switch (path) {
 			'settings.unifiedSyncNote' => 'Merge selected data with the cloud, including custom images. Downloaded files are excluded.',
 			'settings.moreDetails' => 'Details',
 			'settings.syncContent' => 'Sync content',
 			'settings.syncBehavior' => 'Sync options',
-			'settings.syncScopeNote' => 'Favorites and history always merge. Privacy artwork follows settings; downloaded files stay on this device.',
-			'settings.syncMergeNote' => 'Upload uses this device’s choices; restore uses the cloud’s.',
+			'settings.syncScopeNote' => 'Merges favorites, history, progress, and follows. Downloads stay on this device.',
+			'settings.syncMergeNote' => 'Settings and images follow the selected direction.',
 			'settings.appearanceOptions' => 'Display options',
 			'settings.categoryGridFormat' => 'Grid layout',
 			'settings.categoryGridGroup' => 'Display',
@@ -4444,17 +4581,22 @@ extension on TranslationsEnUs {
 			'settings.appearanceGalleryConfirmHint' => ({required Object count}) => '${count} unselected images will be removed from this device\'s gallery and Breeze cloud.',
 			'settings.sectionHelp' => ({required Object section}) => 'About ${section}',
 			'settings.syncAdvanced' => 'Advanced',
-			'settings.cloudReplaceTitle' => 'Replace all cloud data with this device',
-			'settings.cloudReplaceScope' => 'Replace all current and older cloud archives with the data on this device, including retained data for uninstalled plugins. Cloud-only data will be deleted. Downloads and this device’s cover protection switch are excluded.',
-			'settings.cloudReplacePreview' => 'Preview cloud data',
-			'settings.cloudReplaceConfirmTitle' => 'Replace all cloud data?',
-			'settings.cloudReplaceConfirmHint' => 'The cloud data shown in the preview will be overwritten or deleted. This cannot be undone. Do not sync other devices during this operation.',
+			'settings.cloudReplaceTitle' => 'Replace cloud with this device',
+			'settings.cloudReplaceScope' => 'Replace current and legacy cloud archives, including retained data from uninstalled plugins. Downloads and protection settings stay on this device.',
+			'settings.cloudReplacePreview' => 'Preview cloud changes',
+			'settings.cloudReplaceReview' => 'Continue to replace',
+			'settings.cloudReplaceReading' => 'Reading data for preview…',
+			'settings.cloudReplaceWriting' => 'Replacing cloud data with this device…',
+			'settings.cloudReplaceConfirmTitle' => 'Replace cloud with this device?',
+			'settings.cloudReplaceConfirmHint' => 'Changed cloud data will be overwritten. Cloud-only data will be deleted. This can’t be undone. Pause sync on other devices first.',
 			'settings.cloudReplaceConfirm' => 'Replace cloud data',
-			'settings.cloudReplaceSuccess' => 'Cloud data replaced',
+			'settings.cloudReplaceSuccess' => 'Cloud archives replaced with this device’s data.',
 			'settings.cloudReplaceStale' => 'Local or cloud data changed. Preview again.',
-			'settings.cloudReplacePartial' => 'Replacement did not finish. Some cloud data may have changed. Local data is preserved. Preview again to retry.',
-			'settings.cloudReplaceArchives' => ({required Object current, required Object legacy}) => 'Replace ${current} files in current archives and ${legacy} files in older archives.',
-			'settings.cloudReplaceCounts' => ({required Object local, required Object removed, required Object overwritten}) => '${local} local items · ${removed} cloud-only items to delete · ${overwritten} items to overwrite',
+			'settings.cloudReplacePartial' => 'Replacement incomplete. Cloud data may have changed. Preview again.',
+			'settings.cloudReplaceArchives' => ({required Object current, required Object legacy}) => 'Current cloud files: ${current} · Legacy: ${legacy}',
+			'settings.cloudReplaceLocalCount' => ({required Object count}) => 'Local ${count}',
+			'settings.cloudReplaceRemovedCount' => ({required Object count}) => 'Remove ${count}',
+			'settings.cloudReplaceOverwrittenCount' => ({required Object count}) => 'Overwrite ${count}',
 			'settings.cloudReplaceComic' => 'Comic records',
 			'settings.cloudReplaceVideo' => 'Video records',
 			'settings.cloudReplacePlugins' => 'Plugin data',
@@ -4462,7 +4604,7 @@ extension on TranslationsEnUs {
 			'settings.cloudReplaceImages' => 'Images',
 			'settings.bookshelfScope' => 'Applies to comics and videos',
 			'settings.oldPageRollbackScope' => 'Show Home and Rankings in the main navigation after restarting',
-			'settings.proxyApplyScope' => 'New visits use this setting; requests already in progress keep their current route.',
+			'settings.proxyApplyScope' => 'Applies to new requests',
 			'bookshelf.facets.title' => 'Filter favorites',
 			'bookshelf.facets.resultTitle' => ({required Object count}) => 'Filter · ${count} results',
 			'bookshelf.facets.current' => 'Current folder',
@@ -4741,7 +4883,6 @@ extension on TranslationsEnUs {
 			'comicInfo.likeSuccess' => 'Liked',
 			'comicInfo.unlikeSuccess' => 'Unliked',
 			'comicInfo.likeDisabled' => 'This plugin does not support this feature',
-			'comicInfo.likeUnconfirmed' => 'Could not confirm the like status. Refresh the details and try again.',
 			'comicInfo.localCollectFailed' => ({required Object error}) => 'Local favorite failed: ${error}',
 			'comicInfo.likeFailed' => ({required Object error}) => 'Like failed: ${error}',
 			'comicInfo.loadFailedWithError' => ({required Object error}) => '${error}\nLoading failed, please retry.',
@@ -4777,17 +4918,24 @@ extension on TranslationsEnUs {
 			'reader.topHalfNext' => 'Top half: scroll down',
 			'reader.bottomHalfNext' => 'Bottom half: scroll down',
 			'reader.tapPageTurnWebtoonAll' => 'Anywhere: scroll down',
-			'reader.tapPageTurnAllHelp' => 'The center is reserved for reader controls. Tap elsewhere for the next page.',
-			'reader.tapPageTurnSplitHelp' => 'The center is reserved for reader controls. The other half turns to the previous page.',
-			'reader.tapPageTurnWebtoonAllHelp' => 'The center is reserved for reader controls. Tap elsewhere to scroll down.',
-			'reader.tapPageTurnWebtoonSplitHelp' => 'The center is reserved for reader controls. Tap the other half to scroll up.',
+			'reader.toolbarTapArea' => 'Reader toolbar',
+			'reader.customToolbarTapArea' => 'Trigger only in the center',
+			'reader.toolbarTapAreaHelp' => 'The entire reading area can trigger the toolbar.',
+			'reader.toolbarTapAreaWidth' => 'Area width',
+			'reader.editSliderPercentage' => ({required Object title}) => 'Edit ${title}',
+			'reader.sliderPercentageRange' => ({required Object min, required Object max}) => 'Enter a whole number from ${min}% to ${max}%.',
+			'reader.tapPageTurnNeedsCustomArea' => 'Limit the toolbar to the center to use tap-to-turn.',
+			'reader.tapPageTurnAllHelp' => 'Tap outside the toolbar area to go to the next page.',
+			'reader.tapPageTurnSplitHelp' => 'Tap either side of the toolbar area to turn pages.',
+			'reader.tapPageTurnWebtoonAllHelp' => 'Tap outside the toolbar area to scroll down.',
+			'reader.tapPageTurnWebtoonSplitHelp' => 'Tap outside the toolbar area to scroll up or down.',
 			'reader.tapPageTurnWebtoonDisabled' => 'Turn on webtoon tap scrolling to choose a zone.',
 			'reader.tapPageTurnWebtoonPerComicDisabled' => 'Turn on webtoon tap scrolling in Gestures to choose a zone for this comic.',
 			'reader.reverseHorizontalPageTurn' => 'Reverse arrow keys',
 			'reader.reverseHorizontalPageTurnSubtitle' => 'Swap left/right arrow keys for page turning, useful for right-to-left manga',
 			'reader.webtoonTapPageTurn' => 'Webtoon tap scrolling',
 			'reader.enableWebtoonTapPageTurn' => 'Enable tap scrolling',
-			'reader.webtoonTapPageTurnSubtitle' => 'When off, the whole page is reserved for reader controls.',
+			'reader.webtoonTapPageTurnSubtitle' => 'When off, tapping outside the toolbar area does not scroll.',
 			'reader.readingMode' => 'Reading mode',
 			'reader.perComicReadMode' => 'Enable per-comic settings',
 			'reader.perComicReadModeSubtitle' => 'Only applies to the current comic',
@@ -4890,8 +5038,8 @@ extension on TranslationsEnUs {
 			'reader.doubleTapZoom' => 'Double-tap zoom',
 			'reader.doubleTapZoomAnimation' => 'Double-tap zoom animation',
 			'reader.doubleTapZoomSubtitle' => 'Double-tap image to toggle zoom',
-			'reader.doubleTapOpenMenu' => 'Double-tap to open menu',
-			'reader.doubleTapOpenMenuSubtitle' => 'Double-tap page to open menu (exclusive with zoom)',
+			'reader.doubleTapOpenMenu' => 'Double-tap to open toolbar',
+			'reader.doubleTapOpenMenuSubtitle' => 'Open the toolbar with a double tap. This replaces double-tap zoom.',
 			'reader.volumeKeyPageTurn' => 'Volume key page turn',
 			'reader.enableVolumeKeyPageTurn' => 'Enable volume key page turn',
 			'reader.volumeKeyPageTurnSubtitle' => 'Use volume keys to turn pages/scroll',
@@ -4910,11 +5058,40 @@ extension on TranslationsEnUs {
 			'reader.saveImagePermissionDenied' => 'Save failed: please grant album access in settings',
 			'reader.imageSaveFailedWithError' => ({required Object error}) => 'Save failed: ${error}',
 			'plugin.routeOptionInUse' => 'In use',
+			'plugin.routeAutomatic' => 'Automatic',
+			_ => null,
+		} ?? switch (path) {
+			'plugin.routeUnknown' => 'Untested',
+			'plugin.routeAvailable' => 'Available',
+			'plugin.routeUnavailable' => 'Unavailable',
+			'plugin.routeReadOnly' => 'Reading only',
+			'plugin.copyOnlyReadOnlyRoutesAvailable' => 'Reading only',
+			'plugin.autoRouteDescription' => 'Select a connection automatically.',
+			'plugin.autoRouteModesDescription' => 'Availability keeps the connection working. Speed uses test results.',
+			'plugin.copyAutoRouteModesDescription' => 'Availability prioritizes account access. Speed uses reading latency.',
+			'plugin.routeAutomaticAvailable' => 'Auto (availability)',
+			'plugin.routeAutomaticSpeed' => 'Auto (speed)',
 			'plugin.store' => 'Plugin Store',
 			'plugin.searchHint' => 'Search plugins by name or feature...',
 			'plugin.localInstall' => 'Local install',
 			'plugin.networkInstall' => 'Network install',
 			'plugin.cloudComponents' => 'Cloud components',
+			'plugin.cloudUpdateAll' => 'Update all',
+			'plugin.cloudInstallAll' => 'Install all',
+			'plugin.cloudNoUpdates' => 'No updates',
+			'plugin.cloudNoInstalls' => 'Nothing to install',
+			'plugin.cloudUpdateCount' => ({required Object count}) => '${count} available',
+			'plugin.cloudInstallCount' => ({required Object count}) => '${count} available',
+			'plugin.confirmCloudUpdateAll' => ({required Object count}) => 'Update ${count} installed plugins with compatible newer versions in the full store catalog?',
+			'plugin.confirmCloudInstallAll' => ({required Object count}) => 'Install ${count} compatible plugins from the full store catalog that are not installed on this device?',
+			'plugin.cloudBatchUpdating' => ({required Object name, required Object current, required Object total}) => 'Updating ${name} (${current}/${total})',
+			'plugin.cloudBatchInstalling' => ({required Object name, required Object current, required Object total}) => 'Installing ${name} (${current}/${total})',
+			'plugin.cloudBatchUpdated' => ({required Object count}) => 'Updated ${count}',
+			'plugin.cloudBatchInstalled' => ({required Object count}) => 'Installed ${count}',
+			'plugin.cloudBatchFailed' => ({required Object count}) => 'Failed ${count}',
+			'plugin.cloudBatchSkipped' => ({required Object count}) => 'Skipped ${count}',
+			'plugin.cloudPluginUpdated' => ({required Object name}) => '${name} updated',
+			'plugin.cloudBatchFailureTitle' => 'Plugins that failed',
 			'plugin.loginSuccess' => 'Please sign in on the website.',
 			'plugin.chromiumFallbackUnsupported' => 'External Chromium auto-login fallback is not supported on this platform',
 			'plugin.switchingToExternalBrowser' => 'Built-in WebView login is limited, switching to external browser...',
@@ -4928,8 +5105,6 @@ extension on TranslationsEnUs {
 			'plugin.urlCannotBeEmpty' => 'URL cannot be empty',
 			'plugin.startInstall' => 'Start install',
 			'plugin.pluginSettingsTitle' => ({required Object name}) => '${name} settings',
-			_ => null,
-		} ?? switch (path) {
 			'plugin.debugConfigUpdated' => 'Plugin debug config updated',
 			'plugin.deletePlugin' => 'Remove plugin',
 			'plugin.confirmDeletePlugin' => 'Remove this plugin from this device? Personal data and downloads are kept. Other devices are unaffected.',
@@ -4972,34 +5147,35 @@ extension on TranslationsEnUs {
 			'plugin.installingFromNetwork' => 'Downloading network plugin...',
 			'plugin.cloudDownloadFailed' => ({required Object error}) => 'Cloud download failed: ${error}',
 			'plugin.networkDownloadFailed' => ({required Object error}) => 'Network plugin download failed: ${error}',
-			'plugin.remoteAssetNotFound' => 'Remote plugin file not found (404). It may have been removed or the version updated. Please check the update URL or retry later',
-			'plugin.githubRateLimited' => 'GitHub access is rate limited (likely IP-based). Please retry later or switch networks; a truly missing plugin still reports 404',
-			'plugin.remoteReturnedWebPage' => 'Remote returned a web page instead of a plugin file. The remote file may be missing or the link expired. Please check the plugin update URL',
-			'plugin.remoteEmptyResponse' => 'Remote returned empty content. Please retry later or check the update URL',
-			'plugin.remoteAccessDenied' => ({required Object status}) => 'Remote access denied (HTTP ${status}). Please check your network or retry later',
-			'plugin.remoteServerError' => ({required Object status}) => 'Remote server error (HTTP ${status}). Please retry later',
-			'plugin.remoteHttpError' => ({required Object status}) => 'Remote request failed (HTTP ${status}). Please retry later',
-			'plugin.downloadedScriptInvalid' => 'Downloaded file is not a valid plugin script (looks like a web or error page). Please verify the remote file exists and retry',
-			'plugin.downloadedScriptCorrupted' => 'Downloaded plugin file is corrupted or failed to decompress. Please retry later',
+			'plugin.remoteAssetNotFound' => 'Plugin file unavailable. Refresh and try again',
+			'plugin.githubRateLimited' => 'Too many download requests. Try again later',
+			'plugin.remoteReturnedWebPage' => 'This link doesn\'t point to a plugin file',
+			'plugin.remoteEmptyResponse' => 'Can\'t download the plugin right now. Try again later',
+			'plugin.remoteAccessDenied' => 'Can\'t access the plugin file. Try again later',
+			'plugin.remoteServerError' => 'Download service unavailable. Try again later',
+			'plugin.remoteHttpError' => 'Download failed. Try again later',
+			'plugin.downloadedScriptInvalid' => 'Can\'t install this file. Check that you selected a plugin file',
+			'plugin.downloadedScriptCorrupted' => 'Plugin file is damaged. Download it again',
 			'plugin.networkUnstableRetry' => 'Unstable network, download failed. Please check your connection and retry',
 			'plugin.cloudVersion' => ({required Object version}) => 'Cloud ${version}',
 			'plugin.localVersion' => ({required Object version}) => 'Local ${version}',
 			'plugin.loginTitle' => ({required Object name}) => '${name} Login',
-			'plugin.cookieSynced' => 'Login cookie synced',
-			'plugin.lineTestSuccess' => 'Connection tests passed',
-			'plugin.lineTestPartial' => 'Some connections failed. Check the line results.',
+			'plugin.cookieSynced' => 'Sign-in information synced',
+			'plugin.lineTestSuccess' => 'All connections passed the test',
+			'plugin.lineTestPartial' => 'Some connections are available',
 			'plugin.lineTestFailure' => 'No working connection found. Try again later.',
+			'plugin.lineTestCancelled' => 'Connection test cancelled',
 			'plugin.executeSuccess' => 'Executed successfully',
 			'plugin.userInfoTitle' => 'User info',
-			'plugin.userInfoLoadFailed' => 'Failed to load user info',
+			'plugin.userInfoLoadFailed' => 'Can’t load account details right now',
 			'plugin.unnamedAction' => 'Unnamed action',
 			'plugin.pluginSettingsLoading' => 'Loading plugin settings...',
 			'plugin.pluginSettingsLoadFailed' => 'Failed to load plugin settings',
-			'plugin.actionNotExecutable' => 'Action not executable: missing fnPath',
+			'plugin.actionNotExecutable' => 'This action is currently unavailable',
 			'plugin.saved' => 'Saved',
 			'plugin.close' => 'Close',
 			'plugin.sync' => 'Sync',
-			'plugin.syncSubtitle' => 'Check and update via npm / updateUrl',
+			'plugin.syncSubtitle' => 'Check for plugin updates',
 			'plugin.syncing' => 'Syncing plugin...',
 			'plugin.syncSuccess' => 'Sync successful',
 			'plugin.syncFailed' => ({required Object error}) => 'Sync failed: ${error}',
@@ -5010,7 +5186,7 @@ extension on TranslationsEnUs {
 			'plugin.updating' => 'Updating plugin...',
 			'plugin.updateSuccess' => 'Update successful',
 			'plugin.updateFailed' => ({required Object error}) => 'Update failed: ${error}',
-			'plugin.uuidMismatch' => 'Plugin id mismatch, install rejected',
+			'plugin.uuidMismatch' => 'This file is for a different plugin. Choose the matching file',
 			'plugin.currentVersion' => ({required Object version}) => 'Current version ${version}',
 			'plugin.debugAddress' => 'Development server URL',
 			'plugin.developmentDebugHint' => 'Load the plugin from the specified development URL.',
@@ -5320,9 +5496,16 @@ extension on TranslationsEnUs {
 			'more.sync' => 'Sync',
 			'more.comicFollow' => 'Updates',
 			'more.changelog' => 'Changelog',
+			'search.defaultScope' => 'Default search scope',
+			'search.noScopeSources' => 'No plugins support configurable search scope',
 			'search.title' => 'Search',
 			'search.searchHint' => 'Search',
 			'search.enterKeyword' => 'Enter a search term',
+			'search.jmPopularTopics' => 'Popular topics',
+			'search.jmRandomRecommendations' => 'Random picks',
+			'search.jmMoreRecommendations' => 'Shuffle',
+			'search.jmSearchYear' => ({required Object year}) => '${year}',
+			'search.jmDateFilter' => 'Filter by date',
 			'search.selectSource' => 'Select Source',
 			'search.advancedSearchNotSupported' => 'Current plugin does not support advanced search',
 			'search.advancedSearchOptions' => 'Advanced Search Options',
@@ -5390,6 +5573,8 @@ extension on TranslationsEnUs {
 			'discover.customOrder' => 'Custom plugin order',
 			'discover.resetOrder' => 'Reset order',
 			'discover.noPlugins' => 'No plugins available. Go to the plugin store to install one~',
+			_ => null,
+		} ?? switch (path) {
 			'discover.pluginStore' => 'Plugin Store',
 			'discover.browseInstall' => 'Browse & Install',
 			'discover.noPluginForSearch' => 'No plugins available, cannot search',
@@ -5432,6 +5617,34 @@ extension on TranslationsEnUs {
 			'sourceNotices.stateUnavailable' => 'Messages could not be verified. Refresh and try again.',
 			'sourceNotices.stateUnconfirmed' => 'Message status is unconfirmed. Refresh and try again.',
 			'sourceNotices.partialMarked' => ({required Object confirmed, required Object pending}) => 'Marked ${confirmed}. ${pending} remain unconfirmed. Refresh and try again.',
+			'sourceProfile.jmFolderAvailable' => ({required Object name}) => 'Found folder “${name}”',
+			'sourceProfile.jmFolderLimit' => 'Your folders are full. Delete one to create another.',
+			'sourceProfile.jmFolderLimitDetail' => ({required Object count}) => 'You already have ${count} folders. Delete one to create another.',
+			'sourceProfile.jmFolderMissing' => 'This folder no longer exists.',
+			'sourceProfile.jmSiteWatchHistory' => 'Site reading history',
+			'sourceProfile.jmMoveToFolder' => 'Move to folder',
+			'sourceProfile.jmMovedToFolder' => ({required Object name}) => 'Moved to “${name}”',
+			'sourceProfile.jmFolderUnconfirmed' => 'The change could not be confirmed. Refresh your folders to check.',
+			'sourceProfile.jmFolderRenamed' => 'Folder renamed',
+			'sourceProfile.jmFolderDeleted' => 'Folder deleted',
+			'sourceProfile.jmDeleteFolder' => ({required Object name}) => 'Delete “${name}”?',
+			'sourceProfile.jmRefreshFolders' => 'Refresh folders',
+			'sourceProfile.jmAccountFavorites' => 'JM account favorites',
+			'sourceProfile.jmFollowSeries' => 'Follow series updates',
+			'sourceProfile.jmFavoriteTags' => 'Favorite tags',
+			'sourceProfile.jmTagCollection' => 'Saved tags',
+			'sourceProfile.jmFollowCollection' => 'Tracked comics',
+			'sourceProfile.jmAddTag' => 'Add tag',
+			'sourceProfile.jmTagName' => 'Tag name',
+			'sourceProfile.jmTagExists' => 'This tag is already saved',
+			'sourceProfile.jmTagInvalid' => 'Enter one tag without commas',
+			'sourceProfile.jmRemoveTag' => 'Remove tag',
+			'sourceProfile.jmRemoveTagConfirm' => ({required Object name}) => 'Remove “${name}” from saved tags?',
+			'sourceProfile.jmTagAdded' => 'Tag saved',
+			'sourceProfile.jmTagRemoved' => 'Tag removed',
+			'sourceProfile.jmTagWriteFailed' => 'Couldn’t update the tag. Try again later',
+			'sourceProfile.jmTagsEmpty' => 'No saved tags yet',
+			'sourceProfile.jmFollowsEmpty' => 'No tracked comics yet',
 			'sourceProfile.websiteCheckinUnavailable' => 'Could not verify website check-in. Try again later.',
 			'sourceProfile.websiteCheckedIn' => ({required Object date}) => '${date} · Website confirms check-in',
 			'sourceProfile.websiteNotCheckedIn' => ({required Object date}) => '${date} · Website shows no check-in',
@@ -5442,8 +5655,6 @@ extension on TranslationsEnUs {
 			'sourceProfile.backToProfile' => 'Back to profile',
 			'sourceProfile.recordsUnavailable' => 'Local records are unavailable',
 			'sourceProfile.signInForFavorites' => 'Sign in to view site favorites',
-			_ => null,
-		} ?? switch (path) {
 			'sourceProfile.dataNotRefreshed' => 'Site data could not be refreshed',
 			'sourceProfile.checkinIdentityChanged' => 'The account or date changed. Check again.',
 			'sourceProfile.calendarCheckedIn' => ({required Object date}) => '${date} · Site calendar confirms check-in',
@@ -5495,6 +5706,8 @@ extension on TranslationsEnUs {
 			'sourceShell.searchScopeAll' => 'All fields',
 			'sourceShell.searchScopeTitle' => 'Title',
 			'sourceShell.searchScopeTeam' => 'Translation group',
+			'sourceShell.searchScopeOriginalWork' => 'Original work',
+			'sourceShell.searchScopeCharacter' => 'Character',
 			'sourceShell.searchScopeTags' => 'Tags',
 			'sourceShell.searchScopeAuthor' => 'Author',
 			'sourceShell.collectionLoadingCount' => ({required Object loaded, required Object total}) => '${loaded} / ${total} loaded',
@@ -5652,6 +5865,29 @@ extension on TranslationsEnUs {
 			'sourceShell.bikaFirstLineNotice' => 'Choose an available route. Your selection will be remembered.',
 			'sourceShell.bikaLineStateFailed' => 'Could not read the current route. Please retry.',
 			'sourceShell.collectionLoadedCount' => ({required Object count}) => '${count} loaded',
+			'searchResult.blockCategories' => 'Hide categories',
+			'searchResult.categories' => 'Categories',
+			'searchResult.bikaContentBlocking' => 'Content blocking',
+			'searchResult.bikaContentBlockingScope' => 'Applies to Bika results in source search, combined search, categories, and random works.',
+			'searchResult.bikaBlockedTitles' => 'Title contains',
+			'searchResult.bikaBlockedTags' => 'Exact tag match',
+			'searchResult.bikaBlockedAuthors' => 'Exact author match',
+			'searchResult.bikaBlockRuleInput' => 'Enter one rule',
+			'searchResult.bikaBlockRuleDuplicate' => 'This rule already exists',
+			'searchResult.bikaBlockRulesCount' => ({required Object count}) => '${count} set',
+			'searchResult.bikaRemoveBlockRule' => ({required Object rule}) => 'Remove “${rule}”',
+			'searchResult.bikaBlockedCategories' => 'Hide works by category',
+			'searchResult.bikaHiddenHomeCategories' => 'Hide categories from Home',
+			'searchResult.bikaFilterSiteCategories' => 'Site categories',
+			'searchResult.bikaFilterLoadedWorks' => 'Loaded works',
+			'searchResult.bikaFilterTitleContains' => 'Title contains',
+			'searchResult.bikaFilterTranslationTeam' => 'Translation team',
+			'searchResult.bikaFilterCategoryHiddenBySettings' => 'Restore this category in the plugin’s Content Blocking settings.',
+			'searchResult.bikaFilterCategoryHiddenByQuickBar' => 'Tap the category in the bar to restore it.',
+			'searchResult.shuffle' => 'Shuffle',
+			'searchResult.randomWorks' => 'Random works',
+			'searchResult.noVisibleRandomWorks' => 'No works to show in this batch',
+			'searchResult.resultNavigation' => 'Navigate results',
 			'searchResult.enterPageNumber' => 'Enter page number',
 			'searchResult.pleaseEnterNumber' => 'Please enter a number',
 			'searchResult.returnToTop' => 'Return to top',
@@ -5659,6 +5895,9 @@ extension on TranslationsEnUs {
 			'searchResult.jump' => 'Jump',
 			'searchResult.pageProgress' => ({required Object page, required Object pages}) => 'Page ${page} / ${pages}',
 			'searchResult.pageOnly' => ({required Object page}) => 'Page ${page}',
+			'searchResult.findingMatches' => 'Finding matching works…',
+			'searchResult.noMatchesYet' => 'No matches yet',
+			'searchResult.noMatchingWorks' => 'No matching works',
 			'searchResult.pageOutOfRange' => ({required Object pages}) => 'Enter a page between 1 and ${pages}',
 			'searchResult.pageMustBePositive' => 'Enter a page greater than zero',
 			'searchResult.itemPageCount' => ({required Object count}) => '${count} pages',
@@ -5712,12 +5951,14 @@ extension on TranslationsEnUs {
 			'comicFollow.sort' => 'Sort',
 			'comicFollow.lastRead' => 'Last read',
 			'comicFollow.lastUpdate' => 'Latest check',
+			'comicFollow.recentUpdate' => 'Recent updates',
 			'comicFollow.checkTime' => ({required Object time}) => 'Check time: ${time}',
 			'comicFollow.lastCheckAttempt' => ({required Object time}) => 'Last attempt: ${time}',
 			'comicFollow.notRead' => 'Not read yet',
 			'comicFollow.lastReadChapter' => ({required Object chapter}) => 'Read to: ${chapter}',
 			'comicFollow.latestChapter' => ({required Object count, required Object chapter}) => 'Latest: ${count} / ${chapter}',
 			'comicFollow.knownChapter' => ({required Object count, required Object chapter}) => 'Last known: ${count} / ${chapter}',
+			'comicFollow.chapterSummary' => ({required Object count, required Object chapter}) => '${count} chapters · ${chapter}',
 			'comicFollow.noUnread' => 'No unseen updates',
 			'comicFollow.showAll' => 'Show all',
 			'comicFollow.latestChapterFailed' => 'Failed to get latest chapter',
@@ -5727,10 +5968,10 @@ extension on TranslationsEnUs {
 			'comicFollow.knownCount' => ({required Object count}) => 'Last known: ${count} chapters',
 			'comicFollow.fetchFailed' => 'Fetch failed',
 			'comicFollow.newChaptersShort' => ({required Object diff}) => '${diff} new',
+			'comicFollow.updateBadge' => 'New',
 			'comicFollow.newUnreadChaptersShort' => ({required Object diff}) => '${diff} unread',
 			'comicFollow.update' => 'Update',
 			'comicFollow.retry' => 'Retry',
-			'comicFollow.readProgress' => ({required Object read, required Object total}) => '${read} of ${total} read',
 			'comicFollow.readProgressUnknown' => ({required Object total}) => '${total} total',
 			'comicFollow.updatedJustNow' => 'Just checked',
 			'comicFollow.updatedMinutesAgo' => ({required Object minutes}) => 'Checked ${minutes} min ago',
@@ -5753,11 +5994,11 @@ extension on TranslationsEnUs {
 			'comicFollow.checkFailedReason' => 'Couldn\'t check for updates',
 			'comicFollow.checkNetworkUnavailable' => 'Can\'t reach the source',
 			'comicFollow.checkSourceUnavailable' => 'Source temporarily unavailable',
-			'comicFollow.checkInvalidResponse' => 'The source didn\'t return usable chapter information',
-			'comicFollow.checkSignInRequired' => 'Sign in to the source, then retry',
-			'comicFollow.checkComicNotFound' => 'The source couldn\'t find this comic',
-			'comicFollow.checkPluginDisabled' => 'Enable the source plugin to check for updates',
-			'comicFollow.checkPluginMissing' => 'Install the source plugin to check for updates',
+			'comicFollow.checkInvalidResponse' => 'Chapter data unavailable',
+			'comicFollow.checkSignInRequired' => 'Sign in to the source',
+			'comicFollow.checkComicNotFound' => 'Comic unavailable at source',
+			'comicFollow.checkPluginDisabled' => 'Enable the source plugin',
+			'comicFollow.checkPluginMissing' => 'Install the source plugin',
 			'comicFollow.lastSuccessfulCheck' => ({required Object time}) => 'Last successful check: ${time}',
 			'comicFollow.lastReadAt' => ({required Object time}) => 'Last read: ${time}',
 			'comicFollow.mediaComic' => 'Comics',
@@ -5839,21 +6080,30 @@ extension on TranslationsEnUs {
 			'videoPlayback.subscriptionsEmpty' => 'No subscription videos available',
 			'videoPlayback.inlinePlaybackNote' => 'Playing in Breeze; return to view the original details',
 			'videoPlayback.episodes' => 'Episodes',
+			'videoPlayback.chooseEpisode' => 'Episodes',
 			'videoPlayback.related' => 'You may also like',
 			'videoPlayback.searchVideos' => 'Search videos',
 			'videoPlayback.closeSearch' => 'Close search',
 			'videoPlayback.search' => 'Search',
 			'videoPlayback.websiteToggle' => 'Display mode',
 			'videoPlayback.nativeMode' => 'Native',
+			_ => null,
+		} ?? switch (path) {
 			'videoPlayback.catalogRefreshFailed' => 'Could not refresh. Showing previously loaded content.',
 			'videoPlayback.playbackSettings' => 'Video settings',
 			'videoPlayback.hostSettingsScope' => 'Playback preferences are shared. Source settings are saved separately.',
 			'videoPlayback.settingsSaveFailed' => 'Could not save settings. Please try again.',
 			'videoPlayback.settingsLoadFailed' => 'Video settings could not be loaded',
 			'videoPlayback.autoplay' => 'Autoplay',
+			'videoPlayback.autoplayNext' => 'Autoplay next',
+			'videoPlayback.repeatMode' => 'Repeat',
+			'videoPlayback.repeatSingle' => 'Repeat one',
+			'videoPlayback.repeatPlaylist' => 'Repeat playlist',
+			'videoPlayback.repeatOff' => 'Off',
+			'videoPlayback.mirrorVideo' => 'Mirror video',
 			'videoPlayback.resumeProgress' => 'Resume playback',
 			'videoPlayback.recordHistory' => 'Save watch history',
-			'videoPlayback.recordHistoryNote' => 'Turning this off stops saving watch history and automatic resume. Existing records are kept.',
+			'videoPlayback.recordHistoryNote' => 'Stops automatic resume. Keeps existing history.',
 			'videoPlayback.watchHistory' => 'Watch history',
 			'videoPlayback.historyEmpty' => 'No watch history yet',
 			'videoPlayback.historyEmptyNote' => 'Native videos appear here after 5 seconds of playback or completion. Tap a record to watch again',
@@ -5873,8 +6123,10 @@ extension on TranslationsEnUs {
 			'videoPlayback.fastForwardRate' => ({required Object rate}) => 'Playing at ${rate}×',
 			'videoPlayback.controlsTimeout' => 'Auto-hide controls',
 			'videoPlayback.seconds' => ({required Object value}) => '${value} seconds',
-			'videoPlayback.coverVideo' => 'Fill frame',
-			'videoPlayback.coverVideoNote' => 'Landscape may crop edges. Portrait keeps the full frame.',
+			'videoPlayback.pictureSize' => 'Picture size',
+			'videoPlayback.pictureFit' => 'Fit',
+			'videoPlayback.pictureStretch' => 'Stretch',
+			'videoPlayback.pictureFill' => 'Fill',
 			'videoPlayback.doubleTapAction' => 'Double-tap action',
 			'videoPlayback.doubleTapSeek' => 'Center: play/pause; sides: back/forward 10 seconds',
 			'videoPlayback.doubleTapPlay' => 'Play or pause',
@@ -5884,6 +6136,12 @@ extension on TranslationsEnUs {
 			'videoPlayback.breezeControls' => 'Breeze controls',
 			'videoPlayback.controlsStyleNote' => 'Shared with Breeze appearance settings. Changes apply immediately.',
 			'videoPlayback.swipeSeekNote' => 'Drag to preview; release to seek.',
+			'videoPlayback.landscapeAdjustments' => 'Swipe vertically for brightness and volume',
+			'videoPlayback.adjustBrightness' => 'Brightness',
+			'videoPlayback.adjustVolume' => 'Volume',
+			'videoPlayback.landscapeAdjustmentSides' => 'Swipe zones',
+			'videoPlayback.brightnessLeftVolumeRight' => 'Brightness left · Volume right',
+			'videoPlayback.volumeLeftBrightnessRight' => 'Volume left · Brightness right',
 			'videoPlayback.lockControls' => 'Lock player controls',
 			'videoPlayback.unlockControls' => 'Unlock player controls',
 			'videoPlayback.expandDescription' => 'Show description',
@@ -5947,6 +6205,7 @@ extension on TranslationsEnUs {
 			'videoPlayback.episodeSwitching' => 'Preparing episode',
 			'videoPlayback.episodeOrderUnavailable' => 'Current video is absent from the episode list. Choose an episode manually.',
 			'videoPlayback.episodeAscending' => 'Ascending',
+			'videoPlayback.episodeListOrder' => 'Display order',
 			'videoPlayback.episodeDescending' => 'Descending',
 			'videoPlayback.episodeSite' => 'Site order',
 			'videoPlayback.episodeManual' => 'Custom',
@@ -5956,14 +6215,13 @@ extension on TranslationsEnUs {
 			'videoPlayback.selectCurrentRange' => 'Select this range',
 			'videoPlayback.deselectCurrentRange' => 'Deselect this range',
 			'videoPlayback.clearAllSelections' => 'Clear all selections',
-			_ => null,
-		} ?? switch (path) {
 			'videoPlayback.addRange' => 'Add range',
 			'videoPlayback.episodeApplyOrder' => 'Apply order',
 			'videoPlayback.episodeReorder' => 'Reorder',
 			'videoPlayback.episodeMoveUp' => 'Move up',
 			'videoPlayback.episodeMoveDown' => 'Move down',
 			'videoPlayback.episodeWaiting' => 'Loading the selected video…',
+			'videoPlayback.episodeWaitingFor' => ({required Object episode}) => 'Switching to “${episode}”…',
 			'videoPlayback.settingsSearch' => 'Search video settings',
 			'videoPlayback.settingsScopeCommon' => 'All video sources',
 			'videoPlayback.settingsScopeSource' => 'This source only',
@@ -6098,24 +6356,24 @@ extension on TranslationsEnUs {
 			'download.durationLong' => '30–60 minutes',
 			'download.durationHour' => '1 hour or longer',
 			'download.lastSuccessfulLine' => 'Last successful download',
-			'download.concurrentComicImages' => 'Simultaneous comic images',
-			'download.concurrentComicImagesHint' => 'Download up to 10 images at once per chapter. Changes apply from the next chapter. Lower plugin limits apply automatically.',
-			'download.concurrentVideos' => 'Concurrent video downloads',
+			'download.concurrentComicImages' => 'Comic image downloads',
+			'download.concurrentVideos' => 'Video downloads',
 			'download.wifiOnly' => 'Download over Wi-Fi only',
 			'download.waitingForWifi' => 'Waiting for Wi-Fi',
 			'download.waitingForNetwork' => 'Waiting for network',
 			'download.notEnoughSpace' => 'Free device storage, then retry.',
 			'download.sourceUnavailableHint' => 'This record has no usable work address, so it cannot open the work directly.',
-			'download.helpExport' => 'Export saves a copy to the selected location. You can still read or play the original download in Breeze. Comic chapters export as ZIP, and regular videos can be saved to Files.',
-			'download.helpHls' => 'On iOS, HLS offline packages play only inside Breeze and cannot currently be exported.',
+			'download.helpExport' => 'Export saves a copy to the selected location. You can still read or play the original download in Breeze. Comics export as ZIP archives, and MP4 videos export as video files.',
+			'download.helpHls' => 'HLS offline packages play only in Breeze.',
 			'download.helpDelete' => 'Removing local downloads requires confirmation and does not delete the work from its source.',
 			'download.helpContinue' => 'Downloads continue when you close the download panel or leave this page.',
-			'download.helpContinueIos' => 'Downloads continue while you use Breeze. They pause when you lock the screen or switch apps, and resume when you return.',
+			'download.helpContinueIos' => 'Some tasks pause when you lock the screen or switch apps and resume when you return.',
 			'download.exportFiles' => 'Export a copy of the download',
 			'download.exportCopySaved' => 'Copy saved',
 			'download.exportBusy' => 'The file is in use. Try exporting again in a moment.',
-			'download.exportComicScope' => ({required Object chapters, required Object pages}) => 'Export ${chapters} locally saved chapters and ${pages} images. Missing content is not downloaded.',
-			'download.exportComicMissing' => ({required Object pages, required Object chapters}) => '${pages} images are missing; ${chapters} chapters have no local files.',
+			'download.exportComicScope' => ({required Object chapters, required Object pages}) => 'The copy includes ${chapters} chapters and ${pages} images saved on this device.',
+			'download.exportComicMissingPages' => ({required Object pages}) => 'Missing images (${pages}).',
+			'download.exportComicUnavailableChapters' => ({required Object chapters}) => 'Chapters without local files (${chapters}).',
 			'download.exportNothing' => 'No local files are available to export.',
 			'download.exportChanged' => 'Downloaded files changed. Please export again.',
 			'download.exportNoSpace' => 'Not enough local space to prepare the export.',
@@ -6178,7 +6436,6 @@ extension on TranslationsEnUs {
 			'download.videoCancelled' => 'Cancelled',
 			'download.videoInterrupted' => 'Download interrupted. Open the video page to download again.',
 			'download.videoForegroundNote' => 'Downloads continue after you close this panel. View them in Downloads.',
-			'download.videoForegroundNoteIos' => 'View your tasks in Downloads. They pause when you lock the screen or switch apps, and resume when you return to Breeze.',
 			'download.videoRecordFailed' => 'The download record could not be saved and may be missing when you reopen the app.',
 			'download.inProgress' => 'In progress',
 			'download.incomplete' => 'Unfinished',
@@ -6243,6 +6500,10 @@ extension on TranslationsEnUs {
 			'update.unknownArch' => 'Unknown',
 			'videoDownload.title' => 'Download video',
 			'videoDownload.chooseQuality' => 'Choose a quality to download',
+			'videoDownload.selectQuality' => 'Choose quality',
+			'videoDownload.backToEpisodes' => 'Back to selection',
+			'videoDownload.sourceQuality' => 'Use site quality',
+			'videoDownload.noCommonQuality' => 'The selected videos have no quality in common',
 			'videoDownload.loading' => 'Getting download options…',
 			'videoDownload.empty' => 'No download options are available.',
 			'videoDownload.downloading' => ({required Object quality}) => 'Downloading ${quality}',
@@ -6340,6 +6601,8 @@ extension on TranslationsEnUs {
 			'videoCommunity.checkStatus' => 'Check result',
 			'videoCommunity.createdNotAdded' => 'The playlist was created. This video has not been added.',
 			'videoCommunity.addToCreatedPlaylist' => 'Add to this playlist',
+			_ => null,
+		} ?? switch (path) {
 			'videoCommunity.uploader' => 'Uploader',
 			'videoCommunity.creatorUnavailable' => 'The author’s real profile could not be identified. Retry, or view all works separately.',
 			'videoCommunity.unassignedSubscriptionUpdates' => 'Updates without a confirmed author',
@@ -6470,8 +6733,6 @@ extension on TranslationsEnUs {
 			'videoFilters.active' => 'Active filters',
 			'videoFilters.removeFilter' => 'Remove this condition',
 			'videoFilters.customDate' => 'Custom date',
-			_ => null,
-		} ?? switch (path) {
 			'videoFilters.searchGroup' => 'Group',
 			'videoFilters.yearNeedsCategory' => 'Choose a category that supports year filtering',
 			'videoFilters.yearUnavailableRange' => 'Year filtering is unavailable in this scope',
@@ -6739,7 +7000,6 @@ extension on TranslationsEnUs {
 			'routingRules.resetRules' => 'This removes rules previously added by Breeze from the config copy',
 			'routingRules.removalHint' => 'Restoring existing rules also requires generating and selecting a new config copy.',
 			'routingRules.internalProxy' => 'Breeze built-in proxy',
-			'routingRules.internalHint' => 'Forward Breeze network requests through a specified proxy address',
 			'routingRules.internalWarning' => 'Turn off the Breeze built-in proxy for these plugins before importing routing rules.',
 			'routingRules.notApplied' => 'Breeze cannot confirm whether Shadowrocket has enabled this configuration.',
 			'routingRules.busy' => 'Preparing config copy…',
@@ -6763,7 +7023,7 @@ extension on TranslationsEnUs {
 			'routingRules.installed' => 'Installed plugins',
 			'routingRules.importedFiles' => 'Plugins imported from files',
 			'routingRules.noPlugins' => 'No installed plugins. Import a CJS file to extract domains.',
-			'routingRules.importHint' => 'Read a CJS file to extract domains. The plugin is not installed.',
+			'routingRules.importHint' => 'Pick a file, preview it, then choose how to import.',
 			'routingRules.domainCount' => ({required Object count}) => '${count} domains',
 			'routingRules.scan' => 'Update domains',
 			'routingRules.scanning' => 'Scanning plugin file…',
@@ -6855,6 +7115,8 @@ extension on TranslationsEnUs {
 			'imageEditor.zoom' => 'Zoom',
 			'imageEditor.rotate' => 'Rotate',
 			'imageEditor.reset' => 'Reset',
+			_ => null,
+		} ?? switch (path) {
 			'imageEditor.cropHint' => 'Drag to position, pinch to zoom',
 			'imageEditor.processing' => 'Processing image…',
 			'imageEditor.confirm' => 'Use image',
@@ -6886,28 +7148,30 @@ extension on TranslationsEnUs {
 			'followReminders.saveFailed' => 'Could not save reminder settings. Try again.',
 			'followReminders.openFollowing' => 'View followed comics',
 			'backupFlow.includeFiles' => 'Include downloaded files',
-			'backupFlow.includeFilesHint' => 'Comic and video downloads are excluded by default.',
+			'backupFlow.includeFilesHint' => 'Backs up favorites, records, settings, plugin data, and custom images.',
+			'backupFlow.exportConfirmTitle' => 'Export backup?',
+			'backupFlow.exportWithoutDownloads' => 'Downloads excluded',
 			'backupFlow.protection' => 'Backup protection',
 			'backupFlow.standard' => 'Standard file',
 			'backupFlow.protected' => 'Password protected',
 			'backupFlow.standardHint' => 'This file may include saved plugin accounts. Keep it private.',
-			'backupFlow.encryptedExportHint' => 'Requires a password and can include saved S3 and WebDAV accounts.',
+			'backupFlow.encryptedExportHint' => 'Password required. May include cloud sync accounts.',
 			'backupFlow.merge' => 'Keep and merge',
-			'backupFlow.mergeHint' => 'Keep local data and merge records from the backup, retaining newer changes and deletions.',
+			'backupFlow.mergeHint' => 'Merges local and backup data, keeping newer changes and deletions.',
 			'backupFlow.restore' => 'Replace local data',
-			'backupFlow.restoreHint' => 'Replace local records and the contents selected below with the backup.',
+			'backupFlow.restoreHint' => 'Replaces local records and selected data.',
 			'backupFlow.mergeTitle' => 'Merge this backup?',
 			'backupFlow.restoreTitle' => 'Replace local data?',
 			'backupFlow.mergeConfirm' => 'Merge records, retaining newer changes and deletions.',
-			'backupFlow.restoreConfirm' => 'Restore replaces current records, settings and plugins. If the backup includes local images, it replaces those too. This cannot be directly undone.',
+			'backupFlow.restoreConfirm' => 'Replace local records and the selected items. Custom images follow your selections. This cannot be directly undone.',
 			'backupFlow.createdAt' => ({required Object value}) => 'Backup date: ${value}',
 			'backupFlow.version' => ({required Object value}) => 'Backup version: ${value}',
 			'backupFlow.records' => ({required Object count}) => 'Entries: ${count}',
 			'backupFlow.settingsChoice' => ({required Object value}) => 'Settings: ${value}',
 			'backupFlow.pluginsChoice' => ({required Object value}) => 'Plugins: ${value}',
 			'backupFlow.downloadsIncluded' => 'Includes downloaded files',
-			'backupFlow.downloadsExcluded' => 'This backup has no downloaded files. Local downloads will be kept.',
-			'backupFlow.mergeFilesHint' => 'Keep local downloads and add downloads from the backup. The import stops if they cannot be merged.',
+			'backupFlow.downloadsExcluded' => 'This backup has no downloads. Local downloads stay.',
+			'backupFlow.mergeFilesHint' => 'Merges downloads. Import stops if they can’t merge.',
 			'backupFlow.restoreFilesHint' => 'This backup includes downloaded files and will replace local downloads.',
 			'backupFlow.mergeDone' => 'Merge complete',
 			'backupFlow.restoreDone' => 'Restore complete',
@@ -6931,8 +7195,8 @@ extension on TranslationsEnUs {
 			'backupFlow.replaceRecordsWarning' => 'The backup will replace local favorites, folders, tracking, and reading or viewing records.',
 			'backupFlow.replaceSettingsWarning' => 'Settings and the private gallery will also be replaced.',
 			'backupFlow.replacePluginsWarning' => 'Plugins and account settings will also be replaced.',
-			'backupFlow.replaceIrreversible' => 'This cannot be directly undone. Your cloud connection and app lock stay unchanged.',
-			'backupFlow.replaceIrreversibleWithCloudAccount' => 'This cannot be directly undone. Your app lock stays unchanged.',
+			'backupFlow.replaceIrreversible' => 'This cannot be undone. Cloud connections and app lock stay as they are.',
+			'backupFlow.replaceIrreversibleWithCloudAccount' => 'This cannot be undone. App lock stays as it is.',
 			'backupFlow.protectionSharedHint' => 'Applies to both cloud sync and backup files.',
 			'backupSecurity.title' => 'Sync and backup protection',
 			'backupSecurity.mode' => 'Protection',
@@ -6984,8 +7248,6 @@ extension on TranslationsEnUs {
 			'backupSecurity.localVideoInUse' => 'Close local video playback and try again.',
 			'backupSecurity.scopeHint' => 'Shared protection settings for cloud sync and local backup exports.',
 			'backupSecurity.cloudNotConfigured' => 'Cloud sync is not configured. Choose a service and enter its connection details in Sync.',
-			_ => null,
-		} ?? switch (path) {
 			'backupSecurity.readFailed' => 'Could not read the protection method. Tap to retry.',
 			'pluginLifecycle.remove' => 'Remove plugin',
 			'pluginLifecycle.removeHint' => 'Remove it from this device only. Favorites, history, account settings and downloads are kept.',

@@ -3,6 +3,8 @@ import 'package:zephyr/main.dart' show eventBus;
 import 'package:zephyr/network/http/plugin/qjs_download_runtime.dart'
     show normalizePluginId;
 import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
+import 'package:zephyr/page/comic_info/models/comic_like.dart';
+import 'package:zephyr/service/comic_like_updates.dart';
 import 'package:zephyr/service/comic_public_metadata.dart';
 import 'package:zephyr/service/jm_list_like_counts.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
@@ -77,6 +79,7 @@ Future<PluginComicDetail> getComicDetailByPlugin(
   String? pluginId,
   Map<String, dynamic>? extern,
   bool notifyUnauthorized = true,
+  bool refresh = false,
   bool Function()? canPublish,
   String? taskGroupKey,
 }) async {
@@ -84,6 +87,11 @@ Future<PluginComicDetail> getComicDetailByPlugin(
     pluginId?.trim().isNotEmpty == true ? pluginId! : from,
   );
   final payload = {'comicId': comicId};
+  final likeWork = comicLikeWork(resolvedPluginId, comicId);
+  final likes = ComicLikeUpdates.instance;
+  final likeRead = isJmComicLikeSource(resolvedPluginId)
+      ? null
+      : likes.markRead(likeWork);
   final generation = pluginSessionWriteFence.generation(resolvedPluginId);
   bool ownsSideEffects() =>
       generation == pluginSessionWriteFence.generation(resolvedPluginId) &&
@@ -96,6 +104,7 @@ Future<PluginComicDetail> getComicDetailByPlugin(
       from: resolvedPluginId,
       fnPath: 'getComicDetail',
       core: payload,
+      refresh: refresh,
       extern: extern,
       notifyUnauthorized: false,
       taskGroupKey: taskGroupKey,
@@ -116,6 +125,21 @@ Future<PluginComicDetail> getComicDetailByPlugin(
   );
 
   if (normalInfo.comicInfo.id == comicId && ownsSideEffects()) {
+    if (likeRead != null && normalInfo.allowLike) {
+      try {
+        likes.observeDetail(
+          likeWork,
+          likeRead,
+          comicLikeFromDetail(
+            detail,
+            source: resolvedPluginId,
+            comicId: comicId,
+          ),
+        );
+      } on ComicLikeUnconfirmed {
+        // An unavailable interaction field does not change a recent vote.
+      }
+    }
     if (resolvedPluginId == JmListLikeCounts.source) {
       if (detail.confirmedLikes(source: resolvedPluginId, comicId: comicId)
           case final count?) {

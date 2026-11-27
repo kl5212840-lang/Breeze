@@ -775,7 +775,7 @@ void main() {
   );
 
   imageHostTest(
-    'favorite privacy controls stay in the same 44pt slot through loading and empty states',
+    'favorite privacy controls keep their Android touch slot through loading and empty states',
     (tester) async {
       final store = VideoLibraryStore(
         deviceId: 'privacy',
@@ -808,7 +808,7 @@ void main() {
       await tester.pump();
       final button = find.byType(CollectionCoverPrivacyButton);
       final before = tester.getRect(button);
-      expect(before.size, const Size(44, 44));
+      expect(before.size, const Size(48, 48));
       rows.complete([]);
       await tester.pumpAndSettle();
       expect(tester.getRect(button), before);
@@ -834,7 +834,7 @@ void main() {
       pendingRead.complete(VideoLibrarySnapshot());
       await tester.pumpAndSettle();
       expect(button, findsOneWidget);
-      expect(tester.getSize(button), const Size(44, 44));
+      expect(tester.getSize(button), const Size(48, 48));
       expect(find.byType(TextField), findsOneWidget);
       expect(tester.widget<TextField>(find.byType(TextField)).enabled, isFalse);
       final emptyEditor = tester.getRect(find.byType(TextField));
@@ -871,7 +871,7 @@ void main() {
       );
       await tester.pump();
       final beforeOmo = tester.getRect(button);
-      expect(beforeOmo.size, const Size(44, 44));
+      expect(beforeOmo.size, const Size(48, 48));
       expect(find.byType(TextField), findsNothing);
       account.complete({
         'kind': 'account',
@@ -1015,7 +1015,7 @@ void main() {
       );
       expect(
         tester.getSize(find.byType(CollectionCoverPrivacyButton)),
-        const Size(44, 44),
+        const Size(48, 48),
       );
       expect(tester.takeException(), isNull);
     },

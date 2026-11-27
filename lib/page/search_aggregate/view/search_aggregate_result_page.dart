@@ -1,11 +1,11 @@
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
-import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'dart:async';
+
 import 'package:zephyr/widgets/read_recovery_scope.dart';
 import 'package:zephyr/page/search/method/search_history_entries.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/search/method/copy_search_topic.dart';
-import 'package:zephyr/page/search_result/view/source_search_scope_control.dart';
 import 'package:zephyr/page/search_aggregate/aggregate_video_search.dart';
 import 'package:zephyr/page/search_aggregate/aggregate_search_matching.dart';
 import 'package:zephyr/page/video/api_video_models.dart';
@@ -22,7 +22,6 @@ import 'package:zephyr/cubit/plugin_registry_cubit.dart';
 import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search_result/view/search_bar.dart';
-import 'package:zephyr/page/search/widget/source_select_dialog.dart';
 import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/service/jm_list_like_counts.dart';
@@ -42,23 +41,14 @@ class SearchAggregateResultPage extends StatelessWidget
     super.key,
     required this.searchEvent,
     this.searchCubit,
-    this.selectedSources = const <String, bool>{},
   });
 
   final SearchEvent searchEvent;
   final SearchCubit? searchCubit;
-  final Map<String, bool> selectedSources;
-
   @override
   Widget wrappedRoute(BuildContext context) {
     final pluginStates = context.read<PluginRegistryCubit>().state;
-    final visiblePlugins = PluginRegistryService.I.sortPlugins(
-      pluginStates.values.where((state) => !state.isDeleted && state.isEnabled),
-    );
-    final initial = {
-      for (final plugin in visiblePlugins)
-        plugin.uuid: selectedSources[plugin.uuid] ?? true,
-    };
+    final visiblePlugins = _activePlugins(pluginStates);
     return MultiBlocProvider(
       providers: [
         searchCubit != null
@@ -69,22 +59,21 @@ class SearchAggregateResultPage extends StatelessWidget
         BlocProvider(
           create: (_) => AggregateSearchCubit(
             searchEvent,
-            initialSelectedSources: initial,
-            availableSources: visiblePlugins.map((p) => p.uuid).toSet(),
-            sourceDefinitions: _sourceDefinitions(pluginStates),
+            initialSelectedSources: {
+              for (final plugin in visiblePlugins) plugin.uuid: true,
+            },
+            sourceDefinitions: _sourceDefinitions(visiblePlugins),
           )..search(),
         ),
       ],
       child: BlocListener<PluginRegistryCubit, Map<String, PluginRuntimeState>>(
         listener: (context, plugins) {
-          final cubit = context.read<AggregateSearchCubit>();
-          cubit.updateAvailableSources(
-            plugins.values
-                .where((p) => p.isEnabled && !p.isDeleted)
-                .map((p) => p.uuid)
-                .toSet(),
+          final visiblePlugins = _activePlugins(plugins);
+          unawaited(
+            context.read<AggregateSearchCubit>().updateAvailableSources({
+              for (final plugin in visiblePlugins) plugin.uuid,
+            }, definitions: _sourceDefinitions(visiblePlugins)),
           );
-          cubit.updateSourceDefinitions(_sourceDefinitions(plugins));
         },
         child: this,
       ),
@@ -97,17 +86,22 @@ class SearchAggregateResultPage extends StatelessWidget
   }
 }
 
-Map<String, Object> _sourceDefinitions(
+List<PluginRuntimeState> _activePlugins(
   Map<String, PluginRuntimeState> plugins,
-) => {
-  for (final plugin in plugins.values)
-    plugin.uuid: (
-      plugin.version,
-      plugin.originScript,
-      plugin.debug,
-      plugin.debugUrl,
-    ),
-};
+) => PluginRegistryService.I.sortPlugins(
+  plugins.values.where((plugin) => plugin.isActive),
+);
+
+Map<String, Object> _sourceDefinitions(Iterable<PluginRuntimeState> plugins) =>
+    {
+      for (final plugin in plugins)
+        plugin.uuid: (
+          plugin.version,
+          plugin.originScript,
+          plugin.debug,
+          plugin.debugUrl,
+        ),
+    };
 
 class _SearchAggregateResultPage extends StatefulWidget {
   const _SearchAggregateResultPage({required this.searchEvent});
@@ -121,8 +115,6 @@ class _SearchAggregateResultPage extends StatefulWidget {
 
 class _SearchAggregateResultPageState
     extends State<_SearchAggregateResultPage> {
-  bool _selectingSources = false;
-
   @override
   void initState() {
     super.initState();
@@ -138,6 +130,9 @@ class _SearchAggregateResultPageState
             current.searchHistory,
             keyword,
             scope: '',
+            keywordScope: keywordSearchScope(
+              widget.searchEvent.searchStates.pluginExtern,
+            ),
           ),
         ),
       );
@@ -148,7 +143,6 @@ class _SearchAggregateResultPageState
   Widget build(BuildContext context) {
     return ReadRecoveryHost(
       onActiveChanged: context.read<AggregateSearchCubit>().setReadActive,
-      keepActiveWhileCovered: () => _selectingSources,
       child: Scaffold(
         appBar: AppBar(
           toolbarHeight: SearchResultQueryTitle.toolbarHeight(context),
@@ -165,8 +159,9 @@ class _SearchAggregateResultPageState
           top: false,
           bottom: false,
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _FilterChipsRow(onSelectSources: _showSourceDialog),
+              const _FilterChipsRow(),
               Expanded(
                 child: BlocBuilder<AggregateSearchCubit, AggregateSearchState>(
                   builder: (context, state) {
@@ -201,57 +196,6 @@ class _SearchAggregateResultPageState
         ),
       ),
     );
-  }
-
-  Future<void> _showSourceDialog() async {
-    if (_selectingSources) return;
-    final cubit = context.read<AggregateSearchCubit>();
-    final options = _sourceOptions(context, cubit.state.selectedSources.keys);
-    final session = context.read<SearchCubit>();
-    _selectingSources = true;
-    final Map<String, bool>? selected;
-    try {
-      selected = await showSourceSelectDialog(
-        context,
-        initial: cubit.state.selectedSources,
-        sourceOptions: options,
-      );
-    } finally {
-      _selectingSources = false;
-    }
-    if (selected == null ||
-        !mounted ||
-        ModalRoute.of(context)?.isCurrent == false)
-      return;
-    session.update(
-      session.state.copyWith(
-        aggregateSources: {...session.state.aggregateSources, ...selected},
-      ),
-    );
-    await cubit.applySelectedSources(selected);
-  }
-
-  List<({String pluginId, String title})> _sourceOptions(
-    BuildContext context,
-    Iterable<String> selectedKeys,
-  ) {
-    final pluginStates = context.read<PluginRegistryCubit>().state;
-    final ordered = PluginRegistryService.I.sortPlugins(
-      pluginStates.values.where((state) => !state.isDeleted && state.isEnabled),
-    );
-    final selectedSet = selectedKeys.toSet();
-    final result = <({String pluginId, String title})>[];
-    for (final plugin in ordered) {
-      if (!selectedSet.contains(plugin.uuid)) {
-        continue;
-      }
-      final info = PluginRegistryService.I.getCachedPluginInfo(plugin.uuid);
-      final title = info?['name']?.toString().trim().isNotEmpty == true
-          ? info!['name'].toString().trim()
-          : plugin.uuid;
-      result.add((pluginId: plugin.uuid, title: title));
-    }
-    return result;
   }
 }
 
@@ -293,69 +237,45 @@ class _SearchBarTrigger extends StatelessWidget {
 }
 
 class _FilterChipsRow extends StatelessWidget {
-  const _FilterChipsRow({required this.onSelectSources});
-
-  final VoidCallback onSelectSources;
+  const _FilterChipsRow();
 
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<AggregateSearchCubit, AggregateSearchState>(
       builder: (context, state) => Padding(
         padding: CollectionToolbarMetrics.contentPaddingOf(context, bottom: 4),
-        child: Row(
+        child: SingleChildScrollView(
           key: const ValueKey('aggregate.result-tools'),
-          spacing: CollectionToolbarMetrics.searchControlGap,
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  spacing: CollectionToolbarMetrics.searchControlGap,
-                  children: [
-                    FilterChip(
-                      showCheckmark: false,
-                      label: Text(t.search.hasResults),
-                      selected: state.showHasResults,
-                      onSelected: (value) => context
-                          .read<AggregateSearchCubit>()
-                          .toggleHasResults(value),
-                    ),
-                    FilterChip(
-                      showCheckmark: false,
-                      label: Text(
-                        state.errors.isEmpty
-                            ? t.search.showErrors
-                            : t.search.aggregateUnavailable(
-                                count: state.errors.length,
-                              ),
-                      ),
-                      selected: state.showErrors,
-                      onSelected: state.errors.isEmpty
-                          ? null
-                          : (value) => context
-                                .read<AggregateSearchCubit>()
-                                .toggleShowErrors(value),
-                    ),
-                    if (state.pendingSources.isNotEmpty)
-                      Text(
-                        '${t.common.loading} ${state.pendingSources.length}',
-                      ),
-                  ],
-                ),
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            spacing: CollectionToolbarMetrics.searchControlGap,
+            children: [
+              FilterChip(
+                showCheckmark: false,
+                label: Text(t.search.hasResults),
+                selected: state.showHasResults,
+                onSelected: context
+                    .read<AggregateSearchCubit>()
+                    .toggleHasResults,
               ),
-            ),
-            SourceSearchScopeControl(
-              aggregate: true,
-              compact: true,
-              onChanged: context.read<AggregateSearchCubit>().applyKeywordScope,
-            ),
-            SourceChromeIconButton(
-              tooltip: t.search.selectSourceTooltip,
-              onPressed: onSelectSources,
-              icon: Icons.layers_outlined,
-              symbol: 'square.stack.3d.up',
-            ),
-          ],
+              FilterChip(
+                showCheckmark: false,
+                label: Text(
+                  state.errors.isEmpty
+                      ? t.search.showErrors
+                      : t.search.aggregateUnavailable(
+                          count: state.errors.length,
+                        ),
+                ),
+                selected: state.showErrors,
+                onSelected: state.errors.isEmpty
+                    ? null
+                    : context.read<AggregateSearchCubit>().toggleShowErrors,
+              ),
+              if (state.pendingSources.isNotEmpty)
+                Text('${t.common.loading} ${state.pendingSources.length}'),
+            ],
+          ),
         ),
       ),
     );
@@ -372,23 +292,9 @@ class _ResultList extends StatelessWidget {
   Widget build(BuildContext context) {
     final children = <Widget>[];
     final pluginStates = context.watch<PluginRegistryCubit>().state;
-    final selectedIds = state.selectedSources.keys.toSet();
-    final pluginIds = PluginRegistryService.I
-        .sortPlugins(
-          pluginStates.values.where(
-            (plugin) =>
-                selectedIds.contains(plugin.uuid) &&
-                plugin.isEnabled &&
-                !plugin.isDeleted,
-          ),
-        )
-        .map((plugin) => plugin.uuid)
-        .toList();
-    for (final pluginId in pluginIds) {
-      final selected = state.selectedSources[pluginId] ?? false;
-      if (!selected) {
-        continue;
-      }
+    for (final plugin in _activePlugins(pluginStates)) {
+      final pluginId = plugin.uuid;
+      if (state.selectedSources[pluginId] != true) continue;
 
       final items = state.results[pluginId] ?? const <dynamic>[];
       final category = state.categoryPreviews[pluginId];

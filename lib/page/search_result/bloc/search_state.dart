@@ -8,6 +8,7 @@ abstract class SearchState with _$SearchState {
     @Default(SearchStatus.initial) SearchStatus status,
     @Default([]) List<ComicNumber> comics,
     @Default(false) bool hasReachedMax,
+    // Last accepted source response, used to continue the fetch.
     @Default(0) int currentPage,
     @Default(0) int totalPages,
     @Default(0) int totalResults,

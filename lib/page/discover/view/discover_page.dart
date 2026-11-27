@@ -555,11 +555,13 @@ class _DiscoverViewState extends State<_DiscoverView> {
       'list': t.discover.listLayout,
       'grid': t.discover.gridLayout,
     };
+    final systemControls = usesNativeSourceChrome(context);
     final selector = VideoControlAppearance(
-      systemControls: usesNativeSourceChrome(context),
+      systemControls: systemControls,
       child: NativeVideoSegmentedControl(
         options: options,
         selected: _layout.name,
+        flatTrack: !systemControls,
         dragEnabled: true,
         onSelected: (value) => _setLayout(_DiscoverLayout.values.byName(value)),
       ),

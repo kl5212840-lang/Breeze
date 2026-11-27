@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:zephyr/config/global/color_theme_types.dart';
+import 'package:zephyr/config/global/navigation_appearance.dart';
 import 'package:zephyr/i18n/i18n_helper.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/i18n/system_locale_service.dart';
@@ -25,6 +26,14 @@ enum ReaderInfoVerticalPosition { top, bottom }
 enum ReaderInfoHorizontalPosition { left, center, right }
 
 enum ReaderBackgroundMode { auto, black, white, grey }
+
+const minToolbarTapAreaPercent = 30;
+const maxToolbarTapAreaPercent = 70;
+const defaultToolbarTapAreaPercent = 50;
+
+int normalizeToolbarTapAreaPercent(Object? value) => value is int
+    ? value.clamp(minToolbarTapAreaPercent, maxToolbarTapAreaPercent)
+    : defaultToolbarTapAreaPercent;
 
 enum ReaderTapPageTurnMode { fullScreen, leftHand, rightHand }
 
@@ -161,6 +170,10 @@ abstract class GlobalSettingState with _$GlobalSettingState {
     @JsonKey(fromJson: normalizeMainNavigationSlots)
     @Default('')
     String mainNavigationSlots,
+    @Default(false) bool navigationHidesOnScroll,
+    @JsonKey(fromJson: normalizeNavigationTransparency)
+    @Default(defaultNavigationTransparency)
+    int navigationTransparency,
     @Default(SyncSettingState()) SyncSettingState syncSetting,
     @Default([]) List<String> maskedKeywords,
     @Default(true) bool socks5ProxyEnabled,
@@ -318,6 +331,10 @@ abstract class ReadSettingState with _$ReadSettingState {
     @Default(ReaderTapPageTurnMode.rightHand)
     ReaderTapPageTurnMode tapPageTurnMode,
     @Default(false) bool tapPageTurnInWebtoon,
+    @Default(false) bool customToolbarTapArea,
+    @JsonKey(fromJson: normalizeToolbarTapAreaPercent)
+    @Default(defaultToolbarTapAreaPercent)
+    int toolbarTapAreaPercent,
     @Default(false) bool reverseHorizontalPageTurn,
     @Default(ReaderBackgroundMode.auto)
     ReaderBackgroundMode readerBackgroundMode,

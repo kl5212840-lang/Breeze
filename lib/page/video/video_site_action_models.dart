@@ -56,6 +56,7 @@ abstract class VideoInteractionState with _$VideoInteractionState {
     int? positiveVotes,
     int? negativeVotes,
     int? totalVotes,
+    @Default(false) bool voteCountEstimated,
     String? ratingPercentRaw,
     bool? following,
     bool? watchLater,
@@ -122,6 +123,7 @@ abstract class VideoInteractionState with _$VideoInteractionState {
       positiveVotes: count('positiveVotes'),
       negativeVotes: count('negativeVotes'),
       totalVotes: count('totalVotes'),
+      voteCountEstimated: raw['voteCountEstimated'] == true,
       ratingPercentRaw: ratingNumber != null && ratingNumber <= 100
           ? rating as String
           : null,

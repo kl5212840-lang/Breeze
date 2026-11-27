@@ -9,6 +9,7 @@ import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search_result/bloc/search_bloc.dart';
 import 'package:zephyr/page/search_result/view/search_bar.dart';
 import 'package:zephyr/page/source_shell/source_native_controls.dart';
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 
 void main() {
   testWidgets(
@@ -78,37 +79,50 @@ void main() {
     },
   );
 
-  testWidgets('narrow search results keep search and explicit exit usable', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(320, 700);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final search = SearchCubit(
-      const SearchStates().copyWith(searchKeyword: 'A long search phrase'),
-    );
-    addTearDown(search.close);
-    await tester.pumpWidget(
-      BlocProvider<SearchCubit>.value(
-        value: search,
-        child: MaterialApp(
-          home: Scaffold(
-            appBar: const SearchResultBar(searchEvent: SearchEvent()),
+  testWidgets(
+    'narrow keyword results keep the query and ordinary back usable',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final search = SearchCubit(
+        const SearchStates(searchKeyword: 'A long search phrase'),
+      );
+      addTearDown(search.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => BlocProvider<SearchCubit>.value(
+                      value: search,
+                      child: const Scaffold(
+                        appBar: SearchResultBar(searchEvent: SearchEvent()),
+                      ),
+                    ),
+                  ),
+                ),
+                child: const Text('Search origin'),
+              ),
+            ),
           ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-    expect(find.text('A long search phrase'), findsOneWidget);
-    expect(find.byType(SourceMoreButton).hitTestable(), findsOneWidget);
-    await tester.tap(find.byType(SourceMoreButton));
-    await tester.pumpAndSettle();
-    expect(find.text(t.sourceShell.exitPlugin), findsOneWidget);
-    await tester.tapAt(const Offset(20, 400));
-    await tester.pumpAndSettle();
-    expect(find.text(t.sourceShell.exitPlugin), findsNothing);
-    expect(search.state.searchKeyword, 'A long search phrase');
-  });
+      );
+      await tester.tap(find.text('Search origin'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('A long search phrase'), findsOneWidget);
+      expect(find.byTooltip(t.common.search).hitTestable(), findsOneWidget);
+      expect(find.byType(SourceMoreButton), findsNothing);
+
+      await tester.tap(find.byType(SourceBackButton));
+      await tester.pumpAndSettle();
+      expect(find.text('Search origin'), findsOneWidget);
+      expect(find.byType(SearchResultBar), findsNothing);
+      expect(search.state.searchKeyword, 'A long search phrase');
+    },
+  );
 }

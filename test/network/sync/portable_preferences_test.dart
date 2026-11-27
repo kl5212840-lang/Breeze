@@ -17,6 +17,7 @@ import 'package:zephyr/page/video/video_playback_preferences.dart';
 import 'package:zephyr/page/video/video_personal_preferences.dart';
 import 'package:zephyr/page/video/video_personal_snapshot_store.dart';
 import 'package:zephyr/service/offline_backup_merge.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/page/video/video_search_history.dart';
 import 'package:zephyr/page/video/video_watch_history.dart';
 import 'package:zephyr/widgets/collection_cover_privacy.dart';
@@ -290,6 +291,33 @@ void main() {
       );
     },
   );
+
+  test('video search scope round-trips under the legacy word identity', () async {
+    const source = 'source';
+    final query = List.filled(300, '"').join();
+    await VideoSearchHistory.add(source, query);
+    await VideoSearchHistory.add(source, 'legacy');
+    final stale = await PortablePreferences.capture();
+    await VideoSearchHistory.add(source, query, scope: KeywordSearchScope.title);
+    final scoped = await PortablePreferences.capture();
+    final portable = PortablePreferencesSnapshot.fromJson(
+      scoped.merged(stale).toJson(),
+    );
+    expect(portable.entries.keys, unorderedEquals(stale.entries.keys));
+
+    SharedPreferences.setMockInitialValues({});
+    await PortablePreferences.restore(portable);
+    final entries = await VideoSearchHistory.readEntries(source);
+    expect(entries, containsAll([
+      (query: query, scope: KeywordSearchScope.title),
+      (query: 'legacy', scope: null),
+    ]));
+    await VideoSearchHistory.remove(source, query);
+    final removed = await PortablePreferences.capture();
+    SharedPreferences.setMockInitialValues({});
+    await PortablePreferences.restore(removed.merged(stale).merged(scoped));
+    expect(await VideoSearchHistory.read(source), ['legacy']);
+  });
 
   test(
     'data sync can exclude settings and corrupt remote snapshots do not alter local data',

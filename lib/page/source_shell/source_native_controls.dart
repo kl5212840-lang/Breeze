@@ -8,6 +8,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/widgets/collection_cover_settings.dart';
 import 'package:zephyr/widgets/collection_command_icons.dart';
+import 'package:zephyr/widgets/android_toolbar_icon_button.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/source_shell/source_website.dart';
@@ -27,6 +28,10 @@ bool usesNativeSourceChrome(BuildContext context) {
       !eInk &&
       AppInterfaceStyleScope.usesSystem(context);
 }
+
+bool usesSystemSourceChrome(BuildContext context) =>
+    AppInterfaceStyleScope.usesAndroidSystem(context) ||
+    usesNativeSourceChrome(context);
 
 /// Explicit exit disposes every source route on the way back to Discover.
 void exitSourceToDiscover(BuildContext context) {
@@ -64,6 +69,24 @@ class SourceChromeIconButton extends StatelessWidget {
     final breeze = !AppInterfaceStyleScope.usesSystem(context);
     final colors = Theme.of(context).colorScheme;
     final extent = CollectionToolbarMetrics.actionExtentOf(context);
+    final glyph = busy
+        ? const SizedBox.square(
+            dimension: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : CollectionCommandGlyph(icon);
+    if (!bare && AppInterfaceStyleScope.usesAndroidSystem(context)) {
+      return Center(
+        widthFactor: 1,
+        heightFactor: 1,
+        child: AndroidToolbarIconButton(
+          tooltip: tooltip,
+          selected: selected,
+          icon: glyph,
+          onPressed: onPressed,
+        ),
+      );
+    }
     final fallback = SizedBox(
       height: extent,
       width: extent,
@@ -82,12 +105,7 @@ class SourceChromeIconButton extends StatelessWidget {
               )
             : null,
         onPressed: onPressed,
-        icon: busy
-            ? const SizedBox.square(
-                dimension: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : CollectionCommandGlyph(icon),
+        icon: glyph,
       ),
     );
     return Center(
@@ -179,7 +197,7 @@ class _SourceMoreButtonState extends State<SourceMoreButton> {
   List<SourceMenuAction> get actions => widget.actions;
   bool _diagnostics = false;
   int _readEpoch = 0;
-  static const _settingsId = '__source_settings';
+  static const _settingsId = sourceSettingsMenuAction;
   static const _websiteId = '__source_website';
   static const _exitId = '__source_exit';
 
@@ -284,7 +302,7 @@ class _SourceMoreButtonState extends State<SourceMoreButton> {
       if (canOpenSettings)
         SourceMenuAction(
           id: _settingsId,
-          label: t.discover.settings,
+          label: t.plugin.pluginSettings,
           icon: Icons.settings_outlined,
           symbol: 'gearshape',
           onSelected:

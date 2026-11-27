@@ -5,6 +5,7 @@ import 'package:zephyr/widgets/year_filter_picker.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/services.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/widgets/applied_filter_bar.dart';
 
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -48,6 +49,42 @@ const schema = VideoFilterSchema(
 Future<VideoSiteResult<VideoFilterSchema>> read() async =>
     (status: VideoSiteStatus.ok, value: schema, writeUnconfirmed: false);
 void main() {
+  testWidgets('Android filter options share the sheet material', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => showVideoTaskSheet<VideoSearchFilters>(
+                context: context,
+                builder: (_) => VideoSearchFilterPanel(
+                  initial: const VideoSearchFilters(),
+                  schema: schema,
+                  readSchema: read,
+                  initialSection: VideoFilterSection.genre,
+                ),
+              ),
+              child: const Text('Open Android filters'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open Android filters'));
+    await tester.pumpAndSettle();
+    expect(find.byType(NativeMaterialSurface), findsOneWidget);
+    expect(find.byType(BackdropFilter), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('video-filter.readable-content')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byTooltip(t.common.cancel));
+    await tester.pumpAndSettle();
+    expect(find.byType(BackdropFilter), findsNothing);
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+
   testWidgets(
     'applied filters reveal an accessible remove button and confirm bulk clearing',
     (tester) async {
@@ -131,6 +168,90 @@ void main() {
       TargetPlatform.android,
     }),
   );
+
+  for (final direction in TextDirection.values) {
+    testWidgets(
+      'compact clear filters stays at the leading edge while tags scroll $direction',
+      (tester) async {
+        var clears = 0;
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData(platform: defaultTargetPlatform),
+            home: Scaffold(
+              body: Align(
+                alignment: Alignment.topCenter,
+                child: SizedBox(
+                  width: 320,
+                  child: Directionality(
+                    textDirection: direction,
+                    child: AppliedFilterBar(
+                      compact: true,
+                      entries: [
+                        for (var index = 0; index < 12; index++)
+                          (
+                            id: 'filter-$index',
+                            label: 'Selected filter $index',
+                            remove: () {},
+                            edit: null,
+                          ),
+                      ],
+                      onClearAll: () => clears++,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        final clear = find.byKey(const ValueKey('applied-filter.clear-all'));
+        final tags = find.byType(ListView);
+        final clearBefore = tester.getRect(clear);
+        final tagViewport = tester.getRect(tags);
+        final bar = tester.getRect(find.byType(AppliedFilterBar));
+        if (direction == TextDirection.ltr) {
+          expect(clearBefore.left - bar.left, 6);
+          expect(tagViewport.left - clearBefore.right, 2);
+        } else {
+          expect(bar.right - clearBefore.right, 6);
+          expect(clearBefore.left - tagViewport.right, 2);
+        }
+        final actionExtent = defaultTargetPlatform == TargetPlatform.android
+            ? 48.0
+            : 44.0;
+        expect(clearBefore.size, Size.square(actionExtent));
+
+        await tester.drag(
+          tags,
+          Offset(direction == TextDirection.ltr ? -160 : 160, 0),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          tester
+              .state<ScrollableState>(find.byType(Scrollable))
+              .position
+              .pixels,
+          greaterThan(0),
+        );
+        expect(tester.getRect(clear), clearBefore);
+        await tester.tap(clear);
+        await tester.pumpAndSettle();
+        expect(clears, 0);
+        await tester.tap(
+          find.descendant(
+            of: find.byType(AlertDialog),
+            matching: find.text(t.common.clear),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(clears, 1);
+      },
+      variant: TargetPlatformVariant({
+        TargetPlatform.iOS,
+        TargetPlatform.android,
+      }),
+    );
+  }
 
   testWidgets('Hanime match choices share the title row at phone width', (
     tester,

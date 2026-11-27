@@ -8,11 +8,11 @@ import 'package:zephyr/page/video/video_hls_assets.dart';
 import 'package:zephyr/page/video/video_downloaded_details.dart';
 import 'package:zephyr/page/video/video_network_scope.dart';
 import 'dart:async';
+import 'package:zephyr/page/video/native_site_episode_downloads.dart';
 import 'dart:io';
 
 import 'package:zephyr/page/video/video_page_route.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -22,7 +22,11 @@ import 'package:zephyr/page/setting/common/setting_ui.dart';
 import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:zephyr/page/source_shell/source_diagnostic_preferences.dart';
 import 'package:zephyr/page/video/native_playback_session.dart';
+import 'package:zephyr/page/video/video_picture_size.dart';
 import 'package:zephyr/page/video/video_playback_preferences.dart';
+import 'package:zephyr/page/video/video_landscape_title.dart';
+import 'package:zephyr/page/video/video_seek_preview_controller.dart';
+import 'package:zephyr/page/video/video_surface_gestures.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/page/video/video_playback_settings_page.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
@@ -95,6 +99,7 @@ class NativeVideoPage extends StatefulWidget {
     this.extraPlayerActions,
     this.onOpenWebsite,
     this.onPlaybackError,
+    this.onResolverProbeActivity,
     this.analyzePlayback,
     this.extraFailureActions,
     this.resourceLines,
@@ -110,6 +115,8 @@ class NativeVideoPage extends StatefulWidget {
     this.onMediaPrepared,
     this.downloadSourceDuration,
     this.onDownloadEpisodes,
+    this.selectDownloadEpisodes,
+    this.allowSeekThumbnails,
     this.offlineOnly = false,
     this.initialControlsVisible = true,
   });
@@ -125,8 +132,13 @@ class NativeVideoPage extends StatefulWidget {
   final VoidCallback? onMediaPrepared;
   final String? Function(NativePlaybackSession)? downloadSourceDuration;
   final Future<void> Function(NativePlaybackSession)? onDownloadEpisodes;
+  final Future<void> Function(BuildContext, NativePlaybackSession, bool)?
+  selectDownloadEpisodes;
+  final bool Function(NativePlaybackSession)? allowSeekThumbnails;
   final AsyncCallback? onOpenWebsite;
   final ValueChanged<String>? onPlaybackError;
+  final void Function(NativePlaybackSession session, bool playing)?
+  onResolverProbeActivity;
   final Future<void> Function(BuildContext, NativePlaybackSession, String)?
   analyzePlayback;
   final List<Widget> Function(
@@ -188,10 +200,10 @@ class NativeVideoPage extends StatefulWidget {
   final ValueChanged<NativePlaybackReturnState>? onPlaybackExit;
 
   @override
-  State<NativeVideoPage> createState() => _NativeVideoPageState();
+  NativeVideoPageState createState() => NativeVideoPageState();
 }
 
-class _NativeVideoPageState extends State<NativeVideoPage>
+class NativeVideoPageState extends State<NativeVideoPage>
     with WidgetsBindingObserver {
   bool _downloadOpen = false;
   bool get _canAutoResourceFallback =>
@@ -200,7 +212,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
   late VideoEpisodeSequence _episodeSequence;
   final _episodeReturns = <Uri, NativePlaybackReturnState>{};
   bool _episodeLoading = false, _episodeCancelled = false;
-  Completer<void>? _episodeAbort;
+  Completer<void>? _episodeAbort, _episodeRestoreAbort;
   Completer<void>? _retryAbort;
   VideoPlayerController? _episodeStartingPlayer;
   NativeVideoCard? _episodeRetryTarget;
@@ -216,6 +228,8 @@ class _NativeVideoPageState extends State<NativeVideoPage>
   bool _auxiliaryOverlayOpen = false;
   Timer? _episodeWaitTimer;
   bool _showEpisodeWait = false;
+  String? _switchingEpisodeTitle;
+  bool _retryEpisodeFromStart = false;
   bool _autoResourceActive = false;
   String _autoResourceLabel = '';
   int _autoResourceAttempt = 0, _autoResourceTotal = 0;
@@ -243,6 +257,29 @@ class _NativeVideoPageState extends State<NativeVideoPage>
   String get _selectionTitle => _session.isSitePlaylist
       ? t.videoPlayback.sitePlaylist
       : t.videoPlayback.episodes;
+  String get _selectionButtonLabel =>
+      _session.isSitePlaylist ? _selectionTitle : t.videoPlayback.chooseEpisode;
+  bool get _canSelectEpisode =>
+      _session.playbackEntries.isNotEmpty &&
+      (widget.loadEpisode != null || widget.onOpenVideo != null);
+
+  String? get _currentEpisodeName {
+    final episode = _episodeSequence.items
+        .where((card) => card.isCurrent(_session.watchUrl))
+        .firstOrNull
+        ?.title
+        .trim();
+    return episode?.isNotEmpty == true && episode != _session.title.trim()
+        ? episode
+        : null;
+  }
+
+  String get _landscapeTitle {
+    final title = _session.title.trim();
+    final episode = _currentEpisodeName;
+    if (episode == null) return title;
+    return title.isEmpty ? episode : '$episode · $title';
+  }
 
   VideoEpisodeSequence _newSequence(NativePlaybackSession session) =>
       VideoEpisodeSequence(
@@ -288,7 +325,22 @@ class _NativeVideoPageState extends State<NativeVideoPage>
             _LinePlaybackPhase.cancelled => t.videoSource.lineCancelled,
             null => '',
           };
-    return state.isNotEmpty ? state : t.videoSource.lineUntested;
+    if (resolving || line.detail.isEmpty) {
+      return state.isNotEmpty ? state : t.videoSource.lineUntested;
+    }
+    return state.isEmpty ? line.detail : '$state · ${line.detail}';
+  }
+
+  Uri? _resolverProbeWatch;
+  Duration? _resolverProbeAnchor;
+  void _notifyResolverProbeActivity(bool active) {
+    final notify = widget.onResolverProbeActivity;
+    if (notify == null) return;
+    if (!active) _resolverProbeAnchor = null;
+    final next = active ? _session.watchUrl : null;
+    if (next == _resolverProbeWatch) return;
+    _resolverProbeWatch = next;
+    notify(_session, active);
   }
 
   VideoPlaybackPreferences _preferences = const VideoPlaybackPreferences();
@@ -302,14 +354,31 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       ? null
       : Future.value(widget.networkContext);
   VideoPlayerController? _controller;
+  VideoPlayerController? _endArmedPlayer, _userSoughtToEnd;
+  VideoPlayerController? _pendingEndPlayer;
+  Future<void>? _endSiteIdle;
+  bool _mirrored = false;
   VideoPlayerValue? _lastPlayableValue;
   Timer? _hideTimer;
   Timer? _stallWatchdog;
   Duration? _stallPosition;
+  ({VideoPlayerController player, Duration position})? _bufferStallFailure;
+  static const _bufferStallWindow = Duration(seconds: 20);
+  int _seekCommandId = 0;
+  VideoPlayerController? _seekingPlayer;
+  bool get _seekingOnlineMedia =>
+      !widget.offlineOnly &&
+      switch (_session.sources.elementAtOrNull(_sourceIndex)?.url.scheme) {
+        'http' || 'https' => true,
+        _ => false,
+      };
   Timer? _feedbackTimer;
   Timer? _actionNoticeTimer;
   String? _actionNotice;
   Duration? _dragPosition;
+  final _seekPreview = VideoSeekPreviewController();
+  VideoPlayerController? _scrubPlayer;
+  int? _timelinePointer;
   String? _seekFeedback;
   Alignment _seekFeedbackAlignment = Alignment.center;
   int _sourceIndex = 0;
@@ -322,11 +391,18 @@ class _NativeVideoPageState extends State<NativeVideoPage>
   bool _foreground = true;
   bool _hostPlaybackPaused = false;
   bool _routeExited = false;
+  final _initialIntentReady = Completer<void>();
   bool get _canResumePlayback =>
       _foreground &&
       !_hostPlaybackPaused &&
       !_verificationRequired &&
       !_relatedPageOpen;
+
+  bool _currentPlayIntent(VideoPlayerValue? value) =>
+      !_hostPlaybackPaused &&
+      (value == null || value.isBuffering || _seekingOnlineMedia
+          ? _resumePlaying
+          : value.isPlaying);
   late final VideoDownloadPlaybackOwner _downloadPlaybackOwner;
   bool _controlsVisible = true;
   int _controlsTapEpoch = 0;
@@ -338,8 +414,9 @@ class _NativeVideoPageState extends State<NativeVideoPage>
   bool _holdingFastForward = false;
   bool _swiping = false;
   bool _muted = false;
+  double _playbackVolume = 1;
+  int _volumeIntent = 0;
   bool _locked = false;
-  bool _descriptionExpanded = false;
   bool _tagsExpanded = false;
   bool _commentsSelected = false, _commentsOpened = false;
   VideoEngagementController? _engagement;
@@ -465,10 +542,16 @@ class _NativeVideoPageState extends State<NativeVideoPage>
           ? _newSequence(_session)
           : _episodeSequence.reconciled(_session.episodes);
     }
+    if ((oldWidget.loadEpisode == null) != (widget.loadEpisode == null) ||
+        !identical(oldWidget.session, widget.session)) {
+      _syncNativeRepeat();
+    }
   }
 
   void _onEngagementChanged() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    if (_pendingEndPlayer != null) scheduleMicrotask(_continueAfterEnd);
   }
 
   void _retainObservedCreator() {
@@ -597,6 +680,9 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     }
     final operations = engagement?.operations;
     final session = _session;
+    final selectEpisodes = widget.selectDownloadEpisodes;
+    final hasDownloadSequence =
+        selectEpisodes != null && nativeSiteDownloadEntries(session).length > 1;
     final player = _controller?.value;
     final durationMs =
         !_episodeLoading &&
@@ -605,8 +691,10 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         ? player.duration.inMilliseconds
         : null;
     final adapter = _downloadAdapter(session);
-    if (adapter == null && operations == null) return;
-    if (adapter != null && adapter.choices.isEmpty) return;
+    if (!hasDownloadSequence &&
+        (adapter == null && operations == null ||
+            adapter != null && adapter.choices.isEmpty))
+      return;
     final refreshDownloadSession = widget.refreshSession;
     final downloadSource = widget.source;
     final downloadContext = widget.networkContext;
@@ -641,10 +729,15 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     engagement?.hold(true);
     _holdControls('system-download');
     try {
+      final systemStyle = _usesSystemControls;
+      if (hasDownloadSequence) {
+        await selectEpisodes(context, session, systemStyle);
+        return;
+      }
       await showVideoTaskSheet<void>(
         context: context,
         useRootNavigator: true,
-        systemStyle: _usesSystemControls,
+        systemStyle: systemStyle,
         networkSource: widget.source,
         network: _network,
         builder: (sheetContext) => VideoDownloadNavigationOrigin(
@@ -673,7 +766,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         ),
       );
     } finally {
-      await operations?.cancelRead();
+      if (!hasDownloadSequence) await operations?.cancelRead();
       if (mounted && identical(_engagement, engagement))
         engagement?.hold(false);
       _downloadOpen = false;
@@ -720,10 +813,16 @@ class _NativeVideoPageState extends State<NativeVideoPage>
   Future<void> _setSiteAction(VideoSiteAction action, bool enabled) async {
     final engagement = _engagement;
     if (engagement == null) return;
+    final voting =
+        action == VideoSiteAction.like || action == VideoSiteAction.dislike;
     _holdControls('site-write');
     try {
-      await engagement.set(action, enabled);
-      if (mounted && _fullscreen && engagement.error != null) {
+      await engagement.set(
+        action,
+        enabled,
+        displayedMetadata: _session.metadata,
+      );
+      if (!voting && mounted && _fullscreen && engagement.error != null) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(engagement.error!)));
@@ -749,11 +848,13 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       _quickSection = null;
       _controlInteractions.remove('quick-settings');
       _verificationRequired = true;
+      _bufferStallFailure = null;
       _failed = true;
       _loading = false;
       _controlsVisible = true;
       _locked = false;
       _holdingFastForward = false;
+      _resetScrub();
     });
     unawaited(
       _controller
@@ -786,6 +887,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     if (widget.initialPosition != null) {
       _resumePosition = widget.initialPosition!;
     }
+    _initialIntentReady.complete();
     if (widget.initialMedia case final pending?) {
       NativePlaybackSession? media;
       try {
@@ -799,7 +901,9 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         setState(() => _session = _session.withSources(resolved.sources));
       }
     }
-    if (mounted) await _loadSource(_preferredSourceIndex());
+    if (mounted && !_routeExited && epoch == _loadEpoch) {
+      await _loadSource(_preferredSourceIndex());
+    }
   }
 
   Future<Duration> _storedProgress(
@@ -880,12 +984,14 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       final saved = await VideoPlaybackPreferences.read();
       if (!mounted || epoch != _preferenceReadEpoch) return;
       final previousDefault = _preferences.defaultSpeed;
+      final previousRepeat = _preferences.repeatMode;
       setState(
         () => _preferences = VideoPlaybackPreferences.fromValues({
           ...saved.toValues(),
           ..._pendingPreferenceValues,
         }),
       );
+      if (previousRepeat != _preferences.repeatMode) _syncNativeRepeat();
       if (previousDefault != _preferences.defaultSpeed) {
         await _setSpeed(_preferences.defaultSpeed);
       }
@@ -904,6 +1010,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         key: value,
       }),
     );
+    if (key == 'repeatMode') _syncNativeRepeat();
     try {
       await VideoPlaybackPreferences.save(key, value);
     } catch (_) {
@@ -932,6 +1039,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     setState(() {
       _quickSection = section;
       _lastQuickSection = section;
+      _resetScrub();
     });
     final offlinePlayer = _androidOfflineHlsPlayer;
     if (section == VideoQuickSection.playback && offlinePlayer != null) {
@@ -1109,11 +1217,21 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     return true;
   }
 
+  /// Accepts a choice from the detail host's still-open initial picker.
+  Future<void> selectEpisodeFromHost(NativeVideoCard card) async {
+    await _initialIntentReady.future;
+    if (mounted && _foreground && !_routeExited) _selectEpisode(card);
+  }
+
   void _selectEpisode(
     NativeVideoCard card, {
     NativePlaybackReturnState? selectionIntent,
+    bool playFromStart = false,
   }) {
-    _closeQuickSettings();
+    if (!playFromStart) {
+      _pendingEndPlayer = null;
+      _closeQuickSettings();
+    }
     if (card.isCurrent(_session.watchUrl) ||
         _blockDocumentChangeForSiteWrite()) {
       return;
@@ -1151,7 +1269,13 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     _failedMediaUrls.clear();
     _rawRecoveriesTried.clear();
     if (widget.loadEpisode != null) {
-      unawaited(_switchEpisode(card, selectionIntent: selectionIntent));
+      unawaited(
+        _switchEpisode(
+          card,
+          selectionIntent: selectionIntent,
+          playFromStart: playFromStart,
+        ),
+      );
     } else {
       widget.onOpenVideo?.call(card.watchUrl);
     }
@@ -1282,10 +1406,12 @@ class _NativeVideoPageState extends State<NativeVideoPage>
 
   Future<bool> _pauseForDownloadTasks() async {
     if (!mounted) return true;
+    _pendingEndPlayer = null;
     // Persist a deliberate pause intent before awaiting native code. A late
     // preparation, episode switch or related-page return must not resume audio.
     _hostPlaybackPaused = true;
     _resumePlaying = false;
+    _resetScrub();
     _stallWatchdog?.cancel();
     _hideTimer?.cancel();
     final player = _controller;
@@ -1321,12 +1447,15 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     if (_routeExited) return;
     if (state == AppLifecycleState.resumed) {
       _foreground = true;
+      _seekPreview.setForeground(true);
     }
     // iOS may briefly report `inactive` during fullscreen rotation. Pause
     // only when the app actually leaves the foreground.
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
+      _notifyResolverProbeActivity(false);
       _foreground = false;
+      _seekPreview.setForeground(false);
       // A pending player setup or child page can finish after we foreground.
       // Keep the pause intent until the user explicitly starts playback.
       _hostPlaybackPaused = true;
@@ -1341,7 +1470,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         unawaited(_runPlayerCommand(controller, controller.pause));
       }
       unawaited(_setFastForward(false));
-      _dragPosition = null;
+      _resetScrub();
       unawaited(_persistProgress());
       _showControls();
     }
@@ -1359,6 +1488,8 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     final fullscreen = _fullscreen;
     final portrait = _portraitFullscreen;
     _relatedPageOpen = true;
+    _notifyResolverProbeActivity(false);
+    _resetScrub();
     _cancelEpisodeRead();
     _holdControls('related-page');
     try {
@@ -1472,6 +1603,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     bool cancelRecovery = true,
     bool notifyResolution = true,
   }) {
+    _pendingEndPlayer = null;
     _episodeCancelled = true;
     if (discardQueued) {
       _queuedManualLine = null;
@@ -1485,6 +1617,8 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     }
     final abort = _episodeAbort;
     if (abort != null && !abort.isCompleted) abort.complete();
+    final restore = _episodeRestoreAbort;
+    if (restore != null && !restore.isCompleted) restore.complete();
     final retry = _retryAbort;
     if (retry != null && !retry.isCompleted) retry.complete();
     unawaited(
@@ -1518,7 +1652,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
 
   Future<T> _awaitEpisode<T>(Future<T> request) {
     final abort = _episodeAbort;
-    if (!_canAutoResourceFallback || abort == null) return request;
+    if (abort == null) return request;
     return Future.any([
       request,
       abort.future.then<T>((_) => throw StateError('Episode switch cancelled')),
@@ -1532,6 +1666,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     DateTime? deadline,
     bool automatic = false,
     NativePlaybackReturnState? selectionIntent,
+    bool playFromStart = false,
   }) async {
     bool canContinue() =>
         mounted &&
@@ -1554,6 +1689,10 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       return;
     }
     final oldSession = _session;
+    final sameEpisode = _resourceLines.any(
+      (line) => line.target?.watchUrl == target.watchUrl,
+    );
+    _notifyResolverProbeActivity(false);
     final hadPlayablePrevious =
         !_failed &&
         previous?.value.isInitialized == true &&
@@ -1568,7 +1707,9 @@ class _NativeVideoPageState extends State<NativeVideoPage>
               : _resumePosition,
           playing: automatic
               ? _resumePlaying
-              : previous?.value.isPlaying ?? _preferences.autoplay,
+              : previous == null
+              ? _preferences.autoplay
+              : _currentPlayIntent(previous.value),
         );
     _activeSwitchIntent = oldState;
     final sourceLabel = _session.sources.elementAtOrNull(_sourceIndex)?.label;
@@ -1584,7 +1725,13 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       if (mounted && _episodeLoading) setState(() => _showEpisodeWait = true);
     });
     ScaffoldMessenger.maybeOf(context)?.hideCurrentSnackBar();
-    setState(() => _episodeLoading = true);
+    setState(() {
+      _episodeLoading = true;
+      _switchingEpisodeTitle = automatic || sameEpisode
+          ? null
+          : target.title.trim();
+      _resetScrub();
+    });
     _holdControls('episode-switch');
     oldEngagement?.hold(true);
     VideoPlayerController? candidate;
@@ -1596,7 +1743,13 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       if (!mounted) return;
       stage = 'pause-current';
       if (previous != null) {
-        await previous.pause().timeout(const Duration(seconds: 3));
+        try {
+          await previous.pause().timeout(const Duration(seconds: 3));
+        } on PlatformException {
+          // A native error may arrive while pause is in flight. The failed
+          // player still has to be disposed before a replacement is created.
+          if (!previous.value.hasError) rethrow;
+        }
       }
       if (!canContinue()) throw StateError('Episode switch cancelled');
       // A manual choice has exactly one authoritative site-document read.
@@ -1613,12 +1766,10 @@ class _NativeVideoPageState extends State<NativeVideoPage>
           }
           return value;
         });
-        loaded = await _awaitEpisode<NativeEpisodeLoad>(
-          request.timeout(
-            remaining != null && remaining < const Duration(seconds: 45)
-                ? remaining
-                : const Duration(seconds: 45),
-          ),
+        loaded = await _awaitEpisode(request).timeout(
+          remaining != null && remaining < const Duration(seconds: 45)
+              ? remaining
+              : const Duration(seconds: 45),
         );
       } on TimeoutException {
         if (_pendingResolutionUri == target.watchUrl) {
@@ -1645,14 +1796,15 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       );
       if (sourceIndex < 0) sourceIndex = 0;
       final returned = _episodeReturns[next.watchUrl];
-      final sameEpisode = _resourceLines.any(
-        (line) => line.target?.watchUrl == target.watchUrl,
-      );
-      final shouldPlay = sameEpisode
-          ? oldState.playing
-          : returned?.playing ?? oldState.playing;
+      final shouldPlay =
+          playFromStart ||
+          (sameEpisode
+              ? oldState.playing
+              : returned?.playing ?? oldState.playing);
       stage = 'restore-target-progress';
-      final position = sameEpisode
+      final position = playFromStart
+          ? Duration.zero
+          : sameEpisode
           ? oldState.position
           : returned?.position ??
                 await _storedProgress(
@@ -1708,8 +1860,8 @@ class _NativeVideoPageState extends State<NativeVideoPage>
             'episode_stage=$stage; begin',
           );
           await _awaitEpisode(
-            candidate.initialize().timeout(_mediaAttemptTime(mediaDeadline)),
-          );
+            candidate.initialize(),
+          ).timeout(_mediaAttemptTime(mediaDeadline));
           stage = 'configure-media';
           // A new AVPlayer already starts at zero. An unnecessary exact seek
           // can wait for more media bytes and turn a ready source into failure.
@@ -1719,29 +1871,23 @@ class _NativeVideoPageState extends State<NativeVideoPage>
               'episode_stage=$stage; begin',
             );
             await _awaitEpisode(
-              candidate
-                  .seekTo(position)
-                  .timeout(_mediaAttemptTime(mediaDeadline)),
-            );
+              candidate.seekTo(position),
+            ).timeout(_mediaAttemptTime(mediaDeadline));
           }
           stage = 'volume';
           widget.networkContext?.notePlaybackSetup(
             'episode_stage=$stage; begin',
           );
           await _awaitEpisode(
-            candidate
-                .setVolume(_muted ? 0 : 1)
-                .timeout(_mediaAttemptTime(mediaDeadline)),
-          );
+            candidate.setVolume(_muted ? 0 : _playbackVolume),
+          ).timeout(_mediaAttemptTime(mediaDeadline));
           stage = 'speed';
           widget.networkContext?.notePlaybackSetup(
             'episode_stage=$stage; begin',
           );
           await _awaitEpisode(
-            candidate
-                .setPlaybackSpeed(_speed)
-                .timeout(_mediaAttemptTime(mediaDeadline)),
-          );
+            candidate.setPlaybackSpeed(_speed),
+          ).timeout(_mediaAttemptTime(mediaDeadline));
           if (!canContinue()) throw StateError('Episode switch cancelled');
           if (shouldPlay && _canResumePlayback) {
             stage = 'play';
@@ -1752,8 +1898,8 @@ class _NativeVideoPageState extends State<NativeVideoPage>
             _episodeStartingPlayer = candidate;
             try {
               await _awaitEpisode(
-                _startPreparedPlayer(candidate).timeout(timeout),
-              );
+                _startPreparedPlayer(candidate),
+              ).timeout(timeout);
             } finally {
               _episodeStartingPlayer = null;
             }
@@ -1811,11 +1957,11 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         _controller = candidate;
         _lastPlayableValue = preparedValue;
         _sourceIndex = sourceIndex;
+        _bufferStallFailure = null;
         _failed = false;
         _loading = false;
         _commentsOpened = false;
         _commentsSelected = false;
-        _descriptionExpanded = false;
         _tagsExpanded = false;
         _lastSavedSecond = -1;
         _resumePosition = position;
@@ -1828,6 +1974,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
               )..addListener(_onEngagementChanged));
       });
       candidate.addListener(_onPlayerChanged);
+      _syncNativeRepeat();
       if (_quickSection == VideoQuickSection.playback &&
           _currentOfflineHlsPlayer(candidate)) {
         unawaited(_refreshOfflineAudio(candidate));
@@ -1871,16 +2018,39 @@ class _NativeVideoPageState extends State<NativeVideoPage>
             (!_canAutoResourceFallback ||
                 oldEngagement?.operations != null ||
                 loaded?.operations != null)) {
+          final restore = Completer<void>();
+          final watch = oldSession.watchUrl;
+          _episodeRestoreAbort = restore;
+          _pendingResolutionUri = watch;
+          var finished = false;
           try {
-            final restored = await load(
-              oldSession.watchUrl,
-            ).timeout(const Duration(seconds: 45));
-            if (restored.session.watchUrl == oldSession.watchUrl &&
-                restored.session.sources.isNotEmpty) {
-              restoredSession = restored.session;
+            final restored = await Future.any<NativeEpisodeLoad?>([
+              load(watch).then((value) {
+                if (!finished && !restore.isCompleted) return value;
+                value.operations?.dispose();
+                return null;
+              }),
+              restore.future.then<NativeEpisodeLoad?>((_) => null),
+            ]).timeout(const Duration(seconds: 45));
+            if (restored != null) {
+              if (!restore.isCompleted &&
+                  restored.session.watchUrl == watch &&
+                  restored.session.sources.isNotEmpty) {
+                restoredSession = restored.session;
+              }
+              restored.operations?.dispose();
             }
-            restored.operations?.dispose();
-          } catch (_) {}
+          } on TimeoutException {
+            if (_pendingResolutionUri == watch) {
+              widget.onResolutionCancelled?.call(watch);
+            }
+          } catch (_) {
+            // Restoration is best effort. Retain the previous playback session.
+          } finally {
+            finished = true;
+            _episodeRestoreAbort = null;
+            if (_pendingResolutionUri == watch) _pendingResolutionUri = null;
+          }
         }
         final cancelled = _episodeCancelled;
         if (_routeExited) return;
@@ -1902,7 +2072,9 @@ class _NativeVideoPageState extends State<NativeVideoPage>
             final restoredIndex = restoredSession.sources.indexWhere(
               (source) => source.label == sourceLabel,
             );
-            if (hadPlayablePrevious && _queuedManualLine == null) {
+            if (hadPlayablePrevious &&
+                previous?.value.hasError != true &&
+                _queuedManualLine == null) {
               await _loadSource(
                 restoredIndex < 0 ? 0 : restoredIndex,
                 forcePlay: oldState.playing && !_episodeCancelled,
@@ -1925,6 +2097,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
           }
         } else if (mounted &&
             previous != null &&
+            !previous.value.hasError &&
             oldState.playing &&
             !_episodeCancelled &&
             _canResumePlayback) {
@@ -1933,7 +2106,10 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         if (mounted &&
             !_episodeCancelled &&
             _controller?.value.isInitialized == true) {
-          setState(() => _episodeRetryTarget = target);
+          setState(() {
+            _episodeRetryTarget = target;
+            _retryEpisodeFromStart = playFromStart;
+          });
         }
       }
     } finally {
@@ -1953,7 +2129,11 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         setState(() {
           _episodeLoading = false;
           _showEpisodeWait = false;
+          _switchingEpisodeTitle = null;
         });
+        if (_controller case final player? when committed) {
+          _watchPlaybackEnd(player, player.value);
+        }
         _releaseControls('episode-switch');
         if (!automatic) _drainManualSelection();
       }
@@ -2160,7 +2340,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
           if (_pendingResolutionUri == watch) _pendingResolutionUri = null;
           if (mounted) setState(() => _rawRecoveryPending = false);
         }
-        if (!current() || renewed?.watchUrl != watch) break;
+        if (!current() || !_failed || renewed?.watchUrl != watch) break;
         final seen = {for (final source in _session.sources) source.url};
         final additions = renewed!.sources
             .where(
@@ -2203,13 +2383,16 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     bool restoringEpisode = false,
   }) async {
     if (!mounted || _routeExited) return;
+    _notifyResolverProbeActivity(false);
     _clearActionNotice();
+    _resetScrub();
     if (!restoringEpisode) {
       if (_episodeLoading) _episodeCancelled = true;
       _cancelEpisodeRead(discardQueued: false, cancelRecovery: false);
     }
     _stallWatchdog?.cancel();
     _stallWatchdog = null;
+    _bufferStallFailure = null;
     if (widget.siteVerification?.value == true) {
       _onSiteVerification();
       return;
@@ -2234,8 +2417,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         : _resumePosition;
     final shouldPlay =
         !_hostPlaybackPaused &&
-        (forcePlay ||
-            (previous == null ? _resumePlaying : previous.value.isPlaying));
+        (forcePlay || _currentPlayIntent(previous?.value));
     _resumePosition = resumeAt;
     _resumePlaying = shouldPlay;
     _controller = null;
@@ -2243,7 +2425,6 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       _sourceIndex = index;
       _loading = true;
       _failed = false;
-      _dragPosition = null;
       _holdingFastForward = false;
     });
     if (previous != null) {
@@ -2317,7 +2498,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       }
       if (!isCurrent()) return;
       setupPhase('volume');
-      await controller.setVolume(_muted ? 0 : 1);
+      await controller.setVolume(_muted ? 0 : _playbackVolume);
       setupPhase('speed');
       await controller.setPlaybackSpeed(_speed);
       if (!isCurrent()) return;
@@ -2325,9 +2506,6 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         setupPhase('play');
         await _startPreparedPlayer(controller);
       }
-      widget.networkContext?.notePlaybackSetup(
-        'stage=ready; elapsed_ms=${setupClock.elapsedMilliseconds}',
-      );
     }
 
     try {
@@ -2346,17 +2524,27 @@ class _NativeVideoPageState extends State<NativeVideoPage>
           (_) => throw StateError('Media setup cancelled'),
         ),
       ]).timeout(_mediaAttemptTime(deadline));
-      if (!isCurrent()) return;
+      if (!isCurrent() || !identical(controller, _controller)) return;
+      final value = controller.value;
+      if (!value.isInitialized || value.hasError) {
+        throw PlatformException(
+          code: 'VideoError',
+          message: value.errorDescription ?? 'Video unavailable after setup',
+        );
+      }
       setupClock.stop();
+      widget.networkContext?.notePlaybackSetup(
+        'stage=ready; elapsed_ms=${setupClock.elapsedMilliseconds}',
+      );
       _linePlaybackAttempts[watch] = (
         phase: _LinePlaybackPhase.ready,
         elapsed: setupClock.elapsed,
         progressAnchor: resumeAt,
       );
-      if (controller.value.isInitialized && !controller.value.hasError) {
-        _lastPlayableValue = controller.value;
-      }
+      _lastPlayableValue = value;
       setState(() => _loading = false);
+      _syncNativeRepeat();
+      _watchPlaybackEnd(controller, value);
       if (_quickSection == VideoQuickSection.playback &&
           _currentOfflineHlsPlayer(controller)) {
         unawaited(_refreshOfflineAudio(controller));
@@ -2394,7 +2582,9 @@ class _NativeVideoPageState extends State<NativeVideoPage>
           if (!tried.contains(n)) n,
       ].firstOrNull;
       if (alternative != null &&
-          (initializing || error is TimeoutException) &&
+          (initializing ||
+              value?.hasError == true ||
+              error is TimeoutException) &&
           tried.length < 3 &&
           _foreground &&
           !_verificationRequired &&
@@ -2433,6 +2623,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     }
     _hostPlaybackPaused = false;
     _retrying = true;
+    _bufferStallFailure = null;
     final abort = _retryAbort = Completer<void>();
     final retryWatch = _session.watchUrl;
     bool current() =>
@@ -2451,7 +2642,23 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         await _loadSource(nextSource, forcePlay: true);
         return;
       }
-      final refresh = widget.offlineOnly ? null : widget.refreshSession;
+      final localSource = _session.sources.elementAtOrNull(_sourceIndex);
+      final localResourceId = localSource?.localResourceId;
+      var refresh = widget.offlineOnly ? null : widget.refreshSession;
+      if (widget.offlineOnly &&
+          localResourceId != null &&
+          localSource?.url.scheme == 'breeze-hls') {
+        refresh = () async {
+          final session = await VideoLocalResources.playback(localResourceId);
+          final source = session.sources.single;
+          if (session.watchUrl != retryWatch ||
+              source.localResourceId != localResourceId ||
+              source.url.scheme != 'breeze-hls') {
+            throw const FormatException('Local HLS resource changed');
+          }
+          return _session.withSources([source]);
+        };
+      }
       if (refresh != null) {
         setState(() {
           _loading = true;
@@ -2542,9 +2749,126 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     }
   }
 
+  int get _playableEpisodeCount {
+    final entries = _episodeSequence.original;
+    if ((entries.length > 1 && widget.loadEpisode == null) ||
+        !entries.any((card) => card.isCurrent(_session.watchUrl))) {
+      return 0;
+    }
+    return entries.length;
+  }
+
+  void _syncNativeRepeat() {
+    final player = _controller;
+    if (player == null ||
+        !player.value.isInitialized ||
+        player.value.hasError) {
+      return;
+    }
+    final repeat = _preferences.repeatMode;
+    // A list containing just the current entry can loop in the same player.
+    final loop =
+        repeat == VideoRepeatMode.single ||
+        (repeat == VideoRepeatMode.playlist && _playableEpisodeCount == 1);
+    if (player.value.isLooping != loop) {
+      unawaited(
+        _runPlayerCommand(player, () => player.setLooping(loop), fatal: false),
+      );
+    }
+  }
+
+  bool _canContinueAfterEnd(VideoPlayerController player) =>
+      mounted &&
+      !_routeExited &&
+      identical(player, _controller) &&
+      _canResumePlayback &&
+      !_loading &&
+      !_failed &&
+      !_episodeLoading &&
+      !_retrying &&
+      !_autoResourceActive &&
+      !_recoveringResource &&
+      !_interruptingMedia &&
+      _queuedManualLine == null &&
+      _dragPosition == null;
+
+  void _watchPlaybackEnd(VideoPlayerController player, VideoPlayerValue value) {
+    if (!_canContinueAfterEnd(player) ||
+        identical(player, _userSoughtToEnd) ||
+        value.duration <= Duration.zero) {
+      return;
+    }
+    if (value.isPlaying && !value.isCompleted) {
+      _endArmedPlayer = player;
+      return;
+    }
+    if (!identical(_endArmedPlayer, player) ||
+        !value.isCompleted ||
+        value.isPlaying ||
+        value.isBuffering ||
+        value.position < value.duration) {
+      return;
+    }
+    _endArmedPlayer = null;
+    _pendingEndPlayer = player;
+    // Allow the native completion callback to finish its current update.
+    // A manual switch or a seek before this runs takes precedence.
+    scheduleMicrotask(_continueAfterEnd);
+  }
+
+  void _continueAfterEnd() {
+    final player = _pendingEndPlayer;
+    if (player == null) return;
+    if (!_canContinueAfterEnd(player) ||
+        !player.value.isCompleted ||
+        player.value.isPlaying ||
+        identical(player, _userSoughtToEnd) ||
+        _playableEpisodeCount < 2) {
+      _pendingEndPlayer = null;
+      return;
+    }
+    final repeat = _preferences.repeatMode;
+    if (repeat == VideoRepeatMode.single ||
+        (repeat == VideoRepeatMode.none && !_preferences.autoplayNext)) {
+      _pendingEndPlayer = null;
+      return;
+    }
+    final sequence = _episodeSequence;
+    final next =
+        sequence.adjacent(_session.watchUrl, 1) ??
+        (repeat == VideoRepeatMode.playlist
+            ? sequence.playbackItems.first
+            : null);
+    if (next == null) {
+      _pendingEndPlayer = null;
+      return;
+    }
+    final operations = _operations;
+    if (operations != null && operations.busy) {
+      // Keep one completion pending while the site owns the current document.
+      // Site operations outside the engagement controller only signal when idle.
+      final idle = operations.whenIdle;
+      if (!identical(_endSiteIdle, idle)) {
+        _endSiteIdle = idle;
+        unawaited(
+          idle.then((_) {
+            if (!identical(_endSiteIdle, idle)) return;
+            _endSiteIdle = null;
+            _continueAfterEnd();
+          }),
+        );
+      }
+      return;
+    }
+    if (_engagement?.working == true) return;
+    _pendingEndPlayer = null;
+    _selectEpisode(next, playFromStart: true);
+  }
+
   void _onPlayerChanged() {
     if (!mounted) return;
     if (!_canResumePlayback && _controller?.value.isPlaying == true) {
+      _notifyResolverProbeActivity(false);
       unawaited(
         _controller
             ?.pause()
@@ -2554,10 +2878,16 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       return;
     }
     if (_routeExited) return;
-    if (_controller?.value.hasError == true && !_failed) {
+    final player = _controller;
+    final value = player?.value;
+    final stall = _bufferStallFailure;
+    final stalledPlayer = stall != null && identical(stall.player, player);
+    if (value?.hasError == true && (!_failed || stalledPlayer)) {
+      _notifyResolverProbeActivity(false);
       // Platform errors may replace the value with an uninitialized value
       // at 00:00. Keep the last good position captured before that error.
-      _recordPlaybackError(_controller?.value.errorDescription ?? 'platform');
+      _bufferStallFailure = null;
+      _recordPlaybackError(value?.errorDescription ?? 'platform');
       _hideTimer?.cancel();
       setState(() {
         _quickSection = null;
@@ -2567,29 +2897,55 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         _controlsVisible = true;
         _locked = false;
         _holdingFastForward = false;
+        _resetScrub();
       });
       _markCurrentLineFailed();
       unawaited(_recoverCurrentResource());
       return;
     }
-    final value = _controller?.value;
     var lineStateChanged = false;
+    if (stalledPlayer &&
+        _failed &&
+        !_loading &&
+        !_episodeLoading &&
+        _canResumePlayback &&
+        value != null &&
+        value.isPlaying &&
+        !value.isBuffering &&
+        (value.position - stall.position).abs() >
+            const Duration(milliseconds: 200)) {
+      // A stalled controller can still produce media while line discovery
+      // runs, or after discovery has exhausted the other available URLs.
+      _bufferStallFailure = null;
+      _failed = false;
+      _rawRecoveryPending = false;
+      if (_lastPlaybackError == 'buffering_timeout') _lastPlaybackError = '';
+      final media = _session.sources.elementAtOrNull(_sourceIndex)?.url;
+      if (media != null) _failedMediaUrls.remove(media);
+      final attempt = _linePlaybackAttempts[_session.watchUrl];
+      _linePlaybackAttempts[_session.watchUrl] = (
+        phase: _LinePlaybackPhase.playing,
+        elapsed: attempt?.elapsed,
+        progressAnchor: value.position,
+      );
+      lineStateChanged = true;
+    }
     if (_canAutoResourceFallback &&
-        value?.isBuffering == true &&
+        player != null &&
+        value!.isBuffering &&
         _resumePlaying &&
         !_loading &&
         !_episodeLoading &&
         !_failed &&
         _foreground) {
-      final player = _controller;
-      final position = value!.position;
+      final position = value.position;
       // Buffering flags can remain true while buffered media still advances.
       // Only a full interval without movement and with playback intent is a
       // stall. A deliberate pause is never a reason to change resources.
       if (_stallWatchdog == null || _stallPosition != position) {
         _stallWatchdog?.cancel();
         _stallPosition = position;
-        _stallWatchdog = Timer(const Duration(seconds: 20), () {
+        _stallWatchdog = Timer(_bufferStallWindow, () {
           _stallWatchdog = null;
           if (!mounted ||
               !identical(player, _controller) ||
@@ -2604,6 +2960,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
             return;
           }
           setState(() {
+            _bufferStallFailure = (player: player, position: position);
             _failed = true;
             _loading = false;
             _controlsVisible = true;
@@ -2618,7 +2975,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       _stallWatchdog = null;
       _stallPosition = null;
     }
-    if (value?.isPlaying != true || value?.isBuffering == true) {
+    if (value?.isPlaying != true || _controlsRequiredForWaiting) {
       _hideTimer?.cancel();
       _controlsVisible = true;
     }
@@ -2639,15 +2996,51 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         lineStateChanged = true;
       }
       _resumePosition = value.position;
-      if (!value.isBuffering)
+      // A native rate change can precede the buffering event for a seek.
+      // Keep the last play intent until the seek settles or the user pauses.
+      if (!value.isBuffering &&
+          (!identical(_seekingPlayer, _controller) || value.isPlaying)) {
         _resumePlaying = !_hostPlaybackPaused && value.isPlaying;
+      }
       final second = value.position.inSeconds;
       if (second >= 5 && second ~/ 5 != _lastSavedSecond ~/ 5) {
         _lastSavedSecond = second;
         unawaited(_persistProgress());
       }
+      if (player != null) _watchPlaybackEnd(player, value);
     }
     final now = DateTime.now();
+    final previewPlayer = _controller;
+    if (previewPlayer != null &&
+        value != null &&
+        value.isPlaying &&
+        !value.isBuffering &&
+        !_loading &&
+        !_episodeLoading &&
+        _canResumePlayback &&
+        _allowsSeekThumbnails &&
+        value.position >= const Duration(seconds: 2)) {
+      _seekPreview.prepare(previewPlayer, wideThumbnail: _wideScrubPreview);
+    }
+    if (widget.onResolverProbeActivity != null &&
+        _canResumePlayback &&
+        !_loading &&
+        !_episodeLoading &&
+        !_failed &&
+        !identical(_seekingPlayer, _controller) &&
+        value != null &&
+        value.isPlaying &&
+        !value.isBuffering &&
+        !value.isCompleted) {
+      final anchor = _resolverProbeAnchor ??= value.position;
+      if (value.position > anchor + const Duration(milliseconds: 200) &&
+          _linePlaybackAttempts[_session.watchUrl]?.phase ==
+              _LinePlaybackPhase.playing) {
+        _notifyResolverProbeActivity(true);
+      }
+    } else {
+      _notifyResolverProbeActivity(false);
+    }
     final stateChanged =
         value?.isPlaying != _lastPlaying ||
         value?.isBuffering != _lastBuffering;
@@ -2659,7 +3052,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     _lastUiTick = now;
     _lastPlaying = value?.isPlaying;
     _lastBuffering = value?.isBuffering;
-    if (stateChanged &&
+    if ((stateChanged || (stalledPlayer && !_failed)) &&
         value?.isPlaying == true &&
         value?.isBuffering != true) {
       _scheduleControlsHide();
@@ -2673,6 +3066,12 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         _locked ||
         MediaQuery.accessibleNavigationOf(context))
       return;
+    // Buffering can already have shown the controls before this tap. Keep
+    // navigation and playback actions reachable until the wait has settled.
+    if (_controlsRequiredForWaiting) {
+      _showControls();
+      return;
+    }
     _controlsTapEpoch++;
     _hideTimer?.cancel();
     setState(() => _controlsVisible = !_controlsVisible);
@@ -2707,12 +3106,21 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     }
   }
 
+  bool get _controlsRequiredForWaiting =>
+      _controller?.value.isBuffering == true ||
+      _seekingPlayer != null && identical(_seekingPlayer, _controller);
+
   bool get _canHideControls =>
+      _controlsVisible &&
       _foreground &&
+      !_routeExited &&
+      !_locked &&
+      !_relatedPageOpen &&
+      !_changingFullscreen &&
       !MediaQuery.accessibleNavigationOf(context) &&
       !_failed &&
       _controller?.value.isPlaying == true &&
-      _controller?.value.isBuffering != true &&
+      !_controlsRequiredForWaiting &&
       _dragPosition == null &&
       !_holdingFastForward &&
       _controlInteractions.isEmpty;
@@ -2731,13 +3139,44 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     VideoPlayerController controller,
     Future<void> Function() command, {
     bool fatal = true,
+    bool showFailure = true,
+    int? seekCommandId,
   }) async {
+    bool current() =>
+        mounted &&
+        identical(controller, _controller) &&
+        (seekCommandId == null ||
+            (seekCommandId == _seekCommandId &&
+                !_routeExited &&
+                _foreground &&
+                !_relatedPageOpen &&
+                !_episodeLoading &&
+                !_failed));
+    final waitForOnlineSeek = seekCommandId != null && _seekingOnlineMedia;
+    var seekTimedOut = false;
     try {
-      await command().timeout(const Duration(seconds: 5));
-      return mounted && identical(controller, _controller);
+      await command().timeout(
+        waitForOnlineSeek ? _bufferStallWindow : const Duration(seconds: 5),
+        onTimeout: waitForOnlineSeek
+            ? () {
+                seekTimedOut = true;
+              }
+            : null,
+      );
+      if (!current()) return false;
+      if (!seekTimedOut) return true;
+      _recordPlaybackError('seek_ack_timeout');
+      // The native operation can still finish. Its progress and buffering
+      // events continue to drive the player and the resource stall watchdog.
+      if (!controller.value.isBuffering ||
+          !_canAutoResourceFallback ||
+          !_resumePlaying) {
+        _showPlayerActionFailure();
+      }
+      return false;
     } catch (_) {
-      if (!mounted || !identical(controller, _controller)) return false;
-      _hideTimer?.cancel();
+      if (!current()) return false;
+      if (fatal || showFailure) _hideTimer?.cancel();
       if (fatal) {
         setState(() {
           _quickSection = null;
@@ -2747,7 +3186,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
           _controlsVisible = true;
           _locked = false;
           _holdingFastForward = false;
-          _dragPosition = null;
+          _resetScrub();
         });
         unawaited(
           controller
@@ -2755,37 +3194,81 @@ class _NativeVideoPageState extends State<NativeVideoPage>
               .timeout(const Duration(seconds: 2))
               .catchError((_) {}),
         );
-      } else {
-        _showControls();
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(SnackBar(content: Text(t.videoPlayback.actionFailed)));
+      } else if (showFailure) {
+        _showPlayerActionFailure();
       }
       return false;
+    }
+  }
+
+  void _showPlayerActionFailure() {
+    _showControls();
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(t.videoPlayback.actionFailed)));
+  }
+
+  Future<bool> _runSeekCommand(
+    VideoPlayerController controller,
+    Duration position,
+  ) async {
+    _notifyResolverProbeActivity(false);
+    _pendingEndPlayer = null;
+    if (position >= controller.value.duration) {
+      _userSoughtToEnd = controller;
+      _endArmedPlayer = null;
+    } else if (identical(controller, _userSoughtToEnd)) {
+      _userSoughtToEnd = null;
+    }
+    final commandId = ++_seekCommandId;
+    if (_seekingOnlineMedia) {
+      _seekingPlayer = controller;
+      _showControls();
+      if (_stallWatchdog != null) {
+        _stallWatchdog!.cancel();
+        _stallWatchdog = null;
+        _onPlayerChanged();
+      }
+    }
+    try {
+      return await _runPlayerCommand(
+        controller,
+        () => controller.seekTo(position),
+        seekCommandId: commandId,
+      );
+    } finally {
+      if (_seekCommandId == commandId &&
+          identical(_seekingPlayer, controller)) {
+        _seekingPlayer = null;
+        if (mounted && identical(_controller, controller)) {
+          _scheduleControlsHide();
+        }
+      }
     }
   }
 
   Future<void> _seekTo(Duration position) async {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
-    await _runPlayerCommand(controller, () => controller.seekTo(position));
+    final completed = await _runSeekCommand(controller, position);
+    if (!completed || !mounted) return;
+    // A paused player may emit no later position tick after a throttled update.
+    setState(() {});
   }
 
   Future<void> _togglePlay() async {
-    if (!_foreground || _verificationRequired) return;
+    if (!_foreground || _verificationRequired || _episodeLoading) return;
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
     final value = controller.value;
     if (value.isPlaying) {
+      _endArmedPlayer = null;
       if (!await _runPlayerCommand(controller, controller.pause)) return;
       _resumePlaying = false;
       unawaited(_persistProgress());
     } else {
       if (value.duration > Duration.zero && value.position >= value.duration) {
-        if (!await _runPlayerCommand(
-          controller,
-          () => controller.seekTo(Duration.zero),
-        )) {
+        if (!await _runSeekCommand(controller, Duration.zero)) {
           return;
         }
       }
@@ -2798,6 +3281,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
   }
 
   Future<void> _seekBy(int seconds) async {
+    if (_episodeLoading) return;
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
     final value = controller.value;
@@ -2807,10 +3291,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         : target > value.duration
         ? value.duration
         : target;
-    if (!await _runPlayerCommand(
-      controller,
-      () => controller.seekTo(clamped),
-    )) {
+    if (!await _runSeekCommand(controller, clamped)) {
       return;
     }
     _feedbackTimer?.cancel();
@@ -2872,18 +3353,36 @@ class _NativeVideoPageState extends State<NativeVideoPage>
   }
 
   Future<void> _toggleMute() async {
-    final muted = !_muted;
+    if (await _setPlaybackVolume(
+      _muted ? _playbackVolume : 0,
+      showFailure: true,
+    )) {
+      _showControls();
+    }
+  }
+
+  Future<bool> _setPlaybackVolume(
+    double level, {
+    bool showFailure = false,
+  }) async {
+    final intent = ++_volumeIntent;
     final controller = _controller;
     if (controller == null ||
         !await _runPlayerCommand(
           controller,
-          () => controller.setVolume(muted ? 0 : 1),
+          () => controller.setVolume(level),
           fatal: false,
-        )) {
-      return;
+          showFailure: showFailure,
+        ) ||
+        !mounted ||
+        intent != _volumeIntent) {
+      return false;
     }
-    if (mounted) setState(() => _muted = muted);
-    _showControls();
+    setState(() {
+      if (level > 0) _playbackVolume = level;
+      _muted = level == 0;
+    });
+    return true;
   }
 
   Future<void> _setFullscreen(bool enabled, {bool? portrait}) async {
@@ -2901,8 +3400,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     final wasPortrait = _portraitFullscreen;
     final wasLocked = _locked;
     _changingFullscreen = true;
-    _swiping = false;
-    _dragPosition = null;
+    _resetScrub();
     unawaited(_setFastForward(false));
     try {
       if (enabled) {
@@ -2994,13 +3492,84 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     }
   }
 
-  void _beginSwipe() {
-    if (_controller?.value.isInitialized != true) return;
+  void _startScrub(Duration position, {required bool swipe}) {
+    final player = _controller;
+    if (player == null ||
+        !player.value.isInitialized ||
+        player.value.duration <= Duration.zero ||
+        _scrubPlayer != null ||
+        !_foreground ||
+        _routeExited ||
+        _failed ||
+        _loading ||
+        _episodeLoading ||
+        _changingFullscreen ||
+        _locked ||
+        _relatedPageOpen ||
+        _quickSection != null) {
+      return;
+    }
     _hideTimer?.cancel();
-    _swiping = true;
-    _swipeOrigin = _controller!.value.position;
+    _pendingEndPlayer = null;
+    _scrubPlayer = player;
+    _swiping = swipe;
+    setState(() => _dragPosition = position);
+    if (_allowsSeekThumbnails) {
+      _seekPreview.update(player, position, wideThumbnail: _wideScrubPreview);
+    }
+  }
+
+  void _updateScrub(Duration position, {required bool swipe}) {
+    final player = _scrubPlayer;
+    if (player == null ||
+        !identical(player, _controller) ||
+        _swiping != swipe) {
+      return;
+    }
+    final target = Duration(
+      milliseconds: position.inMilliseconds.clamp(
+        0,
+        player.value.duration.inMilliseconds,
+      ),
+    );
+    if (_dragPosition == target) return;
+    setState(() => _dragPosition = target);
+    if (_allowsSeekThumbnails) {
+      _seekPreview.update(player, target, wideThumbnail: _wideScrubPreview);
+    }
+  }
+
+  void _resetScrub({bool keepPreview = false}) {
+    _scrubPlayer = null;
+    _timelinePointer = null;
+    _swiping = false;
+    _dragPosition = null;
+    if (keepPreview) {
+      _seekPreview.endScrub();
+    } else {
+      _seekPreview.clear();
+    }
+  }
+
+  void _finishScrub({required bool swipe, bool cancelled = false}) {
+    final player = _scrubPlayer;
+    if (player == null || _swiping != swipe) return;
+    final target = _dragPosition;
+    setState(() => _resetScrub(keepPreview: true));
+    if (!cancelled && target != null && identical(player, _controller)) {
+      unawaited(_seekTo(target));
+    }
+    if (swipe) {
+      _showControls();
+    } else {
+      _scheduleControlsHide();
+    }
+  }
+
+  void _beginSwipe() {
+    _swipeOrigin = _controller?.value.position ?? Duration.zero;
     _swipeDistance = 0;
-    setState(() => _dragPosition = _swipeOrigin);
+    _startScrub(_swipeOrigin, swipe: true);
   }
 
   void _updateSwipe(double delta) {
@@ -3012,29 +3581,20 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     final target =
         _swipeOrigin.inMilliseconds +
         (_swipeDistance / _tapAreaWidth * range).round();
-    setState(
-      () => _dragPosition = Duration(
-        milliseconds: target.clamp(0, duration.inMilliseconds),
-      ),
-    );
+    _updateScrub(Duration(milliseconds: target), swipe: true);
   }
 
   void _endSwipe({bool cancelled = false}) {
     // A tap also cancels Flutter's drag recognizer. It must not reveal the
     // controls before the pending single-tap callback toggles them again.
-    if (!_swiping) return;
-    _swiping = false;
-    final target = _dragPosition;
-    setState(() => _dragPosition = null);
-    if (!cancelled && target != null) unawaited(_seekTo(target));
-    _showControls();
+    _finishScrub(swipe: true, cancelled: cancelled);
   }
 
   void _toggleLock() {
     unawaited(_setFastForward(false));
     setState(() {
       _locked = !_locked;
-      _dragPosition = null;
+      _resetScrub();
     });
     _showControls();
   }
@@ -3117,6 +3677,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     _hideTimer?.cancel();
     _feedbackTimer?.cancel();
     _actionNoticeTimer?.cancel();
+    _seekPreview.dispose();
     _loadEpoch++;
     unawaited(_persistProgress());
     final controller = _controller;
@@ -3158,6 +3719,8 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     if (ready && !_loading) _lastPlayableValue = value;
     unawaited(_persistProgress());
     _routeExited = true;
+    _notifyResolverProbeActivity(false);
+    _resetScrub();
     _hostPlaybackPaused = true;
     _resumePlaying = false;
     _loadEpoch++;
@@ -3352,6 +3915,26 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     return width;
   }
 
+  Widget _adjacentEpisodeButton(int direction) {
+    final previous = direction < 0;
+    final target = _episodeSequence.adjacent(_session.watchUrl, direction);
+    return NativeVideoIconButton(
+      key: ValueKey(previous ? 'video-episode.previous' : 'video-episode.next'),
+      tooltip: _session.isSitePlaylist
+          ? (previous
+                ? t.videoPlayback.previousPlaylistEntry
+                : t.videoPlayback.nextPlaylistEntry)
+          : (previous
+                ? t.videoPlayback.previousEpisode
+                : t.videoPlayback.nextEpisode),
+      symbol: previous ? 'backward.end' : 'forward.end',
+      icon: previous ? Icons.skip_previous_rounded : Icons.skip_next_rounded,
+      onPressed: _episodeLoading || target == null
+          ? null
+          : () => _selectEpisode(target),
+    );
+  }
+
   Widget _controlLayout({
     required bool ready,
     required bool ended,
@@ -3373,12 +3956,16 @@ class _NativeVideoPageState extends State<NativeVideoPage>
         _fullscreen &&
         _portraitFullscreen &&
         MediaQuery.sizeOf(context).height >= 500;
+    final adjacentEpisodes =
+        _canSelectEpisode && _episodeSequence.items.length > 1;
+    final holdTransport = _fullscreen && _episodeLoading;
+    final showTransport = ready || holdTransport;
     final timeStyle = Theme.of(context).textTheme.labelMedium?.copyWith(
       color: Colors.white,
       fontFeatures: const [FontFeature.tabularFigures()],
     );
     final timeText =
-        '${ready ? _time(position) : '--:--'} / ${ready && duration > Duration.zero ? _time(duration) : '--:--'}';
+        '${showTransport ? _time(position) : '--:--'} / ${showTransport && duration > Duration.zero ? _time(duration) : '--:--'}';
     final systemTimeline =
         !kIsWeb &&
         defaultTargetPlatform == TargetPlatform.iOS &&
@@ -3390,9 +3977,8 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       overflow: TextOverflow.ellipsis,
       style: timeStyle,
     );
-    Widget timeline({bool centered = false}) => SizedBox(
-      height: 44,
-      child: SliderTheme(
+    Widget timeline({bool centered = false}) {
+      final slider = SliderTheme(
         data: SliderTheme.of(context).copyWith(
           trackHeight: systemTimeline ? 3 : 2,
           trackShape: centered
@@ -3442,20 +4028,38 @@ class _NativeVideoPageState extends State<NativeVideoPage>
           overlayColor: systemTimeline
               ? WidgetStatePropertyAll(Colors.white.withValues(alpha: .13))
               : null,
-          onChangeStart: (v) {
-            _hideTimer?.cancel();
-            setState(() => _dragPosition = Duration(milliseconds: v.round()));
-          },
-          onChanged: (v) =>
-              setState(() => _dragPosition = Duration(milliseconds: v.round())),
-          onChangeEnd: (v) {
-            setState(() => _dragPosition = null);
-            unawaited(_seekTo(Duration(milliseconds: v.round())));
-            _scheduleControlsHide();
-          },
+          onChangeStart: (value) =>
+              _startScrub(Duration(milliseconds: value.round()), swipe: false),
+          onChanged: showTransport && duration > Duration.zero
+              ? (value) => _updateScrub(
+                  Duration(milliseconds: value.round()),
+                  swipe: false,
+                )
+              : null,
+          onChangeEnd: (_) =>
+              _finishScrub(swipe: false, cancelled: _timelinePointer != null),
         ),
-      ),
-    );
+      );
+      return SizedBox(
+        height: 44,
+        child: IgnorePointer(
+          ignoring: holdTransport,
+          child: Listener(
+            onPointerDown: (event) => _timelinePointer ??= event.pointer,
+            onPointerUp: (event) {
+              if (_timelinePointer == event.pointer) _timelinePointer = null;
+            },
+            onPointerCancel: (event) {
+              if (_timelinePointer != event.pointer) return;
+              _timelinePointer = null;
+              _finishScrub(swipe: false, cancelled: true);
+            },
+            child: slider,
+          ),
+        ),
+      );
+    }
+
     final play = NativeVideoIconButton(
       tooltip: ended
           ? t.videoPlayback.replay
@@ -3472,7 +4076,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
           : playing
           ? Icons.pause_rounded
           : Icons.play_arrow_rounded,
-      onPressed: () => unawaited(_togglePlay()),
+      onPressed: holdTransport ? null : () => unawaited(_togglePlay()),
     );
     final speedLabel =
         '${_speed == _speed.roundToDouble() ? _speed.toStringAsFixed(1) : _speed}×';
@@ -3489,7 +4093,9 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       maxWidth: speedWidth,
       label: speedLabel,
       tooltip: t.videoPlayback.speed,
-      onPressed: () => _openQuickSettings(VideoQuickSection.speed),
+      onPressed: holdTransport
+          ? null
+          : () => _openQuickSettings(VideoQuickSection.speed),
     );
     final portraitButton = NativeVideoIconButton(
       tooltip: _fullscreen
@@ -3513,6 +4119,23 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       icon: Icons.fullscreen_exit_rounded,
       onPressed: () => unawaited(_setFullscreen(false)),
     );
+    Widget episodePicker() => NativeVideoTextButton(
+      maxWidth: 100,
+      label: _selectionButtonLabel,
+      tooltip: _selectionTitle,
+      onPressed: () => _openQuickSettings(VideoQuickSection.episodes),
+    );
+
+    Widget labeledControl(Widget control, String label) => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        control,
+        Text(
+          label,
+          style: const TextStyle(fontSize: 10, color: Colors.white70),
+        ),
+      ],
+    );
     final top = Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -3530,14 +4153,10 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                     horizontal: 8,
                     vertical: 12,
                   ),
-                  child: Text(
-                    _session.title,
+                  child: VideoLandscapeTitle(
                     key: const ValueKey('video-landscape-title'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(
-                      context,
-                    ).textTheme.titleSmall?.copyWith(color: Colors.white),
+                    title: _landscapeTitle,
+                    active: controlsShown && _foreground,
                   ),
                 )
               : const SizedBox.shrink(),
@@ -3628,6 +4247,20 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                             context,
                           ).textTheme.titleSmall?.copyWith(color: Colors.white),
                         ),
+                        if (_currentEpisodeName case final episode?)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 3),
+                            child: Text(
+                              episode,
+                              key: const ValueKey(
+                                'video-portrait-episode-name',
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.labelMedium
+                                  ?.copyWith(color: Colors.white70),
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -3657,67 +4290,19 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                 _fullscreenActions(subtle: true).last,
               ],
             ),
-          if (portrait &&
-              _session.playbackEntries.isNotEmpty &&
-              (widget.loadEpisode != null || widget.onOpenVideo != null))
+          if (portrait && (showTransport || _canSelectEpisode))
             Row(
               children: [
-                NativeVideoTextButton(
-                  label: _selectionTitle,
-                  tooltip: _selectionTitle,
-                  onPressed: () =>
-                      _openQuickSettings(VideoQuickSection.episodes),
-                ),
-                if (_episodeSequence.items.length <= 1)
-                  const Spacer()
-                else
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Text(
-                        _episodeSequence.playbackIndexOf(_session.watchUrl) < 0
-                            ? (_session.isSitePlaylist
-                                  ? t.videoPlayback.playlistCurrentMissing
-                                  : t.videoPlayback.episodeOrderUnavailable)
-                            : '${_episodeSequence.playbackIndexOf(_session.watchUrl) + 1}/${_episodeSequence.items.length}',
-                        style: Theme.of(
-                          context,
-                        ).textTheme.labelSmall?.copyWith(color: Colors.white70),
-                      ),
-                    ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: showTransport ? time() : const SizedBox.shrink(),
                   ),
-                if (_episodeSequence.items.length > 1)
-                  for (final direction in [-1, 1])
-                    NativeVideoIconButton(
-                      tooltip: _session.isSitePlaylist
-                          ? (direction < 0
-                                ? t.videoPlayback.previousPlaylistEntry
-                                : t.videoPlayback.nextPlaylistEntry)
-                          : (direction < 0
-                                ? t.videoPlayback.previousEpisode
-                                : t.videoPlayback.nextEpisode),
-                      symbol: direction < 0 ? 'backward.end' : 'forward.end',
-                      icon: direction < 0
-                          ? Icons.skip_previous_rounded
-                          : Icons.skip_next_rounded,
-                      onPressed:
-                          _episodeLoading ||
-                              _episodeSequence.adjacent(
-                                    _session.watchUrl,
-                                    direction,
-                                  ) ==
-                                  null
-                          ? null
-                          : () => _selectEpisode(
-                              _episodeSequence.adjacent(
-                                _session.watchUrl,
-                                direction,
-                              )!,
-                            ),
-                    ),
+                ),
+                if (_canSelectEpisode) episodePicker(),
               ],
             ),
-          if (ready) ...[
+          if (showTransport) ...[
             if (!_fullscreen)
               LayoutBuilder(
                 builder: (context, constraints) {
@@ -3766,93 +4351,85 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                   child: Align(alignment: Alignment.centerLeft, child: time()),
                 ),
               timeline(),
-              Row(
-                key: ValueKey(
-                  portrait
-                      ? 'video-controls.portrait-bottom'
-                      : 'video-controls.landscape-bottom',
-                ),
-                children: [
-                  play,
-                  if (rich) ...[
-                    NativeVideoIconButton(
-                      tooltip: t.videoPlayback.rewind10,
-                      symbol: 'gobackward.10',
-                      icon: Icons.replay_10_rounded,
-                      onPressed: () => unawaited(_seekBy(-10)),
-                    ),
-                    NativeVideoIconButton(
-                      tooltip: t.videoPlayback.forward10,
-                      symbol: 'goforward.10',
-                      icon: Icons.forward_10_rounded,
-                      onPressed: () => unawaited(_seekBy(10)),
-                    ),
-                  ],
-                  if (portrait)
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: time(),
+              if (portrait)
+                SizedBox(
+                  width: double.infinity,
+                  child: Wrap(
+                    key: const ValueKey('video-controls.portrait-bottom'),
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 4,
+                    runSpacing: 2,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (adjacentEpisodes) _adjacentEpisodeButton(-1),
+                          play,
+                          if (adjacentEpisodes) _adjacentEpisodeButton(1),
+                        ],
                       ),
-                    )
-                  else
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          speed,
+                          labeledControl(
+                            collapse,
+                            t.videoPlayback.minimizeShort,
+                          ),
+                          const SizedBox(width: 4),
+                          labeledControl(
+                            landscapeButton,
+                            t.videoPlayback.landscapeShort,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              if (!portrait)
+                Row(
+                  key: const ValueKey('video-controls.landscape-bottom'),
+                  children: [
+                    play,
+                    if (landscape && adjacentEpisodes)
+                      _adjacentEpisodeButton(1),
+                    if (rich) ...[
+                      NativeVideoIconButton(
+                        tooltip: t.videoPlayback.rewind10,
+                        symbol: 'gobackward.10',
+                        icon: Icons.replay_10_rounded,
+                        onPressed: _episodeLoading
+                            ? null
+                            : () => unawaited(_seekBy(-10)),
+                      ),
+                      NativeVideoIconButton(
+                        tooltip: t.videoPlayback.forward10,
+                        symbol: 'goforward.10',
+                        icon: Icons.forward_10_rounded,
+                        onPressed: _episodeLoading
+                            ? null
+                            : () => unawaited(_seekBy(10)),
+                      ),
+                    ],
                     const Spacer(),
-                  if (wide &&
-                      _session.playbackEntries.isNotEmpty &&
-                      (widget.onOpenVideo != null ||
-                          widget.loadEpisode != null))
-                    NativeVideoTextButton(
-                      maxWidth: 100,
-                      label: _selectionTitle,
-                      tooltip: _selectionTitle,
-                      onPressed: () =>
-                          _openQuickSettings(VideoQuickSection.episodes),
-                    ),
-                  speed,
-                  if (wide && _hasSourceChoices)
-                    NativeVideoTextButton(
-                      maxWidth: 100,
-                      label: _currentSourceLabel,
-                      tooltip: t.videoPlayback.source,
-                      onPressed: () =>
-                          _openQuickSettings(VideoQuickSection.sources),
-                    ),
-                  if (!portrait) portraitButton,
-                  if (portrait) ...[
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        collapse,
-                        Text(
-                          t.videoPlayback.minimizeShort,
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: Colors.white70,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(width: 4),
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        landscapeButton,
-                        Text(
-                          t.videoPlayback.landscapeShort,
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: Colors.white70,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ] else
+                    if (landscape && _canSelectEpisode) episodePicker(),
+                    speed,
+                    if (wide && _hasSourceChoices)
+                      NativeVideoTextButton(
+                        maxWidth: 100,
+                        label: _currentSourceLabel,
+                        tooltip: t.videoPlayback.source,
+                        onPressed: () =>
+                            _openQuickSettings(VideoQuickSection.sources),
+                      ),
+                    portraitButton,
                     collapse,
-                ],
-              ),
+                  ],
+                ),
             ],
           ],
-          if (!ready && !portrait)
+          if (!showTransport && !portrait)
             Row(
               children: [
                 const Spacer(),
@@ -3860,37 +4437,13 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                 if (_fullscreen) collapse else landscapeButton,
               ],
             ),
-          if (!ready && portrait)
+          if (!showTransport && portrait)
             Row(
               children: [
                 const Spacer(),
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    collapse,
-                    Text(
-                      t.videoPlayback.minimizeShort,
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: Colors.white70,
-                      ),
-                    ),
-                  ],
-                ),
+                labeledControl(collapse, t.videoPlayback.minimizeShort),
                 const SizedBox(width: 4),
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    landscapeButton,
-                    Text(
-                      t.videoPlayback.landscapeShort,
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: Colors.white70,
-                      ),
-                    ),
-                  ],
-                ),
+                labeledControl(landscapeButton, t.videoPlayback.landscapeShort),
               ],
             ),
         ],
@@ -3898,9 +4451,23 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     );
   }
 
+  VideoPictureSize _pictureSizeForViewport(Size viewport) {
+    if (_preferences.usesLegacyCover &&
+        (_fullscreen
+            ? _portraitFullscreen
+            : viewport.height > viewport.width * 9 / 16 + 1)) {
+      return VideoPictureSize.fit;
+    }
+    return _preferences.pictureSize;
+  }
+
   Widget _quickSettingsOverlay(BoxConstraints constraints) {
     final side = constraints.maxWidth > constraints.maxHeight;
     final padding = MediaQuery.paddingOf(context);
+    final safeViewport = Size(
+      constraints.maxWidth - padding.horizontal,
+      constraints.maxHeight - (_fullscreen ? 0 : padding.vertical),
+    );
     final reservedTop = side
         ? 0.0
         : padding.top + _inlinePlayerHeight(constraints.maxWidth);
@@ -3923,6 +4490,16 @@ class _NativeVideoPageState extends State<NativeVideoPage>
             bucket: _quickStorage,
             child: VideoPlaybackQuickPanel(
               offlineOnly: widget.offlineOnly,
+              playableEpisodeCount: _playableEpisodeCount,
+              mirrored: _mirrored,
+              onMirror: (value) => setState(() => _mirrored = value),
+              activePictureSize: _preferences.usesLegacyCover
+                  ? _pictureSizeForViewport(
+                      _fullscreen
+                          ? safeViewport
+                          : _inlinePlayerSize(safeViewport),
+                    )
+                  : null,
               trackControls: _offlineTrackControls(),
               showSeekActions: !_fullscreen,
               floating: false,
@@ -3964,9 +4541,9 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                                       position:
                                           _controller?.value.position ??
                                           _resumePosition,
-                                      playing:
-                                          _controller?.value.isPlaying ??
-                                          _resumePlaying,
+                                      playing: _currentPlayIntent(
+                                        _controller?.value,
+                                      ),
                                     );
                                     _closeQuickSettings();
                                     _selectEpisode(target);
@@ -3997,6 +4574,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
               muted: _muted,
               ready:
                   !_loading &&
+                  !_episodeLoading &&
                   !_failed &&
                   _controller?.value.isInitialized == true,
               watchLater: _engagement?.state.watchLater,
@@ -4038,7 +4616,10 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                 unawaited(_backToWeb());
               },
               onExitSource: _exitSourceFromPlayer,
-              onEpisode: _selectEpisode,
+              onEpisode:
+                  widget.loadEpisode != null || widget.onOpenVideo != null
+                  ? _selectEpisode
+                  : null,
             ),
           ),
         ),
@@ -4046,6 +4627,115 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     );
     return panel;
   }
+
+  bool get _wideScrubPreview =>
+      _fullscreen &&
+      !_portraitFullscreen &&
+      MediaQuery.orientationOf(context) == Orientation.landscape;
+
+  bool get _allowsSeekThumbnails =>
+      _session.sources.elementAtOrNull(_sourceIndex)?.localResourceId != null ||
+      widget.allowSeekThumbnails?.call(_session) != false;
+
+  Widget _scrubPreview(Duration position, Duration duration) => IgnorePointer(
+    key: const ValueKey('video-scrub-preview'),
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final wide = _wideScrubPreview;
+        final width = (constraints.maxWidth * (wide ? .28 : .42))
+            .clamp(0.0, wide ? 272.0 : 202.0)
+            .clamp(0.0, constraints.maxHeight * .42 * 16 / 9);
+        final showThumbnail =
+            _allowsSeekThumbnails &&
+            VideoSeekPreviewController.supports(_scrubPlayer);
+        final corner = BorderRadius.circular(9);
+        return Center(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (showThumbnail) ...[
+                  ListenableBuilder(
+                    listenable: _seekPreview,
+                    builder: (context, _) {
+                      final frame = _seekPreview.frame;
+                      return Container(
+                        key: const ValueKey('video-scrub-window'),
+                        width: width,
+                        height: width * 9 / 16,
+                        clipBehavior: Clip.antiAlias,
+                        decoration: BoxDecoration(
+                          color: frame == null
+                              ? Colors.black26
+                              : const Color(0xff24272b),
+                          borderRadius: corner,
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Colors.black26,
+                              offset: Offset(0, 3),
+                              blurRadius: 10,
+                            ),
+                          ],
+                        ),
+                        foregroundDecoration: BoxDecoration(
+                          borderRadius: corner,
+                          border: Border.all(color: Colors.white38),
+                        ),
+                        child: frame == null
+                            ? const SizedBox.expand()
+                            : Transform.flip(
+                                flipX: _mirrored,
+                                child: Image.memory(
+                                  frame,
+                                  key: const ValueKey('video-scrub-frame'),
+                                  fit: BoxFit.contain,
+                                  gaplessPlayback: true,
+                                  excludeFromSemantics: true,
+                                  errorBuilder: (_, _, _) =>
+                                      const SizedBox.expand(),
+                                ),
+                              ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 6),
+                ],
+                Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(
+                        text: _time(position),
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      TextSpan(
+                        text: ' / ${_time(duration)}',
+                        style: const TextStyle(color: Colors.white70),
+                      ),
+                    ],
+                  ),
+                  key: const ValueKey('video-scrub-time'),
+                  maxLines: 1,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                    shadows: [
+                      Shadow(
+                        color: Colors.black87,
+                        blurRadius: 5,
+                        offset: Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    ),
+  );
 
   Widget _playerSurface() {
     final controller = _controller;
@@ -4065,204 +4755,209 @@ class _NativeVideoPageState extends State<NativeVideoPage>
             MediaQuery.accessibleNavigationOf(context) ||
             _failed ||
             ended);
+    final adjustmentSession =
+        !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.iOS ||
+            defaultTargetPlatform == TargetPlatform.android) &&
+        _preferences.landscapeAdjustments &&
+        _foreground &&
+        !_routeExited &&
+        !_relatedPageOpen &&
+        !_controlInteractions.contains('settings');
 
     return LayoutBuilder(
       builder: (context, constraints) {
         _tapAreaWidth = constraints.maxWidth;
         final seekingEnabled =
-            ready && !_locked && !_failed && _preferences.swipeSeek;
-        return RawGestureDetector(
+            ready &&
+            !_locked &&
+            !_failed &&
+            !_changingFullscreen &&
+            _quickSection == null &&
+            _preferences.swipeSeek;
+        return ColoredBox(
           key: const ValueKey('video-gesture-surface'),
-          behavior: HitTestBehavior.opaque,
-          gestures: {
-            if (seekingEnabled)
-              _VideoSeekRecognizer:
-                  GestureRecognizerFactoryWithHandlers<_VideoSeekRecognizer>(
-                    _VideoSeekRecognizer.new,
-                    (recognizer) {
-                      recognizer.edgeWidth = _fullscreen ? 0 : 24;
-                      recognizer.width = constraints.maxWidth;
-                      recognizer.gestureSettings = MediaQuery.gestureSettingsOf(
-                        context,
-                      );
-                      recognizer.dragStartBehavior = DragStartBehavior.down;
-                      recognizer.onStart = (_) => _beginSwipe();
-                      recognizer.onUpdate = (details) =>
-                          _updateSwipe(details.delta.dx);
-                      recognizer.onEnd = (_) => _endSwipe();
-                      recognizer.onCancel = () => _endSwipe(cancelled: true);
-                    },
-                  ),
-          },
-          child: Listener(
-            // Flutter reports cancellation of an accepted drag through its
-            // end callback. Handle the pointer cancellation before that can
-            // commit a preview as an intentional seek.
-            onPointerCancel: (_) => _endSwipe(cancelled: true),
-            child: ColoredBox(
-              color: Colors.black,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap:
-                        _failed ||
-                            _locked ||
-                            MediaQuery.accessibleNavigationOf(context)
-                        ? null
-                        : _toggleControls,
-                    onDoubleTapDown:
-                        _failed || _locked || _preferences.doubleTap == 'off'
-                        ? null
-                        : (details) => _doubleTapX = details.localPosition.dx,
-                    onDoubleTap:
-                        _failed || _locked || _preferences.doubleTap == 'off'
-                        ? null
-                        : () => unawaited(
-                            _preferences.doubleTap == 'playPause' ||
-                                    (_doubleTapX >= _tapAreaWidth * 0.3 &&
-                                        _doubleTapX <= _tapAreaWidth * 0.7)
-                                ? _togglePlay()
-                                : _seekBy(
-                                    _doubleTapX < _tapAreaWidth * 0.3
-                                        ? -10
-                                        : 10,
-                                  ),
-                          ),
-                    onLongPressStart:
-                        _failed || _locked || _preferences.holdSpeed == 0
-                        ? null
-                        : (_) => unawaited(_setFastForward(true)),
-                    onLongPressEnd: _failed || _locked
-                        ? null
-                        : (_) => unawaited(_setFastForward(false)),
-                    onLongPressCancel: () => unawaited(_setFastForward(false)),
-                    child: AnimatedSwitcher(
-                      duration: MediaQuery.disableAnimationsOf(context)
-                          ? Duration.zero
-                          : const Duration(milliseconds: 180),
-                      transitionBuilder: (child, animation) =>
-                          FadeTransition(opacity: animation, child: child),
-                      child: KeyedSubtree(
-                        key: ObjectKey(controller),
-                        child: ready
-                            ? ClipRect(
-                                child: SizedBox.expand(
-                                  child: FittedBox(
-                                    fit:
-                                        _preferences.cover &&
-                                            !(_fullscreen &&
-                                                _portraitFullscreen) &&
-                                            (_fullscreen ||
-                                                constraints.maxHeight <=
-                                                    constraints.maxWidth *
-                                                            9 /
-                                                            16 +
-                                                        1)
-                                        ? BoxFit.cover
-                                        : BoxFit.contain,
-                                    child: SizedBox(
-                                      width: value!.size.width,
-                                      height: value.size.height,
-                                      child: VideoPlayer(controller!),
-                                    ),
-                                  ),
+          color: Colors.black,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              VideoSurfaceGestures(
+                sessionActive: adjustmentSession,
+                enabled:
+                    adjustmentSession &&
+                    ready &&
+                    !_loading &&
+                    !_episodeLoading &&
+                    !_failed &&
+                    !_locked &&
+                    !_changingFullscreen &&
+                    _quickSection == null &&
+                    !MediaQuery.accessibleNavigationOf(context),
+                reversed: _preferences.reverseLandscapeAdjustments,
+                seekEnabled: seekingEnabled,
+                fullscreen: _fullscreen,
+                controlsVisible: controlsShown,
+                onSeekStart: _beginSwipe,
+                onSeekUpdate: _updateSwipe,
+                onSeekEnd: _endSwipe,
+                onSeekCancel: () => _endSwipe(cancelled: true),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap:
+                      _failed ||
+                          _locked ||
+                          MediaQuery.accessibleNavigationOf(context)
+                      ? null
+                      : _toggleControls,
+                  onDoubleTapDown:
+                      _failed || _locked || _preferences.doubleTap == 'off'
+                      ? null
+                      : (details) => _doubleTapX = details.localPosition.dx,
+                  onDoubleTap:
+                      _failed || _locked || _preferences.doubleTap == 'off'
+                      ? null
+                      : () => unawaited(
+                          _preferences.doubleTap == 'playPause' ||
+                                  (_doubleTapX >= _tapAreaWidth * 0.3 &&
+                                      _doubleTapX <= _tapAreaWidth * 0.7)
+                              ? _togglePlay()
+                              : _seekBy(
+                                  _doubleTapX < _tapAreaWidth * 0.3 ? -10 : 10,
                                 ),
-                              )
-                            : _episodeLoading && _session.coverUrl != null
-                            ? Center(
-                                child: VideoThumbnail(
-                                  url: _session.coverUrl.toString(),
-                                  placeholderIcon: Icons.play_arrow_rounded,
-                                  referrer: _session.watchUrl,
-                                ),
-                              )
-                            : const SizedBox.expand(),
-                      ),
-                    ),
-                  ),
-                  if (_fullscreen && _actionNotice != null)
-                    Positioned(
-                      left: 16,
-                      right: 16,
-                      top: MediaQuery.viewPaddingOf(context).top + 64,
-                      child: VideoActionNotice(
-                        message: _actionNotice!,
-                        onClose: _clearActionNotice,
-                      ),
-                    ),
-                  if (!_failed &&
-                      !_loading &&
-                      !_episodeLoading &&
-                      _actionNotice == null &&
-                      _episodeRetryTarget != null)
-                    Positioned(
-                      left: 12,
-                      right: 12,
-                      top: _fullscreen
-                          ? MediaQuery.viewPaddingOf(context).top + 64
-                          : 60,
-                      child: Material(
-                        color: const Color(0xEE192025),
-                        borderRadius: BorderRadius.circular(12),
-                        child: Padding(
-                          padding: const EdgeInsets.only(left: 12, right: 4),
-                          child: Row(
-                            children: [
-                              const Icon(
-                                Icons.error_outline_rounded,
-                                size: 18,
-                                color: Colors.white70,
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  t.videoPlayback.episodeSwitchFailed,
-                                  maxLines: 2,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                              ),
-                              TextButton(
-                                onPressed: () =>
-                                    _selectEpisode(_episodeRetryTarget!),
-                                child: Text(t.common.retry),
-                              ),
-                              IconButton(
-                                tooltip: t.common.close,
-                                onPressed: () =>
-                                    setState(() => _episodeRetryTarget = null),
-                                icon: const Icon(
-                                  Icons.close_rounded,
-                                  size: 18,
-                                  color: Colors.white70,
-                                ),
-                              ),
-                            ],
-                          ),
                         ),
+                  onLongPressStart:
+                      _failed || _locked || _preferences.holdSpeed == 0
+                      ? null
+                      : (_) => unawaited(_setFastForward(true)),
+                  onLongPressEnd: _failed || _locked
+                      ? null
+                      : (_) => unawaited(_setFastForward(false)),
+                  onLongPressCancel: () => unawaited(_setFastForward(false)),
+                  child: AnimatedSwitcher(
+                    duration: MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: 180),
+                    transitionBuilder: (child, animation) =>
+                        FadeTransition(opacity: animation, child: child),
+                    child: KeyedSubtree(
+                      key: ObjectKey(controller),
+                      child: ready
+                          ? VideoPictureFrame(
+                              size: _pictureSizeForViewport(
+                                constraints.biggest,
+                              ),
+                              mediaSize: value!.size,
+                              child: Transform.flip(
+                                key: const ValueKey('video-picture-mirror'),
+                                flipX: _mirrored,
+                                transformHitTests: false,
+                                child: VideoPlayer(controller!),
+                              ),
+                            )
+                          : _episodeLoading && _session.coverUrl != null
+                          ? Center(
+                              child: VideoThumbnail(
+                                url: _session.coverUrl.toString(),
+                                placeholderIcon: Icons.play_arrow_rounded,
+                                referrer: _session.watchUrl,
+                              ),
+                            )
+                          : const SizedBox.expand(),
+                    ),
+                  ),
+                ),
+              ),
+              if (_fullscreen && _actionNotice != null)
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  top: MediaQuery.viewPaddingOf(context).top + 64,
+                  child: VideoActionNotice(
+                    message: _actionNotice!,
+                    onClose: _clearActionNotice,
+                  ),
+                ),
+              if (!_failed &&
+                  !_loading &&
+                  !_episodeLoading &&
+                  _actionNotice == null &&
+                  _episodeRetryTarget != null)
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  top: _fullscreen
+                      ? MediaQuery.viewPaddingOf(context).top + 64
+                      : 60,
+                  child: Material(
+                    color: const Color(0xEE192025),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 12, right: 4),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.error_outline_rounded,
+                            size: 18,
+                            color: Colors.white70,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              t.videoPlayback.episodeSwitchFailed,
+                              maxLines: 2,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () => _selectEpisode(
+                              _episodeRetryTarget!,
+                              playFromStart: _retryEpisodeFromStart,
+                            ),
+                            child: Text(t.common.retry),
+                          ),
+                          IconButton(
+                            tooltip: t.common.close,
+                            onPressed: () =>
+                                setState(() => _episodeRetryTarget = null),
+                            icon: const Icon(
+                              Icons.close_rounded,
+                              size: 18,
+                              color: Colors.white70,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  if (_showEpisodeWait || _rawRecoveryPending)
-                    Positioned(
-                      left: 20,
-                      right: 20,
-                      bottom: 130,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.translucent,
-                        onTap: _toggleControls,
-                        child: Semantics(
-                          liveRegion: true,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (_showEpisodeWait || _rawRecoveryPending)
-                                const LinearProgressIndicator(minHeight: 2),
-                              const SizedBox(height: 8),
-                              Text(
+                  ),
+                ),
+              if (_showEpisodeWait ||
+                  _rawRecoveryPending ||
+                  _switchingEpisodeTitle?.isNotEmpty == true)
+                Positioned(
+                  left: 20,
+                  right: 20,
+                  top: _fullscreen
+                      ? MediaQuery.paddingOf(context).top + 72
+                      : 48,
+                  child: ExcludeSemantics(
+                    excluding: _quickSection != null,
+                    child: Semantics(
+                      container: true,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_showEpisodeWait || _rawRecoveryPending)
+                            const Padding(
+                              padding: EdgeInsets.only(bottom: 8),
+                              child: LinearProgressIndicator(minHeight: 2),
+                            ),
+                          IgnorePointer(
+                            child: Semantics(
+                              liveRegion: true,
+                              child: Text(
                                 _rawRecoveryPending
                                     ? t.videoSource.lineResolving
                                     : _autoResourceActive
@@ -4271,374 +4966,366 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                                         current: _autoResourceAttempt,
                                         total: _autoResourceTotal,
                                       )
+                                    : _switchingEpisodeTitle?.isNotEmpty == true
+                                    ? t.videoPlayback.episodeWaitingFor(
+                                        episode: _switchingEpisodeTitle!,
+                                      )
                                     : t.videoPlayback.episodeWaiting,
                                 maxLines: 2,
                                 textAlign: TextAlign.center,
-                                style: const TextStyle(color: Colors.white),
-                              ),
-                              if (_canAutoResourceFallback)
-                                TextButton(
-                                  key: const ValueKey('video-switch.cancel'),
-                                  onPressed: _cancelEpisodeRead,
-                                  child: Text(t.common.cancel),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  shadows: [Shadow(blurRadius: 4)],
                                 ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                  if (_loading && !_episodeLoading)
-                    IgnorePointer(
-                      child: Center(
-                        child: Semantics(
-                          label: t.videoPlayback.buffering,
-                          child: const CircularProgressIndicator(),
-                        ),
-                      ),
-                    ),
-                  if (ready &&
-                      value!.isBuffering &&
-                      !_failed &&
-                      !_loading &&
-                      !_episodeLoading &&
-                      _episodeRetryTarget == null)
-                    Positioned(
-                      top: _fullscreen ? 60 : 8,
-                      left: 0,
-                      right: 0,
-                      child: Center(
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: Colors.black87,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 6,
-                            ),
-                            child: Text(
-                              t.videoPlayback.buffering,
-                              style: const TextStyle(color: Colors.white),
+                              ),
                             ),
                           ),
-                        ),
-                      ),
-                    ),
-                  if (_failed)
-                    Positioned(
-                      top: MediaQuery.paddingOf(context).top,
-                      left: MediaQuery.paddingOf(context).left,
-                      child: NativeVideoIconButton(
-                        tooltip: _fullscreen
-                            ? t.videoPlayback.exitFullscreen
-                            : t.common.back,
-                        symbol: 'chevron.left',
-                        icon: Icons.arrow_back_ios_new_rounded,
-                        onPressed: _backFromPlayer,
-                      ),
-                    ),
-                  if (_failed &&
-                      !_episodeLoading &&
-                      !_loading &&
-                      !_rawRecoveryPending)
-                    Center(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(16, 44, 16, 8),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              _verificationRequired
-                                  ? t.videoPlayback.verificationRequired
-                                  : t.videoPlayback.playFailed,
-                              style: const TextStyle(color: Colors.white),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 8),
+                          if (_showEpisodeWait || _rawRecoveryPending)
                             Wrap(
                               alignment: WrapAlignment.center,
-                              spacing: 8,
                               children: [
-                                if (_verificationRequired &&
-                                    widget.onVerifySite != null)
+                                if (_resourceLines.any(
+                                  (line) =>
+                                      !line.current && line.target != null,
+                                ))
                                   TextButton(
-                                    onPressed: () => unawaited(_verifySite()),
-                                    child: Text(
-                                      t.videoPlayback.continueVerification,
-                                    ),
-                                  ),
-                                if (!widget.offlineOnly)
-                                  TextButton(
-                                    onPressed: () => unawaited(_backToWeb()),
-                                    child: Text(
-                                      widget.onOpenWebsite == null
-                                          ? t.videoPlayback.backToWeb
-                                          : t.videoPlayback.openWebsitePlayer,
-                                    ),
-                                  ),
-                                TextButton(
-                                  onPressed: () => unawaited(_retryPlayback()),
-                                  child: Text(t.common.retry),
-                                ),
-                                if (widget.resourceLines != null &&
-                                    _hasSourceChoices)
-                                  TextButton(
+                                    key: const ValueKey('video-switch.sources'),
                                     onPressed: () => _openQuickSettings(
                                       VideoQuickSection.sources,
                                     ),
                                     child: Text(t.videoPlayback.source),
                                   ),
-                                if (_sourceIndex + 1 < _session.sources.length)
+                                if (_canAutoResourceFallback)
                                   TextButton(
-                                    onPressed: () => unawaited(
-                                      _retryPlayback(
-                                        nextSource: _sourceIndex + 1,
-                                      ),
-                                    ),
-                                    child: Text(t.videoPlayback.nextSource),
+                                    key: const ValueKey('video-switch.cancel'),
+                                    onPressed: _cancelEpisodeRead,
+                                    child: Text(t.common.cancel),
                                   ),
                               ],
                             ),
-                            if (widget.extraFailureActions case final actions?)
-                              Wrap(
-                                alignment: WrapAlignment.center,
-                                spacing: 8,
-                                children: actions(
-                                  context,
-                                  _session,
-                                  _selectEpisode,
-                                ),
-                              ),
-                            if (_canAnalyze)
-                              TextButton(
-                                key: const ValueKey('video-failure.analysis'),
-                                onPressed: () => unawaited(_analyzePlayback()),
-                                child: Text(t.videoPlayback.playbackAnalysis),
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  Positioned(
-                    top:
-                        (_fullscreen ? MediaQuery.paddingOf(context).top : 0) +
-                        8,
-                    left: _fullscreen ? MediaQuery.paddingOf(context).left : 0,
-                    right: _fullscreen
-                        ? MediaQuery.paddingOf(context).right
-                        : 0,
-                    child: IgnorePointer(
-                      child: AnimatedSwitcher(
-                        duration: MediaQuery.disableAnimationsOf(context)
-                            ? Duration.zero
-                            : const Duration(milliseconds: 160),
-                        transitionBuilder: (child, animation) => FadeTransition(
-                          opacity: animation,
-                          child: SlideTransition(
-                            position: Tween(
-                              begin: const Offset(0, -0.2),
-                              end: Offset.zero,
-                            ).animate(animation),
-                            child: child,
-                          ),
-                        ),
-                        child: _holdingFastForward && !_failed
-                            ? Center(
-                                key: const ValueKey('video-hold-speed-hint'),
-                                child: DecoratedBox(
-                                  decoration: BoxDecoration(
-                                    color: Colors.black87,
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 6,
-                                    ),
-                                    child: Text(
-                                      t.videoPlayback.fastForwardRate(
-                                        rate: _preferences.holdSpeed,
-                                      ),
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              )
-                            : const SizedBox.shrink(),
+                        ],
                       ),
                     ),
                   ),
-                  if (_dragPosition != null && !_failed)
-                    Center(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: Colors.black87,
-                          borderRadius: BorderRadius.circular(8),
+                ),
+              if (_loading && !_episodeLoading)
+                IgnorePointer(
+                  child: Center(
+                    child: Semantics(
+                      label: t.videoPlayback.buffering,
+                      child: const CircularProgressIndicator(),
+                    ),
+                  ),
+                ),
+              if (ready &&
+                  value!.isBuffering &&
+                  !_failed &&
+                  !_loading &&
+                  !_episodeLoading &&
+                  _episodeRetryTarget == null)
+                Positioned(
+                  top: _fullscreen ? 60 : 8,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.black87,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
                         ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (_swiping)
-                                Text(
-                                  '${position >= _swipeOrigin ? '+' : '−'}${t.videoPlayback.seconds(value: (position - _swipeOrigin).inSeconds.abs())}',
-                                  style: const TextStyle(color: Colors.white70),
-                                ),
-                              Text(
-                                '${_time(position)} / ${_time(duration)}',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 20,
+                        child: Text(
+                          t.videoPlayback.buffering,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              if (_failed)
+                Positioned(
+                  top: MediaQuery.paddingOf(context).top,
+                  left: MediaQuery.paddingOf(context).left,
+                  child: NativeVideoIconButton(
+                    tooltip: _fullscreen
+                        ? t.videoPlayback.exitFullscreen
+                        : t.common.back,
+                    symbol: 'chevron.left',
+                    icon: Icons.arrow_back_ios_new_rounded,
+                    onPressed: _backFromPlayer,
+                  ),
+                ),
+              if (_failed &&
+                  !_episodeLoading &&
+                  !_loading &&
+                  !_rawRecoveryPending)
+                Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16, 44, 16, 8),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _verificationRequired
+                              ? t.videoPlayback.verificationRequired
+                              : t.videoPlayback.playFailed,
+                          style: const TextStyle(color: Colors.white),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          alignment: WrapAlignment.center,
+                          spacing: 8,
+                          children: [
+                            if (_verificationRequired &&
+                                widget.onVerifySite != null)
+                              TextButton(
+                                onPressed: () => unawaited(_verifySite()),
+                                child: Text(
+                                  t.videoPlayback.continueVerification,
                                 ),
                               ),
-                            ],
-                          ),
+                            if (!widget.offlineOnly)
+                              TextButton(
+                                onPressed: () => unawaited(_backToWeb()),
+                                child: Text(
+                                  widget.onOpenWebsite == null
+                                      ? t.videoPlayback.backToWeb
+                                      : t.videoPlayback.openWebsitePlayer,
+                                ),
+                              ),
+                            TextButton(
+                              onPressed: () => unawaited(_retryPlayback()),
+                              child: Text(t.common.retry),
+                            ),
+                            if (widget.resourceLines != null &&
+                                _hasSourceChoices)
+                              TextButton(
+                                onPressed: () => _openQuickSettings(
+                                  VideoQuickSection.sources,
+                                ),
+                                child: Text(t.videoPlayback.source),
+                              ),
+                            if (_sourceIndex + 1 < _session.sources.length)
+                              TextButton(
+                                onPressed: () => unawaited(
+                                  _retryPlayback(nextSource: _sourceIndex + 1),
+                                ),
+                                child: Text(t.videoPlayback.nextSource),
+                              ),
+                          ],
                         ),
-                      ),
-                    ),
-                  if (_seekFeedback != null &&
-                      !_failed &&
-                      _dragPosition == null)
-                    IgnorePointer(
-                      child: Align(
-                        alignment: _seekFeedbackAlignment,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 24),
-                          child: Text(
-                            _seekFeedback!,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 24,
+                        if (widget.extraFailureActions case final actions?)
+                          Wrap(
+                            alignment: WrapAlignment.center,
+                            spacing: 8,
+                            children: actions(
+                              context,
+                              _session,
+                              _selectEpisode,
                             ),
                           ),
-                        ),
+                        if (_canAnalyze)
+                          TextButton(
+                            key: const ValueKey('video-failure.analysis'),
+                            onPressed: () => unawaited(_analyzePlayback()),
+                            child: Text(t.videoPlayback.playbackAnalysis),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              Positioned(
+                top: (_fullscreen ? MediaQuery.paddingOf(context).top : 0) + 8,
+                left: _fullscreen ? MediaQuery.paddingOf(context).left : 0,
+                right: _fullscreen ? MediaQuery.paddingOf(context).right : 0,
+                child: IgnorePointer(
+                  child: AnimatedSwitcher(
+                    duration: MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: 160),
+                    transitionBuilder: (child, animation) => FadeTransition(
+                      opacity: animation,
+                      child: SlideTransition(
+                        position: Tween(
+                          begin: const Offset(0, -0.2),
+                          end: Offset.zero,
+                        ).animate(animation),
+                        child: child,
                       ),
                     ),
-                  if (!_failed)
-                    IgnorePointer(
-                      child: AnimatedOpacity(
-                        opacity: controlsShown ? 1 : 0,
-                        duration: MediaQuery.disableAnimationsOf(context)
-                            ? Duration.zero
-                            : const Duration(milliseconds: 180),
-                        child: const DecoratedBox(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [
-                                Colors.black54,
-                                Colors.transparent,
-                                Colors.black87,
-                              ],
-                              stops: [0, 0.4, 1],
+                    child: _holdingFastForward && !_failed
+                        ? Center(
+                            key: const ValueKey('video-hold-speed-hint'),
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: Colors.black87,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                child: Text(
+                                  t.videoPlayback.fastForwardRate(
+                                    rate: _preferences.holdSpeed,
+                                  ),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  if (ready &&
-                      !_failed &&
-                      controller != null &&
-                      _offlineCaption[controller] != null)
-                    Positioned(
-                      left: 12,
-                      right: 12,
-                      bottom:
-                          (controlsShown ? 58 : 0) +
-                          (_fullscreen
-                              ? MediaQuery.paddingOf(context).bottom
-                              : 0),
-                      child: IgnorePointer(
-                        child: ValueListenableBuilder<VideoPlayerValue>(
-                          valueListenable: controller,
-                          builder: (context, value, _) => ClosedCaption(
-                            text: value.caption.text,
-                            textStyle: TextStyle(
-                              color: Colors.white,
-                              fontSize: _fullscreen ? 20 : 14,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  if (!_failed)
-                    AnimatedOpacity(
-                      opacity: controlsShown ? 1 : 0,
-                      duration: MediaQuery.disableAnimationsOf(context)
-                          ? Duration.zero
-                          : const Duration(milliseconds: 180),
-                      child: IgnorePointer(
-                        ignoring: !controlsShown,
-                        child: Padding(
-                          padding: _fullscreen
-                              ? MediaQuery.paddingOf(context)
-                              : EdgeInsets.zero,
-                          child: _controlLayout(
-                            controlsShown: controlsShown,
-                            ready: ready && !_loading,
-                            ended: ended,
-                            playing: value?.isPlaying == true,
-                            position: position,
-                            duration: duration,
-                            wide:
-                                _fullscreen &&
-                                !_portraitFullscreen &&
-                                constraints.maxWidth >= 600,
-                          ),
-                        ),
-                      ),
-                    ),
-                  if (_fullscreen &&
-                      (_locked ||
-                          (!_portraitFullscreen &&
-                              controlsShown &&
-                              MediaQuery.orientationOf(context) ==
-                                  Orientation.landscape)))
-                    Positioned(
-                      left: _portraitFullscreen
-                          ? MediaQuery.paddingOf(context).left + 12
-                          : null,
-                      right: _portraitFullscreen
-                          ? null
-                          : MediaQuery.paddingOf(context).right + 12,
-                      top: 0,
-                      bottom: 0,
-                      child: Center(
-                        child: NativeVideoIconButton(
-                          tooltip: _locked
-                              ? t.videoPlayback.unlockControls
-                              : t.videoPlayback.lockControls,
-                          symbol: _locked ? 'lock.fill' : 'lock.open',
-                          onPressed: _toggleLock,
-                          icon: _locked ? Icons.lock_rounded : Icons.lock_open,
-                        ),
-                      ),
-                    ),
-                  if (ready && !controlsShown && !_failed)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      child: IgnorePointer(
-                        child: LinearProgressIndicator(
-                          minHeight: 2,
-                          value: duration.inMilliseconds > 0
-                              ? position.inMilliseconds /
-                                    duration.inMilliseconds
-                              : 0,
-                          backgroundColor: Colors.white24,
-                        ),
-                      ),
-                    ),
-                ],
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                ),
               ),
-            ),
+              if (_seekFeedback != null && !_failed && _dragPosition == null)
+                IgnorePointer(
+                  child: Align(
+                    alignment: _seekFeedbackAlignment,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Text(
+                        _seekFeedback!,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 24,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              if (!_failed)
+                IgnorePointer(
+                  child: AnimatedOpacity(
+                    opacity: controlsShown ? 1 : 0,
+                    duration: MediaQuery.disableAnimationsOf(context)
+                        ? Duration.zero
+                        : const Duration(milliseconds: 180),
+                    child: const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [
+                            Colors.black54,
+                            Colors.transparent,
+                            Colors.black87,
+                          ],
+                          stops: [0, 0.4, 1],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              if (_dragPosition != null && !_failed)
+                _scrubPreview(position, duration),
+              if (ready &&
+                  !_failed &&
+                  controller != null &&
+                  _offlineCaption[controller] != null)
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  bottom:
+                      (controlsShown ? 58 : 0) +
+                      (_fullscreen ? MediaQuery.paddingOf(context).bottom : 0),
+                  child: IgnorePointer(
+                    child: ValueListenableBuilder<VideoPlayerValue>(
+                      valueListenable: controller,
+                      builder: (context, value, _) => ClosedCaption(
+                        text: value.caption.text,
+                        textStyle: TextStyle(
+                          color: Colors.white,
+                          fontSize: _fullscreen ? 20 : 14,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              if (!_failed)
+                AnimatedOpacity(
+                  opacity: controlsShown ? 1 : 0,
+                  duration: MediaQuery.disableAnimationsOf(context)
+                      ? Duration.zero
+                      : const Duration(milliseconds: 180),
+                  child: IgnorePointer(
+                    ignoring: !controlsShown,
+                    child: Padding(
+                      padding: _fullscreen
+                          ? MediaQuery.paddingOf(context)
+                          : EdgeInsets.zero,
+                      child: _controlLayout(
+                        controlsShown: controlsShown,
+                        ready: ready && !_loading,
+                        ended: ended,
+                        playing: _fullscreen && _episodeLoading
+                            ? _activeSwitchIntent?.playing == true
+                            : value?.isPlaying == true,
+                        position: _fullscreen && _episodeLoading
+                            ? _lastPlayableValue?.position ?? position
+                            : position,
+                        duration: _fullscreen && _episodeLoading
+                            ? _lastPlayableValue?.duration ?? duration
+                            : duration,
+                        wide:
+                            _fullscreen &&
+                            !_portraitFullscreen &&
+                            constraints.maxWidth >= 600,
+                      ),
+                    ),
+                  ),
+                ),
+              if (_fullscreen &&
+                  (_locked ||
+                      (!_portraitFullscreen &&
+                          controlsShown &&
+                          MediaQuery.orientationOf(context) ==
+                              Orientation.landscape)))
+                Positioned(
+                  left: _portraitFullscreen
+                      ? MediaQuery.paddingOf(context).left + 12
+                      : null,
+                  right: _portraitFullscreen
+                      ? null
+                      : MediaQuery.paddingOf(context).right + 12,
+                  top: 0,
+                  bottom: 0,
+                  child: Center(
+                    child: NativeVideoIconButton(
+                      tooltip: _locked
+                          ? t.videoPlayback.unlockControls
+                          : t.videoPlayback.lockControls,
+                      symbol: _locked ? 'lock.fill' : 'lock.open',
+                      onPressed: _toggleLock,
+                      icon: _locked ? Icons.lock_rounded : Icons.lock_open,
+                    ),
+                  ),
+                ),
+              if (ready && !controlsShown && !_failed)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: IgnorePointer(
+                    child: LinearProgressIndicator(
+                      minHeight: 2,
+                      value: duration.inMilliseconds > 0
+                          ? position.inMilliseconds / duration.inMilliseconds
+                          : 0,
+                      backgroundColor: Colors.white24,
+                    ),
+                  ),
+                ),
+            ],
           ),
         );
       },
@@ -4782,6 +5469,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                             ),
                           ),
                           VideoCardFacts(
+                            workUrl: card.watchUrl,
                             metadata: card.metadata,
                             creator: card.creator?.name ?? '',
                             fallback: card.subtitle,
@@ -5149,8 +5837,6 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                             ),
                         ],
                       ),
-              if (_hanimeOnlineDetail && _commentsSelected)
-                _inlineTools(compact: true),
               Expanded(
                 child: VideoDetailSections(
                   storageKey: 'video-detail',
@@ -5291,8 +5977,7 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                             ],
                           ),
                         ],
-                        if (_hanimeOnlineDetail && !_commentsSelected)
-                          _inlineTools(compact: true),
+                        if (_hanimeOnlineDetail) _inlineTools(compact: true),
                         if (_engagement == null &&
                             widget.source?.isNotEmpty == true &&
                             videoPublicPage(_session.watchUrl)?.path ==
@@ -5367,53 +6052,15 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                         ],
                         if (_session.description.isNotEmpty) ...[
                           const SizedBox(height: 16),
-                          AnimatedSize(
-                            duration: VideoMotion.feedback(context),
-                            alignment: AlignmentDirectional.topStart,
-                            curve: Curves.easeOutCubic,
-                            child: Text(
-                              _session.description,
-                              maxLines: _descriptionExpanded ? null : 3,
-                              overflow: _descriptionExpanded
-                                  ? TextOverflow.visible
-                                  : TextOverflow.ellipsis,
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: colors.onSurfaceVariant,
-                                height: 1.5,
-                              ),
+                          VideoExpandableDescription(
+                            key: ValueKey(_session.watchUrl),
+                            text: _session.description,
+                            previewLines: 3,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: colors.onSurfaceVariant,
+                              height: 1.5,
                             ),
                           ),
-                          if (_session.description.length > 100)
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: Semantics(
-                                button: true,
-                                excludeSemantics: true,
-                                label: _descriptionExpanded
-                                    ? t.videoPlayback.collapseDescription
-                                    : t.videoPlayback.expandDescription,
-                                onTap: () => setState(
-                                  () => _descriptionExpanded =
-                                      !_descriptionExpanded,
-                                ),
-                                expanded: _descriptionExpanded,
-                                child: TextButton.icon(
-                                  icon: VideoDisclosureIndicator(
-                                    expanded: _descriptionExpanded,
-                                    size: 18,
-                                  ),
-                                  onPressed: () => setState(
-                                    () => _descriptionExpanded =
-                                        !_descriptionExpanded,
-                                  ),
-                                  label: Text(
-                                    _descriptionExpanded
-                                        ? t.videoPlayback.collapseDescription
-                                        : t.videoPlayback.expandDescription,
-                                  ),
-                                ),
-                              ),
-                            ),
                         ],
                         if (_session.tags.isNotEmpty) ...[
                           const SizedBox(height: 12),
@@ -5556,13 +6203,25 @@ class _NativeVideoPageState extends State<NativeVideoPage>
     return (width * 9 / 16).clamp(controls, double.infinity);
   }
 
+  bool _usesInlineSideLayout(Size viewport) =>
+      !_editingComments && viewport.width > viewport.height;
+
+  Size _inlinePlayerSize(Size viewport) => _usesInlineSideLayout(viewport)
+      ? Size(viewport.width * 3 / 5, viewport.height)
+      : Size(
+          viewport.width,
+          _editingComments ? 0 : _inlinePlayerHeight(viewport.width),
+        );
+
   Widget _inlineLayout() {
     return LayoutBuilder(
       builder: (context, constraints) {
         // Rotation is asynchronous: after exiting fullscreen the window can
         // remain landscape briefly. Fit that viewport instead of overflowing
         // a full-width 16:9 player while waiting for portrait orientation.
-        if (!_editingComments && constraints.maxWidth > constraints.maxHeight) {
+        final viewport = constraints.biggest;
+        final playerSize = _inlinePlayerSize(viewport);
+        if (_usesInlineSideLayout(viewport)) {
           return Stack(
             clipBehavior: Clip.none,
             children: [
@@ -5576,15 +6235,13 @@ class _NativeVideoPageState extends State<NativeVideoPage>
                 left: 0,
                 top: 0,
                 bottom: 0,
-                width: constraints.maxWidth * 3 / 5,
+                width: playerSize.width,
                 child: _playerSurface(),
               ),
             ],
           );
         }
-        final height = _editingComments
-            ? 0.0
-            : _inlinePlayerHeight(constraints.maxWidth);
+        final height = playerSize.height;
         // Keep one player/control subtree, in its original rectangle. Painting
         // the details first prevents native controls splitting later body paint
         // into another platform-view overlay during page transitions.
@@ -5677,19 +6334,4 @@ class _NativeVideoPageState extends State<NativeVideoPage>
       ),
     );
   }
-}
-
-/// Let the route own edge-back before joining the gesture arena. Ignoring an
-/// already accepted edge drag would still steal navigation from its parent.
-class _VideoSeekRecognizer extends HorizontalDragGestureRecognizer {
-  double edgeWidth = 0;
-  double width = double.infinity;
-  bool _inside(Offset position) =>
-      position.dx >= edgeWidth && position.dx <= width - edgeWidth;
-  @override
-  bool isPointerAllowed(PointerEvent event) =>
-      _inside(event.localPosition) && super.isPointerAllowed(event);
-  @override
-  bool isPointerPanZoomAllowed(PointerPanZoomStartEvent event) =>
-      _inside(event.localPosition) && super.isPointerPanZoomAllowed(event);
 }

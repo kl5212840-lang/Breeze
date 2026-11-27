@@ -14,9 +14,12 @@ import 'package:zephyr/network/sync/sync_plugin_participation.dart';
 import 'package:zephyr/network/sync/sync_service.dart';
 import 'package:zephyr/network/sync/video_library_sync.dart';
 import 'package:zephyr/object_box/model.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
+import 'package:zephyr/page/search/method/search_history_entries.dart';
 import 'package:zephyr/page/video/api_video_models.dart';
 import 'package:zephyr/page/video/video_library_store.dart';
 import 'package:zephyr/service/local_plugin_installation_state.dart';
+import 'package:zephyr/service/offline_backup_merge.dart';
 
 import '../../test_helper.dart';
 
@@ -389,6 +392,112 @@ void main() {
         reason:
             'Skipped foreign rows must not cause clock/hash churn each round',
       );
+    },
+  );
+
+  test(
+    'directed cloud settings preserve only the destination history of nonparticipating sources',
+    () async {
+      String word(String source, String query, {KeywordSearchScope? field}) =>
+          SearchHistoryEntries.add(
+            const [],
+            query,
+            scope: source,
+            keywordScope: field,
+          ).single;
+      final localRecent = word(
+        _installed,
+        'same title',
+        field: KeywordSearchScope.title,
+      );
+      final localDuplicate = word(
+        _installed,
+        'same title',
+        field: KeywordSearchScope.all,
+      );
+      final cloudRecent = word(_installed, 'cloud recent');
+      final localRemoved = word(_removed, 'local retained');
+      final cloudRemoved = word(_removed, 'cloud retained');
+      final localAbsent = word(_absent, 'local absent');
+      final cloudAbsent = word(_absent, 'cloud absent');
+      final local = [
+        localRecent,
+        localAbsent,
+        'older combined search',
+        localDuplicate,
+        localRemoved,
+      ];
+      final cloud = [
+        cloudAbsent,
+        cloudRecent,
+        cloudRemoved,
+        'cloud combined search',
+      ];
+      GlobalSettingState state(List<String> history) => GlobalSettingState(
+        searchHistory: history,
+        syncSetting: const SyncSettingState(syncSettings: true),
+      );
+      void save(List<String> history) => objectbox.userSettingBox.put(
+        UserSetting(id: 1)..globalSetting = state(history),
+      );
+      final remote = _Remote();
+      void seed(List<String> history) {
+        final payload = _settings([]);
+        (payload['blocks'] as Map)['library'] = {
+          'updatedAt': 10000,
+          'data': {'searchHistory': history},
+        };
+        remote.seedSettings(payload);
+      }
+
+      List<dynamic> historyFrom(Map<String, dynamic> payload) =>
+          payload['blocks']['library']['data']['searchHistory'] as List;
+
+      save(local);
+      seed(cloud);
+      await runSettingsSync(
+        remote,
+        currentGlobalSetting: state(local),
+        codec: _settingsCodec,
+        direction: SyncDirection.upload,
+      );
+      final uploaded = remote.files.entries.lastWhere(
+        (entry) => entry.key.endsWith('.bin'),
+      );
+      final uploadedPayload =
+          jsonDecode(utf8.decode(uploaded.value)) as Map<String, dynamic>;
+      expect(historyFrom(uploadedPayload), [
+        localRecent,
+        'older combined search',
+        cloudAbsent,
+        cloudRemoved,
+      ]);
+      expect(
+        uploadedPayload['globalSetting']['searchHistory'],
+        historyFrom(uploadedPayload),
+      );
+      expect(
+        objectbox.userSettingBox.get(1)!.globalSetting.searchHistory,
+        local,
+      );
+      expect(historyFrom(await captureOfflineSettingsPayload()), local);
+
+      remote.files.clear();
+      seed(cloud);
+      final uploads = remote.uploads;
+      await runSettingsSync(
+        remote,
+        currentGlobalSetting: state(local),
+        codec: _settingsCodec,
+        direction: SyncDirection.restore,
+      );
+      expect(objectbox.userSettingBox.get(1)!.globalSetting.searchHistory, [
+        cloudRecent,
+        'cloud combined search',
+        localAbsent,
+        localRemoved,
+      ]);
+      expect(remote.uploads, uploads);
     },
   );
 

@@ -82,8 +82,10 @@ Future<Uint8List> _download(
   String path, {
   int limit = BackupProtectionSession.maxBytesPayload + 65536 + 4096,
 }) async {
-  final bytes = await raw.downloadRemoteFile(path);
-  if (bytes.length > limit) {
+  final List<int> bytes;
+  try {
+    bytes = await downloadSyncFile(raw, path, limit);
+  } on SyncRemoteFileTooLarge {
     throw const BackupProtectionException('cloud_protection_payload_too_large');
   }
   return bytes is Uint8List ? bytes : Uint8List.fromList(bytes);

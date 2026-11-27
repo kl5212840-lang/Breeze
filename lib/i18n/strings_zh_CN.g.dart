@@ -190,6 +190,9 @@ class Translations$videoSource$zh_CN {
 	/// zh-CN: '解析失败 · $seconds 秒'
 	String lineResolveFailed({required Object seconds}) => '解析失败 · ${seconds} 秒';
 
+	/// zh-CN: '解析超时 · $seconds 秒'
+	String lineResolveTimedOut({required Object seconds}) => '解析超时 · ${seconds} 秒';
+
 	/// zh-CN: '正在尝试同集其他线路'
 	String get autoSwitching => '正在尝试同集其他线路';
 
@@ -544,6 +547,12 @@ class Translations$common$zh_CN {
 
 	/// zh-CN: '关闭'
 	String get close => '关闭';
+
+	/// zh-CN: '展开筛选面板'
+	String get expandFilterPanel => '展开筛选面板';
+
+	/// zh-CN: '收起筛选面板'
+	String get collapseFilterPanel => '收起筛选面板';
 
 	/// zh-CN: '返回'
 	String get back => '返回';
@@ -976,11 +985,11 @@ class Translations$settings$zh_CN {
 	/// zh-CN: '输入新关键词...'
 	String get maskedKeywordsInputHint => '输入新关键词...';
 
-	/// zh-CN: '漫画内容简繁转换'
-	String get chineseConvert => '漫画内容简繁转换';
+	/// zh-CN: '漫画简繁转换'
+	String get chineseConvert => '漫画简繁转换';
 
-	/// zh-CN: '转换漫画标题、简介、章节和评论'
-	String get chineseConvertSubtitle => '转换漫画标题、简介、章节和评论';
+	/// zh-CN: '标题、简介、章节名和评论'
+	String get chineseConvertSubtitle => '标题、简介、章节名和评论';
 
 	/// zh-CN: '关闭'
 	String get chineseConvertOff => '关闭';
@@ -996,9 +1005,6 @@ class Translations$settings$zh_CN {
 
 	/// zh-CN: '配置代理地址'
 	String get proxySubtitle => '配置代理地址';
-
-	/// zh-CN: '开启后网络请求将经过代理'
-	String get proxyEnabledSubtitle => '开启后网络请求将经过代理';
 
 	/// zh-CN: '代理地址'
 	String get proxyAddress => '代理地址';
@@ -1030,9 +1036,6 @@ class Translations$settings$zh_CN {
 	/// zh-CN: '持续重试漫画下载'
 	String get retryDownloadUntilSuccess => '持续重试漫画下载';
 
-	/// zh-CN: '临时故障时继续尝试'
-	String get retryDownloadUntilSuccessSubtitle => '临时故障时继续尝试';
-
 	/// zh-CN: '同步'
 	String get sync => '同步';
 
@@ -1060,8 +1063,8 @@ class Translations$settings$zh_CN {
 	/// zh-CN: '自动同步'
 	String get autoSync => '自动同步';
 
-	/// zh-CN: '合并记录；账号随“同步插件”备份，不恢复账号、设置或图片。'
-	String get autoSyncSubtitle => '合并记录；账号随“同步插件”备份，不恢复账号、设置或图片。';
+	/// zh-CN: '自动合并记录。账号备份随「同步插件」上传。'
+	String get autoSyncSubtitle => '自动合并记录。账号备份随「同步插件」上传。';
 
 	/// zh-CN: '自动同步进度提醒'
 	String get syncNotify => '自动同步进度提醒';
@@ -1561,6 +1564,21 @@ class Translations$settings$zh_CN {
 	/// zh-CN: '界面样式'
 	String get interfaceStyle => '界面样式';
 
+	/// zh-CN: '底部导航栏'
+	String get bottomNavigation => '底部导航栏';
+
+	/// zh-CN: '显示方式'
+	String get navigationVisibility => '显示方式';
+
+	/// zh-CN: '固定'
+	String get navigationFixed => '固定';
+
+	/// zh-CN: '滚动时隐藏'
+	String get navigationHideOnScroll => '滚动时隐藏';
+
+	/// zh-CN: '透明度'
+	String get navigationTransparency => '透明度';
+
 	late final Translations$settings$switchStyles$zh_CN switchStyles = Translations$settings$switchStyles$zh_CN.internal(_root);
 
 	/// zh-CN: '统一导航、菜单、按钮和播放器的样式。网页内容不变。'
@@ -1659,11 +1677,11 @@ class Translations$settings$zh_CN {
 	/// zh-CN: '同步选项'
 	String get syncBehavior => '同步选项';
 
-	/// zh-CN: '收藏与历史始终合并；封面保护图片随设置同步，下载文件不上传。'
-	String get syncScopeNote => '收藏与历史始终合并；封面保护图片随设置同步，下载文件不上传。';
+	/// zh-CN: '合并收藏、历史、进度和追更。下载文件留在本机。'
+	String get syncScopeNote => '合并收藏、历史、进度和追更。下载文件留在本机。';
 
-	/// zh-CN: '上传以本机为准；恢复以云端为准。'
-	String get syncMergeNote => '上传以本机为准；恢复以云端为准。';
+	/// zh-CN: '设置与图片随所选方向同步。'
+	String get syncMergeNote => '设置与图片随所选方向同步。';
 
 	/// zh-CN: '显示选项'
 	String get appearanceOptions => '显示选项';
@@ -1731,38 +1749,53 @@ class Translations$settings$zh_CN {
 	/// zh-CN: '高级操作'
 	String get syncAdvanced => '高级操作';
 
-	/// zh-CN: '用本机完整替换云端'
-	String get cloudReplaceTitle => '用本机完整替换云端';
+	/// zh-CN: '用本机替换云端'
+	String get cloudReplaceTitle => '用本机替换云端';
 
-	/// zh-CN: '云端所有新旧存档将以本机现状替换，包括未安装插件的保留资料。仅云端存在的资料将删除。下载文件和本机保护开关不上传。'
-	String get cloudReplaceScope => '云端所有新旧存档将以本机现状替换，包括未安装插件的保留资料。仅云端存在的资料将删除。下载文件和本机保护开关不上传。';
+	/// zh-CN: '替换新旧云端存档，含已卸载插件的保留资料。下载文件和保护设置仅留本机。'
+	String get cloudReplaceScope => '替换新旧云端存档，含已卸载插件的保留资料。下载文件和保护设置仅留本机。';
 
-	/// zh-CN: '预览云端资料'
-	String get cloudReplacePreview => '预览云端资料';
+	/// zh-CN: '预览云端变更'
+	String get cloudReplacePreview => '预览云端变更';
 
-	/// zh-CN: '确认完整替换云端？'
-	String get cloudReplaceConfirmTitle => '确认完整替换云端？';
+	/// zh-CN: '继续替换'
+	String get cloudReplaceReview => '继续替换';
 
-	/// zh-CN: '将覆盖并删除预览中的云端资料，无法撤销。操作期间请勿在其他设备同步。'
-	String get cloudReplaceConfirmHint => '将覆盖并删除预览中的云端资料，无法撤销。操作期间请勿在其他设备同步。';
+	/// zh-CN: '正在读取资料以预览…'
+	String get cloudReplaceReading => '正在读取资料以预览…';
 
-	/// zh-CN: '确认替换'
-	String get cloudReplaceConfirm => '确认替换';
+	/// zh-CN: '正在用本机替换云端…'
+	String get cloudReplaceWriting => '正在用本机替换云端…';
 
-	/// zh-CN: '云端已完整替换'
-	String get cloudReplaceSuccess => '云端已完整替换';
+	/// zh-CN: '用本机替换云端？'
+	String get cloudReplaceConfirmTitle => '用本机替换云端？';
+
+	/// zh-CN: '将覆盖有差异的云端资料，删除仅存云端的资料。替换无法撤销，请先暂停其他设备同步。'
+	String get cloudReplaceConfirmHint => '将覆盖有差异的云端资料，删除仅存云端的资料。替换无法撤销，请先暂停其他设备同步。';
+
+	/// zh-CN: '替换云端'
+	String get cloudReplaceConfirm => '替换云端';
+
+	/// zh-CN: '已用本机资料替换云端存档。'
+	String get cloudReplaceSuccess => '已用本机资料替换云端存档。';
 
 	/// zh-CN: '本机或云端资料已变化，请重新预览。'
 	String get cloudReplaceStale => '本机或云端资料已变化，请重新预览。';
 
-	/// zh-CN: '替换未完成，部分云端资料已更新。本机资料保留，请重新预览后重试。'
-	String get cloudReplacePartial => '替换未完成，部分云端资料已更新。本机资料保留，请重新预览后重试。';
+	/// zh-CN: '替换未完成，云端资料可能已改变。请重新预览。'
+	String get cloudReplacePartial => '替换未完成，云端资料可能已改变。请重新预览。';
 
-	/// zh-CN: '将替换新存档 $current 个文件、旧格式存档 $legacy 个文件。'
-	String cloudReplaceArchives({required Object current, required Object legacy}) => '将替换新存档 ${current} 个文件、旧格式存档 ${legacy} 个文件。';
+	/// zh-CN: '现行云端文件 $current 个 · 旧版 $legacy 个'
+	String cloudReplaceArchives({required Object current, required Object legacy}) => '现行云端文件 ${current} 个 · 旧版 ${legacy} 个';
 
-	/// zh-CN: '本机 $local 项 · 删除云端独有 $removed 项 · 覆盖不同内容 $overwritten 项'
-	String cloudReplaceCounts({required Object local, required Object removed, required Object overwritten}) => '本机 ${local} 项 · 删除云端独有 ${removed} 项 · 覆盖不同内容 ${overwritten} 项';
+	/// zh-CN: '本机 $count'
+	String cloudReplaceLocalCount({required Object count}) => '本机 ${count}';
+
+	/// zh-CN: '云端删除 $count'
+	String cloudReplaceRemovedCount({required Object count}) => '云端删除 ${count}';
+
+	/// zh-CN: '云端覆盖 $count'
+	String cloudReplaceOverwrittenCount({required Object count}) => '云端覆盖 ${count}';
 
 	/// zh-CN: '漫画记录'
 	String get cloudReplaceComic => '漫画记录';
@@ -1785,8 +1818,8 @@ class Translations$settings$zh_CN {
 	/// zh-CN: '在主导航显示首页与排行榜；重启后生效'
 	String get oldPageRollbackScope => '在主导航显示首页与排行榜；重启后生效';
 
-	/// zh-CN: '新访问使用此设置，正在进行的请求不变。'
-	String get proxyApplyScope => '新访问使用此设置，正在进行的请求不变。';
+	/// zh-CN: '仅影响新请求'
+	String get proxyApplyScope => '仅影响新请求';
 }
 
 // Path: bookshelf
@@ -2504,9 +2537,6 @@ class Translations$comicInfo$zh_CN {
 	/// zh-CN: '该插件暂不支持此功能'
 	String get likeDisabled => '该插件暂不支持此功能';
 
-	/// zh-CN: '未能确认点赞状态，刷新详情后再试'
-	String get likeUnconfirmed => '未能确认点赞状态，刷新详情后再试';
-
 	/// zh-CN: '本地收藏失败: $error'
 	String localCollectFailed({required Object error}) => '本地收藏失败: ${error}';
 
@@ -2621,17 +2651,38 @@ class Translations$reader$zh_CN {
 	/// zh-CN: '全部向下'
 	String get tapPageTurnWebtoonAll => '全部向下';
 
-	/// zh-CN: '中央区域用于阅读菜单，其余位置点按到下一页。'
-	String get tapPageTurnAllHelp => '中央区域用于阅读菜单，其余位置点按到下一页。';
+	/// zh-CN: '操作栏'
+	String get toolbarTapArea => '操作栏';
 
-	/// zh-CN: '中央区域用于阅读菜单，另一半屏到上一页。'
-	String get tapPageTurnSplitHelp => '中央区域用于阅读菜单，另一半屏到上一页。';
+	/// zh-CN: '仅在中央区域触发'
+	String get customToolbarTapArea => '仅在中央区域触发';
 
-	/// zh-CN: '中央区域用于阅读菜单，其余位置点按向下滚动。'
-	String get tapPageTurnWebtoonAllHelp => '中央区域用于阅读菜单，其余位置点按向下滚动。';
+	/// zh-CN: '整个阅读区可触发'
+	String get toolbarTapAreaHelp => '整个阅读区可触发';
 
-	/// zh-CN: '中央区域用于阅读菜单，另一半屏向上滚动。'
-	String get tapPageTurnWebtoonSplitHelp => '中央区域用于阅读菜单，另一半屏向上滚动。';
+	/// zh-CN: '区域宽度'
+	String get toolbarTapAreaWidth => '区域宽度';
+
+	/// zh-CN: '编辑$title'
+	String editSliderPercentage({required Object title}) => '编辑${title}';
+
+	/// zh-CN: '请输入 $min%–$max% 之间的整数。'
+	String sliderPercentageRange({required Object min, required Object max}) => '请输入 ${min}%–${max}% 之间的整数。';
+
+	/// zh-CN: '将操作栏设为仅在中央区域触发，即可使用点按翻页。'
+	String get tapPageTurnNeedsCustomArea => '将操作栏设为仅在中央区域触发，即可使用点按翻页。';
+
+	/// zh-CN: '点按操作栏区域外可到下一页。'
+	String get tapPageTurnAllHelp => '点按操作栏区域外可到下一页。';
+
+	/// zh-CN: '操作栏区域外按左右区分上一页和下一页。'
+	String get tapPageTurnSplitHelp => '操作栏区域外按左右区分上一页和下一页。';
+
+	/// zh-CN: '点按操作栏区域外可向下滚动。'
+	String get tapPageTurnWebtoonAllHelp => '点按操作栏区域外可向下滚动。';
+
+	/// zh-CN: '操作栏区域外按上下区分滚动方向。'
+	String get tapPageTurnWebtoonSplitHelp => '操作栏区域外按上下区分滚动方向。';
 
 	/// zh-CN: '开启「条漫点按翻动」后可选择区域。'
 	String get tapPageTurnWebtoonDisabled => '开启「条漫点按翻动」后可选择区域。';
@@ -2651,8 +2702,8 @@ class Translations$reader$zh_CN {
 	/// zh-CN: '启用点按翻动'
 	String get enableWebtoonTapPageTurn => '启用点按翻动';
 
-	/// zh-CN: '关闭时，整页点按用于阅读菜单。'
-	String get webtoonTapPageTurnSubtitle => '关闭时，整页点按用于阅读菜单。';
+	/// zh-CN: '关闭后，操作栏区域外的点按不会滚动。'
+	String get webtoonTapPageTurnSubtitle => '关闭后，操作栏区域外的点按不会滚动。';
 
 	/// zh-CN: '阅读模式'
 	String get readingMode => '阅读模式';
@@ -3029,6 +3080,39 @@ class Translations$plugin$zh_CN {
 	/// zh-CN: '使用中'
 	String get routeOptionInUse => '使用中';
 
+	/// zh-CN: '自动'
+	String get routeAutomatic => '自动';
+
+	/// zh-CN: '未测速'
+	String get routeUnknown => '未测速';
+
+	/// zh-CN: '可用'
+	String get routeAvailable => '可用';
+
+	/// zh-CN: '暂不可用'
+	String get routeUnavailable => '暂不可用';
+
+	/// zh-CN: '仅阅读'
+	String get routeReadOnly => '仅阅读';
+
+	/// zh-CN: '仅阅读可用'
+	String get copyOnlyReadOnlyRoutesAvailable => '仅阅读可用';
+
+	/// zh-CN: '自动选线。'
+	String get autoRouteDescription => '自动选线。';
+
+	/// zh-CN: '可用优先保持连接。速度优先按测速选线。'
+	String get autoRouteModesDescription => '可用优先保持连接。速度优先按测速选线。';
+
+	/// zh-CN: '可用优先兼顾账号。速度优先按阅读测速。'
+	String get copyAutoRouteModesDescription => '可用优先兼顾账号。速度优先按阅读测速。';
+
+	/// zh-CN: '自动（可用优先）'
+	String get routeAutomaticAvailable => '自动（可用优先）';
+
+	/// zh-CN: '自动（速度优先）'
+	String get routeAutomaticSpeed => '自动（速度优先）';
+
 	/// zh-CN: '插件商店'
 	String get store => '插件商店';
 
@@ -3043,6 +3127,54 @@ class Translations$plugin$zh_CN {
 
 	/// zh-CN: '云端组件'
 	String get cloudComponents => '云端组件';
+
+	/// zh-CN: '一键更新全部'
+	String get cloudUpdateAll => '一键更新全部';
+
+	/// zh-CN: '一键安装全部'
+	String get cloudInstallAll => '一键安装全部';
+
+	/// zh-CN: '暂无更新'
+	String get cloudNoUpdates => '暂无更新';
+
+	/// zh-CN: '暂无可安装'
+	String get cloudNoInstalls => '暂无可安装';
+
+	/// zh-CN: '$count 个可更新'
+	String cloudUpdateCount({required Object count}) => '${count} 个可更新';
+
+	/// zh-CN: '$count 个可安装'
+	String cloudInstallCount({required Object count}) => '${count} 个可安装';
+
+	/// zh-CN: '要更新商店完整目录中已有兼容新版本的 $count 个已装插件吗？'
+	String confirmCloudUpdateAll({required Object count}) => '要更新商店完整目录中已有兼容新版本的 ${count} 个已装插件吗？';
+
+	/// zh-CN: '要安装商店完整目录中本机尚未安装的 $count 个兼容插件吗？'
+	String confirmCloudInstallAll({required Object count}) => '要安装商店完整目录中本机尚未安装的 ${count} 个兼容插件吗？';
+
+	/// zh-CN: '正在更新 $name（$current/$total）'
+	String cloudBatchUpdating({required Object name, required Object current, required Object total}) => '正在更新 ${name}（${current}/${total}）';
+
+	/// zh-CN: '正在安装 $name（$current/$total）'
+	String cloudBatchInstalling({required Object name, required Object current, required Object total}) => '正在安装 ${name}（${current}/${total}）';
+
+	/// zh-CN: '已更新 $count 项'
+	String cloudBatchUpdated({required Object count}) => '已更新 ${count} 项';
+
+	/// zh-CN: '已安装 $count 项'
+	String cloudBatchInstalled({required Object count}) => '已安装 ${count} 项';
+
+	/// zh-CN: '失败 $count 项'
+	String cloudBatchFailed({required Object count}) => '失败 ${count} 项';
+
+	/// zh-CN: '跳过 $count 项'
+	String cloudBatchSkipped({required Object count}) => '跳过 ${count} 项';
+
+	/// zh-CN: '$name 更新成功'
+	String cloudPluginUpdated({required Object name}) => '${name} 更新成功';
+
+	/// zh-CN: '未成功处理的插件'
+	String get cloudBatchFailureTitle => '未成功处理的插件';
 
 	/// zh-CN: '请在网页中完成登录。'
 	String get loginSuccess => '请在网页中完成登录。';
@@ -3212,32 +3344,32 @@ class Translations$plugin$zh_CN {
 	/// zh-CN: '网络下载插件失败: $error'
 	String networkDownloadFailed({required Object error}) => '网络下载插件失败: ${error}';
 
-	/// zh-CN: '远程插件文件不存在（404），可能已被删除或版本已更新，请稍后重试或检查更新地址'
-	String get remoteAssetNotFound => '远程插件文件不存在（404），可能已被删除或版本已更新，请稍后重试或检查更新地址';
+	/// zh-CN: '插件文件暂不可用，请刷新后重试'
+	String get remoteAssetNotFound => '插件文件暂不可用，请刷新后重试';
 
-	/// zh-CN: 'GitHub 访问受限（疑似 IP 被限流），请稍后重试或切换网络；若插件确实不存在也会显示 404'
-	String get githubRateLimited => 'GitHub 访问受限（疑似 IP 被限流），请稍后重试或切换网络；若插件确实不存在也会显示 404';
+	/// zh-CN: '下载次数过多，请稍后再试'
+	String get githubRateLimited => '下载次数过多，请稍后再试';
 
-	/// zh-CN: '远端返回了网页而非插件文件，通常是远程文件不存在或链接已失效，请检查插件仓库的更新地址'
-	String get remoteReturnedWebPage => '远端返回了网页而非插件文件，通常是远程文件不存在或链接已失效，请检查插件仓库的更新地址';
+	/// zh-CN: '链接未指向插件文件，请检查链接'
+	String get remoteReturnedWebPage => '链接未指向插件文件，请检查链接';
 
-	/// zh-CN: '远端返回内容为空，请稍后重试或检查更新地址'
-	String get remoteEmptyResponse => '远端返回内容为空，请稍后重试或检查更新地址';
+	/// zh-CN: '暂时无法下载插件，请稍后重试'
+	String get remoteEmptyResponse => '暂时无法下载插件，请稍后重试';
 
-	/// zh-CN: '远端拒绝访问（HTTP $status），请检查网络或稍后重试'
-	String remoteAccessDenied({required Object status}) => '远端拒绝访问（HTTP ${status}），请检查网络或稍后重试';
+	/// zh-CN: '无法访问插件文件，请稍后重试'
+	String get remoteAccessDenied => '无法访问插件文件，请稍后重试';
 
-	/// zh-CN: '远端服务器异常（HTTP $status），请稍后重试'
-	String remoteServerError({required Object status}) => '远端服务器异常（HTTP ${status}），请稍后重试';
+	/// zh-CN: '下载服务暂不可用，请稍后重试'
+	String get remoteServerError => '下载服务暂不可用，请稍后重试';
 
-	/// zh-CN: '远端请求失败（HTTP $status），请稍后重试'
-	String remoteHttpError({required Object status}) => '远端请求失败（HTTP ${status}），请稍后重试';
+	/// zh-CN: '下载失败，请稍后重试'
+	String get remoteHttpError => '下载失败，请稍后重试';
 
-	/// zh-CN: '下载到的文件不是有效的插件脚本（疑似网页或错误页），请检查远程文件是否存在后再试'
-	String get downloadedScriptInvalid => '下载到的文件不是有效的插件脚本（疑似网页或错误页），请检查远程文件是否存在后再试';
+	/// zh-CN: '文件无法安装，请检查是否选对了插件文件'
+	String get downloadedScriptInvalid => '文件无法安装，请检查是否选对了插件文件';
 
-	/// zh-CN: '下载到的插件文件已损坏或解压失败，请稍后重试'
-	String get downloadedScriptCorrupted => '下载到的插件文件已损坏或解压失败，请稍后重试';
+	/// zh-CN: '插件文件已损坏，请重新下载'
+	String get downloadedScriptCorrupted => '插件文件已损坏，请重新下载';
 
 	/// zh-CN: '网络不稳定，下载失败，请检查网络后重试'
 	String get networkUnstableRetry => '网络不稳定，下载失败，请检查网络后重试';
@@ -3251,17 +3383,20 @@ class Translations$plugin$zh_CN {
 	/// zh-CN: '$name 登录'
 	String loginTitle({required Object name}) => '${name} 登录';
 
-	/// zh-CN: '登录 Cookie 已同步'
-	String get cookieSynced => '登录 Cookie 已同步';
+	/// zh-CN: '登录信息已同步'
+	String get cookieSynced => '登录信息已同步';
 
-	/// zh-CN: '线路测试完成，可正常访问'
-	String get lineTestSuccess => '线路测试完成，可正常访问';
+	/// zh-CN: '所有线路均通过测速'
+	String get lineTestSuccess => '所有线路均通过测速';
 
-	/// zh-CN: '部分线路未通过，请查看线路结果'
-	String get lineTestPartial => '部分线路未通过，请查看线路结果';
+	/// zh-CN: '部分线路可用'
+	String get lineTestPartial => '部分线路可用';
 
-	/// zh-CN: '暂未测到可用线路，请稍后重试'
-	String get lineTestFailure => '暂未测到可用线路，请稍后重试';
+	/// zh-CN: '暂未找到可用线路，请稍后重试'
+	String get lineTestFailure => '暂未找到可用线路，请稍后重试';
+
+	/// zh-CN: '测速已取消'
+	String get lineTestCancelled => '测速已取消';
 
 	/// zh-CN: '执行成功'
 	String get executeSuccess => '执行成功';
@@ -3269,8 +3404,8 @@ class Translations$plugin$zh_CN {
 	/// zh-CN: '用户信息'
 	String get userInfoTitle => '用户信息';
 
-	/// zh-CN: '用户信息加载失败'
-	String get userInfoLoadFailed => '用户信息加载失败';
+	/// zh-CN: '暂时无法读取账号资料'
+	String get userInfoLoadFailed => '暂时无法读取账号资料';
 
 	/// zh-CN: '未命名操作'
 	String get unnamedAction => '未命名操作';
@@ -3281,8 +3416,8 @@ class Translations$plugin$zh_CN {
 	/// zh-CN: '插件设置加载失败'
 	String get pluginSettingsLoadFailed => '插件设置加载失败';
 
-	/// zh-CN: '动作不可执行: 缺少 fnPath'
-	String get actionNotExecutable => '动作不可执行: 缺少 fnPath';
+	/// zh-CN: '暂时无法执行此操作'
+	String get actionNotExecutable => '暂时无法执行此操作';
 
 	/// zh-CN: '已保存'
 	String get saved => '已保存';
@@ -3293,8 +3428,8 @@ class Translations$plugin$zh_CN {
 	/// zh-CN: '同步'
 	String get sync => '同步';
 
-	/// zh-CN: '通过 npm / updateUrl 检查并更新插件'
-	String get syncSubtitle => '通过 npm / updateUrl 检查并更新插件';
+	/// zh-CN: '检查并更新插件'
+	String get syncSubtitle => '检查并更新插件';
 
 	/// zh-CN: '正在同步插件...'
 	String get syncing => '正在同步插件...';
@@ -3326,8 +3461,8 @@ class Translations$plugin$zh_CN {
 	/// zh-CN: '更新失败: $error'
 	String updateFailed({required Object error}) => '更新失败: ${error}';
 
-	/// zh-CN: '插件 id 不一致，无法安装'
-	String get uuidMismatch => '插件 id 不一致，无法安装';
+	/// zh-CN: '文件与当前插件不匹配，请选择对应的插件文件'
+	String get uuidMismatch => '文件与当前插件不匹配，请选择对应的插件文件';
 
 	/// zh-CN: '当前版本 $version'
 	String currentVersion({required Object version}) => '当前版本 ${version}';
@@ -4352,6 +4487,12 @@ class Translations$search$zh_CN {
 
 	// Translations
 
+	/// zh-CN: '默认搜索范围'
+	String get defaultScope => '默认搜索范围';
+
+	/// zh-CN: '暂无支持设置搜索范围的插件'
+	String get noScopeSources => '暂无支持设置搜索范围的插件';
+
 	/// zh-CN: '搜索'
 	String get title => '搜索';
 
@@ -4360,6 +4501,21 @@ class Translations$search$zh_CN {
 
 	/// zh-CN: '请输入搜索关键词'
 	String get enterKeyword => '请输入搜索关键词';
+
+	/// zh-CN: '热门主题'
+	String get jmPopularTopics => '热门主题';
+
+	/// zh-CN: '随机推荐'
+	String get jmRandomRecommendations => '随机推荐';
+
+	/// zh-CN: '换一批'
+	String get jmMoreRecommendations => '换一批';
+
+	/// zh-CN: '$year 年'
+	String jmSearchYear({required Object year}) => '${year} 年';
+
+	/// zh-CN: '日期筛选'
+	String get jmDateFilter => '日期筛选';
 
 	/// zh-CN: '搜索来源'
 	String get selectSource => '搜索来源';
@@ -4715,6 +4871,90 @@ class Translations$sourceProfile$zh_CN {
 
 	// Translations
 
+	/// zh-CN: '已找到文件夹「$name」'
+	String jmFolderAvailable({required Object name}) => '已找到文件夹「${name}」';
+
+	/// zh-CN: '收藏夹已满。删除一个后即可新建。'
+	String get jmFolderLimit => '收藏夹已满。删除一个后即可新建。';
+
+	/// zh-CN: '已有 $count 个收藏夹，已达上限。删除一个后即可新建。'
+	String jmFolderLimitDetail({required Object count}) => '已有 ${count} 个收藏夹，已达上限。删除一个后即可新建。';
+
+	/// zh-CN: '这个收藏夹已不存在。'
+	String get jmFolderMissing => '这个收藏夹已不存在。';
+
+	/// zh-CN: '站点阅读记录'
+	String get jmSiteWatchHistory => '站点阅读记录';
+
+	/// zh-CN: '移动到文件夹'
+	String get jmMoveToFolder => '移动到文件夹';
+
+	/// zh-CN: '已移至「$name」'
+	String jmMovedToFolder({required Object name}) => '已移至「${name}」';
+
+	/// zh-CN: '还无法确认结果，请先刷新收藏夹。'
+	String get jmFolderUnconfirmed => '还无法确认结果，请先刷新收藏夹。';
+
+	/// zh-CN: '文件夹已重命名'
+	String get jmFolderRenamed => '文件夹已重命名';
+
+	/// zh-CN: '文件夹已删除'
+	String get jmFolderDeleted => '文件夹已删除';
+
+	/// zh-CN: '删除「$name」文件夹？'
+	String jmDeleteFolder({required Object name}) => '删除「${name}」文件夹？';
+
+	/// zh-CN: '刷新文件夹'
+	String get jmRefreshFolders => '刷新文件夹';
+
+	/// zh-CN: '禁漫账号收藏'
+	String get jmAccountFavorites => '禁漫账号收藏';
+
+	/// zh-CN: '追踪连载更新'
+	String get jmFollowSeries => '追踪连载更新';
+
+	/// zh-CN: '收藏标签'
+	String get jmFavoriteTags => '收藏标签';
+
+	/// zh-CN: '标签收藏'
+	String get jmTagCollection => '标签收藏';
+
+	/// zh-CN: '追踪漫画'
+	String get jmFollowCollection => '追踪漫画';
+
+	/// zh-CN: '添加标签'
+	String get jmAddTag => '添加标签';
+
+	/// zh-CN: '标签名称'
+	String get jmTagName => '标签名称';
+
+	/// zh-CN: '已收藏此标签'
+	String get jmTagExists => '已收藏此标签';
+
+	/// zh-CN: '请输入一个标签，名称中不能有逗号'
+	String get jmTagInvalid => '请输入一个标签，名称中不能有逗号';
+
+	/// zh-CN: '移除标签'
+	String get jmRemoveTag => '移除标签';
+
+	/// zh-CN: '从收藏中移除「$name」？'
+	String jmRemoveTagConfirm({required Object name}) => '从收藏中移除「${name}」？';
+
+	/// zh-CN: '已收藏标签'
+	String get jmTagAdded => '已收藏标签';
+
+	/// zh-CN: '已移除标签'
+	String get jmTagRemoved => '已移除标签';
+
+	/// zh-CN: '暂时无法更新标签，请稍后重试'
+	String get jmTagWriteFailed => '暂时无法更新标签，请稍后重试';
+
+	/// zh-CN: '还没有收藏的标签'
+	String get jmTagsEmpty => '还没有收藏的标签';
+
+	/// zh-CN: '还没有追踪的漫画'
+	String get jmFollowsEmpty => '还没有追踪的漫画';
+
 	/// zh-CN: '暂时无法核对网站的签到状态，请稍后重试'
 	String get websiteCheckinUnavailable => '暂时无法核对网站的签到状态，请稍后重试';
 
@@ -4906,6 +5146,12 @@ class Translations$sourceShell$zh_CN {
 
 	/// zh-CN: '汉化组'
 	String get searchScopeTeam => '汉化组';
+
+	/// zh-CN: '原作'
+	String get searchScopeOriginalWork => '原作';
+
+	/// zh-CN: '角色'
+	String get searchScopeCharacter => '角色';
 
 	/// zh-CN: '标签'
 	String get searchScopeTags => '标签';
@@ -5272,6 +5518,75 @@ class Translations$searchResult$zh_CN {
 	/// zh-CN: '跳转页面'
 	String get jumpToPage => '跳转页面';
 
+	/// zh-CN: '屏蔽分类'
+	String get blockCategories => '屏蔽分类';
+
+	/// zh-CN: '分类'
+	String get categories => '分类';
+
+	/// zh-CN: '内容屏蔽'
+	String get bikaContentBlocking => '内容屏蔽';
+
+	/// zh-CN: '用于哔咔搜索（含综合搜索）、分类和随机作品。'
+	String get bikaContentBlockingScope => '用于哔咔搜索（含综合搜索）、分类和随机作品。';
+
+	/// zh-CN: '标题包含'
+	String get bikaBlockedTitles => '标题包含';
+
+	/// zh-CN: '标签完全匹配'
+	String get bikaBlockedTags => '标签完全匹配';
+
+	/// zh-CN: '作者完全匹配'
+	String get bikaBlockedAuthors => '作者完全匹配';
+
+	/// zh-CN: '输入一条规则'
+	String get bikaBlockRuleInput => '输入一条规则';
+
+	/// zh-CN: '这条规则已存在'
+	String get bikaBlockRuleDuplicate => '这条规则已存在';
+
+	/// zh-CN: '$count 条'
+	String bikaBlockRulesCount({required Object count}) => '${count} 条';
+
+	/// zh-CN: '删除「$rule」'
+	String bikaRemoveBlockRule({required Object rule}) => '删除「${rule}」';
+
+	/// zh-CN: '分类屏蔽'
+	String get bikaBlockedCategories => '分类屏蔽';
+
+	/// zh-CN: '隐藏首页分类入口'
+	String get bikaHiddenHomeCategories => '隐藏首页分类入口';
+
+	/// zh-CN: '站点分类'
+	String get bikaFilterSiteCategories => '站点分类';
+
+	/// zh-CN: '已加载作品'
+	String get bikaFilterLoadedWorks => '已加载作品';
+
+	/// zh-CN: '标题包含'
+	String get bikaFilterTitleContains => '标题包含';
+
+	/// zh-CN: '汉化组'
+	String get bikaFilterTranslationTeam => '汉化组';
+
+	/// zh-CN: '此分类可在插件设置的「内容屏蔽」中恢复。'
+	String get bikaFilterCategoryHiddenBySettings => '此分类可在插件设置的「内容屏蔽」中恢复。';
+
+	/// zh-CN: '点按顶部彩条可恢复此分类。'
+	String get bikaFilterCategoryHiddenByQuickBar => '点按顶部彩条可恢复此分类。';
+
+	/// zh-CN: '换一批'
+	String get shuffle => '换一批';
+
+	/// zh-CN: '随机作品'
+	String get randomWorks => '随机作品';
+
+	/// zh-CN: '这一批没有可显示的作品'
+	String get noVisibleRandomWorks => '这一批没有可显示的作品';
+
+	/// zh-CN: '结果导航'
+	String get resultNavigation => '结果导航';
+
 	/// zh-CN: '跳转'
 	String get jump => '跳转';
 
@@ -5280,6 +5595,15 @@ class Translations$searchResult$zh_CN {
 
 	/// zh-CN: '第$page页'
 	String pageOnly({required Object page}) => '第${page}页';
+
+	/// zh-CN: '正在查找符合条件的作品…'
+	String get findingMatches => '正在查找符合条件的作品…';
+
+	/// zh-CN: '暂未找到匹配作品'
+	String get noMatchesYet => '暂未找到匹配作品';
+
+	/// zh-CN: '没有符合条件的作品'
+	String get noMatchingWorks => '没有符合条件的作品';
 
 	/// zh-CN: '请输入 1 至 $pages 之间的页码'
 	String pageOutOfRange({required Object pages}) => '请输入 1 至 ${pages} 之间的页码';
@@ -5467,6 +5791,9 @@ class Translations$comicFollow$zh_CN {
 	/// zh-CN: '最近检测'
 	String get lastUpdate => '最近检测';
 
+	/// zh-CN: '最近更新'
+	String get recentUpdate => '最近更新';
+
 	/// zh-CN: '检测时间：$time'
 	String checkTime({required Object time}) => '检测时间：${time}';
 
@@ -5484,6 +5811,9 @@ class Translations$comicFollow$zh_CN {
 
 	/// zh-CN: '已知：$count 话 / $chapter'
 	String knownChapter({required Object count, required Object chapter}) => '已知：${count} 话 / ${chapter}';
+
+	/// zh-CN: '共 $count 话 · $chapter'
+	String chapterSummary({required Object count, required Object chapter}) => '共 ${count} 话 · ${chapter}';
 
 	/// zh-CN: '暂无未看内容'
 	String get noUnread => '暂无未看内容';
@@ -5512,6 +5842,9 @@ class Translations$comicFollow$zh_CN {
 	/// zh-CN: '新增 $diff 话'
 	String newChaptersShort({required Object diff}) => '新增 ${diff} 话';
 
+	/// zh-CN: '更新'
+	String get updateBadge => '更新';
+
 	/// zh-CN: '新增 $diff 话未阅读'
 	String newUnreadChaptersShort({required Object diff}) => '新增 ${diff} 话未阅读';
 
@@ -5520,9 +5853,6 @@ class Translations$comicFollow$zh_CN {
 
 	/// zh-CN: '重试'
 	String get retry => '重试';
-
-	/// zh-CN: '已看 $read / 共 $total 话'
-	String readProgress({required Object read, required Object total}) => '已看 ${read} / 共 ${total} 话';
 
 	/// zh-CN: '共 $total 话'
 	String readProgressUnknown({required Object total}) => '共 ${total} 话';
@@ -5590,20 +5920,20 @@ class Translations$comicFollow$zh_CN {
 	/// zh-CN: '来源暂时不可用'
 	String get checkSourceUnavailable => '来源暂时不可用';
 
-	/// zh-CN: '来源未返回有效的章节信息'
-	String get checkInvalidResponse => '来源未返回有效的章节信息';
+	/// zh-CN: '章节信息不可用'
+	String get checkInvalidResponse => '章节信息不可用';
 
-	/// zh-CN: '请在来源插件登录后重试'
-	String get checkSignInRequired => '请在来源插件登录后重试';
+	/// zh-CN: '请先登录来源'
+	String get checkSignInRequired => '请先登录来源';
 
-	/// zh-CN: '来源暂时找不到这部作品'
-	String get checkComicNotFound => '来源暂时找不到这部作品';
+	/// zh-CN: '来源找不到作品'
+	String get checkComicNotFound => '来源找不到作品';
 
-	/// zh-CN: '启用来源插件后可检查更新'
-	String get checkPluginDisabled => '启用来源插件后可检查更新';
+	/// zh-CN: '请启用来源插件'
+	String get checkPluginDisabled => '请启用来源插件';
 
-	/// zh-CN: '安装来源插件后可检查更新'
-	String get checkPluginMissing => '安装来源插件后可检查更新';
+	/// zh-CN: '请安装来源插件'
+	String get checkPluginMissing => '请安装来源插件';
 
 	/// zh-CN: '上次成功检查：$time'
 	String lastSuccessfulCheck({required Object time}) => '上次成功检查：${time}';
@@ -5875,6 +6205,9 @@ class Translations$videoPlayback$zh_CN {
 	/// zh-CN: '剧集'
 	String get episodes => '剧集';
 
+	/// zh-CN: '选集'
+	String get chooseEpisode => '选集';
+
 	/// zh-CN: '相关推荐'
 	String get related => '相关推荐';
 
@@ -5911,14 +6244,32 @@ class Translations$videoPlayback$zh_CN {
 	/// zh-CN: '自动播放'
 	String get autoplay => '自动播放';
 
+	/// zh-CN: '自动连播'
+	String get autoplayNext => '自动连播';
+
+	/// zh-CN: '循环播放'
+	String get repeatMode => '循环播放';
+
+	/// zh-CN: '单集循环'
+	String get repeatSingle => '单集循环';
+
+	/// zh-CN: '列表循环'
+	String get repeatPlaylist => '列表循环';
+
+	/// zh-CN: '不循环'
+	String get repeatOff => '不循环';
+
+	/// zh-CN: '镜像翻转'
+	String get mirrorVideo => '镜像翻转';
+
 	/// zh-CN: '继续上次位置'
 	String get resumeProgress => '继续上次位置';
 
 	/// zh-CN: '保存观看记录'
 	String get recordHistory => '保存观看记录';
 
-	/// zh-CN: '关闭后不再保存，也不再自动续播。已有记录保留。'
-	String get recordHistoryNote => '关闭后不再保存，也不再自动续播。已有记录保留。';
+	/// zh-CN: '关闭后停止续播，保留已有记录。'
+	String get recordHistoryNote => '关闭后停止续播，保留已有记录。';
 
 	/// zh-CN: '观看记录'
 	String get watchHistory => '观看记录';
@@ -5977,11 +6328,17 @@ class Translations$videoPlayback$zh_CN {
 	/// zh-CN: '$value 秒'
 	String seconds({required Object value}) => '${value} 秒';
 
-	/// zh-CN: '铺满画面'
-	String get coverVideo => '铺满画面';
+	/// zh-CN: '画面尺寸'
+	String get pictureSize => '画面尺寸';
 
-	/// zh-CN: '横屏可能裁边；竖屏保留完整画面。'
-	String get coverVideoNote => '横屏可能裁边；竖屏保留完整画面。';
+	/// zh-CN: '适应'
+	String get pictureFit => '适应';
+
+	/// zh-CN: '拉伸'
+	String get pictureStretch => '拉伸';
+
+	/// zh-CN: '填充'
+	String get pictureFill => '填充';
 
 	/// zh-CN: '双击画面操作'
 	String get doubleTapAction => '双击画面操作';
@@ -6009,6 +6366,24 @@ class Translations$videoPlayback$zh_CN {
 
 	/// zh-CN: '拖动预览，松手跳转。'
 	String get swipeSeekNote => '拖动预览，松手跳转。';
+
+	/// zh-CN: '竖滑调节亮度和音量'
+	String get landscapeAdjustments => '竖滑调节亮度和音量';
+
+	/// zh-CN: '亮度'
+	String get adjustBrightness => '亮度';
+
+	/// zh-CN: '音量'
+	String get adjustVolume => '音量';
+
+	/// zh-CN: '调节区域'
+	String get landscapeAdjustmentSides => '调节区域';
+
+	/// zh-CN: '左亮度 · 右音量'
+	String get brightnessLeftVolumeRight => '左亮度 · 右音量';
+
+	/// zh-CN: '左音量 · 右亮度'
+	String get volumeLeftBrightnessRight => '左音量 · 右亮度';
 
 	/// zh-CN: '锁定播放控件'
 	String get lockControls => '锁定播放控件';
@@ -6199,6 +6574,9 @@ class Translations$videoPlayback$zh_CN {
 	/// zh-CN: '正序'
 	String get episodeAscending => '正序';
 
+	/// zh-CN: '列表排序'
+	String get episodeListOrder => '列表排序';
+
 	/// zh-CN: '倒序'
 	String get episodeDescending => '倒序';
 
@@ -6243,6 +6621,9 @@ class Translations$videoPlayback$zh_CN {
 
 	/// zh-CN: '正在加载目标视频…'
 	String get episodeWaiting => '正在加载目标视频…';
+
+	/// zh-CN: '正在切换到「$episode」…'
+	String episodeWaitingFor({required Object episode}) => '正在切换到「${episode}」…';
 
 	/// zh-CN: '搜索视频设置'
 	String get settingsSearch => '搜索视频设置';
@@ -6682,14 +7063,11 @@ class Translations$download$zh_CN {
 	/// zh-CN: '上次下载成功'
 	String get lastSuccessfulLine => '上次下载成功';
 
-	/// zh-CN: '漫画同时下载图片数'
-	String get concurrentComicImages => '漫画同时下载图片数';
+	/// zh-CN: '漫画图片并发数'
+	String get concurrentComicImages => '漫画图片并发数';
 
-	/// zh-CN: '每话最多同时下载 10 张，从下一话生效。若插件限制更低，自动采用较低上限。'
-	String get concurrentComicImagesHint => '每话最多同时下载 10 张，从下一话生效。若插件限制更低，自动采用较低上限。';
-
-	/// zh-CN: '视频同时下载数'
-	String get concurrentVideos => '视频同时下载数';
+	/// zh-CN: '视频下载并发数'
+	String get concurrentVideos => '视频下载并发数';
 
 	/// zh-CN: '仅 Wi-Fi 下载'
 	String get wifiOnly => '仅 Wi-Fi 下载';
@@ -6706,11 +7084,11 @@ class Translations$download$zh_CN {
 	/// zh-CN: '此记录缺少作品地址，无法直接前往。'
 	String get sourceUnavailableHint => '此记录缺少作品地址，无法直接前往。';
 
-	/// zh-CN: '导出会在所选位置保存副本，Breeze 内的下载仍可阅读或播放。漫画章节可导出为 ZIP，普通视频可保存到文件。'
-	String get helpExport => '导出会在所选位置保存副本，Breeze 内的下载仍可阅读或播放。漫画章节可导出为 ZIP，普通视频可保存到文件。';
+	/// zh-CN: '导出会在所选位置保存副本，Breeze 内的下载仍可阅读或播放。漫画可导出为 ZIP，MP4 视频可导出为视频文件。'
+	String get helpExport => '导出会在所选位置保存副本，Breeze 内的下载仍可阅读或播放。漫画可导出为 ZIP，MP4 视频可导出为视频文件。';
 
-	/// zh-CN: 'iOS 的 HLS 离线包仅能在 Breeze 内播放，暂不支持导出。'
-	String get helpHls => 'iOS 的 HLS 离线包仅能在 Breeze 内播放，暂不支持导出。';
+	/// zh-CN: 'HLS 离线包仅可在 Breeze 内播放。'
+	String get helpHls => 'HLS 离线包仅可在 Breeze 内播放。';
 
 	/// zh-CN: '删除本地下载前会要求确认，不会删除源站作品。'
 	String get helpDelete => '删除本地下载前会要求确认，不会删除源站作品。';
@@ -6718,8 +7096,8 @@ class Translations$download$zh_CN {
 	/// zh-CN: '关闭下载面板或离开此页，下载会继续。'
 	String get helpContinue => '关闭下载面板或离开此页，下载会继续。';
 
-	/// zh-CN: '下载可在 Breeze 内继续。锁屏或切换应用后暂停，返回 Breeze 后自动继续。'
-	String get helpContinueIos => '下载可在 Breeze 内继续。锁屏或切换应用后暂停，返回 Breeze 后自动继续。';
+	/// zh-CN: '锁屏或切换应用时，部分任务会暂停，返回后续传。'
+	String get helpContinueIos => '锁屏或切换应用时，部分任务会暂停，返回后续传。';
 
 	/// zh-CN: '导出下载副本'
 	String get exportFiles => '导出下载副本';
@@ -6730,11 +7108,14 @@ class Translations$download$zh_CN {
 	/// zh-CN: '文件正在使用，稍后可以再次导出。'
 	String get exportBusy => '文件正在使用，稍后可以再次导出。';
 
-	/// zh-CN: '本次导出本机已有的 $chapters 个章节、$pages 张图片，不补下缺失内容。'
-	String exportComicScope({required Object chapters, required Object pages}) => '本次导出本机已有的 ${chapters} 个章节、${pages} 张图片，不补下缺失内容。';
+	/// zh-CN: '副本包含本机已保存的 $chapters 个章节、$pages 张图片。'
+	String exportComicScope({required Object chapters, required Object pages}) => '副本包含本机已保存的 ${chapters} 个章节、${pages} 张图片。';
 
-	/// zh-CN: '另有 $pages 张图片缺失，$chapters 个章节没有本机文件。'
-	String exportComicMissing({required Object pages, required Object chapters}) => '另有 ${pages} 张图片缺失，${chapters} 个章节没有本机文件。';
+	/// zh-CN: '缺少 $pages 张图片。'
+	String exportComicMissingPages({required Object pages}) => '缺少 ${pages} 张图片。';
+
+	/// zh-CN: '$chapters 个章节没有本机文件。'
+	String exportComicUnavailableChapters({required Object chapters}) => '${chapters} 个章节没有本机文件。';
 
 	/// zh-CN: '没有可导出的本机文件。'
 	String get exportNothing => '没有可导出的本机文件。';
@@ -6921,9 +7302,6 @@ class Translations$download$zh_CN {
 
 	/// zh-CN: '关闭此面板后仍会继续下载，可在下载中心查看。'
 	String get videoForegroundNote => '关闭此面板后仍会继续下载，可在下载中心查看。';
-
-	/// zh-CN: '关闭面板后可在下载中心查看。锁屏或切换应用后暂停，返回 Breeze 后自动继续。'
-	String get videoForegroundNoteIos => '关闭面板后可在下载中心查看。锁屏或切换应用后暂停，返回 Breeze 后自动继续。';
 
 	/// zh-CN: '下载记录未能保存，下次打开应用时可能无法显示。'
 	String get videoRecordFailed => '下载记录未能保存，下次打开应用时可能无法显示。';
@@ -7152,6 +7530,18 @@ class Translations$videoDownload$zh_CN {
 
 	/// zh-CN: '选择清晰度后下载'
 	String get chooseQuality => '选择清晰度后下载';
+
+	/// zh-CN: '选择清晰度'
+	String get selectQuality => '选择清晰度';
+
+	/// zh-CN: '返回选择'
+	String get backToEpisodes => '返回选择';
+
+	/// zh-CN: '跟随站点清晰度'
+	String get sourceQuality => '跟随站点清晰度';
+
+	/// zh-CN: '所选条目没有共同的清晰度'
+	String get noCommonQuality => '所选条目没有共同的清晰度';
 
 	/// zh-CN: '正在获取下载选项…'
 	String get loading => '正在获取下载选项…';
@@ -8725,9 +9115,6 @@ class Translations$routingRules$zh_CN {
 	/// zh-CN: 'Breeze 内置代理'
 	String get internalProxy => 'Breeze 内置代理';
 
-	/// zh-CN: '使用指定地址转发 Breeze 的网络请求'
-	String get internalHint => '使用指定地址转发 Breeze 的网络请求';
-
 	/// zh-CN: '请先关闭这些插件的 Breeze 内置代理，再导入分流规则。'
 	String get internalWarning => '请先关闭这些插件的 Breeze 内置代理，再导入分流规则。';
 
@@ -8797,8 +9184,8 @@ class Translations$routingRules$zh_CN {
 	/// zh-CN: '暂无已安装插件，可导入 CJS 文件提取域名'
 	String get noPlugins => '暂无已安装插件，可导入 CJS 文件提取域名';
 
-	/// zh-CN: '读取 CJS 文件，提取域名，不安装插件。'
-	String get importHint => '读取 CJS 文件，提取域名，不安装插件。';
+	/// zh-CN: '选文件、预览并选择导入方式。'
+	String get importHint => '选文件、预览并选择导入方式。';
 
 	/// zh-CN: '$count 个域名'
 	String domainCount({required Object count}) => '${count} 个域名';
@@ -9202,8 +9589,14 @@ class Translations$backupFlow$zh_CN {
 	/// zh-CN: '包含下载文件'
 	String get includeFiles => '包含下载文件';
 
-	/// zh-CN: '默认不备份下载的漫画和视频。'
-	String get includeFilesHint => '默认不备份下载的漫画和视频。';
+	/// zh-CN: '备份收藏、记录、设置、插件资料和自定义图片。'
+	String get includeFilesHint => '备份收藏、记录、设置、插件资料和自定义图片。';
+
+	/// zh-CN: '导出备份？'
+	String get exportConfirmTitle => '导出备份？';
+
+	/// zh-CN: '不含下载文件'
+	String get exportWithoutDownloads => '不含下载文件';
 
 	/// zh-CN: '备份保护'
 	String get protection => '备份保护';
@@ -9217,20 +9610,20 @@ class Translations$backupFlow$zh_CN {
 	/// zh-CN: '备份可能包含已保存的插件账号，请妥善保管。'
 	String get standardHint => '备份可能包含已保存的插件账号，请妥善保管。';
 
-	/// zh-CN: '需要密码，可包含已保存的 S3 和 WebDAV 账号。'
-	String get encryptedExportHint => '需要密码，可包含已保存的 S3 和 WebDAV 账号。';
+	/// zh-CN: '需要密码，可包含云同步账号。'
+	String get encryptedExportHint => '需要密码，可包含云同步账号。';
 
 	/// zh-CN: '保留并合并'
 	String get merge => '保留并合并';
 
-	/// zh-CN: '保留本机资料，加入备份中的记录。较新的修改和删除结果会保留。'
-	String get mergeHint => '保留本机资料，加入备份中的记录。较新的修改和删除结果会保留。';
+	/// zh-CN: '合并本机与备份资料，保留较新的修改与删除。'
+	String get mergeHint => '合并本机与备份资料，保留较新的修改与删除。';
 
 	/// zh-CN: '替换本机资料'
 	String get restore => '替换本机资料';
 
-	/// zh-CN: '用备份替换本机记录，以及下方选中的内容。'
-	String get restoreHint => '用备份替换本机记录，以及下方选中的内容。';
+	/// zh-CN: '用备份替换本机记录和所选内容。'
+	String get restoreHint => '用备份替换本机记录和所选内容。';
 
 	/// zh-CN: '合并这份备份？'
 	String get mergeTitle => '合并这份备份？';
@@ -9241,8 +9634,8 @@ class Translations$backupFlow$zh_CN {
 	/// zh-CN: '合并记录，保留较新的修改和删除结果。'
 	String get mergeConfirm => '合并记录，保留较新的修改和删除结果。';
 
-	/// zh-CN: '恢复会覆盖现有记录、设置和插件。备份含有本机图片时，也会替换当前图片。此操作无法直接撤销。'
-	String get restoreConfirm => '恢复会覆盖现有记录、设置和插件。备份含有本机图片时，也会替换当前图片。此操作无法直接撤销。';
+	/// zh-CN: '替换本机记录和选中的项目。恢复会按所选范围替换自定义图片。此操作无法直接撤销。'
+	String get restoreConfirm => '替换本机记录和选中的项目。恢复会按所选范围替换自定义图片。此操作无法直接撤销。';
 
 	/// zh-CN: '备份时间：$value'
 	String createdAt({required Object value}) => '备份时间：${value}';
@@ -9262,11 +9655,11 @@ class Translations$backupFlow$zh_CN {
 	/// zh-CN: '包含下载文件'
 	String get downloadsIncluded => '包含下载文件';
 
-	/// zh-CN: '此备份不含下载文件。本机下载会保留。'
-	String get downloadsExcluded => '此备份不含下载文件。本机下载会保留。';
+	/// zh-CN: '备份不含下载，本机下载会保留。'
+	String get downloadsExcluded => '备份不含下载，本机下载会保留。';
 
-	/// zh-CN: '保留本机下载，加入备份中的下载。若无法合并，会停止导入。'
-	String get mergeFilesHint => '保留本机下载，加入备份中的下载。若无法合并，会停止导入。';
+	/// zh-CN: '合并下载。无法合并时停止导入。'
+	String get mergeFilesHint => '合并下载。无法合并时停止导入。';
 
 	/// zh-CN: '这份备份包含下载文件，会替换本机下载。'
 	String get restoreFilesHint => '这份备份包含下载文件，会替换本机下载。';
@@ -9337,11 +9730,11 @@ class Translations$backupFlow$zh_CN {
 	/// zh-CN: '插件与账号设置也会替换。'
 	String get replacePluginsWarning => '插件与账号设置也会替换。';
 
-	/// zh-CN: '此操作无法直接撤销。云端连接和应用锁保持不变。'
-	String get replaceIrreversible => '此操作无法直接撤销。云端连接和应用锁保持不变。';
+	/// zh-CN: '无法撤销。云端连接和应用锁保持不变。'
+	String get replaceIrreversible => '无法撤销。云端连接和应用锁保持不变。';
 
-	/// zh-CN: '此操作无法直接撤销。应用锁保持不变。'
-	String get replaceIrreversibleWithCloudAccount => '此操作无法直接撤销。应用锁保持不变。';
+	/// zh-CN: '无法撤销。应用锁保持不变。'
+	String get replaceIrreversibleWithCloudAccount => '无法撤销。应用锁保持不变。';
 
 	/// zh-CN: '同时用于云同步和备份文件。'
 	String get protectionSharedHint => '同时用于云同步和备份文件。';
@@ -10305,6 +10698,7 @@ extension on Translations {
 			'videoSource.lineUntested' => '尚未测试',
 			'videoSource.lineResolved' => ({required Object seconds}) => '解析 ${seconds} 秒',
 			'videoSource.lineResolveFailed' => ({required Object seconds}) => '解析失败 · ${seconds} 秒',
+			'videoSource.lineResolveTimedOut' => ({required Object seconds}) => '解析超时 · ${seconds} 秒',
 			'videoSource.autoSwitching' => '正在尝试同集其他线路',
 			'videoSource.recentUpdates' => '最近更新',
 			'videoSource.siteNotices' => '站点资讯',
@@ -10424,6 +10818,8 @@ extension on Translations {
 			'common.reload' => '重新加载',
 			'common.confirm' => '确认',
 			'common.close' => '关闭',
+			'common.expandFilterPanel' => '展开筛选面板',
+			'common.collapseFilterPanel' => '收起筛选面板',
 			'common.back' => '返回',
 			'common.help' => '帮助',
 			'common.gotIt' => '知道了',
@@ -10560,14 +10956,13 @@ extension on Translations {
 			'settings.maskedKeywordsSubtitle' => '在搜索结果中隐藏匹配内容',
 			'settings.maskedKeywordsEmpty' => '暂无屏蔽词',
 			'settings.maskedKeywordsInputHint' => '输入新关键词...',
-			'settings.chineseConvert' => '漫画内容简繁转换',
-			'settings.chineseConvertSubtitle' => '转换漫画标题、简介、章节和评论',
+			'settings.chineseConvert' => '漫画简繁转换',
+			'settings.chineseConvertSubtitle' => '标题、简介、章节名和评论',
 			'settings.chineseConvertOff' => '关闭',
 			'settings.chineseConvertSimplified' => '简体中文',
 			'settings.chineseConvertTraditional' => '繁体中文',
 			'settings.proxy' => '代理',
 			'settings.proxySubtitle' => '配置代理地址',
-			'settings.proxyEnabledSubtitle' => '开启后网络请求将经过代理',
 			'settings.proxyAddress' => '代理地址',
 			'settings.proxyHint' => '请输入代理地址（HTTP / SOCKS5）',
 			'settings.proxyCurrent' => ({required Object currentProxy}) => '当前代理：${currentProxy}',
@@ -10578,7 +10973,6 @@ extension on Translations {
 			'settings.updateAccelerate' => '更新下载加速',
 			'settings.updateAccelerateSubtitle' => '开启后优先使用代理加速 GitHub 更新链接',
 			'settings.retryDownloadUntilSuccess' => '持续重试漫画下载',
-			'settings.retryDownloadUntilSuccessSubtitle' => '临时故障时继续尝试',
 			'settings.sync' => '同步',
 			'settings.syncConfig' => '同步配置',
 			'settings.syncConfigSubtitle' => '填写连接地址和登录资料',
@@ -10588,7 +10982,7 @@ extension on Translations {
 			'settings.syncServiceWebdav' => 'WebDAV',
 			'settings.syncServiceS3' => 'S3',
 			'settings.autoSync' => '自动同步',
-			'settings.autoSyncSubtitle' => '合并记录；账号随“同步插件”备份，不恢复账号、设置或图片。',
+			'settings.autoSyncSubtitle' => '自动合并记录。账号备份随「同步插件」上传。',
 			'settings.syncNotify' => '自动同步进度提醒',
 			'settings.syncNotifySubtitle' => '自动同步开始和完成时提醒',
 			'settings.syncSettings' => '同步设置',
@@ -10755,6 +11149,11 @@ extension on Translations {
 			'settings.debugAddress' => '调试地址',
 			'settings.notSet' => '未设置',
 			'settings.interfaceStyle' => '界面样式',
+			'settings.bottomNavigation' => '底部导航栏',
+			'settings.navigationVisibility' => '显示方式',
+			'settings.navigationFixed' => '固定',
+			'settings.navigationHideOnScroll' => '滚动时隐藏',
+			'settings.navigationTransparency' => '透明度',
 			'settings.switchStyles.title' => '开关样式',
 			'settings.switchStyles.classic' => '经典',
 			'settings.switchStyles.symbols' => '符号',
@@ -10788,20 +11187,20 @@ extension on Translations {
 			'settings.syncTaskFinishing' => '正在完成并核对',
 			'settings.syncTaskWaiting' => '等待选择要保留的图片',
 			'settings.syncTaskFinished' => '同步完成',
+			_ => null,
+		} ?? switch (path) {
 			'settings.syncTaskCancelled' => '同步已停止，可重试',
 			'settings.syncTaskImagePrepare' => '准备图片',
 			'settings.syncTaskImageUpload' => '上传并核对图片',
 			'settings.syncTaskImageProgress' => ({required Object action, required Object done, required Object total, required Object percent}) => '${action} ${done}/${total} · ${percent}%',
 			'settings.syncKeepForeground' => '请保持应用前台',
 			'settings.syncTaskForegroundHint' => '可切换应用内页面；请保持应用前台直至完成。',
-			_ => null,
-		} ?? switch (path) {
 			'settings.unifiedSyncNote' => '合并所选资料与云端数据，包含自定义图片，不包含下载文件。',
 			'settings.moreDetails' => '说明',
 			'settings.syncContent' => '同步内容',
 			'settings.syncBehavior' => '同步选项',
-			'settings.syncScopeNote' => '收藏与历史始终合并；封面保护图片随设置同步，下载文件不上传。',
-			'settings.syncMergeNote' => '上传以本机为准；恢复以云端为准。',
+			'settings.syncScopeNote' => '合并收藏、历史、进度和追更。下载文件留在本机。',
+			'settings.syncMergeNote' => '设置与图片随所选方向同步。',
 			'settings.appearanceOptions' => '显示选项',
 			'settings.categoryGridFormat' => '格式设置',
 			'settings.categoryGridGroup' => '界面显示',
@@ -10824,17 +11223,22 @@ extension on Translations {
 			'settings.appearanceGalleryConfirmHint' => ({required Object count}) => '将从本机图库和 Breeze 云端移除 ${count} 张未选图片。',
 			'settings.sectionHelp' => ({required Object section}) => '${section}说明',
 			'settings.syncAdvanced' => '高级操作',
-			'settings.cloudReplaceTitle' => '用本机完整替换云端',
-			'settings.cloudReplaceScope' => '云端所有新旧存档将以本机现状替换，包括未安装插件的保留资料。仅云端存在的资料将删除。下载文件和本机保护开关不上传。',
-			'settings.cloudReplacePreview' => '预览云端资料',
-			'settings.cloudReplaceConfirmTitle' => '确认完整替换云端？',
-			'settings.cloudReplaceConfirmHint' => '将覆盖并删除预览中的云端资料，无法撤销。操作期间请勿在其他设备同步。',
-			'settings.cloudReplaceConfirm' => '确认替换',
-			'settings.cloudReplaceSuccess' => '云端已完整替换',
+			'settings.cloudReplaceTitle' => '用本机替换云端',
+			'settings.cloudReplaceScope' => '替换新旧云端存档，含已卸载插件的保留资料。下载文件和保护设置仅留本机。',
+			'settings.cloudReplacePreview' => '预览云端变更',
+			'settings.cloudReplaceReview' => '继续替换',
+			'settings.cloudReplaceReading' => '正在读取资料以预览…',
+			'settings.cloudReplaceWriting' => '正在用本机替换云端…',
+			'settings.cloudReplaceConfirmTitle' => '用本机替换云端？',
+			'settings.cloudReplaceConfirmHint' => '将覆盖有差异的云端资料，删除仅存云端的资料。替换无法撤销，请先暂停其他设备同步。',
+			'settings.cloudReplaceConfirm' => '替换云端',
+			'settings.cloudReplaceSuccess' => '已用本机资料替换云端存档。',
 			'settings.cloudReplaceStale' => '本机或云端资料已变化，请重新预览。',
-			'settings.cloudReplacePartial' => '替换未完成，部分云端资料已更新。本机资料保留，请重新预览后重试。',
-			'settings.cloudReplaceArchives' => ({required Object current, required Object legacy}) => '将替换新存档 ${current} 个文件、旧格式存档 ${legacy} 个文件。',
-			'settings.cloudReplaceCounts' => ({required Object local, required Object removed, required Object overwritten}) => '本机 ${local} 项 · 删除云端独有 ${removed} 项 · 覆盖不同内容 ${overwritten} 项',
+			'settings.cloudReplacePartial' => '替换未完成，云端资料可能已改变。请重新预览。',
+			'settings.cloudReplaceArchives' => ({required Object current, required Object legacy}) => '现行云端文件 ${current} 个 · 旧版 ${legacy} 个',
+			'settings.cloudReplaceLocalCount' => ({required Object count}) => '本机 ${count}',
+			'settings.cloudReplaceRemovedCount' => ({required Object count}) => '云端删除 ${count}',
+			'settings.cloudReplaceOverwrittenCount' => ({required Object count}) => '云端覆盖 ${count}',
 			'settings.cloudReplaceComic' => '漫画记录',
 			'settings.cloudReplaceVideo' => '视频记录',
 			'settings.cloudReplacePlugins' => '插件资料',
@@ -10842,7 +11246,7 @@ extension on Translations {
 			'settings.cloudReplaceImages' => '图片',
 			'settings.bookshelfScope' => '漫画和视频共用',
 			'settings.oldPageRollbackScope' => '在主导航显示首页与排行榜；重启后生效',
-			'settings.proxyApplyScope' => '新访问使用此设置，正在进行的请求不变。',
+			'settings.proxyApplyScope' => '仅影响新请求',
 			'bookshelf.facets.title' => '筛选收藏',
 			'bookshelf.facets.resultTitle' => ({required Object count}) => '筛选 · ${count} 项结果',
 			'bookshelf.facets.current' => '当前文件夹',
@@ -11122,7 +11526,6 @@ extension on Translations {
 			'comicInfo.likeSuccess' => '点赞成功',
 			'comicInfo.unlikeSuccess' => '已取消点赞',
 			'comicInfo.likeDisabled' => '该插件暂不支持此功能',
-			'comicInfo.likeUnconfirmed' => '未能确认点赞状态，刷新详情后再试',
 			'comicInfo.localCollectFailed' => ({required Object error}) => '本地收藏失败: ${error}',
 			'comicInfo.likeFailed' => ({required Object error}) => '点赞失败: ${error}',
 			'comicInfo.loadFailedWithError' => ({required Object error}) => '${error}\n加载失败，请重试。',
@@ -11158,17 +11561,24 @@ extension on Translations {
 			'reader.topHalfNext' => '上半屏向下',
 			'reader.bottomHalfNext' => '下半屏向下',
 			'reader.tapPageTurnWebtoonAll' => '全部向下',
-			'reader.tapPageTurnAllHelp' => '中央区域用于阅读菜单，其余位置点按到下一页。',
-			'reader.tapPageTurnSplitHelp' => '中央区域用于阅读菜单，另一半屏到上一页。',
-			'reader.tapPageTurnWebtoonAllHelp' => '中央区域用于阅读菜单，其余位置点按向下滚动。',
-			'reader.tapPageTurnWebtoonSplitHelp' => '中央区域用于阅读菜单，另一半屏向上滚动。',
+			'reader.toolbarTapArea' => '操作栏',
+			'reader.customToolbarTapArea' => '仅在中央区域触发',
+			'reader.toolbarTapAreaHelp' => '整个阅读区可触发',
+			'reader.toolbarTapAreaWidth' => '区域宽度',
+			'reader.editSliderPercentage' => ({required Object title}) => '编辑${title}',
+			'reader.sliderPercentageRange' => ({required Object min, required Object max}) => '请输入 ${min}%–${max}% 之间的整数。',
+			'reader.tapPageTurnNeedsCustomArea' => '将操作栏设为仅在中央区域触发，即可使用点按翻页。',
+			'reader.tapPageTurnAllHelp' => '点按操作栏区域外可到下一页。',
+			'reader.tapPageTurnSplitHelp' => '操作栏区域外按左右区分上一页和下一页。',
+			'reader.tapPageTurnWebtoonAllHelp' => '点按操作栏区域外可向下滚动。',
+			'reader.tapPageTurnWebtoonSplitHelp' => '操作栏区域外按上下区分滚动方向。',
 			'reader.tapPageTurnWebtoonDisabled' => '开启「条漫点按翻动」后可选择区域。',
 			'reader.tapPageTurnWebtoonPerComicDisabled' => '在「手势」开启条漫点按翻动后，可选择本漫的点按区域。',
 			'reader.reverseHorizontalPageTurn' => '反转左右方向键',
 			'reader.reverseHorizontalPageTurnSubtitle' => '交换左右方向键的翻页方向，适合从右到左的日漫',
 			'reader.webtoonTapPageTurn' => '条漫点按翻动',
 			'reader.enableWebtoonTapPageTurn' => '启用点按翻动',
-			'reader.webtoonTapPageTurnSubtitle' => '关闭时，整页点按用于阅读菜单。',
+			'reader.webtoonTapPageTurnSubtitle' => '关闭后，操作栏区域外的点按不会滚动。',
 			'reader.readingMode' => '阅读模式',
 			'reader.perComicReadMode' => '启用本漫画设置',
 			'reader.perComicReadModeSubtitle' => '仅当前漫画生效',
@@ -11291,11 +11701,40 @@ extension on Translations {
 			'reader.saveImagePermissionDenied' => '保存失败: 请在系统设置中授予相册访问权限',
 			'reader.imageSaveFailedWithError' => ({required Object error}) => '保存失败: ${error}',
 			'plugin.routeOptionInUse' => '使用中',
+			_ => null,
+		} ?? switch (path) {
+			'plugin.routeAutomatic' => '自动',
+			'plugin.routeUnknown' => '未测速',
+			'plugin.routeAvailable' => '可用',
+			'plugin.routeUnavailable' => '暂不可用',
+			'plugin.routeReadOnly' => '仅阅读',
+			'plugin.copyOnlyReadOnlyRoutesAvailable' => '仅阅读可用',
+			'plugin.autoRouteDescription' => '自动选线。',
+			'plugin.autoRouteModesDescription' => '可用优先保持连接。速度优先按测速选线。',
+			'plugin.copyAutoRouteModesDescription' => '可用优先兼顾账号。速度优先按阅读测速。',
+			'plugin.routeAutomaticAvailable' => '自动（可用优先）',
+			'plugin.routeAutomaticSpeed' => '自动（速度优先）',
 			'plugin.store' => '插件商店',
 			'plugin.searchHint' => '搜索插件名称或功能...',
 			'plugin.localInstall' => '本地安装',
 			'plugin.networkInstall' => '网络安装',
 			'plugin.cloudComponents' => '云端组件',
+			'plugin.cloudUpdateAll' => '一键更新全部',
+			'plugin.cloudInstallAll' => '一键安装全部',
+			'plugin.cloudNoUpdates' => '暂无更新',
+			'plugin.cloudNoInstalls' => '暂无可安装',
+			'plugin.cloudUpdateCount' => ({required Object count}) => '${count} 个可更新',
+			'plugin.cloudInstallCount' => ({required Object count}) => '${count} 个可安装',
+			'plugin.confirmCloudUpdateAll' => ({required Object count}) => '要更新商店完整目录中已有兼容新版本的 ${count} 个已装插件吗？',
+			'plugin.confirmCloudInstallAll' => ({required Object count}) => '要安装商店完整目录中本机尚未安装的 ${count} 个兼容插件吗？',
+			'plugin.cloudBatchUpdating' => ({required Object name, required Object current, required Object total}) => '正在更新 ${name}（${current}/${total}）',
+			'plugin.cloudBatchInstalling' => ({required Object name, required Object current, required Object total}) => '正在安装 ${name}（${current}/${total}）',
+			'plugin.cloudBatchUpdated' => ({required Object count}) => '已更新 ${count} 项',
+			'plugin.cloudBatchInstalled' => ({required Object count}) => '已安装 ${count} 项',
+			'plugin.cloudBatchFailed' => ({required Object count}) => '失败 ${count} 项',
+			'plugin.cloudBatchSkipped' => ({required Object count}) => '跳过 ${count} 项',
+			'plugin.cloudPluginUpdated' => ({required Object name}) => '${name} 更新成功',
+			'plugin.cloudBatchFailureTitle' => '未成功处理的插件',
 			'plugin.loginSuccess' => '请在网页中完成登录。',
 			'plugin.chromiumFallbackUnsupported' => '当前平台不支持外部 Chromium 自动登录回退',
 			'plugin.switchingToExternalBrowser' => '内置 WebView 登录受限，正在切换外部浏览器...',
@@ -11308,8 +11747,6 @@ extension on Translations {
 			'plugin.addFromNetwork' => '从网络添加插件',
 			'plugin.urlCannotBeEmpty' => 'URL 不能为空',
 			'plugin.startInstall' => '开始安装',
-			_ => null,
-		} ?? switch (path) {
 			'plugin.pluginSettingsTitle' => ({required Object name}) => '${name} 设置',
 			'plugin.debugConfigUpdated' => '插件调试配置已更新',
 			'plugin.deletePlugin' => '移除插件',
@@ -11354,34 +11791,35 @@ extension on Translations {
 			'plugin.installingFromNetwork' => '正在下载网络插件...',
 			'plugin.cloudDownloadFailed' => ({required Object error}) => '云端下载失败: ${error}',
 			'plugin.networkDownloadFailed' => ({required Object error}) => '网络下载插件失败: ${error}',
-			'plugin.remoteAssetNotFound' => '远程插件文件不存在（404），可能已被删除或版本已更新，请稍后重试或检查更新地址',
-			'plugin.githubRateLimited' => 'GitHub 访问受限（疑似 IP 被限流），请稍后重试或切换网络；若插件确实不存在也会显示 404',
-			'plugin.remoteReturnedWebPage' => '远端返回了网页而非插件文件，通常是远程文件不存在或链接已失效，请检查插件仓库的更新地址',
-			'plugin.remoteEmptyResponse' => '远端返回内容为空，请稍后重试或检查更新地址',
-			'plugin.remoteAccessDenied' => ({required Object status}) => '远端拒绝访问（HTTP ${status}），请检查网络或稍后重试',
-			'plugin.remoteServerError' => ({required Object status}) => '远端服务器异常（HTTP ${status}），请稍后重试',
-			'plugin.remoteHttpError' => ({required Object status}) => '远端请求失败（HTTP ${status}），请稍后重试',
-			'plugin.downloadedScriptInvalid' => '下载到的文件不是有效的插件脚本（疑似网页或错误页），请检查远程文件是否存在后再试',
-			'plugin.downloadedScriptCorrupted' => '下载到的插件文件已损坏或解压失败，请稍后重试',
+			'plugin.remoteAssetNotFound' => '插件文件暂不可用，请刷新后重试',
+			'plugin.githubRateLimited' => '下载次数过多，请稍后再试',
+			'plugin.remoteReturnedWebPage' => '链接未指向插件文件，请检查链接',
+			'plugin.remoteEmptyResponse' => '暂时无法下载插件，请稍后重试',
+			'plugin.remoteAccessDenied' => '无法访问插件文件，请稍后重试',
+			'plugin.remoteServerError' => '下载服务暂不可用，请稍后重试',
+			'plugin.remoteHttpError' => '下载失败，请稍后重试',
+			'plugin.downloadedScriptInvalid' => '文件无法安装，请检查是否选对了插件文件',
+			'plugin.downloadedScriptCorrupted' => '插件文件已损坏，请重新下载',
 			'plugin.networkUnstableRetry' => '网络不稳定，下载失败，请检查网络后重试',
 			'plugin.cloudVersion' => ({required Object version}) => '云端 ${version}',
 			'plugin.localVersion' => ({required Object version}) => '本地 ${version}',
 			'plugin.loginTitle' => ({required Object name}) => '${name} 登录',
-			'plugin.cookieSynced' => '登录 Cookie 已同步',
-			'plugin.lineTestSuccess' => '线路测试完成，可正常访问',
-			'plugin.lineTestPartial' => '部分线路未通过，请查看线路结果',
-			'plugin.lineTestFailure' => '暂未测到可用线路，请稍后重试',
+			'plugin.cookieSynced' => '登录信息已同步',
+			'plugin.lineTestSuccess' => '所有线路均通过测速',
+			'plugin.lineTestPartial' => '部分线路可用',
+			'plugin.lineTestFailure' => '暂未找到可用线路，请稍后重试',
+			'plugin.lineTestCancelled' => '测速已取消',
 			'plugin.executeSuccess' => '执行成功',
 			'plugin.userInfoTitle' => '用户信息',
-			'plugin.userInfoLoadFailed' => '用户信息加载失败',
+			'plugin.userInfoLoadFailed' => '暂时无法读取账号资料',
 			'plugin.unnamedAction' => '未命名操作',
 			'plugin.pluginSettingsLoading' => '插件设置加载中...',
 			'plugin.pluginSettingsLoadFailed' => '插件设置加载失败',
-			'plugin.actionNotExecutable' => '动作不可执行: 缺少 fnPath',
+			'plugin.actionNotExecutable' => '暂时无法执行此操作',
 			'plugin.saved' => '已保存',
 			'plugin.close' => '关闭',
 			'plugin.sync' => '同步',
-			'plugin.syncSubtitle' => '通过 npm / updateUrl 检查并更新插件',
+			'plugin.syncSubtitle' => '检查并更新插件',
 			'plugin.syncing' => '正在同步插件...',
 			'plugin.syncSuccess' => '同步成功',
 			'plugin.syncFailed' => ({required Object error}) => '同步失败: ${error}',
@@ -11392,7 +11830,7 @@ extension on Translations {
 			'plugin.updating' => '正在更新插件...',
 			'plugin.updateSuccess' => '更新成功',
 			'plugin.updateFailed' => ({required Object error}) => '更新失败: ${error}',
-			'plugin.uuidMismatch' => '插件 id 不一致，无法安装',
+			'plugin.uuidMismatch' => '文件与当前插件不匹配，请选择对应的插件文件',
 			'plugin.currentVersion' => ({required Object version}) => '当前版本 ${version}',
 			'plugin.developmentDebugHint' => '使用指定开发地址加载插件。',
 			'plugin.invalidDebugAddress' => '请输入完整的 HTTP 或 HTTPS 开发服务地址',
@@ -11701,9 +12139,16 @@ extension on Translations {
 			'more.sync' => '同步',
 			'more.comicFollow' => '追更',
 			'more.changelog' => '更新日志',
+			'search.defaultScope' => '默认搜索范围',
+			'search.noScopeSources' => '暂无支持设置搜索范围的插件',
 			'search.title' => '搜索',
 			'search.searchHint' => '搜索',
 			'search.enterKeyword' => '请输入搜索关键词',
+			'search.jmPopularTopics' => '热门主题',
+			'search.jmRandomRecommendations' => '随机推荐',
+			'search.jmMoreRecommendations' => '换一批',
+			'search.jmSearchYear' => ({required Object year}) => '${year} 年',
+			'search.jmDateFilter' => '日期筛选',
 			'search.selectSource' => '搜索来源',
 			'search.advancedSearchNotSupported' => '当前插件不支持高级搜索',
 			'search.advancedSearchOptions' => '高级搜索选项',
@@ -11770,6 +12215,8 @@ extension on Translations {
 			'discover.disablePlugin' => '停用插件',
 			'discover.customOrder' => '自定义插件顺序',
 			'discover.resetOrder' => '恢复默认顺序',
+			_ => null,
+		} ?? switch (path) {
 			'discover.noPlugins' => '暂无可用插件，去插件商店安装一个吧~',
 			'discover.pluginStore' => '插件商店',
 			'discover.browseInstall' => '浏览安装',
@@ -11813,6 +12260,34 @@ extension on Translations {
 			'sourceNotices.stateUnavailable' => '消息暂时无法核对，请刷新后重试',
 			'sourceNotices.stateUnconfirmed' => '消息状态尚未确认，请刷新后重试',
 			'sourceNotices.partialMarked' => ({required Object confirmed, required Object pending}) => '已标记 ${confirmed} 条，${pending} 条尚未确认，请刷新后重试',
+			'sourceProfile.jmFolderAvailable' => ({required Object name}) => '已找到文件夹「${name}」',
+			'sourceProfile.jmFolderLimit' => '收藏夹已满。删除一个后即可新建。',
+			'sourceProfile.jmFolderLimitDetail' => ({required Object count}) => '已有 ${count} 个收藏夹，已达上限。删除一个后即可新建。',
+			'sourceProfile.jmFolderMissing' => '这个收藏夹已不存在。',
+			'sourceProfile.jmSiteWatchHistory' => '站点阅读记录',
+			'sourceProfile.jmMoveToFolder' => '移动到文件夹',
+			'sourceProfile.jmMovedToFolder' => ({required Object name}) => '已移至「${name}」',
+			'sourceProfile.jmFolderUnconfirmed' => '还无法确认结果，请先刷新收藏夹。',
+			'sourceProfile.jmFolderRenamed' => '文件夹已重命名',
+			'sourceProfile.jmFolderDeleted' => '文件夹已删除',
+			'sourceProfile.jmDeleteFolder' => ({required Object name}) => '删除「${name}」文件夹？',
+			'sourceProfile.jmRefreshFolders' => '刷新文件夹',
+			'sourceProfile.jmAccountFavorites' => '禁漫账号收藏',
+			'sourceProfile.jmFollowSeries' => '追踪连载更新',
+			'sourceProfile.jmFavoriteTags' => '收藏标签',
+			'sourceProfile.jmTagCollection' => '标签收藏',
+			'sourceProfile.jmFollowCollection' => '追踪漫画',
+			'sourceProfile.jmAddTag' => '添加标签',
+			'sourceProfile.jmTagName' => '标签名称',
+			'sourceProfile.jmTagExists' => '已收藏此标签',
+			'sourceProfile.jmTagInvalid' => '请输入一个标签，名称中不能有逗号',
+			'sourceProfile.jmRemoveTag' => '移除标签',
+			'sourceProfile.jmRemoveTagConfirm' => ({required Object name}) => '从收藏中移除「${name}」？',
+			'sourceProfile.jmTagAdded' => '已收藏标签',
+			'sourceProfile.jmTagRemoved' => '已移除标签',
+			'sourceProfile.jmTagWriteFailed' => '暂时无法更新标签，请稍后重试',
+			'sourceProfile.jmTagsEmpty' => '还没有收藏的标签',
+			'sourceProfile.jmFollowsEmpty' => '还没有追踪的漫画',
 			'sourceProfile.websiteCheckinUnavailable' => '暂时无法核对网站的签到状态，请稍后重试',
 			'sourceProfile.websiteCheckedIn' => ({required Object date}) => '${date} · 网站资料确认已签到',
 			'sourceProfile.websiteNotCheckedIn' => ({required Object date}) => '${date} · 网站资料显示尚未签到',
@@ -11822,8 +12297,6 @@ extension on Translations {
 			'sourceProfile.backToRecords' => '返回记录列表',
 			'sourceProfile.backToProfile' => '返回我的',
 			'sourceProfile.recordsUnavailable' => '本地记录暂时无法读取',
-			_ => null,
-		} ?? switch (path) {
 			'sourceProfile.signInForFavorites' => '登录后查看站点收藏',
 			'sourceProfile.dataNotRefreshed' => '网络数据尚未更新',
 			'sourceProfile.checkinIdentityChanged' => '账号或日期已变化，请重新核对',
@@ -11876,6 +12349,8 @@ extension on Translations {
 			'sourceShell.searchScopeAll' => '综合',
 			'sourceShell.searchScopeTitle' => '标题',
 			'sourceShell.searchScopeTeam' => '汉化组',
+			'sourceShell.searchScopeOriginalWork' => '原作',
+			'sourceShell.searchScopeCharacter' => '角色',
 			'sourceShell.searchScopeTags' => '标签',
 			'sourceShell.searchScopeAuthor' => '作者',
 			'sourceShell.collectionLoadingCount' => ({required Object loaded, required Object total}) => '已加载 ${loaded} / ${total} 部',
@@ -12037,9 +12512,35 @@ extension on Translations {
 			'searchResult.pleaseEnterNumber' => '请输入数字',
 			'searchResult.returnToTop' => '返回顶部',
 			'searchResult.jumpToPage' => '跳转页面',
+			'searchResult.blockCategories' => '屏蔽分类',
+			'searchResult.categories' => '分类',
+			'searchResult.bikaContentBlocking' => '内容屏蔽',
+			'searchResult.bikaContentBlockingScope' => '用于哔咔搜索（含综合搜索）、分类和随机作品。',
+			'searchResult.bikaBlockedTitles' => '标题包含',
+			'searchResult.bikaBlockedTags' => '标签完全匹配',
+			'searchResult.bikaBlockedAuthors' => '作者完全匹配',
+			'searchResult.bikaBlockRuleInput' => '输入一条规则',
+			'searchResult.bikaBlockRuleDuplicate' => '这条规则已存在',
+			'searchResult.bikaBlockRulesCount' => ({required Object count}) => '${count} 条',
+			'searchResult.bikaRemoveBlockRule' => ({required Object rule}) => '删除「${rule}」',
+			'searchResult.bikaBlockedCategories' => '分类屏蔽',
+			'searchResult.bikaHiddenHomeCategories' => '隐藏首页分类入口',
+			'searchResult.bikaFilterSiteCategories' => '站点分类',
+			'searchResult.bikaFilterLoadedWorks' => '已加载作品',
+			'searchResult.bikaFilterTitleContains' => '标题包含',
+			'searchResult.bikaFilterTranslationTeam' => '汉化组',
+			'searchResult.bikaFilterCategoryHiddenBySettings' => '此分类可在插件设置的「内容屏蔽」中恢复。',
+			'searchResult.bikaFilterCategoryHiddenByQuickBar' => '点按顶部彩条可恢复此分类。',
+			'searchResult.shuffle' => '换一批',
+			'searchResult.randomWorks' => '随机作品',
+			'searchResult.noVisibleRandomWorks' => '这一批没有可显示的作品',
+			'searchResult.resultNavigation' => '结果导航',
 			'searchResult.jump' => '跳转',
 			'searchResult.pageProgress' => ({required Object page, required Object pages}) => '第${page} / ${pages}页',
 			'searchResult.pageOnly' => ({required Object page}) => '第${page}页',
+			'searchResult.findingMatches' => '正在查找符合条件的作品…',
+			'searchResult.noMatchesYet' => '暂未找到匹配作品',
+			'searchResult.noMatchingWorks' => '没有符合条件的作品',
 			'searchResult.pageOutOfRange' => ({required Object pages}) => '请输入 1 至 ${pages} 之间的页码',
 			'searchResult.pageMustBePositive' => '请输入大于 0 的页码',
 			'searchResult.itemPageCount' => ({required Object count}) => '${count} 页',
@@ -12093,12 +12594,14 @@ extension on Translations {
 			'comicFollow.sort' => '排序',
 			'comicFollow.lastRead' => '最后阅读',
 			'comicFollow.lastUpdate' => '最近检测',
+			'comicFollow.recentUpdate' => '最近更新',
 			'comicFollow.checkTime' => ({required Object time}) => '检测时间：${time}',
 			'comicFollow.lastCheckAttempt' => ({required Object time}) => '上次尝试：${time}',
 			'comicFollow.notRead' => '尚未阅读',
 			'comicFollow.lastReadChapter' => ({required Object chapter}) => '看到：${chapter}',
 			'comicFollow.latestChapter' => ({required Object count, required Object chapter}) => '最新：${count} 话 / ${chapter}',
 			'comicFollow.knownChapter' => ({required Object count, required Object chapter}) => '已知：${count} 话 / ${chapter}',
+			'comicFollow.chapterSummary' => ({required Object count, required Object chapter}) => '共 ${count} 话 · ${chapter}',
 			'comicFollow.noUnread' => '暂无未看内容',
 			'comicFollow.showAll' => '显示全部',
 			'comicFollow.latestChapterFailed' => '最新章节获取失败',
@@ -12108,10 +12611,10 @@ extension on Translations {
 			'comicFollow.knownCount' => ({required Object count}) => '已知 ${count} 话',
 			'comicFollow.fetchFailed' => '获取失败',
 			'comicFollow.newChaptersShort' => ({required Object diff}) => '新增 ${diff} 话',
+			'comicFollow.updateBadge' => '更新',
 			'comicFollow.newUnreadChaptersShort' => ({required Object diff}) => '新增 ${diff} 话未阅读',
 			'comicFollow.update' => '更新',
 			'comicFollow.retry' => '重试',
-			'comicFollow.readProgress' => ({required Object read, required Object total}) => '已看 ${read} / 共 ${total} 话',
 			'comicFollow.readProgressUnknown' => ({required Object total}) => '共 ${total} 话',
 			'comicFollow.updatedJustNow' => '刚刚检测',
 			'comicFollow.updatedMinutesAgo' => ({required Object minutes}) => '${minutes} 分钟前检测',
@@ -12134,11 +12637,11 @@ extension on Translations {
 			'comicFollow.checkFailedReason' => '暂时无法检查更新',
 			'comicFollow.checkNetworkUnavailable' => '暂时连不上来源',
 			'comicFollow.checkSourceUnavailable' => '来源暂时不可用',
-			'comicFollow.checkInvalidResponse' => '来源未返回有效的章节信息',
-			'comicFollow.checkSignInRequired' => '请在来源插件登录后重试',
-			'comicFollow.checkComicNotFound' => '来源暂时找不到这部作品',
-			'comicFollow.checkPluginDisabled' => '启用来源插件后可检查更新',
-			'comicFollow.checkPluginMissing' => '安装来源插件后可检查更新',
+			'comicFollow.checkInvalidResponse' => '章节信息不可用',
+			'comicFollow.checkSignInRequired' => '请先登录来源',
+			'comicFollow.checkComicNotFound' => '来源找不到作品',
+			'comicFollow.checkPluginDisabled' => '请启用来源插件',
+			'comicFollow.checkPluginMissing' => '请安装来源插件',
 			'comicFollow.lastSuccessfulCheck' => ({required Object time}) => '上次成功检查：${time}',
 			'comicFollow.lastReadAt' => ({required Object time}) => '阅读时间：${time}',
 			'comicFollow.mediaComic' => '漫画',
@@ -12220,11 +12723,14 @@ extension on Translations {
 			'videoPlayback.subscriptionsEmpty' => '暂未取得订阅视频',
 			'videoPlayback.inlinePlaybackNote' => '正在 Breeze 中播放；原站详情仍可通过返回查看',
 			'videoPlayback.episodes' => '剧集',
+			'videoPlayback.chooseEpisode' => '选集',
 			'videoPlayback.related' => '相关推荐',
 			'videoPlayback.searchVideos' => '搜索视频',
 			'videoPlayback.closeSearch' => '关闭搜索',
 			'videoPlayback.search' => '搜索',
 			'videoPlayback.websiteToggle' => '切换显示模式',
+			_ => null,
+		} ?? switch (path) {
 			'videoPlayback.nativeMode' => '原生',
 			'videoPlayback.catalogRefreshFailed' => '更新暂未成功，显示上次加载的内容',
 			'videoPlayback.playbackSettings' => '视频设置',
@@ -12232,9 +12738,15 @@ extension on Translations {
 			'videoPlayback.settingsSaveFailed' => '设置保存失败，请重试',
 			'videoPlayback.settingsLoadFailed' => '视频设置暂时无法读取',
 			'videoPlayback.autoplay' => '自动播放',
+			'videoPlayback.autoplayNext' => '自动连播',
+			'videoPlayback.repeatMode' => '循环播放',
+			'videoPlayback.repeatSingle' => '单集循环',
+			'videoPlayback.repeatPlaylist' => '列表循环',
+			'videoPlayback.repeatOff' => '不循环',
+			'videoPlayback.mirrorVideo' => '镜像翻转',
 			'videoPlayback.resumeProgress' => '继续上次位置',
 			'videoPlayback.recordHistory' => '保存观看记录',
-			'videoPlayback.recordHistoryNote' => '关闭后不再保存，也不再自动续播。已有记录保留。',
+			'videoPlayback.recordHistoryNote' => '关闭后停止续播，保留已有记录。',
 			'videoPlayback.watchHistory' => '观看记录',
 			'videoPlayback.historyEmpty' => '还没有观看记录',
 			'videoPlayback.historyEmptyNote' => '原生播放超过 5 秒或播放结束后会记在这里，可再次打开观看',
@@ -12254,8 +12766,10 @@ extension on Translations {
 			'videoPlayback.fastForwardRate' => ({required Object rate}) => '${rate} 倍速播放中',
 			'videoPlayback.controlsTimeout' => '自动隐藏',
 			'videoPlayback.seconds' => ({required Object value}) => '${value} 秒',
-			'videoPlayback.coverVideo' => '铺满画面',
-			'videoPlayback.coverVideoNote' => '横屏可能裁边；竖屏保留完整画面。',
+			'videoPlayback.pictureSize' => '画面尺寸',
+			'videoPlayback.pictureFit' => '适应',
+			'videoPlayback.pictureStretch' => '拉伸',
+			'videoPlayback.pictureFill' => '填充',
 			'videoPlayback.doubleTapAction' => '双击画面操作',
 			'videoPlayback.doubleTapSeek' => '中间播放／暂停，两侧后退／前进 10 秒',
 			'videoPlayback.doubleTapPlay' => '播放或暂停',
@@ -12265,6 +12779,12 @@ extension on Translations {
 			'videoPlayback.breezeControls' => 'Breeze 控件',
 			'videoPlayback.controlsStyleNote' => '与 Breeze 的外观设置共用，切换后立即生效。',
 			'videoPlayback.swipeSeekNote' => '拖动预览，松手跳转。',
+			'videoPlayback.landscapeAdjustments' => '竖滑调节亮度和音量',
+			'videoPlayback.adjustBrightness' => '亮度',
+			'videoPlayback.adjustVolume' => '音量',
+			'videoPlayback.landscapeAdjustmentSides' => '调节区域',
+			'videoPlayback.brightnessLeftVolumeRight' => '左亮度 · 右音量',
+			'videoPlayback.volumeLeftBrightnessRight' => '左音量 · 右亮度',
 			'videoPlayback.lockControls' => '锁定播放控件',
 			'videoPlayback.unlockControls' => '解锁播放控件',
 			'videoPlayback.expandDescription' => '展开简介',
@@ -12328,6 +12848,7 @@ extension on Translations {
 			'videoPlayback.episodeSwitching' => '正在准备下一项',
 			'videoPlayback.episodeOrderUnavailable' => '当前视频不在站点剧集列表中，请手动选集',
 			'videoPlayback.episodeAscending' => '正序',
+			'videoPlayback.episodeListOrder' => '列表排序',
 			'videoPlayback.episodeDescending' => '倒序',
 			'videoPlayback.episodeSite' => '原站',
 			'videoPlayback.episodeManual' => '自定',
@@ -12336,8 +12857,6 @@ extension on Translations {
 			'videoPlayback.episodeSessionOrder' => '排序仅影响显示，播放顺序不变。',
 			'videoPlayback.selectCurrentRange' => '全选当前分段',
 			'videoPlayback.deselectCurrentRange' => '取消当前分段全选',
-			_ => null,
-		} ?? switch (path) {
 			'videoPlayback.clearAllSelections' => '清空全部选择',
 			'videoPlayback.addRange' => '添加范围',
 			'videoPlayback.episodeApplyOrder' => '应用顺序',
@@ -12345,6 +12864,7 @@ extension on Translations {
 			'videoPlayback.episodeMoveUp' => '上移',
 			'videoPlayback.episodeMoveDown' => '下移',
 			'videoPlayback.episodeWaiting' => '正在加载目标视频…',
+			'videoPlayback.episodeWaitingFor' => ({required Object episode}) => '正在切换到「${episode}」…',
 			'videoPlayback.settingsSearch' => '搜索视频设置',
 			'videoPlayback.settingsScopeCommon' => '通用视频',
 			'videoPlayback.settingsScopeSource' => '仅当前图源',
@@ -12479,24 +12999,24 @@ extension on Translations {
 			'download.durationLong' => '30–60 分钟',
 			'download.durationHour' => '1 小时以上',
 			'download.lastSuccessfulLine' => '上次下载成功',
-			'download.concurrentComicImages' => '漫画同时下载图片数',
-			'download.concurrentComicImagesHint' => '每话最多同时下载 10 张，从下一话生效。若插件限制更低，自动采用较低上限。',
-			'download.concurrentVideos' => '视频同时下载数',
+			'download.concurrentComicImages' => '漫画图片并发数',
+			'download.concurrentVideos' => '视频下载并发数',
 			'download.wifiOnly' => '仅 Wi-Fi 下载',
 			'download.waitingForWifi' => '等待 Wi-Fi',
 			'download.waitingForNetwork' => '等待网络',
 			'download.notEnoughSpace' => '设备空间不足，请腾出空间后重试。',
 			'download.sourceUnavailableHint' => '此记录缺少作品地址，无法直接前往。',
-			'download.helpExport' => '导出会在所选位置保存副本，Breeze 内的下载仍可阅读或播放。漫画章节可导出为 ZIP，普通视频可保存到文件。',
-			'download.helpHls' => 'iOS 的 HLS 离线包仅能在 Breeze 内播放，暂不支持导出。',
+			'download.helpExport' => '导出会在所选位置保存副本，Breeze 内的下载仍可阅读或播放。漫画可导出为 ZIP，MP4 视频可导出为视频文件。',
+			'download.helpHls' => 'HLS 离线包仅可在 Breeze 内播放。',
 			'download.helpDelete' => '删除本地下载前会要求确认，不会删除源站作品。',
 			'download.helpContinue' => '关闭下载面板或离开此页，下载会继续。',
-			'download.helpContinueIos' => '下载可在 Breeze 内继续。锁屏或切换应用后暂停，返回 Breeze 后自动继续。',
+			'download.helpContinueIos' => '锁屏或切换应用时，部分任务会暂停，返回后续传。',
 			'download.exportFiles' => '导出下载副本',
 			'download.exportCopySaved' => '副本已保存',
 			'download.exportBusy' => '文件正在使用，稍后可以再次导出。',
-			'download.exportComicScope' => ({required Object chapters, required Object pages}) => '本次导出本机已有的 ${chapters} 个章节、${pages} 张图片，不补下缺失内容。',
-			'download.exportComicMissing' => ({required Object pages, required Object chapters}) => '另有 ${pages} 张图片缺失，${chapters} 个章节没有本机文件。',
+			'download.exportComicScope' => ({required Object chapters, required Object pages}) => '副本包含本机已保存的 ${chapters} 个章节、${pages} 张图片。',
+			'download.exportComicMissingPages' => ({required Object pages}) => '缺少 ${pages} 张图片。',
+			'download.exportComicUnavailableChapters' => ({required Object chapters}) => '${chapters} 个章节没有本机文件。',
 			'download.exportNothing' => '没有可导出的本机文件。',
 			'download.exportChanged' => '下载文件已变化，请重新导出。',
 			'download.exportNoSpace' => '本机空间不足，无法准备导出文件。',
@@ -12559,7 +13079,6 @@ extension on Translations {
 			'download.videoCancelled' => '已取消',
 			'download.videoInterrupted' => '下载已中断，请打开影片页面重新下载',
 			'download.videoForegroundNote' => '关闭此面板后仍会继续下载，可在下载中心查看。',
-			'download.videoForegroundNoteIos' => '关闭面板后可在下载中心查看。锁屏或切换应用后暂停，返回 Breeze 后自动继续。',
 			'download.videoRecordFailed' => '下载记录未能保存，下次打开应用时可能无法显示。',
 			'download.inProgress' => '进行中',
 			'download.incomplete' => '未完成',
@@ -12624,6 +13143,10 @@ extension on Translations {
 			'update.unknownArch' => '未知',
 			'videoDownload.title' => '下载视频',
 			'videoDownload.chooseQuality' => '选择清晰度后下载',
+			'videoDownload.selectQuality' => '选择清晰度',
+			'videoDownload.backToEpisodes' => '返回选择',
+			'videoDownload.sourceQuality' => '跟随站点清晰度',
+			'videoDownload.noCommonQuality' => '所选条目没有共同的清晰度',
 			'videoDownload.loading' => '正在获取下载选项…',
 			'videoDownload.empty' => '暂无可用下载选项',
 			'videoDownload.downloading' => ({required Object quality}) => '正在下载 ${quality}',
@@ -12720,6 +13243,8 @@ extension on Translations {
 			'videoCommunity.publishingUnavailable' => '当前可阅读评论，发表请在网页继续。',
 			'videoCommunity.checkStatus' => '核对结果',
 			'videoCommunity.createdNotAdded' => '清单已创建，当前视频尚未加入。',
+			_ => null,
+		} ?? switch (path) {
 			'videoCommunity.addToCreatedPlaylist' => '加入此清单',
 			'videoCommunity.uploader' => '上传者',
 			'videoCommunity.creatorUnavailable' => '尚未识别此作者的真实资料页，请重试；全部作品仍可单独查看。',
@@ -12850,8 +13375,6 @@ extension on Translations {
 			'videoFilters.clearAll' => '清空所有条件与关键词',
 			'videoFilters.active' => '当前条件',
 			'videoFilters.removeFilter' => '移除此条件',
-			_ => null,
-		} ?? switch (path) {
 			'videoFilters.customDate' => '指定日期',
 			'videoFilters.searchGroup' => '分组',
 			'videoFilters.yearNeedsCategory' => '先选择可按年份筛选的分类',
@@ -13120,7 +13643,6 @@ extension on Translations {
 			'routingRules.resetRules' => '本次会移除配置副本中由 Breeze 添加的规则',
 			'routingRules.removalHint' => '恢复原规则也需要重新生成并选用配置副本。',
 			'routingRules.internalProxy' => 'Breeze 内置代理',
-			'routingRules.internalHint' => '使用指定地址转发 Breeze 的网络请求',
 			'routingRules.internalWarning' => '请先关闭这些插件的 Breeze 内置代理，再导入分流规则。',
 			'routingRules.notApplied' => 'Breeze 无法确认 Shadowrocket 是否已启用该配置。',
 			'routingRules.busy' => '正在准备配置副本…',
@@ -13144,7 +13666,7 @@ extension on Translations {
 			'routingRules.installed' => '已安装插件',
 			'routingRules.importedFiles' => '从文件导入的插件',
 			'routingRules.noPlugins' => '暂无已安装插件，可导入 CJS 文件提取域名',
-			'routingRules.importHint' => '读取 CJS 文件，提取域名，不安装插件。',
+			'routingRules.importHint' => '选文件、预览并选择导入方式。',
 			'routingRules.domainCount' => ({required Object count}) => '${count} 个域名',
 			'routingRules.scan' => '更新域名',
 			'routingRules.scanning' => '正在扫描插件文件…',
@@ -13235,6 +13757,8 @@ extension on Translations {
 			'imageEditor.title' => '编辑图片',
 			'imageEditor.zoom' => '缩放',
 			'imageEditor.rotate' => '旋转',
+			_ => null,
+		} ?? switch (path) {
 			'imageEditor.reset' => '重置',
 			'imageEditor.cropHint' => '拖动调整位置，双指缩放',
 			'imageEditor.processing' => '正在处理图片…',
@@ -13267,28 +13791,30 @@ extension on Translations {
 			'followReminders.saveFailed' => '提醒方式保存失败，请重试。',
 			'followReminders.openFollowing' => '查看追更',
 			'backupFlow.includeFiles' => '包含下载文件',
-			'backupFlow.includeFilesHint' => '默认不备份下载的漫画和视频。',
+			'backupFlow.includeFilesHint' => '备份收藏、记录、设置、插件资料和自定义图片。',
+			'backupFlow.exportConfirmTitle' => '导出备份？',
+			'backupFlow.exportWithoutDownloads' => '不含下载文件',
 			'backupFlow.protection' => '备份保护',
 			'backupFlow.standard' => '标准文件',
 			'backupFlow.protected' => '密码保护',
 			'backupFlow.standardHint' => '备份可能包含已保存的插件账号，请妥善保管。',
-			'backupFlow.encryptedExportHint' => '需要密码，可包含已保存的 S3 和 WebDAV 账号。',
+			'backupFlow.encryptedExportHint' => '需要密码，可包含云同步账号。',
 			'backupFlow.merge' => '保留并合并',
-			'backupFlow.mergeHint' => '保留本机资料，加入备份中的记录。较新的修改和删除结果会保留。',
+			'backupFlow.mergeHint' => '合并本机与备份资料，保留较新的修改与删除。',
 			'backupFlow.restore' => '替换本机资料',
-			'backupFlow.restoreHint' => '用备份替换本机记录，以及下方选中的内容。',
+			'backupFlow.restoreHint' => '用备份替换本机记录和所选内容。',
 			'backupFlow.mergeTitle' => '合并这份备份？',
 			'backupFlow.restoreTitle' => '替换本机资料？',
 			'backupFlow.mergeConfirm' => '合并记录，保留较新的修改和删除结果。',
-			'backupFlow.restoreConfirm' => '恢复会覆盖现有记录、设置和插件。备份含有本机图片时，也会替换当前图片。此操作无法直接撤销。',
+			'backupFlow.restoreConfirm' => '替换本机记录和选中的项目。恢复会按所选范围替换自定义图片。此操作无法直接撤销。',
 			'backupFlow.createdAt' => ({required Object value}) => '备份时间：${value}',
 			'backupFlow.version' => ({required Object value}) => '备份版本：${value}',
 			'backupFlow.records' => ({required Object count}) => '条目：${count}',
 			'backupFlow.settingsChoice' => ({required Object value}) => '设置：${value}',
 			'backupFlow.pluginsChoice' => ({required Object value}) => '插件：${value}',
 			'backupFlow.downloadsIncluded' => '包含下载文件',
-			'backupFlow.downloadsExcluded' => '此备份不含下载文件。本机下载会保留。',
-			'backupFlow.mergeFilesHint' => '保留本机下载，加入备份中的下载。若无法合并，会停止导入。',
+			'backupFlow.downloadsExcluded' => '备份不含下载，本机下载会保留。',
+			'backupFlow.mergeFilesHint' => '合并下载。无法合并时停止导入。',
 			'backupFlow.restoreFilesHint' => '这份备份包含下载文件，会替换本机下载。',
 			'backupFlow.mergeDone' => '合并完成',
 			'backupFlow.restoreDone' => '恢复完成',
@@ -13312,8 +13838,8 @@ extension on Translations {
 			'backupFlow.replaceRecordsWarning' => '备份会替换本机的收藏、目录、追更和阅读、观看记录。',
 			'backupFlow.replaceSettingsWarning' => '设置和隐私图库也会替换。',
 			'backupFlow.replacePluginsWarning' => '插件与账号设置也会替换。',
-			'backupFlow.replaceIrreversible' => '此操作无法直接撤销。云端连接和应用锁保持不变。',
-			'backupFlow.replaceIrreversibleWithCloudAccount' => '此操作无法直接撤销。应用锁保持不变。',
+			'backupFlow.replaceIrreversible' => '无法撤销。云端连接和应用锁保持不变。',
+			'backupFlow.replaceIrreversibleWithCloudAccount' => '无法撤销。应用锁保持不变。',
 			'backupFlow.protectionSharedHint' => '同时用于云同步和备份文件。',
 			'backupSecurity.title' => '同步与备份保护',
 			'backupSecurity.mode' => '保护方式',
@@ -13364,8 +13890,6 @@ extension on Translations {
 			'backupSecurity.startupRetry' => '重试恢复',
 			'backupSecurity.localVideoInUse' => '请先关闭正在播放的本机视频，再试。',
 			'backupSecurity.scopeHint' => '云端同步与本地备份导出共用此保护设置。',
-			_ => null,
-		} ?? switch (path) {
 			'backupSecurity.cloudNotConfigured' => '尚未配置云同步；可在“同步”中选择服务并填写连接资料。',
 			'backupSecurity.readFailed' => '未能读取保护方式，点此重试。',
 			'pluginLifecycle.remove' => '移除插件',

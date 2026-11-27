@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:zephyr/widgets/task_dialog.dart';
 import 'package:zephyr/network/http/plugin/unified_plugin_envelope.dart';
 import 'package:zephyr/service/plugin_account_authentication.dart';
 import 'package:zephyr/util/json/json_value.dart';
@@ -753,8 +754,9 @@ Future<Map<String, dynamic>?> _showFavoriteWorkflowSelect(
                 !input.required ||
                 selected.isNotEmpty ||
                 createdName.isNotEmpty;
-            return AlertDialog(
-              title: Text(input.title ?? t.comicInfo.addToCustomFolder),
+            return TaskDialog(
+              title: input.title ?? t.comicInfo.addToCustomFolder,
+              scrollBody: false,
               content: ConstrainedBox(
                 constraints: BoxConstraints(
                   maxHeight: MediaQuery.sizeOf(ctx).height * 0.6,
@@ -886,8 +888,8 @@ Future<Map<String, dynamic>?> _showFavoriteWorkflowText(
           builder: (ctx, setState) {
             final canConfirm =
                 !input.required || controller.text.trim().isNotEmpty;
-            return AlertDialog(
-              title: Text(input.title ?? ''),
+            return TaskDialog(
+              title: input.title ?? '',
               content: TextField(
                 controller: controller,
                 autofocus: true,
@@ -1082,8 +1084,9 @@ Future<Map<String, dynamic>?> _showFavoriteWorkflowForm(
       builder: (dialogContext, controllers) {
         return StatefulBuilder(
           builder: (ctx, setState) {
-            return AlertDialog(
-              title: Text(input.title ?? t.common.confirm),
+            return TaskDialog(
+              title: input.title ?? t.common.confirm,
+              scrollBody: false,
               content: ConstrainedBox(
                 constraints: BoxConstraints(
                   maxHeight: MediaQuery.sizeOf(ctx).height * 0.65,
@@ -1213,8 +1216,9 @@ Future<_FavoriteFolder?> _showFolderSelectionDialog(
     builder: (dialogContext) {
       return StatefulBuilder(
         builder: (ctx, setState) {
-          return AlertDialog(
-            title: Text(t.comicInfo.addToCustomFolder),
+          return TaskDialog(
+            title: t.comicInfo.addToCustomFolder,
+            scrollBody: false,
             content: ConstrainedBox(
               constraints: BoxConstraints(
                 maxHeight: MediaQuery.sizeOf(ctx).height * 0.5,

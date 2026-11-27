@@ -73,19 +73,32 @@ String? _metric(ComicInfoActionItem item) {
   return null;
 }
 
-ComicInfo comicInfoForDetailPresentation(NormalComicAllInfo info) =>
-    info.comicInfo.copyWith(
-      titleMeta: info.comicInfo.titleMeta.where((item) {
-        final metric = _metric(item);
-        if (metric == null) return true;
-        final value = switch (metric) {
-          'totalViews' => info.totalViews,
-          'totalLikes' => info.totalLikes,
-          _ => info.totalComments,
-        };
-        return comicMetricIsKnown(info.extern, metric, value);
-      }).toList(),
+ComicInfo comicInfoForDetailPresentation(
+  NormalComicAllInfo info, {
+  bool showReadOnlyLikes = false,
+}) {
+  final titleMeta = info.comicInfo.titleMeta.where((item) {
+    final metric = _metric(item);
+    if (metric == null) return true;
+    if (showReadOnlyLikes && metric == 'totalLikes') return false;
+    final value = switch (metric) {
+      'totalViews' => info.totalViews,
+      'totalLikes' => info.totalLikes,
+      _ => info.totalComments,
+    };
+    return comicMetricIsKnown(info.extern, metric, value);
+  }).toList();
+  if (showReadOnlyLikes &&
+      comicMetricIsKnown(info.extern, 'totalLikes', info.totalLikes)) {
+    titleMeta.add(
+      ComicInfoActionItem(
+        name: t.comicInfo.likes(count: info.totalLikes),
+        extern: const {'metric': 'totalLikes', 'readOnly': true},
+      ),
     );
+  }
+  return info.comicInfo.copyWith(titleMeta: titleMeta);
+}
 
 /// Absence is declared by a source that knows its response contract. A truly
 /// empty optional value does not imply a failed read for arbitrary plugins.

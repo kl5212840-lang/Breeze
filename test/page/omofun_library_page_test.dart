@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -50,6 +51,24 @@ Future<void> _selectBottom(WidgetTester tester, String label) async {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const connectivity = MethodChannel(
+      'dev.fluttercommunity.plus/connectivity',
+    );
+    const changes = MethodChannel(
+      'dev.fluttercommunity.plus/connectivity_status',
+    );
+    messenger.setMockMethodCallHandler(connectivity, (_) async => ['wifi']);
+    messenger.setMockMethodCallHandler(changes, (_) async => null);
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(connectivity, null);
+      messenger.setMockMethodCallHandler(changes, null);
+    });
+  });
+
   setUpAll(TestObjectBoxHelper.setUpTestObjectBox);
   tearDownAll(TestObjectBoxHelper.tearDownTestObjectBox);
   setUp(() => SharedPreferences.setMockInitialValues({}));
@@ -159,7 +178,16 @@ void main() {
       );
       expect(catalog, ['']);
       expect(operations, isEmpty);
-      await _selectBottom(tester, t.videoSource.me);
+      await tester.tap(_bottomDestination(t.videoSource.me));
+      // Local account previews finish metadata reads outside the fake clock.
+      await tester.pump();
+      for (var i = 0; i < 50 && tester.binding.hasScheduledFrame; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      await tester.pumpAndSettle();
       expect(find.text('显示昵称'), findsOneWidget);
       expect(find.text(t.videoSource.login), findsNothing);
       expect(operations, ['account', 'favorites']);
@@ -443,13 +471,27 @@ void main() {
             findsWidgets,
           );
         } else {
+          final pageProgress = find.descendant(
+            of: tools,
+            matching: find.byKey(const ValueKey('api-catalog.page-progress')),
+          );
           expect(
             find.descendant(
-              of: tools,
-              matching: find.text(t.videoLibrary.results(count: 36)),
+              of: pageProgress,
+              matching: find.text(
+                t.searchResult.pageProgress(page: 1, pages: 1),
+              ),
             ),
             findsOneWidget,
           );
+          expect(
+            tester.widget<SourceVideoResultsToolbar>(tools).count,
+            t.videoLibrary.results(count: 36),
+          );
+          final pageRect = tester.getRect(pageProgress);
+          final filterRect = tester.getRect(filter);
+          expect(pageRect.center.dy, closeTo(filterRect.center.dy, .01));
+          expect(pageRect.right, lessThan(filterRect.left));
         }
         expect(
           find.descendant(of: tools, matching: filter.hitTestable()),
@@ -461,6 +503,10 @@ void main() {
         );
         final filterRect = tester.getRect(filter);
         final viewRect = tester.getRect(view);
+        for (final rect in [filterRect, viewRect]) {
+          expect(rect.width, greaterThanOrEqualTo(44));
+          expect(rect.height, greaterThanOrEqualTo(44));
+        }
         expect(viewRect.top, greaterThanOrEqualTo(target.bottom));
         expect(viewRect.right, closeTo(target.right, .01));
         expect(filterRect.center.dy, closeTo(viewRect.center.dy, .01));

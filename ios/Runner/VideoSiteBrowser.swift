@@ -707,7 +707,9 @@ private final class VideoSiteBrowserView: NSObject, FlutterPlatformView, WKNavig
       var headers: [String: String] = [:]
       for (key, value) in http.allHeaderFields {
         let name = String(describing: key).lowercased()
-        if ["cf-ray", "cf-mitigated"].contains(name) { headers[name] = String(describing: value) }
+        if ["cf-ray", "cf-mitigated", "retry-after"].contains(name) {
+          headers[name] = String(describing: value)
+        }
       }
       if response.isForMainFrame { provisionalStatus = http.statusCode }
       channel.invokeMethod(response.isForMainFrame ? "response" : "http", arguments: [

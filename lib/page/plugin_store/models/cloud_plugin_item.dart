@@ -13,6 +13,17 @@ class CloudPluginItem {
   final CloudPluginManifest manifest;
   final FormalPluginRelease? formalRelease;
 
+  String get displayName {
+    final name = manifest.name.trim();
+    if (name.isNotEmpty) return name;
+    final repository = repo.split('/').last.trim();
+    return repository.isEmpty ? manifest.uuid.trim() : repository;
+  }
+
+  bool get hasDownloadChannel =>
+      manifest.npmName.trim().isNotEmpty ||
+      _isHttpUrl(manifest.updateUrl.trim());
+
   factory CloudPluginItem.fromJson(
     Map<String, dynamic> json, {
     FormalPluginRelease? formalRelease,

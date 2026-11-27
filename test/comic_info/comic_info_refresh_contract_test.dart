@@ -7,6 +7,7 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/main.dart' show objectbox;
 import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/page/comic_info/bloc/get_comic_info_bloc.dart';
 import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart'
     as normal;
@@ -86,6 +87,13 @@ void main() {
           ),
           t.comicFollow.checkSourceUnavailable,
           false,
+        ),
+        (
+          AnyhowException(
+            '[bundle:fixture fn:getComicDetail source:fixture.cjs] Error: 服务器响应异常 (500)\n[stack-hook]',
+          ),
+          t.comicFollow.checkSourceUnavailable,
+          true,
         ),
         (
           AnyhowException(
@@ -293,6 +301,47 @@ void main() {
       expect(await current, isTrue);
       expect(bloc.state.comicId, 'new');
       expect(bloc.state.allInfo!.comicInfo.title, 'current');
+    },
+  );
+
+  test(
+    'a line switch replaces a pending read and keeps the visible detail',
+    () async {
+      final event = _event(
+        'same-work-after-line-change',
+      ).copyWith(from: 'detail-line-fixture');
+      final pending = <Completer<PluginComicDetail>>[];
+      final bloc = GetComicInfoBloc(
+        readDetail: (_) {
+          final response = Completer<PluginComicDetail>();
+          pending.add(response);
+          return response.future;
+        },
+      );
+      addTearDown(bloc.close);
+      final opened = bloc.refresh(event);
+      await Future<void>.delayed(Duration.zero);
+      pending[0].complete(_detail(event.comicId, 'Previously opened'));
+      expect(await opened, isTrue);
+
+      final old = bloc.refresh(event);
+      await Future<void>.delayed(Duration.zero);
+      final change = beginPluginEndpointUpdate(event.from)!;
+      finishPluginEndpointUpdate(
+        event.from,
+        change,
+        refreshSettings: true,
+        refreshProfile: true,
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(bloc.state.allInfo!.comicInfo.title, 'Previously opened');
+      expect(pending, hasLength(3));
+      expect(await old, isFalse);
+      pending[1].complete(_detail(event.comicId, 'Obsolete result'));
+      final current = bloc.refresh(event);
+      pending[2].complete(_detail(event.comicId, 'Selected line'));
+      expect(await current, isTrue);
+      expect(bloc.state.allInfo!.comicInfo.title, 'Selected line');
     },
   );
 

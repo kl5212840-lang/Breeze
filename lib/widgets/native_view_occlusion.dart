@@ -298,6 +298,7 @@ class NativeCompositionObserver extends NavigatorObserver {
           'breeze.video.library',
           'breeze.video.local',
           'breeze.video.local-history',
+          'breeze.source.comic.records',
           'breeze.video.catalog-content',
           'breeze.video.playback-settings',
           'breeze.source.saved-accounts',

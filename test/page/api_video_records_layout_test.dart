@@ -13,6 +13,8 @@ import 'package:zephyr/page/video/video_watch_history.dart';
 import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
 import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/widgets/collection_cover_privacy.dart';
+import 'package:zephyr/widgets/collection_cover_settings.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -144,7 +146,27 @@ void main() {
             expect(scopeRect.right, closeTo(eye.left, .01));
             expect(scopeRect.center.dy, closeTo(eye.center.dy, .01));
             expect(input.center.dy, closeTo(eye.center.dy, .01));
-            expect(input.width, greaterThanOrEqualTo(185));
+            const pageWidth = 320.0;
+            const horizontalInset = 16.0;
+            expect(input.left, closeTo(horizontalInset, .01));
+            final coverActions = find.ancestor(
+              of: privacy,
+              matching: find.byType(CollectionCoverPrivacyActions),
+            );
+            final more = find.descendant(
+              of: coverActions,
+              matching: find.byType(CollectionCoverSettingsMoreButton),
+            );
+            expect(more, findsOneWidget);
+            final settings = tester.getRect(more);
+            expect(settings.size, const Size(44, 44));
+            expect(eye.right, closeTo(settings.left, .01));
+            expect(settings.right, closeTo(pageWidth - horizontalInset, .01));
+            final remainingWidth = pageWidth -
+                2 * horizontalInset - 8 - scopeRect.width - eye.width -
+                settings.width;
+            expect(input.width, closeTo(remainingWidth, .01));
+            expect(input.width, greaterThan(scopeRect.width));
             expect(
               tester.widget<TextField>(search).focusNode?.hasFocus,
               isNot(true),

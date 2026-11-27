@@ -2,48 +2,94 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:zephyr/i18n/strings.g.dart';
+
+enum VideoPictureSize {
+  fit,
+  stretch,
+  fill,
+  wide,
+  standard;
+
+  static const preferenceKey = 'pictureSize';
+
+  static VideoPictureSize? parse(Object? value) =>
+      values.where((size) => size.name == value).firstOrNull;
+}
+
+enum VideoRepeatMode { none, single, playlist }
+
+Map<VideoRepeatMode, String> videoRepeatModeLabels() => {
+  VideoRepeatMode.none: t.videoPlayback.repeatOff,
+  VideoRepeatMode.single: t.videoPlayback.repeatSingle,
+  VideoRepeatMode.playlist: t.videoPlayback.repeatPlaylist,
+};
 
 /// Host-owned video defaults. Comic reader preferences and site configuration
 /// intentionally use different stores and are never read by the player.
 class VideoPlaybackPreferences {
   const VideoPlaybackPreferences({
     this.autoplay = true,
+    this.autoplayNext = false,
+    this.repeatMode = VideoRepeatMode.none,
     this.resumeProgress = true,
     this.recordHistory = true,
     this.defaultSpeed = 1,
     this.holdSpeed = 2,
     this.doubleTap = 'seek',
     this.swipeSeek = true,
+    this.landscapeAdjustments = false,
+    this.reverseLandscapeAdjustments = false,
     this.hideSeconds = 5,
-    this.cover = false,
+    bool cover = false,
+    VideoPictureSize? pictureSize,
     this.fullscreenOrientation = 'landscape',
     this.controlsStyle = 'system',
     this.portraitMode = 'focus',
-  });
+  }) : _pictureSize = pictureSize,
+       cover = pictureSize == null
+           ? cover
+           : pictureSize == VideoPictureSize.fill;
 
   final bool autoplay;
+  final bool autoplayNext;
+  final VideoRepeatMode repeatMode;
   final bool resumeProgress;
   final bool recordHistory;
   final double defaultSpeed;
   final double holdSpeed;
   final String doubleTap;
   final bool swipeSeek;
+  final bool landscapeAdjustments;
+  final bool reverseLandscapeAdjustments;
   final int hideSeconds;
+  final VideoPictureSize? _pictureSize;
   final bool cover;
+
+  /// An older boolean enabled filling only in the original player viewports.
+  bool get usesLegacyCover => _pictureSize == null && cover;
+
+  VideoPictureSize get pictureSize =>
+      _pictureSize ?? (cover ? VideoPictureSize.fill : VideoPictureSize.fit);
   final String fullscreenOrientation;
   final String controlsStyle;
   final String portraitMode;
 
   static const defaults = <String, Object>{
     'autoplay': true,
+    'autoplayNext': false,
+    'repeatMode': 'none',
     'resumeProgress': true,
     'recordHistory': true,
     'defaultSpeed': 1.0,
     'holdSpeed': 2.0,
     'doubleTap': 'seek',
     'swipeSeek': true,
+    'landscapeAdjustments': false,
+    'reverseLandscapeAdjustments': false,
     'hideSeconds': 5,
     'cover': false,
+    VideoPictureSize.preferenceKey: 'fit',
     'fullscreenOrientation': 'landscape',
     'controlsStyle': 'system',
     'portraitMode': 'focus',
@@ -76,14 +122,19 @@ class VideoPlaybackPreferences {
 
   Map<String, Object> toValues() => {
     'autoplay': autoplay,
+    'autoplayNext': autoplayNext,
+    'repeatMode': repeatMode.name,
     'resumeProgress': resumeProgress,
     'recordHistory': recordHistory,
     'defaultSpeed': defaultSpeed,
     'holdSpeed': holdSpeed,
     'doubleTap': doubleTap,
     'swipeSeek': swipeSeek,
+    'landscapeAdjustments': landscapeAdjustments,
+    'reverseLandscapeAdjustments': reverseLandscapeAdjustments,
     'hideSeconds': hideSeconds,
     'cover': cover,
+    if (!usesLegacyCover) VideoPictureSize.preferenceKey: pictureSize.name,
     'fullscreenOrientation': fullscreenOrientation,
     'controlsStyle': controlsStyle,
     'portraitMode': portraitMode,
@@ -141,6 +192,12 @@ class VideoPlaybackPreferences {
     final hide = values['hideSeconds'];
     return VideoPlaybackPreferences(
       autoplay: values['autoplay'] is bool ? values['autoplay'] : true,
+      autoplayNext: values['autoplayNext'] == true,
+      repeatMode:
+          VideoRepeatMode.values
+              .where((mode) => mode.name == values['repeatMode'])
+              .firstOrNull ??
+          VideoRepeatMode.none,
       resumeProgress: values['resumeProgress'] is bool
           ? values['resumeProgress']
           : true,
@@ -151,8 +208,14 @@ class VideoPlaybackPreferences {
       holdSpeed: rate('holdSpeed', [0, 1.5, 2, 3], 2),
       doubleTap: ['seek', 'playPause', 'off'].contains(tap) ? tap : 'seek',
       swipeSeek: values['swipeSeek'] is bool ? values['swipeSeek'] : true,
+      landscapeAdjustments: values['landscapeAdjustments'] == true,
+      reverseLandscapeAdjustments:
+          values['reverseLandscapeAdjustments'] == true,
       hideSeconds: [3, 5, 8].contains(hide) ? hide : 5,
-      cover: values['cover'] is bool ? values['cover'] : false,
+      cover: values['cover'] == true,
+      pictureSize: VideoPictureSize.parse(
+        values[VideoPictureSize.preferenceKey],
+      ),
       fullscreenOrientation: values['fullscreenOrientation'] == 'portrait'
           ? 'portrait'
           : 'landscape',
@@ -166,7 +229,7 @@ class VideoPlaybackPreferences {
     if (!_valid(key, value)) throw ArgumentError.value(value, key);
     await _serialize(() async {
       final store = await SharedPreferences.getInstance();
-      final values = _read(store).toValues()..[key] = value;
+      final values = _merge(_read(store), {key: value});
       await _writeSnapshot(
         store,
         values,
@@ -178,6 +241,7 @@ class VideoPlaybackPreferences {
   static bool _valid(String key, Object? value) {
     if (!defaults.containsKey(key)) return false;
     return switch (key) {
+      'repeatMode' => VideoRepeatMode.values.any((mode) => mode.name == value),
       'defaultSpeed' => value is num && [0.75, 1, 1.25, 1.5, 2].contains(value),
       'holdSpeed' => value is num && [0, 1.5, 2, 3].contains(value),
       'hideSeconds' => value is int && [3, 5, 8].contains(value),
@@ -185,6 +249,7 @@ class VideoPlaybackPreferences {
       'fullscreenOrientation' => ['portrait', 'landscape'].contains(value),
       'controlsStyle' => ['system', 'breeze'].contains(value),
       'portraitMode' => ['focus', 'episodes'].contains(value),
+      VideoPictureSize.preferenceKey => VideoPictureSize.parse(value) != null,
       _ => value is bool,
     };
   }
@@ -207,7 +272,7 @@ class VideoPlaybackPreferences {
     }
     await _serialize(() async {
       final store = await SharedPreferences.getInstance();
-      final merged = _read(store).toValues()..addAll(valid);
+      final merged = _merge(_read(store), valid);
       await _writeSnapshot(
         store,
         merged,
@@ -218,11 +283,28 @@ class VideoPlaybackPreferences {
     });
   }
 
+  static Map<String, Object> _merge(
+    VideoPlaybackPreferences current,
+    Map<String, Object> changes,
+  ) {
+    final values = current.toValues()..addAll(changes);
+    const key = VideoPictureSize.preferenceKey;
+    if (changes.containsKey('cover') && !changes.containsKey(key)) {
+      values.remove(key);
+    }
+    // Older readers of the same snapshot still see the legacy fill state.
+    if (values.containsKey(key)) {
+      values['cover'] = values[key] == VideoPictureSize.fill.name;
+    }
+    return values;
+  }
+
   static Future<void> restoreSnapshotIfCurrent(
     Iterable<String?> expected,
     String? before,
   ) => _serialize(() async {
     final store = await SharedPreferences.getInstance();
+    await store.reload();
     final current = store.getString(snapshotKey);
     if (current == before || !expected.contains(current)) return;
     await _restoreSnapshot(store, before);

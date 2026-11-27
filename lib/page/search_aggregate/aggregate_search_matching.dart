@@ -26,7 +26,10 @@ Map<String, dynamic> aggregateComicSearchExtern(
       'blockedCategories',
       'settingsBlockedCategories',
     ])
-      if (search.pluginExtern.containsKey(key)) key: search.pluginExtern[key],
+      if (search.pluginExtern.containsKey(key) &&
+          !(key == 'settingsBlockedCategories' &&
+              isBikaExperienceSource(source)))
+        key: search.pluginExtern[key],
 };
 
 Set<String> aggregateBlockedCategories(Map<String, dynamic> extern) => {

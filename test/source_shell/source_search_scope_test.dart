@@ -6,10 +6,12 @@ import 'package:zephyr/main.dart' show objectbox;
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/search/cubit/search_cubit.dart';
 import 'package:zephyr/page/search/method/keyword_search_scope.dart';
+import 'package:zephyr/page/search/method/on_search.dart';
 import 'package:zephyr/page/search_result/view/source_list_filter_bar.dart';
 import 'package:zephyr/page/search_result/view/source_search_capabilities.dart';
 import 'package:zephyr/page/search_result/view/source_search_scope_control.dart';
 import 'package:zephyr/page/source_shell/source_experience_preferences.dart';
+import 'package:zephyr/plugin/plugin_registry_service.dart';
 
 import '../test_helper.dart';
 
@@ -111,6 +113,89 @@ void main() {
     },
   );
 
+  test(
+    'Bika reopens old source title drafts as ordinary site searches',
+    () async {
+      const legacy = {
+        keywordSearchScopeKey: 'title',
+        'categories': ['短篇'],
+      };
+      const draft = SearchStates(
+        from: bikaPlusSourceId,
+        searchKeyword: '作品',
+        pluginExtern: legacy,
+      );
+      expect(sourceKeywordSearchScopes(bikaPlusSourceId), [
+        KeywordSearchScope.all,
+      ]);
+      final date = DateTime.utc(2026);
+      objectbox.pluginInfoBox.put(
+        PluginInfo(
+          uuid: bikaPlusSourceId,
+          version: '0.0.1',
+          originScript: 'fixture',
+          insertedAt: date,
+          updatedAt: date,
+          isEnabled: true,
+          isDeleted: false,
+          lastLoadSuccess: true,
+          debug: false,
+          getInfoJson: '{"breezeExperience":{"publicSearchFields":1}}',
+        ),
+      );
+      await PluginRegistryService.I.init();
+      expect(sourceKeywordSearchScopes(bikaPlusSourceId), [
+        KeywordSearchScope.all,
+        KeywordSearchScope.author,
+        KeywordSearchScope.tags,
+        KeywordSearchScope.team,
+      ]);
+      expect(
+        sourceKeywordSearchScope(bikaPlusSourceId, legacy),
+        KeywordSearchScope.all,
+      );
+      expect(needsLoadedTitleMatch(bikaPlusSourceId, legacy), isTrue);
+      final submitted = searchSubmissionExtern(draft, aggregateMode: false);
+      expect(submitted[keywordSearchScopeKey], 'all');
+      expect(submitted.containsKey(bikaLoadedTitleOnlyKey), isFalse);
+      expect(needsLoadedTitleMatch(bikaPlusSourceId, submitted), isFalse);
+      expect(keywordSearchRequestExtern(bikaPlusSourceId, submitted), {
+        'categories': ['短篇'],
+      });
+      expect(
+        needsLoadedTitleMatch(bikaPlusSourceId, {
+          ...submitted,
+          bikaLoadedTitleOnlyKey: true,
+        }),
+        isFalse,
+      );
+      expect(
+        searchSubmissionExtern(
+          draft,
+          aggregateMode: false,
+          pluginExtern: {...legacy, bikaLoadedTitleOnlyKey: true},
+        ),
+        submitted,
+      );
+      for (final scope in [
+        KeywordSearchScope.author,
+        KeywordSearchScope.tags,
+        KeywordSearchScope.team,
+      ]) {
+        final next = changeKeywordSearchScope(submitted, scope);
+        expect(next['categories'], ['短篇']);
+        expect(needsLoadedTitleMatch(bikaPlusSourceId, next), isFalse);
+        expect(
+          keywordSearchRequestExtern(
+            bikaPlusSourceId,
+            next,
+          ).containsKey('categories'),
+          isFalse,
+        );
+      }
+    },
+  );
+
   testWidgets(
     'changing scope retains the query and supports returning to All',
     (tester) async {
@@ -166,6 +251,30 @@ void main() {
       expect(cubit.state.pluginExtern[keywordSearchScopeKey], 'title');
       expect(cubit.state.searchKeyword, '查询关键词');
       expect(searches, 2);
+    },
+  );
+
+  test(
+    'JM original works and characters are site scopes, not title filters',
+    () {
+      const jm = '6886291b-f524-441c-844b-c2efae9899a9';
+      final original = changeKeywordSearchScope({
+        'search_type': 'character',
+        'main_tag': 3,
+        'y': 2025,
+        'm': 5,
+      }, KeywordSearchScope.work);
+      expect(keywordSearchRequestExtern(jm, original), {
+        'search_type': 'work',
+        'main_tag': 0,
+        'y': 2025,
+        'm': 5,
+      });
+      expect(needsLoadedTitleMatch(jm, original), isFalse);
+      expect(
+        sourceKeywordSearchScope(jm, {'search_type': 'character'}),
+        KeywordSearchScope.character,
+      );
     },
   );
 

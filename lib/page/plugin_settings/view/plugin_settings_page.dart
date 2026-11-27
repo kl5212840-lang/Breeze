@@ -5,6 +5,8 @@ import 'package:zephyr/service/plugin_account_profiles.dart';
 import 'package:zephyr/service/plugin_account_sync_coordinator.dart';
 import 'package:zephyr/page/video/omo_network.dart' show omoNetworkSource;
 import 'package:zephyr/page/video/omofun_account_page.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
+import 'package:zephyr/page/video/video_account_credentials.dart';
 import 'package:zephyr/page/video/omofun_site_client.dart';
 import 'package:zephyr/page/discover/service/discover_router.dart';
 import 'package:zephyr/page/source_shell/source_experience_scope.dart';
@@ -52,6 +54,8 @@ import 'package:zephyr/util/event/event.dart';
 import 'package:zephyr/util/event/webview_observe_bus.dart';
 import 'package:zephyr/util/json/json_value.dart';
 import 'package:zephyr/config/router/router.gr.dart';
+import 'package:zephyr/page/source_shell/bika_content_block_rules.dart';
+import 'package:zephyr/page/source_shell/source_category_settings_scope.dart';
 import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
 import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/widgets/action_feedback.dart';
@@ -737,9 +741,14 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
   }
 
   Future<void> _openSavedAccounts() async {
+    final loginSupported = context
+        .read<PluginSettingsCubit>()
+        .state
+        .loginSupported;
     final revealBrowser = await openPluginSavedAccounts(
       context,
       source: widget.from,
+      nativeLoginSupported: loginSupported,
       onAddAccount: () async {
         await _openAccountLogin(requireFreshSignIn: true);
       },
@@ -749,6 +758,14 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
           addAccount: addAccount,
         );
       },
+      onRecoverAccount: widget.from == hanimeSourceId
+          ? (profile) async {
+              await _openAccountLogin(
+                requireFreshSignIn: true,
+                savedProfile: profile,
+              );
+            }
+          : null,
       prepareSession: () =>
           context.read<PluginSettingsCubit>().loadUserInfo(widget.from),
     );
@@ -809,6 +826,7 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
     bool recoverCurrent = false,
     bool requireFreshSignIn = false,
     PluginAccountAddition? addAccount,
+    PluginAccountProfile? savedProfile,
   }) async {
     final state = context.read<PluginSettingsCubit>().state;
     final source = widget.from;
@@ -816,19 +834,15 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
       final generation = pluginSessionWriteFence.generation(
         normalizePluginId(source),
       );
-      final sessionField = switch (source) {
-        PluginAccountAuthenticationService.copy => 'auth.token',
-        PluginAccountAuthenticationService.jm => 'auth.jwt',
-        _ when PluginAccountAuthenticationService.bika.contains(source) =>
-          'auth.authorization',
-        _ => null,
-      };
       final username = recoverCurrent
-          ? await PluginAccountProfiles.currentLoginHint(
-              source,
-              legacySessionKey: sessionField,
-            )
+          ? await PluginAccountProfiles.currentLoginHint(source)
           : null;
+      final id = username == null
+          ? null
+          : await PluginAccountProfiles.selected(source);
+      final selected = id == null
+          ? null
+          : PluginAccountProfiles.read(source).profiles[id];
       if (!mounted ||
           source != widget.from ||
           isPluginEndpointUpdating(source)) {
@@ -838,6 +852,12 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
         context,
         source: source,
         username: username,
+        savedAccount:
+            selected != null &&
+                selected.kind != 'web' &&
+                selected.identity == username
+            ? (id: selected.id, revision: selected.revision)
+            : null,
         recoveryGeneration: recoverCurrent && username != null
             ? generation
             : null,
@@ -878,17 +898,32 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
     if (action == null) throw StateError(t.accountProfiles.verificationHint);
     final payload = asJsonMap(action['payload']);
     final origin = Uri.tryParse(payload['url']?.toString() ?? '');
-    final username = !recoverCurrent
-        ? null
-        : origin == null
-        ? ''
-        : await PluginAccountProfiles.currentLoginHint(
-                source,
-                origin: origin,
-              ) ??
-              '';
+    String? username;
+    if (requireFreshSignIn) {
+      final credentials = origin == null
+          ? null
+          : VideoAccountCredentials.decode(
+              savedProfile?.bundle['account.credentials'],
+              origin,
+            );
+      final account = credentials?.account;
+      username =
+          account != null &&
+              account.length <= 300 &&
+              RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(account)
+          ? account
+          : '';
+    } else if (recoverCurrent) {
+      username = origin == null
+          ? ''
+          : await PluginAccountProfiles.currentLoginHint(
+                  source,
+                  origin: origin,
+                ) ??
+                '';
+    }
     if (!mounted || source != widget.from) return false;
-    await DiscoverRouter.route(
+    Future<void> openCatalogLogin() => DiscoverRouter.route(
       context,
       currentFrom: source,
       accountLoginUsername: username,
@@ -897,6 +932,19 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
         'payload': {...payload, 'source': source, 'initialAccountLogin': true},
       },
     );
+    if (addAccount != null && source == hanimeSourceId) {
+      await addAccount(
+        openCatalogLogin,
+        () => mounted && source == widget.from,
+      );
+    } else {
+      await openCatalogLogin();
+    }
+    if (!mounted || source != widget.from) return false;
+    if (source == hanimeSourceId &&
+        !pluginSessionWriteFence.isChanging(source)) {
+      await context.read<PluginSettingsCubit>().loadUserInfo(source);
+    }
     return PluginAccountIdentities.current(source) != null;
   }
 
@@ -1032,6 +1080,12 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
         return;
       }
       showSuccessToast(message.isNotEmpty ? message : t.plugin.updateSuccess);
+      unawaited(
+        context.read<PluginSettingsCubit>().load(
+          widget.from,
+          refreshAccount: false,
+        ),
+      );
     } catch (e) {
       showErrorToast(
         t.plugin.updateFailed(error: normalizePluginInstallErrorMessage(e)),
@@ -1085,6 +1139,12 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
         return;
       }
       showSuccessToast(message.isNotEmpty ? message : t.plugin.updateSuccess);
+      unawaited(
+        context.read<PluginSettingsCubit>().load(
+          widget.from,
+          refreshAccount: false,
+        ),
+      );
     } catch (e) {
       showErrorToast(
         t.plugin.updateFailed(error: normalizePluginInstallErrorMessage(e)),
@@ -1259,10 +1319,12 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
     }
     final sessionChange = action['sessionChange'] == true;
     final cubit = context.read<PluginSettingsCubit>();
-    final copyAutoMeasurement =
+    final copyMeasurement =
         source == PluginAccountAuthenticationService.copy &&
-        fnPath == 'testLineSpeeds' &&
-        cubit.state.values['api.domain'] == 'auto';
+        fnPath == 'testLineSpeeds';
+    final copyRoute = cubit.state.values['api.domain'];
+    final copyAutoMeasurement =
+        copyMeasurement && (copyRoute == 'auto' || copyRoute == 'auto-speed');
     final jmMeasurement =
         source == PluginAccountAuthenticationService.jm &&
         fnPath == 'measureEndpointSpeeds';
@@ -1315,42 +1377,29 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
       );
       if (!mounted || !currentEndpoint()) return;
       if (!handledWebLogin) {
-        if (jmMeasurement) {
-          // Completing the measurement is not evidence that a route works.
-          // Read the measured results, including those from older bundles.
-          final api = data['api'] is List ? data['api'] as List : const [];
-          final images = data['image'] is List
-              ? data['image'] as List
-              : const [];
-          bool passed(Object? value) => asJsonMap(value)['ok'] == true;
-          final anyPassed = [...api, ...images].any(passed);
-          if (!anyPassed) {
-            showErrorToast(t.plugin.lineTestFailure);
-          } else if (api.isEmpty ||
-              images.isEmpty ||
-              ![...api, ...images].every(passed)) {
-            showWarningToast(t.plugin.lineTestPartial);
-          } else {
-            showSuccessToast(t.plugin.lineTestSuccess);
-          }
+        if (copyMeasurement || jmMeasurement) {
+          _showLineMeasurement(data, copy: copyMeasurement);
         } else {
           final message =
               result['message']?.toString() ?? t.plugin.executeSuccess;
           showSuccessToast(message);
         }
       }
-      if ((source == PluginAccountAuthenticationService.copy &&
-              fnPath == 'testLineSpeeds') ||
-          jmMeasurement) {
+      if (copyMeasurement || jmMeasurement) {
         // The schema reflects the last measurement. The endpoint fence
         // separately refreshes the account if Auto actually changed lines.
         await cubit.load(widget.from, refreshAccount: false);
       }
-    } catch (e) {
+    } catch (error) {
       if (mounted && currentEndpoint()) {
-        showErrorToast(
-          t.plugin.executeFailed(error: userFacingErrorMessage(e)),
-        );
+        if (copyMeasurement || jmMeasurement) {
+          logger.w('[PluginSettings] $fnPath failed: ${error.runtimeType}');
+          showErrorToast(t.plugin.lineTestFailure);
+        } else {
+          showErrorToast(
+            t.plugin.executeFailed(error: userFacingErrorMessage(error)),
+          );
+        }
       }
     } finally {
       if (endpointUpdate != null) {
@@ -1359,10 +1408,30 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
           endpointUpdate,
           refreshSettings:
               resumeAccount || (jmMeasurement && effectiveRouteChanged),
-          refreshProfile: copyAutoMeasurement && effectiveRouteChanged,
+          refreshProfile:
+              (copyAutoMeasurement || jmMeasurement) && effectiveRouteChanged,
         );
       }
       if (mounted) setState(() => _pendingActions.remove(fnPath));
+    }
+  }
+
+  void _showLineMeasurement(Map<String, dynamic> data, {required bool copy}) {
+    if (data['stale'] == true) {
+      showInfoToast(t.plugin.lineTestCancelled);
+      return;
+    }
+    final routes = asJsonList(data[copy ? 'results' : 'api']);
+    final images = asJsonList(data['image']);
+    final results = copy ? routes : [...routes, ...images];
+    bool passed(Object? value) => asJsonMap(value)['ok'] == true;
+    if (!results.any(passed)) {
+      showErrorToast(t.plugin.lineTestFailure);
+    } else if (!results.every(passed) ||
+        (!copy && (routes.isEmpty || images.isEmpty))) {
+      showWarningToast(t.plugin.lineTestPartial);
+    } else {
+      showSuccessToast(t.plugin.lineTestSuccess);
     }
   }
 
@@ -1377,13 +1446,22 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
     final persist = field['persist'] != false;
     final source = widget.from;
     final runtime = widget.pluginRuntimeName;
+    final liveBikaBlock =
+        isBikaExperienceSource(source) &&
+        (key == bikaSearchBlockedCategoriesKey ||
+            BikaContentBlockField.values.any(
+              (field) => field.configKey == key,
+            ));
     if (persist &&
         key.isNotEmpty &&
         const DeepCollectionEquality().equals(
-          context.read<PluginSettingsCubit>().state.values[key],
+          liveBikaBlock
+              ? readHostPluginConfiguration(source)[key]
+              : context.read<PluginSettingsCubit>().state.values[key],
           value,
-        ))
+        )) {
       return;
+    }
     final epoch = LocalPluginInstallationState.instance.installationEpoch(
       widget.pluginUuid,
     );
@@ -1400,7 +1478,9 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
     if (appliesJmNetwork && isPluginEndpointUpdating(source)) return;
     final appliesJmApiLine = appliesJmNetwork && key == 'network.apiBase';
     final mayMeasureJmApi =
-        appliesJmNetwork && key == 'network.imageBase' && value == '';
+        appliesJmNetwork &&
+        key == 'network.imageBase' &&
+        (value == '' || value == 'auto-speed');
     final appliesJmEndpoint = appliesJmApiLine || mayMeasureJmApi;
     final appliesCopyNetwork =
         !persist &&
@@ -1524,7 +1604,8 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
               ) ==
               epoch) {
         setState(
-          () => _fieldErrors[identity] = savingLocally
+          () => _fieldErrors[identity] =
+              savingLocally || appliesCopyNetwork || appliesJmNetwork
               ? t.error.saveFailed
               : _fieldSaveError(field, error),
         );
@@ -1546,7 +1627,9 @@ class _PluginSettingsPageViewState extends State<_PluginSettingsPageView> {
                   fieldCommitted &&
                   (effectiveRouteChanged ??
                       (appliesJmApiLine && widget.readOnlyAccount))),
-          refreshProfile: appliesCopyNetwork && effectiveRouteChanged == true,
+          refreshProfile:
+              (appliesCopyNetwork || appliesJmEndpoint) &&
+              effectiveRouteChanged == true,
         );
       }
       if (mounted) setState(() => _pendingFields.remove(identity));

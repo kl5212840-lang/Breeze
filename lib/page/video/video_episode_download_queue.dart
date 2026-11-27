@@ -6,6 +6,7 @@ import 'package:zephyr/network/sync/sync_service.dart'
     show runExclusiveStorageOperation;
 import 'package:zephyr/page/video/native_playback_session.dart';
 import 'package:zephyr/page/video/video_download.dart';
+import 'package:zephyr/page/video/video_download_choice.dart';
 import 'package:zephyr/page/video/video_download_resolution.dart';
 import 'package:zephyr/page/video/video_export_records.dart';
 import 'package:zephyr/page/video/video_playback_download_adapter.dart';
@@ -16,6 +17,15 @@ typedef VideoResolvedEpisodeDownload = ({
   NativePlaybackSession session,
   String? sourceDuration,
 });
+
+typedef VideoEpisodeDownloadTransport = ({
+  List<VideoDownloadChoice> choices,
+  String? networkContext,
+  Map<String, String> Function(VideoDownloadChoice)? headersForChoice,
+  Future<void> Function() release,
+});
+typedef VideoEpisodeTaskResolver =
+    Future<VideoEpisodeDownloadTransport> Function(Map<String, dynamic> task);
 
 /// Process-owned bounded work. Durable rows contain public episodes only; after
 /// restart their existing task reader marks them interrupted, never resumable.
@@ -68,8 +78,8 @@ abstract final class VideoEpisodeDownloadQueue {
   static Future<List<String>> enqueue({
     required String source,
     required List<NativeVideoCard> episodes,
-    required Future<VideoResolvedEpisodeDownload> Function(NativeVideoCard)
-    resolve,
+    Future<VideoResolvedEpisodeDownload> Function(NativeVideoCard)? resolve,
+    VideoEpisodeTaskResolver? resolveTask,
     String? networkContext,
     Future<void> Function()? release,
     String? retryItemId,
@@ -77,7 +87,11 @@ abstract final class VideoEpisodeDownloadQueue {
     String? preferredFormat,
     bool cooperativeResolution = false,
     bool userInitiated = false,
+    bool Function()? canAdmit,
   }) async {
+    if ((resolve == null) == (resolveTask == null)) {
+      throw ArgumentError('Supply one episode resolver');
+    }
     final unique = <Uri, NativeVideoCard>{};
     for (final episode in episodes) {
       final page = videoPlaybackIdentity(episode.watchUrl);
@@ -89,6 +103,7 @@ abstract final class VideoEpisodeDownloadQueue {
     if (unique.isEmpty || source.isEmpty || source.length > 200) {
       throw const FormatException('No download episodes');
     }
+    final accountGeneration = pluginSessionWriteFence.generation(source);
     final installation = SourceNetworkPolicies.supports(source)
         ? LocalPluginInstallationState.instance
         : null;
@@ -97,19 +112,22 @@ abstract final class VideoEpisodeDownloadQueue {
       source,
       unique.values.toList(),
       resolve,
+      resolveTask,
       networkContext,
       installation,
       installation?.installationEpoch(source),
+      accountGeneration,
       release,
       cooperativeResolution,
       preferredQuality,
       preferredFormat,
     );
-    if (!batch.current) throw const PluginLifecycleChanged();
+    bool admitting() => batch.current && (canAdmit?.call() ?? true);
+    if (!admitting()) throw const PluginLifecycleChanged();
     try {
       await runExclusiveStorageOperation(() async {
         for (final episode in batch.episodes) {
-          if (!batch.current) throw const PluginLifecycleChanged();
+          if (!admitting()) throw const PluginLifecycleChanged();
           final existing = VideoExportRecords.sessionTaskSnapshot()
               .where(
                 (row) =>
@@ -139,22 +157,14 @@ abstract final class VideoEpisodeDownloadQueue {
             cover: episode.coverUrl?.toString(),
             queued: true,
             reuseTerminal: true,
+            siteQuality: preferredQuality == null,
             retryItemId: retryItemId,
           );
           batch.keys.add(key);
           batch.resultKeys.add(key);
           batch.queuedEpisodes.add(episode);
           batch.attempts[key] = VideoExportRecords.currentAttempt(key)!;
-          if (!batch.current) {
-            await VideoExportRecords.updateTransfer(
-              key,
-              expectedAttempt: batch.attempts[key],
-              received: null,
-              status: 'cancelled',
-              terminal: true,
-            );
-            throw const PluginLifecycleChanged();
-          }
+          if (!admitting()) throw const PluginLifecycleChanged();
           VideoSystemDownload.registerQueuedTask(
             key,
             source,
@@ -201,9 +211,11 @@ class _EpisodeDownloadBatch {
     this.source,
     this.episodes,
     this.resolve,
+    this.resolveTask,
     this.networkContext,
     this.installation,
     this.epoch,
+    this.accountGeneration,
     this.release,
     this.cooperativeResolution,
     this.preferredQuality,
@@ -211,7 +223,8 @@ class _EpisodeDownloadBatch {
   );
   final String source;
   final List<NativeVideoCard> episodes;
-  final Future<VideoResolvedEpisodeDownload> Function(NativeVideoCard) resolve;
+  final Future<VideoResolvedEpisodeDownload> Function(NativeVideoCard)? resolve;
+  final VideoEpisodeTaskResolver? resolveTask;
   final String? networkContext;
   final LocalPluginInstallationState? installation;
   final int? epoch;
@@ -223,7 +236,7 @@ class _EpisodeDownloadBatch {
   final queuedEpisodes = <NativeVideoCard>[];
   final _cancelledKeys = <String, Completer<void>>{};
   final attempts = <String, int>{};
-  late final int accountGeneration = pluginSessionWriteFence.generation(source);
+  final int accountGeneration;
   final _cancelled = Completer<void>();
   final _engines = <String, VideoSystemDownload>{};
   final _resolutionOwners = <String, VideoDownloadResolutionOwner>{};
@@ -306,6 +319,7 @@ class _EpisodeDownloadBatch {
     String? failureStage;
     String? failureReason;
     VideoDownloadPermit? permit;
+    VideoEpisodeDownloadTransport? transport;
     try {
       if (!episodeCurrent()) throw const _EpisodeDownloadCancelled();
       permit = await VideoSystemDownload.reserveDownload(
@@ -323,32 +337,51 @@ class _EpisodeDownloadBatch {
         cooperative: cooperativeResolution,
       );
       resolving = true;
-      final resolved = await wait(
-        VideoEpisodeDownloadQueue.resolveSource(source, () {
+      String? sourceDuration = episode.metadata.duration;
+      VideoPlaybackDownloadAdapter? adapter;
+      await wait(
+        VideoEpisodeDownloadQueue.resolveSource(source, () async {
           if (!episodeCurrent()) throw const _EpisodeDownloadCancelled();
-          return resolve(episode);
+          if (resolveTask case final resolveCurrentTask?) {
+            final row = VideoExportRecords.sessionTaskSnapshot().firstWhere(
+              (row) => row['key'] == key && row['attempt'] == attempts[key],
+            );
+            final result = await resolveCurrentTask(Map.unmodifiable(row));
+            if (owner.cancelled || !episodeCurrent()) {
+              await result.release();
+              throw const VideoResolutionCancelled();
+            }
+            transport = result;
+          } else {
+            final resolved = await resolve!(episode);
+            if (videoPlaybackIdentity(resolved.session.watchUrl) !=
+                episode.watchUrl) {
+              throw const FormatException('Resolved a different episode');
+            }
+            sourceDuration = resolved.sourceDuration;
+            adapter = VideoPlaybackDownloadAdapter(resolved.session);
+          }
         }, owner: owner),
       );
       resolving = false;
       if (!episodeCurrent()) throw const _EpisodeDownloadCancelled();
-      if (videoPlaybackIdentity(resolved.session.watchUrl) !=
-          episode.watchUrl) {
-        throw const FormatException('Resolved a different episode');
-      }
-      final adapter = VideoPlaybackDownloadAdapter(resolved.session);
-      if (adapter.choices.isEmpty) {
+      final choices = transport?.choices ?? adapter!.choices;
+      if (choices.isEmpty) {
         status = VideoDownloadStatus.unsupported;
       } else {
         final choice = preferredQuality == null
-            ? adapter.choices.first
-            : adapter.choices
+            ? choices.first
+            : choices
                   .where(
                     (choice) =>
                         choice.label == preferredQuality &&
                         (preferredFormat == null ||
-                            (choice.url.path.toLowerCase().endsWith('.m3u8')
-                                    ? 'hls'
-                                    : 'mp4') ==
+                            (choice.format ??
+                                    (choice.url.path.toLowerCase().endsWith(
+                                          '.m3u8',
+                                        )
+                                        ? 'hls'
+                                        : 'mp4')) ==
                                 preferredFormat),
                   )
                   .firstOrNull;
@@ -373,11 +406,14 @@ class _EpisodeDownloadBatch {
                 ? episode.title
                 : '${episode.title} · ${episode.episodeLabel}',
             cover: episode.coverUrl?.toString(),
-            sourceDuration: resolved.sourceDuration,
+            sourceDuration: sourceDuration,
             queuedTaskKey: key,
             permit: permit,
-            networkContext: networkContext,
-            headers: adapter.headersForChoice(choice),
+            networkContext: transport?.networkContext ?? networkContext,
+            headers:
+                transport?.headersForChoice?.call(choice) ??
+                adapter?.headersForChoice(choice) ??
+                const {},
             onProgress: (_) {},
           );
           failureReason = engine.failureReason;
@@ -409,17 +445,24 @@ class _EpisodeDownloadBatch {
     } finally {
       _engines.remove(key);
       _resolutionOwners.remove(key);
-      await VideoExportRecords.updateTransfer(
-        key,
-        expectedAttempt: attempts[key],
-        received: null,
-        status: status.name,
-        failureReason: failureReason,
-        failureStage: failureStage,
-        terminal: true,
-      );
-      VideoSystemDownload.unregisterQueuedTask(key, attempt: attempts[key]);
-      permit?.release();
+      try {
+        await VideoExportRecords.updateTransfer(
+          key,
+          expectedAttempt: attempts[key],
+          received: null,
+          status: status.name,
+          failureReason: failureReason,
+          failureStage: failureStage,
+          terminal: true,
+        );
+      } finally {
+        VideoSystemDownload.unregisterQueuedTask(key, attempt: attempts[key]);
+        try {
+          await transport?.release();
+        } finally {
+          permit?.release();
+        }
+      }
     }
     if (!current) await cancel();
   }

@@ -4,6 +4,7 @@ import 'package:crypto/crypto.dart';
 import 'package:zephyr/network/sync/sync_payload_compatibility.dart';
 
 const pluginAccountProfilesKey = 'account.profiles';
+const hostRememberedPluginLoginKey = 'auth.breeze.rememberedLogin';
 bool isActivePluginAccountField(String key) =>
     key.startsWith('auth.') ||
     key == 'account.credentials' ||
@@ -11,7 +12,7 @@ bool isActivePluginAccountField(String key) =>
 
 /// The declared login identity has precedence over an optional display alias.
 String? pluginAccountBundleIdentity(Map<String, dynamic> data) {
-  for (final key in ['auth.account', 'auth.username']) {
+  for (final key in const ['auth.account', 'auth.username']) {
     final value = data[key];
     if (value is String && value.trim().isNotEmpty) return value.trim();
   }
@@ -22,7 +23,28 @@ String? pluginAccountBundleIdentity(Map<String, dynamic> data) {
           credentials['deleted'] != true
       ? credentials['account']
       : null;
-  return value is String && value.trim().isNotEmpty ? value.trim() : null;
+  if (value is String && value.trim().isNotEmpty) return value.trim();
+  final email = data['auth.email'];
+  return email is String && email.trim().isNotEmpty ? email.trim() : null;
+}
+
+/// A legacy display name or a password is not evidence of a live session.
+String? legacyPluginAccountSession(Map<String, dynamic> data) {
+  final fields = {
+    for (final key in const [
+      'auth.token',
+      'auth.accessToken',
+      'auth.access_token',
+      'auth.jwt',
+      'auth.authorization',
+      'auth.sessionToken',
+    ])
+      if (data[key] case final String value
+          when value.trim().isNotEmpty &&
+              !const {'null', 'undefined'}.contains(value.trim()))
+        key: value,
+  };
+  return fields.isEmpty ? null : accountProfileDigest(fields);
 }
 
 Object? _canonical(Object? value) {

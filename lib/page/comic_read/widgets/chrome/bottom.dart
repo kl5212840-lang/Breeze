@@ -4,6 +4,7 @@ import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:uuid/uuid.dart';
+import 'package:zephyr/widgets/task_dialog.dart';
 import 'package:zephyr/cubit/string_select.dart';
 import 'package:zephyr/page/comic_info/comic_info.dart';
 import 'package:zephyr/page/download/adapters/download_chapter_adapter.dart';
@@ -510,8 +511,10 @@ class _ChapterPickerDialogState extends State<ChapterPickerDialog> {
     // 桌面端别撑满：最多 440，手机上占 90% 屏宽。
     final listWidth = (screenSize.width * 0.9).clamp(0.0, 440.0).toDouble();
 
-    return AlertDialog(
-      title: Text(t.reader.selectChapter),
+    return TaskDialog(
+      title: t.reader.selectChapter,
+      width: listWidth + 48,
+      scrollBody: false,
       content: SizedBox(
         width: listWidth,
         height: listHeight,

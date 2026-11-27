@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/config/global/global_setting.dart';
+import 'package:zephyr/config/global/navigation_appearance.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/i18n/i18n_helper.dart';
 import 'package:zephyr/i18n/strings.g.dart';
@@ -27,6 +28,8 @@ import 'package:zephyr/widgets/collection_cover_privacy.dart';
 import 'package:zephyr/widgets/local_appearance_image_picker.dart';
 import 'package:zephyr/widgets/system_accent_availability.dart';
 import 'package:zephyr/widgets/breeze_switch.dart';
+import 'package:zephyr/widgets/short_alert.dart';
+import 'package:zephyr/widgets/app_interface_style.dart';
 
 @RoutePage()
 class AppearanceSettingPage extends StatelessWidget {
@@ -38,6 +41,7 @@ class AppearanceSettingPage extends StatelessWidget {
     final state = cubit.state;
     final systemAccentAvailable = SystemAccentAvailability.of(context);
     final android = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+    final iOS = !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
     final chinese = Localizations.localeOf(context).languageCode == 'zh';
 
     return SettingPageShell(
@@ -57,6 +61,43 @@ class AppearanceSettingPage extends StatelessWidget {
               if (!android) _fontSettings(context),
             ],
           ),
+          if (android || iOS)
+            SettingSection(
+              title: t.settings.bottomNavigation,
+              children: [
+                SettingChoiceTile<bool>(
+                  key: const ValueKey('settings.navigation-visibility'),
+                  leading: const InterfaceSymbol(
+                    symbol: 'rectangle.bottomthird.inset.filled',
+                    fallback: Icons.view_agenda_outlined,
+                  ),
+                  title: t.settings.navigationVisibility,
+                  value: state.navigationHidesOnScroll,
+                  items: {
+                    false: t.settings.navigationFixed,
+                    true: t.settings.navigationHideOnScroll,
+                  },
+                  onChanged: (value) {
+                    cubit.updateState(
+                      (current) =>
+                          current.copyWith(navigationHidesOnScroll: value),
+                    );
+                  },
+                ),
+                if (AppInterfaceStyleScope.usesAndroidSystem(context) &&
+                    !state.eInkSetting.enabled &&
+                    !MediaQuery.highContrastOf(context))
+                  _NavigationTransparencySetting(
+                    value: state.navigationTransparency,
+                    onChanged: (value) {
+                      cubit.updateState(
+                        (current) =>
+                            current.copyWith(navigationTransparency: value),
+                      );
+                    },
+                  ),
+              ],
+            ),
           SettingSection(
             title: android
                 ? t.settings.themeColor
@@ -281,6 +322,61 @@ class AppearanceSettingPage extends StatelessWidget {
   }
 }
 
+class _NavigationTransparencySetting extends StatefulWidget {
+  const _NavigationTransparencySetting({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final int value;
+  final ValueChanged<int> onChanged;
+
+  @override
+  State<_NavigationTransparencySetting> createState() =>
+      _NavigationTransparencySettingState();
+}
+
+class _NavigationTransparencySettingState
+    extends State<_NavigationTransparencySetting> {
+  int? _draft;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = _draft ?? normalizeNavigationTransparency(widget.value);
+    final title = t.settings.navigationTransparency;
+    return Padding(
+      padding: const EdgeInsetsDirectional.fromSTEB(16, 12, 16, 4),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text(title)),
+              Text('$value%'),
+            ],
+          ),
+          Semantics(
+            label: title,
+            child: Slider(
+              key: const ValueKey('settings.navigation-transparency'),
+              value: value.toDouble(),
+              min: minNavigationTransparency.toDouble(),
+              max: maxNavigationTransparency.toDouble(),
+              divisions: maxNavigationTransparency - minNavigationTransparency,
+              semanticFormatterCallback: (value) => '${value.round()}%',
+              onChanged: (value) => setState(() => _draft = value.round()),
+              onChangeEnd: (value) {
+                final selected = value.round();
+                if (selected != widget.value) widget.onChanged(selected);
+                setState(() => _draft = null);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Hosted by the appearance page; keeps long-running picker operations local.
 class CollectionCoverAppearanceSettings extends StatefulWidget {
   const CollectionCoverAppearanceSettings({
@@ -345,16 +441,16 @@ class _CollectionCoverAppearanceSettingsState
 
       final confirmed = await showDialog<bool>(
         context: context,
-        builder: (dialog) => AlertDialog(
-          scrollable: true,
+        builder: (dialog) => ShortAlert(
           title: Text(t.coverPrivacy.replaceImageConfirmTitle),
           content: Text(t.coverPrivacy.replaceImageConfirm),
           actions: [
-            TextButton(
+            ShortAlertAction(
               onPressed: () => finish(dialog, false),
               child: Text(t.common.cancel),
             ),
-            TextButton(
+            ShortAlertAction(
+              destructive: true,
               onPressed: () => finish(dialog, true),
               child: Text(t.common.confirm),
             ),

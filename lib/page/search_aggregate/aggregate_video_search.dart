@@ -19,18 +19,8 @@ class AggregateSourceEntryRequired implements Exception {
 /// Browser-backed sources retain their own cookies and verification UI. They
 /// get an explicit continuation, never a comic request or a hidden login browser.
 class AggregateVideoSearch {
-  AggregateVideoSearch({
-    Future<Map<String, dynamic>> Function(String)? info,
-    this.call,
-  }) : info =
-           info ??
-           ((id) async =>
-               PluginRegistryService.I.getCachedPluginInfo(id) ??
-               await PluginRegistryService.I.fetchPluginInfo(
-                 uuid: id,
-                 runtimeName: id,
-               ));
-  final Future<Map<String, dynamic>> Function(String) info;
+  AggregateVideoSearch({this.info, this.call});
+  final Future<Map<String, dynamic>> Function(String)? info;
   final Future<Map<String, dynamic>> Function(
     String,
     String,
@@ -45,14 +35,25 @@ class AggregateVideoSearch {
     bool Function()? current,
     void Function(Map<String, dynamic>)? onComicMetadata,
   }) async {
-    final metadataRead = info(source);
+    var preparing = true;
+    final registry = PluginRegistryService.I;
+    final metadataRead =
+        info?.call(source) ??
+        Future<Map<String, dynamic>>.sync(
+          () =>
+              registry.getCachedPluginInfo(source) ??
+              registry.fetchPluginInfo(
+                uuid: source,
+                runtimeName: source,
+                taskGroupKey: taskGroupKey,
+                current: () => preparing && current?.call() != false,
+              ),
+        );
     late final Map<String, dynamic> metadata;
     try {
       metadata = await metadataRead.timeout(const Duration(seconds: 12));
     } finally {
-      // Metadata preparation has no cancellable native group of its own.
-      // A UI timeout must not release physical admission while it still runs.
-      await metadataRead.then<void>((_) {}, onError: (Object _) {});
+      preparing = false;
     }
     if (current?.call() == false) throw StateError("Search cancelled");
     final action = aggregateVideoSourceAction(metadata);

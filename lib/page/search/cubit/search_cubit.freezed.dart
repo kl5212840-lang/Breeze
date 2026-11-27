@@ -16,7 +16,7 @@ T _$identity<T>(T value) => value;
 /// @nodoc
 mixin _$SearchStates implements DiagnosticableTreeMixin {
 
- String get from; String get searchKeyword; int get sortBy; Map<String, dynamic> get pluginExtern; Map<String, bool> get aggregateSources;
+ String get from; String get searchKeyword; int get sortBy; Map<String, dynamic> get pluginExtern;
 /// Create a copy of SearchStates
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -31,26 +31,26 @@ void debugFillProperties(DiagnosticPropertiesBuilder properties) {
   final _this = this as SearchStates;
   properties
     ..add(DiagnosticsProperty('type', 'SearchStates'))
-    ..add(DiagnosticsProperty('from', _this.from))..add(DiagnosticsProperty('searchKeyword', _this.searchKeyword))..add(DiagnosticsProperty('sortBy', _this.sortBy))..add(DiagnosticsProperty('pluginExtern', _this.pluginExtern))..add(DiagnosticsProperty('aggregateSources', _this.aggregateSources));
+    ..add(DiagnosticsProperty('from', _this.from))..add(DiagnosticsProperty('searchKeyword', _this.searchKeyword))..add(DiagnosticsProperty('sortBy', _this.sortBy))..add(DiagnosticsProperty('pluginExtern', _this.pluginExtern));
 }
 
 @override
 bool operator ==(Object other) {
   final _this = this as SearchStates;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is SearchStates&&(identical(other.from, _this.from) || other.from == _this.from)&&(identical(other.searchKeyword, _this.searchKeyword) || other.searchKeyword == _this.searchKeyword)&&(identical(other.sortBy, _this.sortBy) || other.sortBy == _this.sortBy)&&const DeepCollectionEquality().equals(other.pluginExtern, _this.pluginExtern)&&const DeepCollectionEquality().equals(other.aggregateSources, _this.aggregateSources));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is SearchStates&&(identical(other.from, _this.from) || other.from == _this.from)&&(identical(other.searchKeyword, _this.searchKeyword) || other.searchKeyword == _this.searchKeyword)&&(identical(other.sortBy, _this.sortBy) || other.sortBy == _this.sortBy)&&const DeepCollectionEquality().equals(other.pluginExtern, _this.pluginExtern));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
   final _this = this as SearchStates;
-  return Object.hash(runtimeType,_this.from,_this.searchKeyword,_this.sortBy,const DeepCollectionEquality().hash(_this.pluginExtern),const DeepCollectionEquality().hash(_this.aggregateSources));
+  return Object.hash(runtimeType,_this.from,_this.searchKeyword,_this.sortBy,const DeepCollectionEquality().hash(_this.pluginExtern));
 }
 
 @override
 String toString({ DiagnosticLevel minLevel = DiagnosticLevel.info }) {
   final _this = this as SearchStates;
-  return 'SearchStates(from: ${_this.from}, searchKeyword: ${_this.searchKeyword}, sortBy: ${_this.sortBy}, pluginExtern: ${_this.pluginExtern}, aggregateSources: ${_this.aggregateSources})';
+  return 'SearchStates(from: ${_this.from}, searchKeyword: ${_this.searchKeyword}, sortBy: ${_this.sortBy}, pluginExtern: ${_this.pluginExtern})';
 }
 
 
@@ -61,7 +61,7 @@ abstract mixin class $SearchStatesCopyWith<$Res>  {
   factory $SearchStatesCopyWith(SearchStates value, $Res Function(SearchStates) _then) = _$SearchStatesCopyWithImpl;
 @useResult
 $Res call({
- String from, String searchKeyword, int sortBy, Map<String, dynamic> pluginExtern, Map<String, bool> aggregateSources
+ String from, String searchKeyword, int sortBy, Map<String, dynamic> pluginExtern
 });
 
 
@@ -78,14 +78,13 @@ class _$SearchStatesCopyWithImpl<$Res>
 
 /// Create a copy of SearchStates
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? from = null,Object? searchKeyword = null,Object? sortBy = null,Object? pluginExtern = null,Object? aggregateSources = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? from = null,Object? searchKeyword = null,Object? sortBy = null,Object? pluginExtern = null,}) {
   return _then(SearchStates(
 from: null == from ? _self.from : from // ignore: cast_nullable_to_non_nullable
 as String,searchKeyword: null == searchKeyword ? _self.searchKeyword : searchKeyword // ignore: cast_nullable_to_non_nullable
 as String,sortBy: null == sortBy ? _self.sortBy : sortBy // ignore: cast_nullable_to_non_nullable
 as int,pluginExtern: null == pluginExtern ? _self.pluginExtern : pluginExtern // ignore: cast_nullable_to_non_nullable
-as Map<String, dynamic>,aggregateSources: null == aggregateSources ? _self.aggregateSources : aggregateSources // ignore: cast_nullable_to_non_nullable
-as Map<String, bool>,
+as Map<String, dynamic>,
   ));
 }
 
@@ -170,10 +169,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String from,  String searchKeyword,  int sortBy,  Map<String, dynamic> pluginExtern,  Map<String, bool> aggregateSources)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( String from,  String searchKeyword,  int sortBy,  Map<String, dynamic> pluginExtern)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _SearchStates() when $default != null:
-return $default(_that.from,_that.searchKeyword,_that.sortBy,_that.pluginExtern,_that.aggregateSources);case _:
+return $default(_that.from,_that.searchKeyword,_that.sortBy,_that.pluginExtern);case _:
   return orElse();
 
 }
@@ -191,10 +190,10 @@ return $default(_that.from,_that.searchKeyword,_that.sortBy,_that.pluginExtern,_
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String from,  String searchKeyword,  int sortBy,  Map<String, dynamic> pluginExtern,  Map<String, bool> aggregateSources)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( String from,  String searchKeyword,  int sortBy,  Map<String, dynamic> pluginExtern)  $default,) {final _that = this;
 switch (_that) {
 case _SearchStates():
-return $default(_that.from,_that.searchKeyword,_that.sortBy,_that.pluginExtern,_that.aggregateSources);case _:
+return $default(_that.from,_that.searchKeyword,_that.sortBy,_that.pluginExtern);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -211,10 +210,10 @@ return $default(_that.from,_that.searchKeyword,_that.sortBy,_that.pluginExtern,_
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String from,  String searchKeyword,  int sortBy,  Map<String, dynamic> pluginExtern,  Map<String, bool> aggregateSources)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( String from,  String searchKeyword,  int sortBy,  Map<String, dynamic> pluginExtern)?  $default,) {final _that = this;
 switch (_that) {
 case _SearchStates() when $default != null:
-return $default(_that.from,_that.searchKeyword,_that.sortBy,_that.pluginExtern,_that.aggregateSources);case _:
+return $default(_that.from,_that.searchKeyword,_that.sortBy,_that.pluginExtern);case _:
   return null;
 
 }
@@ -226,7 +225,7 @@ return $default(_that.from,_that.searchKeyword,_that.sortBy,_that.pluginExtern,_
 @JsonSerializable()
 
 class _SearchStates with DiagnosticableTreeMixin implements SearchStates {
-  const _SearchStates({this.from = '', this.searchKeyword = "", this.sortBy = 1,  Map<String, dynamic> pluginExtern = const <String, dynamic>{},  Map<String, bool> aggregateSources = const <String, bool>{}}): _pluginExtern = pluginExtern,_aggregateSources = aggregateSources;
+  const _SearchStates({this.from = '', this.searchKeyword = "", this.sortBy = 1,  Map<String, dynamic> pluginExtern = const <String, dynamic>{}}): _pluginExtern = pluginExtern;
   factory _SearchStates.fromJson(Map<String, dynamic> json) => _$SearchStatesFromJson(json);
 
 @override@JsonKey() final  String from;
@@ -237,13 +236,6 @@ class _SearchStates with DiagnosticableTreeMixin implements SearchStates {
   if (_pluginExtern is EqualUnmodifiableMapView) return _pluginExtern;
   // ignore: implicit_dynamic_type
   return EqualUnmodifiableMapView(_pluginExtern);
-}
-
- final  Map<String, bool> _aggregateSources;
-@override@JsonKey() Map<String, bool> get aggregateSources {
-  if (_aggregateSources is EqualUnmodifiableMapView) return _aggregateSources;
-  // ignore: implicit_dynamic_type
-  return EqualUnmodifiableMapView(_aggregateSources);
 }
 
 
@@ -261,23 +253,23 @@ Map<String, dynamic> toJson() {
 void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     properties
     ..add(DiagnosticsProperty('type', 'SearchStates'))
-    ..add(DiagnosticsProperty('from', from))..add(DiagnosticsProperty('searchKeyword', searchKeyword))..add(DiagnosticsProperty('sortBy', sortBy))..add(DiagnosticsProperty('pluginExtern', pluginExtern))..add(DiagnosticsProperty('aggregateSources', aggregateSources));
+    ..add(DiagnosticsProperty('from', from))..add(DiagnosticsProperty('searchKeyword', searchKeyword))..add(DiagnosticsProperty('sortBy', sortBy))..add(DiagnosticsProperty('pluginExtern', pluginExtern));
 }
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _SearchStates&&(identical(other.from, from) || other.from == from)&&(identical(other.searchKeyword, searchKeyword) || other.searchKeyword == searchKeyword)&&(identical(other.sortBy, sortBy) || other.sortBy == sortBy)&&const DeepCollectionEquality().equals(other.pluginExtern, _pluginExtern)&&const DeepCollectionEquality().equals(other.aggregateSources, _aggregateSources));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _SearchStates&&(identical(other.from, from) || other.from == from)&&(identical(other.searchKeyword, searchKeyword) || other.searchKeyword == searchKeyword)&&(identical(other.sortBy, sortBy) || other.sortBy == sortBy)&&const DeepCollectionEquality().equals(other.pluginExtern, _pluginExtern));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
-    return Object.hash(runtimeType,from,searchKeyword,sortBy,const DeepCollectionEquality().hash(_pluginExtern),const DeepCollectionEquality().hash(_aggregateSources));
+    return Object.hash(runtimeType,from,searchKeyword,sortBy,const DeepCollectionEquality().hash(_pluginExtern));
 }
 
 @override
 String toString({ DiagnosticLevel minLevel = DiagnosticLevel.info }) {
-    return 'SearchStates(from: $from, searchKeyword: $searchKeyword, sortBy: $sortBy, pluginExtern: $pluginExtern, aggregateSources: $aggregateSources)';
+    return 'SearchStates(from: $from, searchKeyword: $searchKeyword, sortBy: $sortBy, pluginExtern: $pluginExtern)';
 }
 
 
@@ -288,7 +280,7 @@ abstract mixin class _$SearchStatesCopyWith<$Res> implements $SearchStatesCopyWi
   factory _$SearchStatesCopyWith(_SearchStates value, $Res Function(_SearchStates) _then) = __$SearchStatesCopyWithImpl;
 @override @useResult
 $Res call({
- String from, String searchKeyword, int sortBy, Map<String, dynamic> pluginExtern, Map<String, bool> aggregateSources
+ String from, String searchKeyword, int sortBy, Map<String, dynamic> pluginExtern
 });
 
 
@@ -305,14 +297,13 @@ class __$SearchStatesCopyWithImpl<$Res>
 
 /// Create a copy of SearchStates
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? from = null,Object? searchKeyword = null,Object? sortBy = null,Object? pluginExtern = null,Object? aggregateSources = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? from = null,Object? searchKeyword = null,Object? sortBy = null,Object? pluginExtern = null,}) {
   return _then(_SearchStates(
 from: null == from ? _self.from : from // ignore: cast_nullable_to_non_nullable
 as String,searchKeyword: null == searchKeyword ? _self.searchKeyword : searchKeyword // ignore: cast_nullable_to_non_nullable
 as String,sortBy: null == sortBy ? _self.sortBy : sortBy // ignore: cast_nullable_to_non_nullable
 as int,pluginExtern: null == pluginExtern ? _self._pluginExtern : pluginExtern // ignore: cast_nullable_to_non_nullable
-as Map<String, dynamic>,aggregateSources: null == aggregateSources ? _self._aggregateSources : aggregateSources // ignore: cast_nullable_to_non_nullable
-as Map<String, bool>,
+as Map<String, dynamic>,
   ));
 }
 

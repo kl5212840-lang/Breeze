@@ -4,7 +4,6 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/cubit/string_select.dart';
 import 'package:zephyr/page/comic_info/json/normal/normal_comic_all_info.dart';
 import 'package:zephyr/page/comic_read/type/chapter_extern.dart';
-import 'package:zephyr/page/download/adapters/download_chapter_adapter.dart';
 import 'package:zephyr/page/download/models/download_chapter.dart';
 import 'package:zephyr/page/comic_info/cubit/episode_download_status_cubit.dart';
 import 'package:zephyr/page/comic_info/cubit/episode_selection_cubit.dart';
@@ -202,8 +201,7 @@ class EpButtonWidget extends StatelessWidget {
   }
 
   void _openRead(BuildContext context) {
-    final chapter = const DownloadChapterAdapter().fromEp(doc);
-    final chapterExtern = Map<String, dynamic>.from(doc.extern);
+    final chapterExtern = Map<String, dynamic>.from(chapter.extern);
     context.pushRoute(
       ComicReadRoute(
         comicInfo: allInfo,
@@ -252,14 +250,10 @@ class EpisodeDownloadProgress extends StatelessWidget {
         selector: (state) =>
             (state.statusOf(chapter), state.progressOf(chapter)),
         builder: (context, selected) {
-          final status = selected.$1;
-          if (status != ChapterDownloadStatus.downloading &&
-              status != ChapterDownloadStatus.downloaded) {
+          final (status, progress) = selected;
+          if (status != ChapterDownloadStatus.downloading) {
             return const SizedBox.shrink();
           }
-          final progress = status == ChapterDownloadStatus.downloaded
-              ? 1.0
-              : selected.$2;
           return ClipRRect(
             borderRadius: const BorderRadius.vertical(
               bottom: Radius.circular(8),
@@ -272,9 +266,7 @@ class EpisodeDownloadProgress extends StatelessWidget {
                 minHeight: 3,
                 backgroundColor: Colors.transparent,
                 color: context.theme.colorScheme.primary,
-                semanticsLabel: status == ChapterDownloadStatus.downloaded
-                    ? t.download.completed
-                    : t.download.downloading,
+                semanticsLabel: t.download.downloading,
               ),
             ),
           );
@@ -387,6 +379,7 @@ class _EpisodeTrailing extends StatelessWidget {
                 size: 20,
                 color: context.theme.colorScheme.primary,
               ),
+              label: t.download.completed,
             );
         }
       },

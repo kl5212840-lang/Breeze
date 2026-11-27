@@ -11,7 +11,6 @@ import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/context/context_extensions.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/i18n/strings.g.dart';
-import 'package:zephyr/util/error_filter.dart';
 import 'package:zephyr/widgets/picture_bloc/bloc/picture_bloc.dart';
 import 'package:zephyr/widgets/picture_bloc/models/picture_info.dart';
 import 'package:zephyr/page/source_shell/source_experience_scope.dart';
@@ -85,8 +84,12 @@ class _ReadImageWidgetState extends State<ReadImageWidget>
     _bloc =
         (widget.pictureBlocFactory?.call() ??
               PictureBloc(
+                autoRecover: !widget.useDownloads,
                 initiallyActive: false,
                 useDownloads: widget.useDownloads,
+                retryIntervalAfterAttempts: widget.useDownloads
+                    ? null
+                    : const Duration(seconds: 30),
               ))
           ..add(
             GetPicture(
@@ -149,6 +152,8 @@ class _ReadImageWidgetState extends State<ReadImageWidget>
 
   @override
   Widget build(BuildContext context) {
+    final bloc = _bloc;
+    final pictureInfo = widget.pictureInfo;
     final decoded = ReaderDecodedImageScope.of(context);
     final chapterPage = widget.chapterPage;
     final readSetting = context.watchEffectiveReadSetting();
@@ -160,7 +165,7 @@ class _ReadImageWidgetState extends State<ReadImageWidget>
       brightness,
     );
     return BlocProvider.value(
-      value: _bloc,
+      value: bloc,
       child: SizedBox(
         width: context.screenWidth,
         child: BlocBuilder<PictureBloc, PictureLoadState>(
@@ -181,9 +186,9 @@ class _ReadImageWidgetState extends State<ReadImageWidget>
                   child: Container(
                     color: backgroundColor,
                     child: SourceImageFilterQualityBuilder(
-                      source: widget.pictureInfo.from,
+                      source: pictureInfo.from,
                       builder: (context, filterQuality) => ImageDisplay(
-                        key: ValueKey((widget.pictureInfo, state.imagePath)),
+                        key: ValueKey((pictureInfo, state.imagePath)),
                         imagePath: state.imagePath!,
                         isColumn: isColumn,
                         pageSlotIndex: widget.index,
@@ -192,11 +197,11 @@ class _ReadImageWidgetState extends State<ReadImageWidget>
                         onFirstFrame: decoded == null || chapterPage == null
                             ? null
                             : () => decoded.onDecoded(
-                                widget.pictureInfo.chapterId,
+                                pictureInfo.chapterId,
                                 chapterPage,
                               ),
                         onDecodeError: (error) => unawaited(
-                          _bloc.reportDecodeFailure(
+                          bloc.reportDecodeFailure(
                             error,
                             imagePath: state.imagePath,
                           ),
@@ -207,59 +212,32 @@ class _ReadImageWidgetState extends State<ReadImageWidget>
                   ),
                 );
               case PictureLoadStatus.failure:
-                if (_bloc.recovering) {
+                final offline = decoded?.offline == true;
+                if (!offline && bloc.hasPendingRecovery) {
                   return placeholder(
                     backgroundColor: backgroundColor,
                     foregroundColor: foregroundColor,
                   );
                 }
-                if (decoded?.offline == true) {
-                  return ColoredBox(
-                    color: backgroundColor,
-                    child: Center(
+                return ColoredBox(
+                  color: backgroundColor,
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsetsDirectional.symmetric(
+                        horizontal: 16,
+                      ),
                       child: Text(
-                        t.download.fileUnavailable,
+                        offline
+                            ? t.download.fileUnavailable
+                            : bloc.pictureNotFound
+                            ? t.error.notFound
+                            : t.error.loadFailed,
                         textAlign: TextAlign.center,
                         style: TextStyle(color: foregroundColor, fontSize: 20),
                       ),
                     ),
-                  );
-                }
-                if (_bloc.pictureNotFound) {
-                  return Image.asset(
-                    'asset/image/error_image/404.png',
-                    fit: BoxFit.fill,
-                  );
-                } else {
-                  return Container(
-                    color: backgroundColor,
-                    child: InkWell(
-                      onTap: () {
-                        context.read<PictureBloc>().add(
-                          GetPicture(
-                            widget.pictureInfo.copyWith(
-                              pictureType: PictureType.page,
-                            ),
-                          ),
-                        );
-                      },
-                      child: Center(
-                        child: Text(
-                          t.reader.imageLoadFailedRetry(
-                            error: userFacingErrorMessage(state.result ?? ''),
-                          ),
-                          maxLines: 3,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 20,
-                            color: foregroundColor,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                    ),
-                  );
-                }
+                  ),
+                );
             }
           },
         ),

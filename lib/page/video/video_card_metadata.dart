@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_public_metadata.dart';
+import 'package:zephyr/page/video/video_vote_tally_updates.dart';
 import 'package:zephyr/page/video/video_thumbnail.dart';
 import 'package:zephyr/page/video/video_cover_overlay.dart';
 
@@ -54,16 +55,29 @@ class VideoCardFacts extends StatelessWidget {
   const VideoCardFacts({
     super.key,
     required this.metadata,
+    this.workUrl,
     this.creator = '',
     this.fallback = '',
     this.showCreator = true,
     this.showStatistics = true,
   });
   final VideoPublicMetadata metadata;
+  final Uri? workUrl;
   final String creator, fallback;
   final bool showCreator, showStatistics;
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => workUrl == null || !showStatistics
+      ? _facts(context)
+      : ListenableBuilder(
+          listenable: VideoVoteTallyUpdates.changes,
+          builder: (context, _) => _facts(context),
+        );
+
+  Widget _facts(BuildContext context) {
+    final tally = VideoVoteTallyUpdates.read(workUrl);
+    final rating = videoVoteRating(tally, metadata);
+    final positive = tally?.positive ?? metadata.positiveVotes;
+    final total = tally?.total ?? metadata.totalVotes;
     final byline = metadata.byline(
       creator: creator,
       fallback: fallback,
@@ -76,12 +90,10 @@ class VideoCardFacts extends StatelessWidget {
     final statistics = [
       if (metadata.viewsLabel case final value?)
         t.videoMetadata.views(value: value),
-      if (metadata.ratingLabel case final value?)
-        t.videoMetadata.rating(value: value),
-      if (metadata.positiveVotes case final value?)
+      if (rating case final value?) t.videoMetadata.rating(value: value),
+      if (positive case final value?)
         t.videoMetadata.positiveVotes(count: value),
-      if (metadata.totalVotes case final value?)
-        t.videoMetadata.totalVotes(count: value),
+      if (total case final value?) t.videoMetadata.totalVotes(count: value),
     ].join(' · ');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

@@ -168,8 +168,8 @@ String videoSiteFreshAccountScript(Uri origin) =>
   const origin = ${jsonEncode(origin.origin)};
   if (location.origin !== origin) return null;
   const response = await fetch(origin + '/', {credentials:'include',cache:'no-store',redirect:'error'});
-  if (response.status === 401) return {status:'signedOut'};
-  if (!response.ok || new URL(response.url).origin !== origin) return null;
+  if (!response.ok || new URL(response.url).origin !== origin ||
+      response.headers.get('cf-mitigated') === 'challenge') return null;
   const text = await response.text(); if (text.length > 2000000) return null;
   const doc = new DOMParser().parseFromString(text,'text/html');
   if (doc.querySelector('iframe[src*="challenges.cloudflare.com"], .cf-turnstile, #challenge-running') ||
@@ -178,7 +178,18 @@ String videoSiteFreshAccountScript(Uri origin) =>
     try { const u = new URL(node.getAttribute('href'),origin);
       const m = /^\\/user\\/(\\d+)\\/?\$/.exec(u.pathname);
       if (u.origin !== origin || u.username || u.password || u.search || u.hash || !m) return [];
-      return [{id:m[1],label:(node.textContent || '').trim().slice(0,120)}];
+      const label = (doc.querySelector('#user-modal-name')?.textContent ||
+        node.getAttribute('aria-label') || '').trim().slice(0,120);
+      const image = doc.querySelector('#user-modal-dp-wrapper img, #user-modal-trigger img');
+      const avatar = image?.getAttribute('data-src') || image?.getAttribute('src');
+      let avatarUrl = '';
+      if (avatar) {
+        try {
+          const a = new URL(avatar, origin);
+          if (a.protocol === 'https:' && !a.username && !a.password && !a.hash) avatarUrl = a.href;
+        } catch (_) {}
+      }
+      return [{id:m[1],label,avatarUrl}];
     } catch (_) { return []; }
   });
   const ids = [...new Set(matches.map(p => p.id))];

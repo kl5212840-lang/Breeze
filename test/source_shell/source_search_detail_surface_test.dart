@@ -1,4 +1,5 @@
 import 'package:auto_route/auto_route.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,7 +9,11 @@ import 'package:zephyr/main.dart' show objectbox;
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/object_box/model.dart';
+import 'package:zephyr/page/bookshelf/models/shelf_page_mode.dart';
 import 'package:zephyr/page/search_result/view/source_search_detail_list.dart';
+import 'package:zephyr/page/source_shell/source_list_block_preferences.dart';
+import 'package:zephyr/page/source_shell/view/source_profile_records_view.dart';
+import 'package:zephyr/page/video/native_video_controls.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/service/jm_list_like_counts.dart';
 import 'package:zephyr/widgets/comic_entry/models/models.dart';
@@ -105,6 +110,16 @@ Widget _list(UnifiedComicListItem entry, {VoidCallback? onReturned}) =>
     );
 
 void main() {
+  const connectivity = MethodChannel('dev.fluttercommunity.plus/connectivity');
+  final messenger =
+      TestWidgetsFlutterBinding.ensureInitialized().defaultBinaryMessenger;
+  setUp(() {
+    messenger.setMockMethodCallHandler(connectivity, (_) async => ['wifi']);
+  });
+  tearDown(() {
+    messenger.setMockMethodCallHandler(connectivity, null);
+  });
+
   test(
     'comic timestamps format ISO values without inventing another time meaning',
     () {
@@ -200,7 +215,50 @@ void main() {
   });
   tearDownAll(TestObjectBoxHelper.tearDownTestObjectBox);
 
-  testWidgets('JM list and grid covers observe confirmed likes in place', (
+  testWidgets('record menus keep settings and folders with old exclusions', (
+    tester,
+  ) async {
+    const source = 'record-menu-fixture';
+    SharedPreferences.setMockInitialValues({
+      SourceListBlockPreferences.key('$source|profile:favorite'): '["冒险"]',
+    });
+    final entry = _entry().copyWith(source: source);
+    for (final compact in [false, true]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SourceProfileRecordsView(
+              key: ValueKey(compact),
+              mode: ShelfPageMode.favorite,
+              entries: [entry],
+              source: source,
+              compactLayout: compact,
+              onBack: () {},
+              onRefresh: () {},
+              onManageFolders: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(entry.title), findsOneWidget);
+      final menu = tester.widget<NativeVideoMenu>(
+        find.byKey(
+          ValueKey(compact ? 'jm-record.more' : 'profile-record.more'),
+        ),
+      );
+      expect(menu.options.values, contains(t.plugin.pluginSettings));
+      expect(menu.options.values, contains(t.videoSource.manageFolders));
+      expect(
+        menu.options.keys.any(
+          (key) => key.startsWith('category.') || key == 'clear-blocked',
+        ),
+        isFalse,
+      );
+    }
+  });
+
+  testWidgets('JM search keeps confirmed likes on list and grid covers', (
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
@@ -221,6 +279,7 @@ void main() {
         home: Scaffold(
           body: JmCoverLikeScope(
             counts: counts,
+            subtleBadge: true,
             child: Column(
               children: [
                 SourceSearchDetailTile(entry: entry),
@@ -248,6 +307,21 @@ void main() {
     counts.remember({entry.id: 0}, generation: 0);
     await tester.pump();
     expect(find.text('0'), findsNWidgets(2));
+    final captionCount = find.descendant(
+      of: find.byType(ComicDetailedCaption),
+      matching: find.text('0'),
+    );
+    expect(captionCount, findsNothing);
+    expect(find.byType(JmCoverLikeBadge), findsNWidgets(2));
+    final badgeFill = tester.widget<DecoratedBox>(
+      find
+          .descendant(
+            of: find.byType(JmCoverLikeBadge),
+            matching: find.byType(DecoratedBox),
+          )
+          .first,
+    );
+    expect((badgeFill.decoration as BoxDecoration).color?.a, closeTo(.60, .01));
     expect(tester.stateList(find.byType(CoverWidget)), orderedEquals(covers));
 
     elapsed += const Duration(minutes: 1);
@@ -265,7 +339,7 @@ void main() {
   });
 
   testWidgets(
-    'collection cards keep the bookshelf poster frame across text sizes',
+    'list covers preserve their original proportions across text sizes',
     (tester) async {
       SharedPreferences.setMockInitialValues({});
       tester.view.devicePixelRatio = 1;
@@ -273,38 +347,60 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       for (final width in [320.0, 390.0, 440.0]) {
         for (final scale in [1.0, 1.4, 2.0]) {
-          tester.view.physicalSize = Size(width, 1000);
-          await tester.pumpWidget(
-            MaterialApp(
-              builder: (context, child) => MediaQuery(
-                data: MediaQuery.of(
-                  context,
-                ).copyWith(textScaler: TextScaler.linear(scale)),
-                child: child!,
-              ),
-              home: Scaffold(
-                body: SingleChildScrollView(
-                  child: SourceSearchDetailTile(
-                    entry: _entry(),
-                    collectionLayout: true,
+          for (final collection in [false, true]) {
+            tester.view.physicalSize = Size(width, 1000);
+            await tester.pumpWidget(
+              MaterialApp(
+                builder: (context, child) => MediaQuery(
+                  data: MediaQuery.of(
+                    context,
+                  ).copyWith(textScaler: TextScaler.linear(scale)),
+                  child: child!,
+                ),
+                home: Scaffold(
+                  body: ListView(
+                    children: [
+                      SourceSearchDetailTile(
+                        entry: _entry(
+                          tags: List.generate(12, (i) => '主题$i'),
+                        ).copyWith(title: List.filled(5, '很长的作品标题').join()),
+                        collectionLayout: collection,
+                      ),
+                      SourceSearchDetailTile(
+                        entry: _entry(rich: false).copyWith(id: 'sparse'),
+                        collectionLayout: collection,
+                      ),
+                    ],
                   ),
                 ),
               ),
-            ),
-          );
-          await tester.pumpAndSettle();
-          expect(tester.getSize(find.byType(CoverWidget)), const Size(80, 120));
-          expect(
-            tester
-                .widget<CoverWidget>(find.byType(CoverWidget))
-                .containBackground,
-            isTrue,
-          );
-          expect(
-            find.byKey(const ValueKey('shelf-detail.metadata')),
-            findsOneWidget,
-          );
-          expect(tester.takeException(), isNull, reason: '$width / $scale');
+            );
+            await tester.pumpAndSettle();
+            final covers = find.byType(CoverWidget);
+            final firstCover = tester.getSize(covers.first);
+            expect(
+              firstCover,
+              collection ? const Size(80, 120) : const Size(84, 116),
+            );
+            expect(tester.getSize(covers.last), firstCover);
+            final caption = tester.getRect(
+              find.byType(ComicDetailedCaption).first,
+            );
+            expect(tester.getRect(covers.first).top, caption.top);
+            if (scale == 1) {
+              expect(
+                caption.bottom,
+                lessThanOrEqualTo(tester.getRect(covers.first).bottom),
+              );
+            }
+            expect(find.text('真实的作品简介'), findsNothing);
+            expect(
+              tester.widget<CoverWidget>(covers.first).containBackground,
+              collection,
+            );
+            expect(find.text('作者甲'), findsOneWidget);
+            expect(tester.takeException(), isNull, reason: '$width / $scale');
+          }
         }
       }
     },
@@ -322,22 +418,25 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: SourceSearchDetailTile(
-              entry: _entry(likes: 43, tags: const ['短篇', '校园', '喜剧']),
+              entry: _entry(
+                likes: 43,
+                tags: const ['短篇', '校园', '喜剧'],
+              ).copyWith(source: 'another-plugin', raw: {'pagesCount': 26}),
               collectionLayout: true,
             ),
           ),
         ),
       );
       await tester.pumpAndSettle();
-      final details = tester.widget<Text>(
-        find.byKey(const ValueKey('shelf-detail.metadata')),
+      expect(find.text('作者甲'), findsOneWidget);
+      expect(find.text('连载中 · 第12话 · 冒险 …'), findsOneWidget);
+      expect(find.byIcon(Icons.favorite_border), findsOneWidget);
+      expect(find.text('43'), findsOneWidget);
+      expect(find.text('热度 12345'), findsOneWidget);
+      expect(
+        find.text(t.searchResult.itemPageCount(count: 26)),
+        findsOneWidget,
       );
-      expect(details.data, contains('点赞 43'));
-      expect(details.data, contains('热度 12345'));
-      expect(details.data, contains('冒险'));
-      expect(details.data, contains('短篇'));
-      expect(details.data, isNot(contains('校园')));
-      expect(details.data, contains('+2'));
       expect(tester.getSize(find.byType(CoverWidget)), const Size(80, 120));
       expect(tester.takeException(), isNull);
     },
@@ -363,16 +462,57 @@ void main() {
       );
       expect(find.text('作者甲'), findsOneWidget);
       expect(find.text('作者甲 · 连载中 · 第12话'), findsNothing);
-      expect(find.text('连载中 · 第12话'), findsOneWidget);
-      expect(find.text('又名：Another name'), findsOneWidget);
+      expect(find.text('连载中 · 第12话 · 冒险'), findsOneWidget);
+      expect(find.textContaining('Another name'), findsNothing);
       expect(find.text('热度 12345'), findsOneWidget);
-      expect(find.text('更新: 2026-10-26'), findsOneWidget);
-      expect(find.text('真实的作品简介'), findsOneWidget);
+      expect(find.text('更新: 2026-10-26'), findsNothing);
+      expect(find.text('真实的作品简介'), findsNothing);
       expect(find.byIcon(Icons.favorite_border), findsNothing);
       expect(tester.takeException(), isNull);
-      await tester.pump(const Duration(milliseconds: 150));
+      await tester.tap(find.byTooltip(t.download.workDetails));
+      await tester.pumpAndSettle();
+      final update = find.text('更新: 2026-10-26');
+      await tester.scrollUntilVisible(
+        update,
+        140,
+        scrollable: find.byType(Scrollable).last,
+      );
+      expect(update, findsOneWidget);
     },
   );
+
+  testWidgets('saved comic title facts keep page and chapter counts accessible', (
+    tester,
+  ) async {
+    final entry = _entry(rich: false).copyWith(
+      raw: {
+        'titleMeta':
+            '[{"name":"页数：27"},{"name":"章节数：4"},{"name":"更新时间：2025-03-11T15:08:00"}]',
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SourceSearchDetailTile(
+            entry: entry,
+            collectionLayout: true,
+            localRecord: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text(t.searchResult.itemPageCount(count: 27)), findsOneWidget);
+    expect(find.text('章节数'), findsNothing);
+    await tester.tap(find.byTooltip(t.download.workDetails));
+    await tester.pumpAndSettle();
+    expect(find.text('章节数'), findsOneWidget);
+    expect(find.text('4'), findsOneWidget);
+    expect(
+      find.text(t.comicEntry.updatedAt(time: '2025-03-11 15:08')),
+      findsOneWidget,
+    );
+  });
 
   testWidgets(
     'authors without a navigation slug remain credited beside linked authors',
@@ -396,17 +536,111 @@ void main() {
   testWidgets('missing metadata stays absent and genuine likes stay likes', (
     tester,
   ) async {
+    final unknown = _entry(rich: false).copyWith(id: 'unknown');
+    final zero = _entry(
+      rich: false,
+      likes: 0,
+    ).copyWith(id: 'zero', raw: {'likesCount': 0});
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: _list(_entry(rich: false, likes: 42)))),
+      MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              SourceSearchDetailTile(entry: _entry(rich: false, likes: 42)),
+              SourceSearchDetailTile(entry: unknown),
+              SourceSearchDetailTile(entry: zero),
+            ],
+          ),
+        ),
+      ),
     );
     expect(find.text('42'), findsOneWidget);
-    expect(find.byIcon(Icons.favorite_border), findsOneWidget);
+    expect(find.text('0'), findsOneWidget);
+    expect(find.byIcon(Icons.favorite_border), findsNWidgets(2));
     expect(find.textContaining('1970'), findsNothing);
     expect(find.textContaining('又名'), findsNothing);
     expect(find.textContaining('热度'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pump(const Duration(milliseconds: 150));
   });
+
+  testWidgets(
+    'collection metadata opens every tag and the synopsis without resizing the row',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final tags = List.generate(12, (index) => '独立主题$index');
+      final entry = _entry(tags: tags, actions: true);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SourceSearchDetailTile(entry: entry, collectionLayout: true),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final cover = tester.getRect(find.byType(CoverWidget));
+      expect(find.text(tags.join(' · ')), findsNothing);
+      await tester.tap(find.byTooltip(t.download.workDetails));
+      await tester.pumpAndSettle();
+      final allTags = find.text(tags.join(' · '));
+      expect(allTags, findsOneWidget);
+      expect(tester.widget<Text>(allTags).maxLines, isNull);
+      expect(find.text('真实的作品简介'), findsOneWidget);
+      await tester.tap(find.byTooltip(t.common.close));
+      await tester.pumpAndSettle();
+      expect(tester.getRect(find.byType(CoverWidget)), cover);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'metadata preserves exact JM likes, measured zero views and completion beside rank',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final fence = PluginSessionWriteFence();
+      final counts = JmListLikeCounts(sessionFence: fence);
+      addTearDown(counts.dispose);
+      final entry = _entry(rich: false).copyWith(
+        source: JmListLikeCounts.source,
+        finished: true,
+        extern: {
+          'metricAvailability': {'totalLikes': false, 'totalViews': true},
+        },
+      );
+      counts.remember({entry.id: 12543}, generation: 0);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: JmCoverLikeScope(
+              counts: counts,
+              child: SizedBox(
+                height: 180,
+                child: ComicDetailedCaption(
+                  entry: entry,
+                  rankCount: 'Rank evidence',
+                  showViews: false,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text(t.comicInfo.likes(count: 12543)), findsNothing);
+      await tester.tap(find.byTooltip(t.download.workDetails));
+      await tester.pumpAndSettle();
+      expect(find.text(t.comicInfo.likes(count: 12543)), findsOneWidget);
+      expect(find.text(t.comicEntry.views(count: 0)), findsOneWidget);
+      expect(find.text(t.comicEntry.finished), findsOneWidget);
+      expect(find.text('Rank evidence'), findsNWidgets(2));
+      counts.remember({entry.id: 0}, generation: 0);
+      await tester.pump();
+      expect(find.text(t.comicInfo.likes(count: 12543)), findsNothing);
+      expect(find.text(t.comicInfo.likes(count: 0)), findsOneWidget);
+      fence.advance(JmListLikeCounts.source);
+      await tester.pump();
+    },
+  );
 
   testWidgets(
     'author navigation preserves its scene and only refreshes after return',
@@ -474,4 +708,38 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+
+  testWidgets('Copy author text on the cover card opens the work', (
+    tester,
+  ) async {
+    final entry = _entry(
+      rich: false,
+      actions: true,
+    ).copyWith(source: 'b28da416-f2d4-4208-a85e-8b4c7c648e48');
+    final router = RootStackRouter.build(
+      routes: [
+        NamedRouteDef(
+          name: 'FixtureHome',
+          path: '/',
+          initial: true,
+          builder: (_, _) => Scaffold(body: _list(entry)),
+        ),
+        NamedRouteDef(
+          name: ComicInfoRoute.name,
+          path: '/comic',
+          builder: (_, data) =>
+              Scaffold(body: Text(data.argsAs<ComicInfoRouteArgs>().comicId)),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router.config()));
+    await tester.pumpAndSettle();
+
+    expect(find.widgetWithText(TextButton, '作者甲'), findsNothing);
+    await tester.tap(find.text('作者甲'));
+    await tester.pumpAndSettle();
+    expect(find.text('work-1'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }

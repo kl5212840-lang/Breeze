@@ -2,11 +2,47 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_card_metadata.dart';
+import 'package:zephyr/page/video/hanime_catalog_scope.dart';
+import 'package:zephyr/page/video/hanime_work_facts.dart';
 import 'package:zephyr/page/video/video_engagement.dart';
 import 'package:zephyr/page/video/video_public_metadata.dart';
 import 'package:zephyr/page/video/video_site_action_models.dart';
 
 void main() {
+  testWidgets('Hanime detailed rows retain the site vote split', (
+    tester,
+  ) async {
+    const card = VideoPublicMetadata(ratingPercentRaw: '90%');
+    const known = VideoPublicMetadata(
+      positiveVotes: 9,
+      negativeVotes: 1,
+      totalVotes: 10,
+    );
+    Future<void> show(HanimeCatalogLayout layout) => tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) =>
+                hanimeWorkStatistics(context, card, layout, known: known),
+          ),
+        ),
+      ),
+    );
+    final votes = [
+      t.videoMetadata.positiveVotes(count: 9),
+      t.videoMetadata.negativeVotes(count: 1),
+      t.videoMetadata.totalVotes(count: 10),
+    ];
+    await show(HanimeCatalogLayout.detail);
+    for (final label in votes) {
+      expect(find.text(label), findsOneWidget);
+    }
+    await show(HanimeCatalogLayout.compact);
+    for (final label in votes) {
+      expect(find.text(label), findsNothing);
+    }
+  });
+
   testWidgets(
     'card metadata distinguishes duration, rating, views and current episode at large text',
     (tester) async {
@@ -98,6 +134,20 @@ void main() {
       expect(find.text(t.videoMetadata.totalVotes(count: 103)), findsOneWidget);
       expect(
         find.text(t.videoMetadata.negativeVotes(count: 3)),
+        findsOneWidget,
+      );
+      await mount(
+        VideoInteractionState.fromWire({
+          'positiveVotes': 101,
+          'negativeVotes': 2,
+          'totalVotes': 103,
+          'voteCountEstimated': true,
+        }),
+      );
+      expect(find.text(t.videoMetadata.rating(value: '98%')), findsNothing);
+      expect(find.text(t.videoMetadata.totalVotes(count: 103)), findsOneWidget);
+      expect(
+        find.text(t.videoMetadata.positiveVotes(count: 101)),
         findsOneWidget,
       );
       await mount(

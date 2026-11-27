@@ -60,6 +60,21 @@ Future<Uint8List> _downloadWebAccountAvatar({
 typedef PluginAvatarDownload =
     Future<Uint8List> Function(String url, String source);
 
+_PortraitKey _portraitKey(
+  String identity,
+  String origin,
+  String url,
+  String path,
+) {
+  // A signed URL is only a request input. Persist the image under the
+  // verified account and site so it can be shown after switching away.
+  final fromSignedWebPortrait =
+      origin.isNotEmpty && (url.isEmpty || Uri.tryParse(url)?.hasQuery == true);
+  return fromSignedWebPortrait
+      ? (identity, origin, '', '')
+      : (identity, origin, url, path);
+}
+
 Future<void> _validatePortrait(Uint8List bytes) async {
   final codec = await ui.instantiateImageCodec(bytes, targetWidth: 96);
   try {
@@ -82,9 +97,15 @@ Future<Uint8List> loadPluginAccountAvatar({
   PluginAvatarDownload? download,
   bool Function()? isCurrent,
 }) async {
+  final portrait = _portraitKey(identity, origin, url, path);
   final key = sha256.convert(
     utf8.encode(
-      jsonEncode([identity, if (origin.isNotEmpty) origin, url, path]),
+      jsonEncode([
+        portrait.$1,
+        if (portrait.$2.isNotEmpty) portrait.$2,
+        portrait.$3,
+        portrait.$4,
+      ]),
     ),
   );
   final store = DownloadAssetStore(
@@ -108,6 +129,7 @@ Future<Uint8List> loadPluginAccountAvatar({
       }
     }
   }
+  if (url.isEmpty) throw StateError('Account portrait not cached');
   final bytes =
       await (download ??
           ((url, source) =>
@@ -207,7 +229,7 @@ class _PluginAccountAvatarState extends State<PluginAccountAvatar> {
   bool _loading = false, _active = false, _failed = false;
   late final ImageRecoveryController _recovery;
   _PortraitKey get _key =>
-      (widget.identity, widget.origin, widget.url, widget.path);
+      _portraitKey(widget.identity, widget.origin, widget.url, widget.path);
 
   @override
   void initState() {
@@ -237,7 +259,7 @@ class _PluginAccountAvatarState extends State<PluginAccountAvatar> {
           remembered ??
           (changedAccount ||
                   oldWidget.origin != widget.origin ||
-                  widget.url.isEmpty
+                  widget.url.isEmpty && widget.origin.isEmpty
               ? null
               : _bytes);
       _pendingRead = refresh
@@ -251,7 +273,10 @@ class _PluginAccountAvatarState extends State<PluginAccountAvatar> {
 
   Future<void> _load() async {
     final pending = _pendingRead;
-    if (pending == null || !_active || _loading || widget.url.trim().isEmpty) {
+    if (pending == null ||
+        !_active ||
+        _loading ||
+        widget.url.trim().isEmpty && widget.origin.isEmpty) {
       return;
     }
     final epoch = ++_epoch;
@@ -269,7 +294,7 @@ class _PluginAccountAvatarState extends State<PluginAccountAvatar> {
         url: widget.url,
         path: widget.path,
         origin: origin?.origin ?? '',
-        refresh: pending == _AvatarRead.refresh,
+        refresh: pending == _AvatarRead.refresh && widget.url.isNotEmpty,
         download: origin == null
             ? null
             : (url, source) => _downloadWebAccountAvatar(
@@ -291,7 +316,11 @@ class _PluginAccountAvatarState extends State<PluginAccountAvatar> {
     } catch (error) {
       if (mounted && epoch == _epoch) {
         _failed = true;
-        _recovery.failed(error);
+        if (widget.url.isEmpty) {
+          _pendingRead = null;
+        } else {
+          _recovery.failed(error);
+        }
       }
       /* Retain the last good portrait on a transport failure. */
     } finally {

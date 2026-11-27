@@ -1,3 +1,4 @@
+import 'package:zephyr/page/bookshelf/widgets/filter_sheet_detents.dart';
 import 'dart:math' as math;
 import 'package:zephyr/page/video/omo_network.dart';
 import 'package:zephyr/page/video/video_network_scope.dart';
@@ -180,7 +181,9 @@ Future<T?> showVideoTaskSheet<T>({
   VideoPanelPurpose purpose = VideoPanelPurpose.download,
   double portraitHeightFraction = .82,
   double portraitMaxHeight = 600,
+  bool filterDetents = false,
 }) {
+  if (filterDetents) FocusManager.instance.primaryFocus?.unfocus();
   // Capture player appearance before crossing the modal route boundary.
   final appearance = systemStyle ?? VideoControlAppearance.usesSystem(context);
   final navigator = Navigator.of(context, rootNavigator: useRootNavigator);
@@ -188,7 +191,10 @@ Future<T?> showVideoTaskSheet<T>({
   ModalRoute<T>? closingRoute;
   Widget buildTask(BuildContext sheetContext) {
     closingRoute = ModalRoute.of<T>(sheetContext);
-    return VideoControlAppearance(
+    Widget panel(
+      BuildContext sheetContext,
+      Widget? handle,
+    ) => VideoControlAppearance(
       systemControls: appearance,
       child: Theme(
         data:
@@ -216,6 +222,23 @@ Future<T?> showVideoTaskSheet<T>({
                   final width = landscape
                       ? videoSidePanelWidth(context, bounds, purpose: purpose)
                       : math.min(bounds.maxWidth, 720.0);
+                  final height = landscape
+                      ? available
+                      : FilterSheetDetents.heightOf(
+                          context,
+                          compact: math.min(
+                            portraitMaxHeight,
+                            (media.size.height -
+                                        media.padding.vertical -
+                                        media.viewInsets.bottom)
+                                    .clamp(0.0, double.infinity) *
+                                .82,
+                          ),
+                          expanded: FilterSheetDetents.expandedHeight(
+                            context,
+                            available,
+                          ),
+                        );
                   final positioned = Padding(
                     padding: EdgeInsets.only(bottom: media.viewInsets.bottom),
                     child: Align(
@@ -229,16 +252,7 @@ Future<T?> showVideoTaskSheet<T>({
                           minWidth: width,
                           maxWidth: width,
                           minHeight: 0,
-                          maxHeight: landscape
-                              ? available
-                              : math.min(
-                                  portraitMaxHeight,
-                                  (media.size.height -
-                                              media.padding.vertical -
-                                              media.viewInsets.bottom)
-                                          .clamp(0.0, double.infinity) *
-                                      .82,
-                                ),
+                          maxHeight: height,
                         ),
                         child: Padding(
                           padding: landscape
@@ -267,23 +281,23 @@ Future<T?> showVideoTaskSheet<T>({
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     if (!landscape)
-                                      Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 12,
-                                        ),
-                                        child: Container(
-                                          width: 32,
-                                          height: 4,
-                                          decoration: BoxDecoration(
-                                            color: Theme.of(
-                                              context,
-                                            ).colorScheme.onSurfaceVariant,
-                                            borderRadius: BorderRadius.circular(
-                                              2,
+                                      handle ??
+                                          Padding(
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 12,
+                                            ),
+                                            child: Container(
+                                              width: 32,
+                                              height: 4,
+                                              decoration: BoxDecoration(
+                                                color: Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurfaceVariant,
+                                                borderRadius:
+                                                    BorderRadius.circular(2),
+                                              ),
                                             ),
                                           ),
-                                        ),
-                                      ),
                                     Flexible(
                                       key: const ValueKey('video-task.body'),
                                       child: ColoredBox(
@@ -331,6 +345,9 @@ Future<T?> showVideoTaskSheet<T>({
         ),
       ),
     );
+    return filterDetents
+        ? FilterSheetDetents(builder: panel)
+        : panel(sheetContext, null);
   }
 
   final media = MediaQuery.of(context);
@@ -372,6 +389,7 @@ Future<T?> showVideoTaskSheet<T>({
           _VideoTaskBottomSheetRoute<T>(
             builder: buildTask,
             capturedThemes: themes,
+            useSafeArea: filterDetents,
             barrierLabel: MaterialLocalizations.of(context).scrimLabel,
             barrierOnTapHint: MaterialLocalizations.of(context).scrimOnTapHint(
               MaterialLocalizations.of(context).bottomSheetLabel,
@@ -382,18 +400,17 @@ Future<T?> showVideoTaskSheet<T>({
   return retainVideoModalExitBarrier(shown, () => closingRoute);
 }
 
-/// Keep native bottom-sheet drag/close behavior, with a responsive scrim and
-/// no route-wide safe area that would inset the landscape material itself.
+/// Keep native bottom-sheet drag/close behavior with a responsive scrim.
 class _VideoTaskBottomSheetRoute<T> extends ModalBottomSheetRoute<T> {
   _VideoTaskBottomSheetRoute({
     required super.builder,
     required super.capturedThemes,
+    required super.useSafeArea,
     required super.barrierLabel,
     required super.barrierOnTapHint,
     required super.sheetAnimationStyle,
   }) : super(
          isScrollControlled: true,
-         useSafeArea: false,
          showDragHandle: false,
          backgroundColor: Colors.transparent,
          modalBarrierColor: Colors.transparent,
@@ -441,6 +458,76 @@ class VideoDisclosureIndicator extends StatelessWidget {
       ),
     ),
   );
+}
+
+class VideoExpandableDescription extends StatefulWidget {
+  const VideoExpandableDescription({
+    super.key,
+    required this.text,
+    required this.previewLines,
+    this.style,
+  });
+
+  final String text;
+  final int previewLines;
+  final TextStyle? style;
+
+  @override
+  State<VideoExpandableDescription> createState() =>
+      _VideoExpandableDescriptionState();
+}
+
+class _VideoExpandableDescriptionState
+    extends State<VideoExpandableDescription> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = DefaultTextStyle.of(context).style.merge(widget.style);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final preview = TextPainter(
+          text: TextSpan(text: widget.text, style: style),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+          locale: Localizations.maybeLocaleOf(context),
+          maxLines: widget.previewLines,
+        )..layout(maxWidth: constraints.maxWidth);
+        final hasMore = preview.didExceedMaxLines;
+        preview.dispose();
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            VideoSizeTransition(
+              alignment: AlignmentDirectional.topStart,
+              child: Text(
+                widget.text,
+                style: style,
+                maxLines: _expanded ? null : widget.previewLines,
+                overflow: _expanded
+                    ? TextOverflow.visible
+                    : TextOverflow.ellipsis,
+              ),
+            ),
+            if (hasMore)
+              Semantics(
+                expanded: _expanded,
+                child: TextButton.icon(
+                  onPressed: () => setState(() => _expanded = !_expanded),
+                  icon: VideoDisclosureIndicator(expanded: _expanded, size: 18),
+                  label: Text(
+                    _expanded
+                        ? t.videoPlayback.collapseDescription
+                        : t.videoPlayback.expandDescription,
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
 }
 
 /// Keep the same horizontal list attached during a reversal. Once fully

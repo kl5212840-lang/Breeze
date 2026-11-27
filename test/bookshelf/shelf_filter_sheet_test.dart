@@ -7,6 +7,8 @@ import 'package:zephyr/page/bookshelf/models/shelf_facets.dart';
 import 'package:zephyr/page/bookshelf/service/shelf_facet_preferences.dart';
 import 'package:zephyr/page/bookshelf/widgets/shelf_filter_sheet.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
+import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
 
 List<ShelfFacetEntry> _entries() => [
   const ShelfFacetEntry(
@@ -40,6 +42,11 @@ Future<void> _mount(
   Brightness brightness = Brightness.light,
   bool hierarchical = true,
   String? currentFolder,
+  ShelfFilterKeyword? keyword,
+  bool keywordAsFacet = false,
+  bool autoLoadMetadata = false,
+  ValueNotifier<ShelfFilterSnapshot>? liveSnapshot,
+  VoidCallback? onLoadMetadata,
 }) async {
   await tester.pumpWidget(
     AppInterfaceStyleScope(
@@ -65,6 +72,14 @@ Future<void> _mount(
                   scopeLabel: '本机收藏',
                   currentFolder: currentFolder,
                   hierarchical: hierarchical,
+                  keyword: keyword,
+                  keywordAsFacet: keywordAsFacet,
+                  focusedLayout: keywordAsFacet,
+                  showScopeLabel: keywordAsFacet || autoLoadMetadata,
+                  autoLoadMetadata: autoLoadMetadata,
+                  loadMetadataLabel: 'Load another page',
+                  liveSnapshot: liveSnapshot,
+                  onLoadMetadata: onLoadMetadata,
                 ),
               ),
             ),
@@ -79,6 +94,234 @@ Future<void> _mount(
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
+  testWidgets('title facet shares the filter panel and keeps one editor', (
+    tester,
+  ) async {
+    final style = ValueNotifier('breeze');
+    addTearDown(style.dispose);
+    const added = ShelfFacetEntry(
+      key: 'c',
+      source: 'one',
+      searchText: 'New work',
+      fields: {
+        'tags': {'C'},
+        'team': {'Team three'},
+      },
+    );
+    final entries = _entries();
+    final live = ValueNotifier<ShelfFilterSnapshot>((
+      entries: entries,
+      scopeLabel: 'Loaded scope',
+      loadingMetadata: false,
+      canLoadMetadata: true,
+    ));
+    addTearDown(live.dispose);
+    (String, KeywordSearchScope)? applied;
+    await _mount(
+      tester,
+      style: style,
+      onResult: (_) {},
+      liveSnapshot: live,
+      onLoadMetadata: () {
+        live.value = (
+          entries: [...entries, added],
+          scopeLabel: 'Updated loaded scope',
+          loadingMetadata: false,
+          canLoadMetadata: false,
+        );
+      },
+      keywordAsFacet: true,
+      keyword: (
+        query: '',
+        scope: KeywordSearchScope.title,
+        entriesFor: (query, _) => live.value.entries
+            .where((entry) => entry.searchText.contains(query))
+            .toList(),
+        onApply: (query, scope) => applied = (query, scope),
+      ),
+    );
+
+    final options = find.byKey(const ValueKey('shelf-facet-search'));
+    final titleInput = find.byKey(const ValueKey('shelf-filter-work-query'));
+    final tags = find.byKey(const ValueKey('shelf-facet-tags'));
+    final title = find.byKey(const ValueKey('shelf-facet-title'));
+    expect(tester.widget<ChoiceChip>(tags).selected, isTrue);
+    expect(find.byKey(const ValueKey('shelf-star-A')), findsOneWidget);
+    expect(options, findsOneWidget);
+    expect(titleInput, findsNothing);
+
+    await tester.tap(title);
+    await tester.pumpAndSettle();
+    expect(options, findsNothing);
+    expect(titleInput, findsOneWidget);
+    expect(find.byType(KeywordScopeMenu), findsNothing);
+    await tester.enterText(
+      find.descendant(of: titleInput, matching: find.byType(TextField)),
+      'first',
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Load another page'));
+    await tester.pumpAndSettle();
+    expect(find.text('Updated loaded scope'), findsOneWidget);
+    expect(tester.widget<ChoiceChip>(title).selected, isTrue);
+    expect(find.text('first'), findsOneWidget);
+
+    await tester.tap(tags);
+    await tester.pumpAndSettle();
+    expect(options, findsOneWidget);
+    expect(titleInput, findsNothing);
+    expect(find.byKey(const ValueKey('shelf-facet-team')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('shelf-filter-apply')));
+    await tester.pumpAndSettle();
+    expect(applied, ('first', KeywordSearchScope.title));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('background pages run singly and stop after three', (
+    tester,
+  ) async {
+    final style = ValueNotifier('breeze');
+    addTearDown(style.dispose);
+    final entries = _entries();
+    final live = ValueNotifier<ShelfFilterSnapshot>((
+      entries: entries,
+      scopeLabel: 'Loaded scope',
+      loadingMetadata: false,
+      canLoadMetadata: true,
+    ));
+    addTearDown(live.dispose);
+    var loads = 0;
+    void publish(bool loading) {
+      live.value = (
+        entries: entries,
+        scopeLabel: loading ? 'Loading scope' : 'Loaded scope',
+        loadingMetadata: loading,
+        canLoadMetadata: !loading,
+      );
+    }
+
+    await _mount(
+      tester,
+      style: style,
+      onResult: (_) {},
+      liveSnapshot: live,
+      autoLoadMetadata: true,
+      onLoadMetadata: () {
+        expect(live.value.loadingMetadata, isFalse);
+        loads++;
+        publish(true);
+      },
+    );
+
+    final loadAction = find.byKey(const ValueKey('shelf-filter-more-metadata'));
+    expect(loadAction, findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    for (var page = 1; page <= 3; page++) {
+      expect(loads, page);
+      expect(find.text('Loading scope'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 1));
+      expect(loads, page);
+      publish(false);
+      await tester.pumpAndSettle();
+    }
+    expect(loads, 3);
+    expect(find.text('Loaded scope'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('background pages stay stopped after the sheet closes', (
+    tester,
+  ) async {
+    final style = ValueNotifier('breeze');
+    addTearDown(style.dispose);
+    final entries = _entries();
+    final initial = (
+      entries: entries,
+      scopeLabel: 'Loaded scope',
+      loadingMetadata: false,
+      canLoadMetadata: true,
+    );
+    final live = ValueNotifier<ShelfFilterSnapshot>(initial);
+    addTearDown(live.dispose);
+    var loads = 0;
+    await _mount(
+      tester,
+      style: style,
+      onResult: (_) {},
+      liveSnapshot: live,
+      autoLoadMetadata: true,
+      onLoadMetadata: () {
+        loads++;
+        live.value = (
+          entries: entries,
+          scopeLabel: 'Loading scope',
+          loadingMetadata: true,
+          canLoadMetadata: false,
+        );
+      },
+    );
+    expect(loads, 1);
+
+    await tester.tap(find.byKey(const ValueKey('shelf-focused-cancel')));
+    live.value = initial;
+    await tester.pumpAndSettle();
+    expect(loads, 1);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  for (final completesInSameFrame in [false, true]) {
+    testWidgets(
+      completesInSameFrame
+          ? 'background paging observes loading cycles within one frame'
+          : 'background paging stays idle when the callback is a no-op',
+      (tester) async {
+        final style = ValueNotifier('breeze');
+        addTearDown(style.dispose);
+        final entries = _entries();
+        final idle = (
+          entries: entries,
+          scopeLabel: 'Loaded scope',
+          loadingMetadata: false,
+          canLoadMetadata: true,
+        );
+        final live = ValueNotifier<ShelfFilterSnapshot>(idle);
+        addTearDown(live.dispose);
+        var loads = 0;
+        await _mount(
+          tester,
+          style: style,
+          onResult: (_) {},
+          liveSnapshot: live,
+          autoLoadMetadata: true,
+          onLoadMetadata: () {
+            loads++;
+            if (completesInSameFrame) {
+              live.value = (
+                entries: entries,
+                scopeLabel: 'Loading scope',
+                loadingMetadata: true,
+                canLoadMetadata: false,
+              );
+              live.value = idle;
+            }
+          },
+        );
+
+        final expectedLoads = completesInSameFrame ? 3 : 1;
+        expect(loads, expectedLoads);
+        live.value = (
+          entries: entries,
+          scopeLabel: 'Changed scope',
+          loadingMetadata: false,
+          canLoadMetadata: true,
+        );
+        await tester.pumpAndSettle();
+        expect(loads, expectedLoads);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
+
   testWidgets('shelf filter reopens on its applied facet with outlined chips', (
     tester,
   ) async {

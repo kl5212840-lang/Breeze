@@ -217,14 +217,24 @@ void main() {
       }
       await tester.tap(find.text(t.common.ok));
       var finished = false;
-      operation.whenComplete(() => finished = true);
-      for (var frame = 0; frame < 120 && !finished; frame++) {
+      operation.then<void>(
+        (_) => finished = true,
+        onError: (Object _, StackTrace _) => finished = true,
+      );
+      // The storage lease spans real filesystem I/O. Keep the widget's clock
+      // alive while the journal, rename and cleanup futures resume between frames.
+      final elapsed = Stopwatch()..start();
+      while (!finished && elapsed.elapsed < const Duration(seconds: 10)) {
         await tester.pump(const Duration(milliseconds: 16));
         await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
         );
       }
-      expect(finished, isTrue);
+      expect(
+        finished,
+        isTrue,
+        reason: 'The confirmation operation must settle.',
+      );
       await operation;
       if (cancelled) {
         expect(

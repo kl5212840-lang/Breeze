@@ -241,7 +241,6 @@ Map<String, dynamic> _reviewPortableValues(GlobalSettingState state) {
       ..._reviewAppearanceKeys,
       'oldPageRollbackEnabled',
       'autoFollowOnCollect',
-      'comicDownloadConcurrency',
       'videoDownloadConcurrency',
       'downloadWifiOnly',
       'downloadCompletionNotice',
@@ -336,6 +335,9 @@ Map<String, dynamic> _shippedSettings() {
           )
           as Map<String, dynamic>;
   (global['syncSetting'] as Map).remove('legacyCompatibilityEnabled');
+  // These fields did not exist in the released 3.0.38 serializer.
+  global.remove('comicDownloadConcurrency');
+  (global['readSetting'] as Map).remove('showSystemStatusBar');
   for (final key in ['customExportPath', 'appLockSetting', 'cacheSetting']) {
     global.remove(key);
   }

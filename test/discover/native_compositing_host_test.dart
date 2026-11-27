@@ -50,6 +50,16 @@ Finder _iconGroups(Finder row) => find.descendant(
   ),
 );
 
+Finder _discoverSegment() => find.descendant(
+  of: find.byType(NativeVideoSegmentedControl),
+  matching: find.byWidgetPredicate(
+    (widget) =>
+        widget is UiKitView &&
+        widget.creationParams is Map &&
+        (widget.creationParams as Map)['kind'] == 'segmented',
+  ),
+);
+
 int _platformId(Finder view) {
   RenderUiKitView? result;
   void visit(RenderObject object) {
@@ -108,7 +118,6 @@ void main() {
   final channels = <MethodChannel>[];
   final arguments = <int, Map<dynamic, dynamic>>{};
   final updates = <int, int>{};
-  final gestures = <(String, int)>[];
   final presses = <(int, String, bool)>[];
   setUp(() {
     messenger.setMockMethodCallHandler(SystemChannels.platform_views, (
@@ -137,9 +146,6 @@ void main() {
           return null;
         });
       }
-      if (call.method == 'acceptGesture' || call.method == 'rejectGesture') {
-        gestures.add((call.method, (call.arguments as Map)['id'] as int));
-      }
       return null;
     });
   });
@@ -151,7 +157,6 @@ void main() {
     channels.clear();
     arguments.clear();
     updates.clear();
-    gestures.clear();
     presses.clear();
   });
 
@@ -193,6 +198,14 @@ void main() {
           find.byType(layout == 'list' ? PluginCard : PluginGridTile),
           findsOneWidget,
         );
+        final segment = _discoverSegment();
+        expect(segment, findsOneWidget);
+        expect(arguments[_platformId(segment)]?['selected'], layout);
+        expect(tester.getSize(segment).height, 44);
+        final selector = tester.widget<NativeVideoSegmentedControl>(
+          find.byType(NativeVideoSegmentedControl),
+        );
+        expect(selector.dragEnabled, isTrue);
         expectRectangularNativeAncestry(tester);
         final originals = tester.stateList(find.byType(UiKitView)).toList();
         final initial = cubit.state;
@@ -223,6 +236,7 @@ void main() {
         if (group != null) {
           expect(enabledButtons(), {'search': true, 'settings': true});
           expect(rowButtons(), everyElement(containsPair('flatSurface', true)));
+          expect(rowButtons(), everyElement(containsPair('bare', true)));
           expect(
             rowButtons(),
             everyElement(containsPair('iconPressFeedback', true)),
@@ -386,25 +400,6 @@ void main() {
           await settingsPress.up();
           await tester.pumpAndSettle();
           expect(presses.last, (firstId, 'settings', false));
-          final selector = find.byWidgetPredicate(
-            (widget) =>
-                widget is UiKitView &&
-                (widget.creationParams as Map?)?['kind'] == 'segmented',
-          );
-          final selectorId = _platformId(selector);
-          final center = tester.getCenter(selector);
-          final drag = await tester.startGesture(center + const Offset(42, 0));
-          await drag.moveBy(const Offset(-34, 0));
-          await drag.moveBy(const Offset(-50, 0));
-          await tester.pumpAndSettle();
-          expect(arguments[selectorId]?['selected'], 'grid');
-          expect(find.byType(PluginGridTile), findsNothing);
-          await drag.cancel();
-          await tester.pumpAndSettle();
-          expect(arguments[selectorId]?['selected'], 'list');
-          gestures.clear();
-          await tester.dragFrom(center, const Offset(0, -100));
-          expect(gestures, contains(('rejectGesture', selectorId)));
         } else {
           expect(find.byType(UiKitView), findsNothing);
         }
@@ -434,45 +429,53 @@ void main() {
           final restoredId = _platformId(groups);
           expect(arguments[restoredId]?['rtl'], isTrue);
           expect(_platformLayers(tester), contains(restoredId));
-          final selector = find.byWidgetPredicate(
-            (widget) =>
-                widget is UiKitView &&
-                (widget.creationParams as Map?)?['kind'] == 'segmented',
-          );
-          final center = tester.getCenter(selector);
-          await tester.dragFrom(
-            center + const Offset(42, 0),
-            const Offset(-84, 0),
-          );
-          await tester.pumpAndSettle();
-          expect(find.byType(PluginGridTile), findsWidgets);
-          final preferences = await SharedPreferences.getInstance();
-          expect(preferences.getString('discover_plugin_layout_v1'), 'grid');
-          await tester.dragFrom(
-            tester.getCenter(selector) - const Offset(42, 0),
-            const Offset(84, 0),
-          );
-          await tester.pumpAndSettle();
-          expect(first, findsOneWidget);
-          expect(preferences.getString('discover_plugin_layout_v1'), 'list');
         } else {
           expect(find.byType(UiKitView), findsNothing);
-          final selector = find.byType(BreezeSectionSelector<String>);
-          final listSlot = tester.getCenter(selector) + const Offset(42, 0);
-          final cancelled = await tester.startGesture(listSlot);
-          await cancelled.moveBy(const Offset(-34, 0));
-          await cancelled.moveBy(const Offset(-50, 0));
-          await tester.pump();
-          expect(find.byType(PluginGridTile), findsNothing);
-          await cancelled.cancel();
-          await tester.pumpAndSettle();
-          expect(first, findsOneWidget);
-          await tester.dragFrom(listSlot, const Offset(-84, 0));
-          await tester.pumpAndSettle();
-          expect(find.byType(PluginGridTile), findsWidgets);
-          final preferences = await SharedPreferences.getInstance();
-          expect(preferences.getString('discover_plugin_layout_v1'), 'grid');
         }
+        final selector = find.byType(NativeVideoSegmentedControl);
+        final plate = find.descendant(
+          of: selector,
+          matching: find.byKey(const ValueKey('breeze.selection.plate')),
+        );
+        final center = tester.getCenter(selector);
+        final segment = _discoverSegment();
+        final native = styleName == 'system';
+        final segmentId = native ? _platformId(segment) : null;
+        final start = native ? null : tester.getCenter(plate).dx;
+        final side = tester.getSize(selector).width / 4;
+        final listSlot = center + Offset(side, 0);
+        final cancelled = await tester.startGesture(listSlot);
+        await cancelled.moveBy(Offset(-side, 0));
+        await cancelled.moveBy(Offset(-side, 0));
+        await tester.pump();
+        if (native) {
+          expect(arguments[segmentId]?['selected'], 'grid');
+        } else {
+          expect(tester.getCenter(plate).dx, lessThan(start!));
+        }
+        expect(find.byType(PluginGridTile), findsNothing);
+        await cancelled.cancel();
+        await tester.pumpAndSettle();
+        if (native) {
+          expect(arguments[segmentId]?['selected'], 'list');
+        } else {
+          expect(tester.getCenter(plate).dx, closeTo(start!, .01));
+        }
+        expect(first, findsOneWidget);
+
+        await tester.dragFrom(listSlot, Offset(-2 * side, 0));
+        await tester.pumpAndSettle();
+        expect(find.byType(PluginGridTile), findsWidgets);
+        final preferences = await SharedPreferences.getInstance();
+        expect(preferences.getString('discover_plugin_layout_v1'), 'grid');
+        await tester.dragFrom(center - Offset(side, 0), Offset(2 * side, 0));
+        await tester.pumpAndSettle();
+        expect(first, findsOneWidget);
+        expect(preferences.getString('discover_plugin_layout_v1'), 'list');
+        await tester.dragFrom(center, const Offset(0, -100));
+        await tester.pumpAndSettle();
+        expect(position.pixels, greaterThan(0));
+        expect(preferences.getString('discover_plugin_layout_v1'), 'list');
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
       },

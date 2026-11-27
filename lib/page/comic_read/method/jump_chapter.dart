@@ -49,9 +49,7 @@ class JumpChapter {
 
   void jumpToChapter(BuildContext context, bool isPrev) {
     final router = AutoRouter.of(context);
-    final index = chapters.indexWhere(
-      (chapter) => _matchesCurrentChapter(chapter),
-    );
+    final index = currentChapterIndexIn(chapters);
     if (index < 0) {
       return;
     }
@@ -131,11 +129,9 @@ class JumpChapter {
 
     // 定位当前章节：优先用 chapterId / logicalKey / requestId，再按 order。
     final target = _firstNonEmpty([logicalKey, chapterId, requestId]);
-    DownloadChapter? current;
-    if (target != null && target.isNotEmpty) {
-      current = matcher.find(downloadChapters, target);
-    }
-    current ??= matcher.findByOrder(downloadChapters, order);
+    final DownloadChapter? current = target != null
+        ? matcher.findByIdentity(downloadChapters, target)
+        : matcher.findByOrder(downloadChapters, order);
 
     bool havePrev = true;
     bool haveNext = true;
@@ -177,19 +173,6 @@ class JumpChapter {
     );
   }
 
-  bool _matchesCurrentChapter(UnifiedComicChapterRef chapter) {
-    const adapter = DownloadChapterAdapter();
-    const matcher = DownloadChapterMatcher();
-    final candidate = adapter.fromChapterRef(chapter);
-    // 当前章节标识可能来自 logicalKey / chapterId / requestId，
-    // 取最可靠的一个作为匹配 target。
-    final target = _firstNonEmpty([logicalKey, chapterId, requestId]);
-    if (target == null || target.isEmpty) {
-      return false;
-    }
-    return matcher.matches(candidate, target);
-  }
-
   static String? _firstNonEmpty(List<String> values) {
     for (final value in values) {
       if (value.trim().isNotEmpty) return value.trim();
@@ -198,6 +181,15 @@ class JumpChapter {
   }
 
   /// 用于章节选择对话框定位初始滚动位置
-  int currentChapterIndexIn(List<UnifiedComicChapterRef> refs) =>
-      refs.indexWhere(_matchesCurrentChapter);
+  int currentChapterIndexIn(List<UnifiedComicChapterRef> refs) {
+    final target = _firstNonEmpty([logicalKey, chapterId, requestId]);
+    if (target == null) return -1;
+    const adapter = DownloadChapterAdapter();
+    final chapters = refs.map(adapter.fromChapterRef).toList();
+    final chapter = const DownloadChapterMatcher().findByIdentity(
+      chapters,
+      target,
+    );
+    return chapter == null ? -1 : chapters.indexOf(chapter);
+  }
 }

@@ -142,7 +142,9 @@ void main() {
         const routeTransition = Duration(milliseconds: 350);
 
         Future<void> openGallery(Finder sync) async {
-          await tester.tap(sync);
+          await tester.ensureVisible(sync);
+          await tester.pumpAndSettle();
+          await tester.tap(sync.hitTestable());
           await _pumpUntil(
             tester,
             () => galleryTitle.evaluate().isNotEmpty,

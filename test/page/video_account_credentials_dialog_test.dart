@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
@@ -29,6 +30,24 @@ String _stored() =>
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    const connectivity = MethodChannel(
+      'dev.fluttercommunity.plus/connectivity',
+    );
+    const changes = MethodChannel(
+      'dev.fluttercommunity.plus/connectivity_status',
+    );
+    messenger.setMockMethodCallHandler(connectivity, (_) async => ['wifi']);
+    messenger.setMockMethodCallHandler(changes, (_) async => null);
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(connectivity, null);
+      messenger.setMockMethodCallHandler(changes, null);
+    });
+  });
+
   setUpAll(TestObjectBoxHelper.setUpTestObjectBox);
   tearDownAll(TestObjectBoxHelper.tearDownTestObjectBox);
   setUp(() async {
@@ -342,6 +361,15 @@ void main() {
           ),
         ),
       );
+
+      // Local account previews finish metadata reads outside the fake clock.
+      await tester.pump();
+      for (var i = 0; i < 50 && tester.binding.hasScheduledFrame; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+      }
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('omo-my.avatar')));
       await tester.pumpAndSettle();

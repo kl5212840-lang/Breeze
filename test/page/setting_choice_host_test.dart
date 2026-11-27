@@ -275,7 +275,7 @@ void main() {
   }, variant: TargetPlatformVariant.only(TargetPlatform.iOS));
 
   testWidgets(
-    'selecting a displayed fallback commits the actual eInk setting',
+    'preserves a custom eInk refresh interval until an explicit selection',
     (tester) async {
       final cubit = GlobalSettingCubit();
       addTearDown(cubit.close);
@@ -296,7 +296,7 @@ void main() {
       );
       await tester.pumpAndSettle();
       final setting = find.byType(SettingChoice<int>);
-      expect(tester.widget<SettingChoice<int>>(setting).value, 0);
+      expect(tester.widget<SettingChoice<int>>(setting).value, 17);
       expect(cubit.state.eInkSetting.autoRefreshEveryNTurns, 17);
       final menu = tester.widget<NativeVideoMenu>(
         find.descendant(of: setting, matching: find.byType(NativeVideoMenu)),

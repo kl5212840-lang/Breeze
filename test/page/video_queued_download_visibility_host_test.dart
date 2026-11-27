@@ -163,7 +163,17 @@ void main(){
       await until(() => retry.evaluate().isNotEmpty,
         'A never-reply read ends in an explicit retryable error, while cards remain');
       expect(retry, findsOneWidget);
-      expect(find.textContaining('Omo persisted work'),findsWidgets);expect(find.textContaining('Test Comic visible-comic'),findsWidgets);
+      expect(find.textContaining('Omo persisted work'), findsWidgets);
+      final comic = find.textContaining('Test Comic visible-comic');
+      await tester.scrollUntilVisible(
+        comic,
+        120,
+        scrollable: find.descendant(
+          of: find.byKey(const PageStorageKey('download-center.unified')),
+          matching: find.byType(Scrollable),
+        ).first,
+      );
+      expect(comic, findsWidgets);
       expect(nativeResult.isCompleted,isFalse);expect(index.isCompleted,isFalse);
       expect(calls.where((fn)=>fn=='play'),hasLength(1),reason:'The second public episode remains queued, never resolved early');
     }finally{

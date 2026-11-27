@@ -262,7 +262,7 @@ void main() {
   );
 
   test(
-    'network loss retires the old transfer and resolves the same attempt target',
+    'iOS MP4 network failure retries the same target after native settlement',
     () async {
       const source = 'parallel-download-fixture';
       final resolved = <Map<String, dynamic>>[];
@@ -284,7 +284,13 @@ void main() {
       final engine = VideoSystemDownload();
       final initial = save(engine, 303);
       await starts(1);
+      final id = idFor(303);
+      final scope = arguments[id]!['resumeScope'];
+      expect(scope, matches(RegExp(r'^[0-9a-f]{64}$')));
       connectivity.set(ConnectivityResult.none);
+      await Future<void>.delayed(Duration.zero);
+      expect(nativeCancellations, isEmpty);
+      jobs[id]!.complete({'status': 'failed', 'reason': 'network'});
       expect(await initial, VideoDownloadStatus.failed);
       final waiting = await waitForTask(
         engine,
@@ -296,6 +302,7 @@ void main() {
       expect(resolved.single['url'], watch(303).toString());
       expect(resolved.single['attempt'], (waiting['attempt'] as int) + 1);
       expect(arguments.values.last['url'], contains('signature=reconnected'));
+      expect(arguments.values.last['resumeScope'], scope);
       await VideoSystemDownload.cancelTask(engine.lastTaskKey!);
       await waitForTask(engine, (row) => row['status'] == 'cancelled');
     },
@@ -447,6 +454,8 @@ void main() {
       final initial = save(engine, 305);
       await starts(1);
       connectivity.set(ConnectivityResult.none);
+      await Future<void>.delayed(Duration.zero);
+      jobs[idFor(305)]!.complete({'status': 'failed', 'reason': 'timeout'});
       expect(await initial, VideoDownloadStatus.failed);
       final waiting = await waitForTask(
         engine,
@@ -476,6 +485,40 @@ void main() {
       );
     },
   );
+
+  test('expired MP4 address is refreshed once even when Wi-Fi stays online', () async {
+    const source = 'parallel-download-fixture';
+    final resolved = <Map<String, dynamic>>[];
+    final lease = VideoDownloadRetry.register(source, (row) async {
+      resolved.add(row);
+      return VideoDownloadRetryResolution(choices: [
+        (
+          label: '720p',
+          format: 'mp4',
+          url: Uri.parse('https://cdn.test/314.mp4?signature=new'),
+        ),
+      ]);
+    }, current: () => true);
+    addTearDown(() => VideoDownloadRetry.unregister(source, lease));
+    final engine = VideoSystemDownload();
+    final first = save(engine, 314);
+    await starts(1);
+    const refused = {'status': 'failed', 'reason': 'httpForbidden', 'httpStatus': 403};
+    final firstId = arguments.keys.single;
+    jobs[firstId]!.complete(refused);
+    expect(await first, VideoDownloadStatus.failed);
+    await starts(2);
+    final secondId = arguments.keys.last;
+    expect(resolved.single['key'], engine.lastTaskKey);
+    expect(arguments[secondId]!['url'], 'https://cdn.test/314.mp4?signature=new');
+    expect(arguments[secondId]!['resumeScope'], arguments[firstId]!['resumeScope']);
+    expect(arguments[secondId]!['managedId'], arguments[firstId]!['managedId']);
+    jobs[secondId]!.complete(refused);
+    await waitForTask(engine, (row) => row['status'] == 'failed' && row['attempt'] == 2);
+    await Future<void>.delayed(const Duration(milliseconds: 25));
+    expect(arguments, hasLength(2));
+    expect(resolved, hasLength(1));
+  });
 
   test(
     'one engine rejects a second save before asynchronous admission begins',

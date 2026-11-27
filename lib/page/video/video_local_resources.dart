@@ -314,13 +314,17 @@ abstract final class VideoLocalResources {
     bool fresh = false,
     void Function(List<Map<String, dynamic>>)? onCheckedMp4,
   }) => runExclusiveStorageOperation(() async {
-    final mp4 = await _readNow(fresh: fresh);
-    onCheckedMp4?.call(mp4);
-    try {
-      return (rows: [...mp4, ...await VideoHlsAssets.read()], complete: true);
-    } catch (_) {
-      return (rows: mp4, complete: false);
-    }
+    final (mp4, hls) = await (
+      _readNow(fresh: fresh).then((rows) {
+        onCheckedMp4?.call(rows);
+        return rows;
+      }),
+      VideoHlsAssets.read().then<List<Map<String, dynamic>>?>(
+        (rows) => rows,
+        onError: (Object _, StackTrace _) => null,
+      ),
+    ).wait;
+    return (rows: [...mp4, ...?hls], complete: hls != null);
   });
 
   static Future<List<Map<String, dynamic>>> readPlaybackQueue() async {

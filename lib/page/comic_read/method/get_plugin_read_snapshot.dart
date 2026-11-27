@@ -35,7 +35,7 @@ Future<NormalComicEpInfo> getPluginReadSnapshot(
     final chapters = chapterRefs.map(adapter.fromChapterRef).toList();
     final normalizedChapterId = (selectedChapterId ?? '').trim();
     chapter = normalizedChapterId.isNotEmpty
-        ? matcher.find(chapters, normalizedChapterId)
+        ? matcher.findByIdentity(chapters, normalizedChapterId)
         : matcher.findByOrder(chapters, order);
   }
 
@@ -59,7 +59,10 @@ Future<NormalComicEpInfo> getPluginReadSnapshot(
     chapter?.id ?? '',
     chapter?.effectiveRequestId ?? '',
   }.map((id) => id.trim()).where((id) => id.isNotEmpty).toSet();
-  final candidates = {resolvedChapterId, comicId, ''};
+  final candidates = {
+    resolvedChapterId,
+    if (expectedIds.isEmpty && order <= 1) ...[comicId, ''],
+  };
 
   ComicReadSnapshot? snapshot;
   for (final candidate in candidates) {
@@ -81,10 +84,25 @@ Future<NormalComicEpInfo> getPluginReadSnapshot(
       current.chapter.requestId,
       current.chapter.logicalKey,
     }.map((id) => id.trim()).where((id) => id.isNotEmpty).toSet();
-    if (expectedIds.isNotEmpty &&
-        (returnedIds.isNotEmpty
-            ? !returnedIds.any(expectedIds.contains)
-            : candidate != resolvedChapterId)) {
+    final returnedLogicalKey = current.chapter.logicalKey.trim();
+    final matchingIds = returnedIds.intersection(expectedIds);
+    final ambiguousRequest =
+        matchingIds.length == 1 &&
+        matchingIds.contains(resolvedChapterId) &&
+        comicInfo is PluginComicDetailSource &&
+        comicInfo.eps
+                .map(adapter.fromEp)
+                .where((item) => item.effectiveRequestId == resolvedChapterId)
+                .take(2)
+                .length >
+            1;
+    final identityMatches = expectedIds.isEmpty
+        ? order <= 1 || current.chapter.order == order
+        : matchingIds.isNotEmpty &&
+              !ambiguousRequest &&
+              (returnedLogicalKey.isEmpty ||
+                  expectedIds.contains(returnedLogicalKey));
+    if (!identityMatches) {
       throw const FormatException('插件返回的图片与当前章节不匹配');
     }
     snapshot = current;

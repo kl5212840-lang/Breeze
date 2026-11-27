@@ -7,20 +7,22 @@ class _ReaderSettingsGestureTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final webtoon = context.select<GlobalSettingCubit, bool>(
-      (settings) => settings.state.readSetting.readMode == 0,
-    );
+    final settings = context.watchTargetReadSetting();
+    final webtoon = settings.readMode == 0;
+    final customArea = settings.customToolbarTapArea;
     return _SettingsTabContent(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (webtoon) ...[
+          const _ToolbarTapAreaSection(),
+          const SizedBox(height: 18),
+          if (customArea && webtoon) ...[
             const _WebtoonTapPageTurnSection(),
             const SizedBox(height: 18),
           ],
           const _TapPageTurnModeSection(),
           const SizedBox(height: 18),
-          if (!webtoon) ...[
+          if (customArea && !webtoon) ...[
             const _WebtoonTapPageTurnSection(),
             const SizedBox(height: 18),
           ],
@@ -33,6 +35,74 @@ class _ReaderSettingsGestureTab extends StatelessWidget {
   }
 }
 
+class _ToolbarTapAreaSection extends StatelessWidget {
+  const _ToolbarTapAreaSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final effective = context.watchTargetReadSetting();
+    return _SettingsSection(
+      title: t.reader.toolbarTapArea,
+      children: [
+        _SettingsSwitchTile(
+          title: t.reader.customToolbarTapArea,
+          subtitle: effective.customToolbarTapArea
+              ? ''
+              : t.reader.toolbarTapAreaHelp,
+          value: effective.customToolbarTapArea,
+          onChanged: (value) => context.updateEffectiveReadSetting(
+            (current) => current.copyWith(customToolbarTapArea: value),
+          ),
+        ),
+        if (effective.customToolbarTapArea)
+          _SettingsSliderCard(
+            sliderKey: const ValueKey('reader.toolbar-tap-area.width'),
+            title: t.reader.toolbarTapAreaWidth,
+            value: normalizeToolbarTapAreaPercent(
+              effective.toolbarTapAreaPercent,
+            ),
+            min: minToolbarTapAreaPercent,
+            max: maxToolbarTapAreaPercent,
+            suffix: t.reader.percent,
+            onChanged: (value) => context.updateEffectiveReadSetting(
+              (current) => current.copyWith(toolbarTapAreaPercent: value),
+            ),
+            preview: (context, percent) {
+              final colors = context.theme.colorScheme;
+              final highContrast = MediaQuery.highContrastOf(context);
+              return ExcludeSemantics(
+                child: Center(
+                  child: Container(
+                    width: 76,
+                    height: 106,
+                    decoration: BoxDecoration(
+                      color: colors.surface,
+                      border: Border.all(
+                        color: highContrast ? colors.onSurface : colors.outline,
+                      ),
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: FractionallySizedBox(
+                      key: const ValueKey('reader.toolbar-tap-area.preview'),
+                      widthFactor: percent / 100,
+                      heightFactor: 1,
+                      child: ColoredBox(
+                        color: highContrast
+                            ? colors.primary
+                            : colors.primaryContainer,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+      ],
+    );
+  }
+}
+
 class _TapPageTurnModeSection extends StatelessWidget {
   const _TapPageTurnModeSection();
 
@@ -41,7 +111,8 @@ class _TapPageTurnModeSection extends StatelessWidget {
     final effective = context.watchTargetReadSetting();
     final mode = effective.tapPageTurnMode;
     final webtoon = effective.readMode == 0;
-    final enabled = !webtoon || effective.tapPageTurnInWebtoon;
+    final customArea = effective.customToolbarTapArea;
+    final enabled = customArea && (!webtoon || effective.tapPageTurnInWebtoon);
     final labels = {
       ReaderTapPageTurnMode.fullScreen: webtoon
           ? t.reader.tapPageTurnWebtoonAll
@@ -53,7 +124,9 @@ class _TapPageTurnModeSection extends StatelessWidget {
           ? t.reader.bottomHalfNext
           : t.reader.rightHandMode,
     };
-    final hint = enabled
+    final hint = !customArea
+        ? t.reader.tapPageTurnNeedsCustomArea
+        : enabled
         ? switch ((webtoon, mode == ReaderTapPageTurnMode.fullScreen)) {
             (false, true) => t.reader.tapPageTurnAllHelp,
             (false, false) => t.reader.tapPageTurnSplitHelp,

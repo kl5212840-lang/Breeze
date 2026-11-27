@@ -182,10 +182,13 @@ class DownloadWorkPins {
     return true;
   });
 
+  /// Promote pinned works, keeping the supplied order within each group
+  /// when the user has selected an explicit list sort.
   static List<DownloadCenterDisplayItem> arrange(
     List<DownloadCenterDisplayItem> rows,
-    Map<String, int> pins,
-  ) {
+    Map<String, int> pins, {
+    bool keepPinnedInputOrder = false,
+  }) {
     if (pins.isEmpty) return rows;
     final indexed = [
       for (final (index, row) in rows.indexed)
@@ -199,7 +202,9 @@ class DownloadWorkPins {
         ),
     ];
     indexed.sort((a, b) {
-      final pinnedOrder = b.rank.compareTo(a.rank);
+      final pinnedOrder = keepPinnedInputOrder
+          ? b.rank.sign.compareTo(a.rank.sign)
+          : b.rank.compareTo(a.rank);
       return pinnedOrder != 0 ? pinnedOrder : a.index.compareTo(b.index);
     });
     return [for (final entry in indexed) entry.row];

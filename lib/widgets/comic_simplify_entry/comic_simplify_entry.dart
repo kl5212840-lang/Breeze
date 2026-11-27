@@ -18,6 +18,7 @@ import 'package:zephyr/util/text/chinese_convert.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_info.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/cover.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/jm_cover_like_badge.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 const double kComicCardBorderRadius = 5.0;
 
@@ -464,15 +465,16 @@ class ComicSimplifyEntry extends StatelessWidget {
 
     return showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => ShortAlert(
         title: Text(title),
         content: Text(content),
         actions: [
-          TextButton(
+          ShortAlertAction(
             onPressed: () => context.pop(),
             child: Text(t.common.cancel),
           ),
-          TextButton(
+          ShortAlertAction(
+            destructive: true,
             onPressed: () {
               context.router.pop();
               _handleDeleteAction(context);

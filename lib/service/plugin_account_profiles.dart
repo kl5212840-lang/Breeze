@@ -68,6 +68,93 @@ abstract final class PluginAccountProfiles {
   static String? _account(Map<String, dynamic> data) =>
       pluginAccountBundleIdentity(data);
 
+  static PluginAccountProfile savedNativeLogin(
+    String source,
+    String id,
+    int revision,
+  ) {
+    final profile = read(source).profiles[id];
+    if (profile == null ||
+        profile.deleted ||
+        profile.revision != revision ||
+        profile.kind == 'web') {
+      throw const PluginSessionChanged();
+    }
+    return profile;
+  }
+
+  static String? savedNativePassword(PluginAccountProfile profile) {
+    final bundle = profile.bundle;
+    if (profile.kind == 'web' || _account(bundle) != profile.identity) {
+      return null;
+    }
+    final remembered = bundle[hostRememberedPluginLoginKey];
+    final rememberedPassword =
+        remembered is Map && remembered['account'] == profile.identity
+        ? remembered['password']
+        : null;
+    if (rememberedPassword is String && rememberedPassword.isNotEmpty)
+      return rememberedPassword;
+    final password = bundle['auth.password'];
+    if (password is String && password.isNotEmpty) return password;
+    final raw = bundle['account.credentials'];
+    final origin = raw is Map
+        ? Uri.tryParse(raw['origin']?.toString() ?? '')
+        : null;
+    if (origin == null ||
+        !VideoAccountCredentials.validOrigin(origin) ||
+        profile.origin.isNotEmpty && profile.origin != origin.origin) {
+      return null;
+    }
+    final credentials = VideoAccountCredentials.decode(raw, origin);
+    return credentials?.account == profile.identity
+        ? credentials?.password
+        : null;
+  }
+
+  static Map<String, dynamic> _rememberNativeLogin(
+    String source,
+    Map<String, dynamic> active,
+    ({String account, String? password})? login,
+    int generation, {
+    Map<String, dynamic>? beforeLogin,
+  }) {
+    final account = _account(active);
+    final updated = {...active};
+    final oldPassword = beforeLogin?['auth.password'];
+    if (beforeLogin != null &&
+        _account(beforeLogin) != account &&
+        oldPassword is String &&
+        oldPassword == active['auth.password']) {
+      // Some legacy submitters only overwrite the username and token.
+      updated.remove('auth.password');
+    }
+    final remembered = updated[hostRememberedPluginLoginKey];
+    if (remembered is Map && remembered['account'] != account) {
+      updated.remove(hostRememberedPluginLoginKey);
+    }
+    if (login != null && login.account == account) {
+      final password = login.password;
+      if (password == null || password.isEmpty) {
+        updated.remove(hostRememberedPluginLoginKey);
+      } else {
+        updated[hostRememberedPluginLoginKey] = {
+          'account': login.account,
+          'password': password,
+        };
+      }
+    }
+    final originalDigest = accountProfileDigest(active);
+    if (accountProfileDigest(updated) == originalDigest) return active;
+    replaceActivePluginAccount(
+      source,
+      updated,
+      expectedDigest: originalDigest,
+      expectedGeneration: generation,
+    );
+    return updated;
+  }
+
   static Future<void> _save(PluginAccountProfilesData data) async {
     PluginAccountProfilesData.parse(data.toJson(), source: data.source);
     await savePluginConfigValue(
@@ -146,13 +233,16 @@ abstract final class PluginAccountProfiles {
     final credentials = active['account.credentials'];
     final bundle = <String, dynamic>{
       for (final entry in active.entries)
-        if (entry.key.startsWith('auth.') ||
-            entry.key == 'account.credentials' &&
-                credentials is Map &&
-                (credentials['account'] == identity ||
-                    credentials['account'] == verifiedCredentialAccount) ||
-            entry.key == 'account.backup' &&
-                (kind == 'web' || verifiedWebSession))
+        if (entry.key == hostRememberedPluginLoginKey
+            ? entry.value is Map && entry.value['account'] == identity
+            : entry.key.startsWith('auth.') ||
+                  entry.key == 'account.credentials' &&
+                      credentials is Map &&
+                      (credentials['account'] == identity ||
+                          credentials['account'] ==
+                              verifiedCredentialAccount) ||
+                  entry.key == 'account.backup' &&
+                      (kind == 'web' || verifiedWebSession))
           entry.key: entry.value,
     };
     if (bundle.isEmpty) return data;
@@ -337,6 +427,21 @@ abstract final class PluginAccountProfiles {
     });
   }
 
+  /// A queued save can outlive the session that produced this receipt.
+  static Future<void> rememberVerifiedCurrent(
+    String source,
+    PluginAccountAuthentication proof, {
+    bool explicitSave = false,
+  }) => rememberCurrent(
+    source,
+    label: proof.label,
+    serverIdentity: proof.serverIdentity,
+    avatarUrl: proof.avatarUrl,
+    select: true,
+    explicitSave: explicitSave,
+    canCommit: () => identical(PluginAccountIdentities.current(source), proof),
+  );
+
   static PluginAccountProfilesData _snapshotBeforeChange(
     String source,
     PluginAccountProfilesData data,
@@ -368,6 +473,7 @@ abstract final class PluginAccountProfiles {
     required Future<T> Function() submit,
     Future<PluginAccountAuthentication?> Function()? verify,
     bool webSession = false,
+    ({String account, String? password})? rememberLogin,
   }) {
     source = canonicalQjsSource(source);
     return _serial(source, () async {
@@ -398,6 +504,15 @@ abstract final class PluginAccountProfiles {
           }
           final data = read(source);
           var active = _active(source);
+          if (!webSession) {
+            active = _rememberNativeLogin(
+              source,
+              active,
+              proof == null ? null : rememberLogin,
+              generation,
+              beforeLogin: before,
+            );
+          }
           final webProof = webSession ? proof! : null;
           final account = webProof?.publicSummary['extern'];
           final username = account is Map && account['username'] is String
@@ -575,22 +690,16 @@ abstract final class PluginAccountProfiles {
       }
       // Older API sessions can predate the device-only selection ID. Require
       // their original login field and the known active session field.
-      final legacySession = active[legacySessionKey];
+      final legacySession = legacySessionKey == null
+          ? legacyPluginAccountSession(active)
+          : active[legacySessionKey];
       if (origin != null ||
           legacySession is! String ||
           legacySession.trim().isEmpty ||
           const {'null', 'undefined'}.contains(legacySession.trim())) {
         return null;
       }
-      final account = active['auth.account'];
-      final username = active['auth.username'];
-      return _usableLoginName(
-        account is String && account.trim().isNotEmpty
-            ? account
-            : username is String
-            ? username
-            : null,
-      );
+      return _usableLoginName(_account(active));
     } catch (_) {
       return null;
     }
@@ -631,12 +740,7 @@ abstract final class PluginAccountProfiles {
   static bool _matchesProof(
     PluginAccountProfile profile,
     PluginAccountAuthentication proof,
-  ) =>
-      profile.serverIdentity.isNotEmpty &&
-      profile.serverIdentity == proof.serverIdentity &&
-      (profile.kind != 'web' ||
-          proof.origin.isEmpty ||
-          profile.origin == proof.origin);
+  ) => proof.matchesProfile(profile);
   static bool _isCurrent(
     PluginAccountProfile profile,
     Map<String, dynamic> active, {
@@ -730,6 +834,8 @@ abstract final class PluginAccountProfiles {
     String id, {
     required Future<PluginAccountAuthentication> Function(PluginAccountProfile)
     authenticate,
+    int? expectedRevision,
+    ({String account, String? password})? rememberLogin,
   }) {
     source = canonicalQjsSource(source);
     return _serial(source, () async {
@@ -737,63 +843,91 @@ abstract final class PluginAccountProfiles {
       final target = data.profiles[id];
       if (target == null || target.deleted)
         throw const PluginAccountSwitchFailed();
+      if (expectedRevision != null && target.revision != expectedRevision) {
+        throw const PluginSessionChanged();
+      }
       final installation = LocalPluginInstallationState.instance;
       final lifecycle = installation.installationEpoch(source);
-      final before = _active(source), previousSelected = await selected(source);
+      final before = _active(source);
+      final beforeReceipt = PluginAccountIdentities.current(source);
+      final beforeFingerprint = beforeReceipt == null
+          ? null
+          : PluginAccountIdentities.fingerprint(source);
+      final beforeEndpoint = effectivePluginEndpointRevision(source);
+      final previousSelected = await selected(source);
       // Preserve a previous account before attempting any replacement.
       data = _snapshotBeforeChange(source, data, before, previousSelected);
       await _save(data);
+      final preparedRevision = data.profiles[id]?.revision;
       PluginAccountAuthentication? receipt;
       int? settledGeneration;
       String? settledConfiguration;
-      await runPluginSessionChange(source, () async {
-        final generation = pluginSessionWriteFence.generation(source);
-        bool current() =>
-            pluginSessionWriteFence.generation(source) == generation &&
-            installation.installationEpoch(source) == lifecycle &&
-            !installation.isInstalling(source) &&
-            !installation.isRemoved(source);
-        if (!current()) throw const PluginSessionChanged();
-        replaceActivePluginAccount(
-          source,
-          target.bundle,
-          expectedDigest: accountProfileDigest(before),
-          expectedGeneration: generation,
-        );
-        try {
-          final confirmed = await authenticate(target);
+      try {
+        await runPluginSessionChange(source, () async {
+          final generation = pluginSessionWriteFence.generation(source);
+          bool current() =>
+              pluginSessionWriteFence.generation(source) == generation &&
+              installation.installationEpoch(source) == lifecycle &&
+              !installation.isInstalling(source) &&
+              !installation.isRemoved(source);
           if (!current()) throw const PluginSessionChanged();
-          if (confirmed.serverIdentity.isEmpty ||
-              target.serverIdentity.isNotEmpty &&
-                  confirmed.serverIdentity != target.serverIdentity) {
-            throw const PluginAccountSwitchFailed();
-          }
-          final active = _active(source);
-          if (target.kind != 'web' && _account(active) != target.identity)
-            throw const PluginAccountSwitchFailed();
-          final fresh = _put(
-            read(source),
-            identity: target.identity,
-            label: confirmed.label.isEmpty ? target.label : confirmed.label,
-            origin: target.origin,
-            kind: target.kind,
-            bundle: active,
-            serverIdentity: confirmed.serverIdentity,
-            avatarUrl: confirmed.avatarUrl,
+          replaceActivePluginAccount(
+            source,
+            target.bundle,
+            expectedDigest: accountProfileDigest(before),
+            expectedGeneration: generation,
           );
-          await _save(fresh);
-          if (!current() || read(source).profiles[id]?.deleted != false)
-            throw const PluginSessionChanged();
-          await _select(source, id);
-          receipt = confirmed;
-          settledGeneration = generation + 1;
-          settledConfiguration = PluginAccountIdentities.fingerprint(source);
-        } catch (_) {
-          // Never log out the old server session. Restore only this operation's
-          // compatibility fields, and never overwrite a newer session owner.
-          if (current()) {
-            final actual = _active(source);
-            if (_account(actual) == target.identity || target.kind == 'web') {
+          try {
+            final confirmed = await authenticate(target);
+            if (!current()) throw const PluginSessionChanged();
+            if ((confirmed.serverIdentity.isEmpty ||
+                    target.serverIdentity.isNotEmpty ||
+                    target.kind == 'web' &&
+                        confirmed.origin.isNotEmpty &&
+                        confirmed.origin != target.origin) &&
+                !confirmed.matchesProfile(target)) {
+              throw const PluginAccountSwitchFailed();
+            }
+            final latest = read(source);
+            if (latest.profiles[id]?.revision != preparedRevision) {
+              throw const PluginSessionChanged();
+            }
+            var active = _active(source);
+            if (target.kind != 'web' && _account(active) != target.identity)
+              throw const PluginAccountSwitchFailed();
+            if (target.kind != 'web') {
+              active = _rememberNativeLogin(
+                source,
+                active,
+                rememberLogin,
+                generation,
+              );
+            }
+            final fresh = _put(
+              latest,
+              identity: target.identity,
+              label: confirmed.label.isEmpty ? target.label : confirmed.label,
+              origin: target.origin,
+              kind: target.kind,
+              bundle: active,
+              serverIdentity: confirmed.serverIdentity,
+              avatarUrl: confirmed.avatarUrl,
+            );
+            final verifiedConfiguration = PluginAccountIdentities.fingerprint(
+              source,
+            );
+            await _save(fresh);
+            if (!current() || read(source).profiles[id]?.deleted != false)
+              throw const PluginSessionChanged();
+            await _select(source, id);
+            receipt = confirmed;
+            settledGeneration = generation + 1;
+            settledConfiguration = verifiedConfiguration;
+          } catch (_) {
+            // Never log out the old server session. Restore only this operation's
+            // compatibility fields, and never overwrite a newer session owner.
+            if (current()) {
+              final actual = _active(source);
               replaceActivePluginAccount(
                 source,
                 before,
@@ -801,18 +935,32 @@ abstract final class PluginAccountProfiles {
                 expectedGeneration: generation,
               );
               await _select(source, previousSelected);
+              if (beforeReceipt != null &&
+                  beforeReceipt.origin.isEmpty &&
+                  target.kind != 'web' &&
+                  target.bundle['account.backup'] == null &&
+                  _account(before) != target.identity) {
+                receipt = beforeReceipt;
+                settledGeneration = generation + 1;
+                settledConfiguration = beforeFingerprint;
+              }
             }
+            rethrow;
           }
-          rethrow;
+        });
+      } finally {
+        if (receipt != null &&
+            installation.installationEpoch(source) == lifecycle &&
+            effectivePluginEndpointRevision(source) == beforeEndpoint &&
+            PluginAccountIdentities.fingerprint(source) ==
+                settledConfiguration) {
+          PluginAccountIdentities.confirm(
+            source,
+            receipt!,
+            generation: settledGeneration!,
+          );
         }
-      });
-      if (receipt != null &&
-          PluginAccountIdentities.fingerprint(source) == settledConfiguration)
-        PluginAccountIdentities.confirm(
-          source,
-          receipt!,
-          generation: settledGeneration!,
-        );
+      }
     });
   }
 }

@@ -13,11 +13,12 @@
 import 'dart:async' as _i50;
 
 import 'package:auto_route/auto_route.dart' as _i48;
-import 'package:collection/collection.dart' as _i54;
-import 'package:flutter/foundation.dart' as _i56;
-import 'package:flutter/rendering.dart' as _i52;
+import 'package:collection/collection.dart' as _i55;
+import 'package:flutter/cupertino.dart' as _i52;
+import 'package:flutter/foundation.dart' as _i57;
+import 'package:flutter/rendering.dart' as _i53;
 import 'package:material_ui/material_ui.dart' as _i49;
-import 'package:zephyr/cubit/string_select.dart' as _i58;
+import 'package:zephyr/cubit/string_select.dart' as _i59;
 import 'package:zephyr/debug/coreml_upscale_debug_page.dart' as _i15;
 import 'package:zephyr/debug/qjs_runtime_debug_page.dart' as _i34;
 import 'package:zephyr/debug/show_color.dart' as _i39;
@@ -27,11 +28,11 @@ import 'package:zephyr/page/bookshelf/view/bookshelf_page.dart' as _i5;
 import 'package:zephyr/page/change_log_page.dart' as _i8;
 import 'package:zephyr/page/comic_follow/view/comic_follow_page.dart' as _i9;
 import 'package:zephyr/page/comic_info/view/comic_info.dart' as _i10;
-import 'package:zephyr/page/comic_list/models/comic_list_scene.dart' as _i55;
+import 'package:zephyr/page/comic_list/models/comic_list_scene.dart' as _i56;
 import 'package:zephyr/page/comic_list/view/comic_list_page.dart' as _i11;
-import 'package:zephyr/page/comic_read/type/chapter_extern.dart' as _i57;
+import 'package:zephyr/page/comic_read/type/chapter_extern.dart' as _i58;
 import 'package:zephyr/page/comic_read/view/comic_read.dart' as _i12;
-import 'package:zephyr/page/comments/cubit/cubit.dart' as _i59;
+import 'package:zephyr/page/comments/cubit/cubit.dart' as _i60;
 import 'package:zephyr/page/comments/view/comments.dart' as _i13;
 import 'package:zephyr/page/comments/view/plugin_comments_scaffold.dart'
     as _i29;
@@ -50,14 +51,14 @@ import 'package:zephyr/page/plugin_settings/view/plugin_detail_page.dart'
 import 'package:zephyr/page/plugin_settings/view/plugin_settings_page.dart'
     as _i32;
 import 'package:zephyr/page/plugin_settings/widgets/plugin_settings_content.dart'
-    as _i60;
+    as _i61;
 import 'package:zephyr/page/plugin_store/view/plugin_store_page.dart' as _i33;
-import 'package:zephyr/page/search/cubit/search_cubit.dart' as _i62;
+import 'package:zephyr/page/search/cubit/search_cubit.dart' as _i63;
 import 'package:zephyr/page/search/view/search_page.dart' as _i37;
 import 'package:zephyr/page/search_aggregate/view/search_aggregate_result_page.dart'
     as _i36;
-import 'package:zephyr/page/search_result/bloc/search_bloc.dart' as _i61;
-import 'package:zephyr/page/search_result/search_result.dart' as _i63;
+import 'package:zephyr/page/search_result/bloc/search_bloc.dart' as _i62;
+import 'package:zephyr/page/search_result/search_result.dart' as _i64;
 import 'package:zephyr/page/search_result/view/search_result_page.dart' as _i38;
 import 'package:zephyr/page/setting/bookshelf/bookshelf_setting_page.dart'
     as _i6;
@@ -77,15 +78,15 @@ import 'package:zephyr/page/setting/global/switch_style_setting_page.dart'
 import 'package:zephyr/page/setting/global/sync_setting_page.dart' as _i44;
 import 'package:zephyr/page/setting/real_sr/real_sr_setting_page.dart' as _i35;
 import 'package:zephyr/page/source_shell/models/source_shell_section.dart'
-    as _i65;
-import 'package:zephyr/page/source_shell/source_native_controls.dart' as _i64;
+    as _i66;
+import 'package:zephyr/page/source_shell/source_native_controls.dart' as _i65;
 import 'package:zephyr/page/source_shell/source_settings_hub.dart' as _i40;
 import 'package:zephyr/page/source_shell/view/source_shell_page.dart' as _i41;
 import 'package:zephyr/page/theme_color/view/theme_color_page.dart' as _i45;
 import 'package:zephyr/page/webdav_sync/view/webdav_sync_page.dart' as _i46;
 import 'package:zephyr/page/webview_page.dart' as _i47;
 import 'package:zephyr/service/update/json/github_release_json.dart' as _i51;
-import 'package:zephyr/type/enum.dart' as _i53;
+import 'package:zephyr/type/enum.dart' as _i54;
 import 'package:zephyr/widgets/full_screen_image_view.dart' as _i22;
 
 /// generated route for
@@ -340,9 +341,10 @@ class ChangelogRouteArgs {
 /// [_i9.ComicFollowPage]
 class ComicFollowRoute extends _i48.PageRouteInfo<ComicFollowRouteArgs> {
   ComicFollowRoute({
-    _i49.Key? key,
+    _i52.Key? key,
     bool embedded = false,
     bool active = true,
+    _i52.ValueNotifier<String?>? openSwipe,
     List<_i48.PageRouteInfo>? children,
   }) : super(
          ComicFollowRoute.name,
@@ -350,6 +352,7 @@ class ComicFollowRoute extends _i48.PageRouteInfo<ComicFollowRouteArgs> {
            key: key,
            embedded: embedded,
            active: active,
+           openSwipe: openSwipe,
          ),
          initialChildren: children,
        );
@@ -366,6 +369,7 @@ class ComicFollowRoute extends _i48.PageRouteInfo<ComicFollowRouteArgs> {
         key: args.key,
         embedded: args.embedded,
         active: args.active,
+        openSwipe: args.openSwipe,
       );
     },
   );
@@ -376,17 +380,20 @@ class ComicFollowRouteArgs {
     this.key,
     this.embedded = false,
     this.active = true,
+    this.openSwipe,
   });
 
-  final _i49.Key? key;
+  final _i52.Key? key;
 
   final bool embedded;
 
   final bool active;
 
+  final _i52.ValueNotifier<String?>? openSwipe;
+
   @override
   String toString() {
-    return 'ComicFollowRouteArgs{key: $key, embedded: $embedded, active: $active}';
+    return 'ComicFollowRouteArgs{key: $key, embedded: $embedded, active: $active, openSwipe: $openSwipe}';
   }
 
   @override
@@ -395,21 +402,23 @@ class ComicFollowRouteArgs {
     if (other is! ComicFollowRouteArgs) return false;
     return key == other.key &&
         embedded == other.embedded &&
-        active == other.active;
+        active == other.active &&
+        openSwipe == other.openSwipe;
   }
 
   @override
-  int get hashCode => key.hashCode ^ embedded.hashCode ^ active.hashCode;
+  int get hashCode =>
+      key.hashCode ^ embedded.hashCode ^ active.hashCode ^ openSwipe.hashCode;
 }
 
 /// generated route for
 /// [_i10.ComicInfoPage]
 class ComicInfoRoute extends _i48.PageRouteInfo<ComicInfoRouteArgs> {
   ComicInfoRoute({
-    _i52.Key? key,
+    _i53.Key? key,
     required String comicId,
     required String from,
-    required _i53.ComicEntryType type,
+    required _i54.ComicEntryType type,
     Map<String, dynamic>? extern,
     String? collectionTargetId,
     String? collectionTargetName,
@@ -458,13 +467,13 @@ class ComicInfoRouteArgs {
     this.collectionTargetName,
   });
 
-  final _i52.Key? key;
+  final _i53.Key? key;
 
   final String comicId;
 
   final String from;
 
-  final _i53.ComicEntryType type;
+  final _i54.ComicEntryType type;
 
   final Map<String, dynamic>? extern;
 
@@ -485,7 +494,7 @@ class ComicInfoRouteArgs {
         comicId == other.comicId &&
         from == other.from &&
         type == other.type &&
-        const _i54.MapEquality<String, dynamic>().equals(
+        const _i55.MapEquality<String, dynamic>().equals(
           extern,
           other.extern,
         ) &&
@@ -499,7 +508,7 @@ class ComicInfoRouteArgs {
       comicId.hashCode ^
       from.hashCode ^
       type.hashCode ^
-      const _i54.MapEquality<String, dynamic>().hash(extern) ^
+      const _i55.MapEquality<String, dynamic>().hash(extern) ^
       collectionTargetId.hashCode ^
       collectionTargetName.hashCode;
 }
@@ -510,12 +519,13 @@ class ComicListRoute extends _i48.PageRouteInfo<ComicListRouteArgs> {
   ComicListRoute({
     _i49.Key? key,
     String? title,
-    _i55.ComicListScene? scene,
+    _i56.ComicListScene? scene,
     String? sceneSource,
     String? sceneBundleFnPath,
     String? sceneBundleFnPathFallback,
     bool embedded = false,
     bool jmCollection = false,
+    bool titleInParent = false,
     List<_i48.PageRouteInfo>? children,
   }) : super(
          ComicListRoute.name,
@@ -528,6 +538,7 @@ class ComicListRoute extends _i48.PageRouteInfo<ComicListRouteArgs> {
            sceneBundleFnPathFallback: sceneBundleFnPathFallback,
            embedded: embedded,
            jmCollection: jmCollection,
+           titleInParent: titleInParent,
          ),
          initialChildren: children,
        );
@@ -549,6 +560,7 @@ class ComicListRoute extends _i48.PageRouteInfo<ComicListRouteArgs> {
         sceneBundleFnPathFallback: args.sceneBundleFnPathFallback,
         embedded: args.embedded,
         jmCollection: args.jmCollection,
+        titleInParent: args.titleInParent,
       );
     },
   );
@@ -564,13 +576,14 @@ class ComicListRouteArgs {
     this.sceneBundleFnPathFallback,
     this.embedded = false,
     this.jmCollection = false,
+    this.titleInParent = false,
   });
 
   final _i49.Key? key;
 
   final String? title;
 
-  final _i55.ComicListScene? scene;
+  final _i56.ComicListScene? scene;
 
   final String? sceneSource;
 
@@ -582,9 +595,11 @@ class ComicListRouteArgs {
 
   final bool jmCollection;
 
+  final bool titleInParent;
+
   @override
   String toString() {
-    return 'ComicListRouteArgs{key: $key, title: $title, scene: $scene, sceneSource: $sceneSource, sceneBundleFnPath: $sceneBundleFnPath, sceneBundleFnPathFallback: $sceneBundleFnPathFallback, embedded: $embedded, jmCollection: $jmCollection}';
+    return 'ComicListRouteArgs{key: $key, title: $title, scene: $scene, sceneSource: $sceneSource, sceneBundleFnPath: $sceneBundleFnPath, sceneBundleFnPathFallback: $sceneBundleFnPathFallback, embedded: $embedded, jmCollection: $jmCollection, titleInParent: $titleInParent}';
   }
 
   @override
@@ -598,7 +613,8 @@ class ComicListRouteArgs {
         sceneBundleFnPath == other.sceneBundleFnPath &&
         sceneBundleFnPathFallback == other.sceneBundleFnPathFallback &&
         embedded == other.embedded &&
-        jmCollection == other.jmCollection;
+        jmCollection == other.jmCollection &&
+        titleInParent == other.titleInParent;
   }
 
   @override
@@ -610,25 +626,26 @@ class ComicListRouteArgs {
       sceneBundleFnPath.hashCode ^
       sceneBundleFnPathFallback.hashCode ^
       embedded.hashCode ^
-      jmCollection.hashCode;
+      jmCollection.hashCode ^
+      titleInParent.hashCode;
 }
 
 /// generated route for
 /// [_i12.ComicReadPage]
 class ComicReadRoute extends _i48.PageRouteInfo<ComicReadRouteArgs> {
   ComicReadRoute({
-    _i56.Key? key,
+    _i57.Key? key,
     required String comicId,
     required int order,
     String chapterId = '',
     String requestId = '',
     String storageChapterId = '',
     String logicalKey = '',
-    _i57.ChapterExtern chapterExtern = const {},
+    _i58.ChapterExtern chapterExtern = const {},
     required int epsNumber,
     required String from,
-    required _i58.StringSelectCubit stringSelectCubit,
-    required _i53.ComicEntryType type,
+    required _i59.StringSelectCubit stringSelectCubit,
+    required _i54.ComicEntryType type,
     required dynamic comicInfo,
     List<_i48.PageRouteInfo>? children,
   }) : super(
@@ -693,7 +710,7 @@ class ComicReadRouteArgs {
     required this.comicInfo,
   });
 
-  final _i56.Key? key;
+  final _i57.Key? key;
 
   final String comicId;
 
@@ -707,15 +724,15 @@ class ComicReadRouteArgs {
 
   final String logicalKey;
 
-  final _i57.ChapterExtern chapterExtern;
+  final _i58.ChapterExtern chapterExtern;
 
   final int epsNumber;
 
   final String from;
 
-  final _i58.StringSelectCubit stringSelectCubit;
+  final _i59.StringSelectCubit stringSelectCubit;
 
-  final _i53.ComicEntryType type;
+  final _i54.ComicEntryType type;
 
   final dynamic comicInfo;
 
@@ -1170,7 +1187,7 @@ class PluginCommentsScaffoldRoute
     required String from,
     required String comicId,
     required String comicTitle,
-    _i59.CommentPluginCall? pluginCall,
+    _i60.CommentPluginCall? pluginCall,
     List<_i48.PageRouteInfo>? children,
   }) : super(
          PluginCommentsScaffoldRoute.name,
@@ -1218,7 +1235,7 @@ class PluginCommentsScaffoldRouteArgs {
 
   final String comicTitle;
 
-  final _i59.CommentPluginCall? pluginCall;
+  final _i60.CommentPluginCall? pluginCall;
 
   @override
   String toString() {
@@ -1408,7 +1425,7 @@ class PluginSettingsRoute extends _i48.PageRouteInfo<PluginSettingsRouteArgs> {
     required String pluginRuntimeName,
     required String pluginDisplayName,
     bool insideSource = false,
-    _i60.PluginSettingsScope scope = _i60.PluginSettingsScope.all,
+    _i61.PluginSettingsScope scope = _i61.PluginSettingsScope.all,
     List<_i48.PageRouteInfo>? children,
   }) : super(
          PluginSettingsRoute.name,
@@ -1451,7 +1468,7 @@ class PluginSettingsRouteArgs {
     required this.pluginRuntimeName,
     required this.pluginDisplayName,
     this.insideSource = false,
-    this.scope = _i60.PluginSettingsScope.all,
+    this.scope = _i61.PluginSettingsScope.all,
   });
 
   final _i49.Key? key;
@@ -1466,7 +1483,7 @@ class PluginSettingsRouteArgs {
 
   final bool insideSource;
 
-  final _i60.PluginSettingsScope scope;
+  final _i61.PluginSettingsScope scope;
 
   @override
   String toString() {
@@ -1551,9 +1568,8 @@ class SearchAggregateResultRoute
     extends _i48.PageRouteInfo<SearchAggregateResultRouteArgs> {
   SearchAggregateResultRoute({
     _i49.Key? key,
-    required _i61.SearchEvent searchEvent,
-    _i62.SearchCubit? searchCubit,
-    Map<String, bool> selectedSources = const {},
+    required _i62.SearchEvent searchEvent,
+    _i63.SearchCubit? searchCubit,
     List<_i48.PageRouteInfo>? children,
   }) : super(
          SearchAggregateResultRoute.name,
@@ -1561,7 +1577,6 @@ class SearchAggregateResultRoute
            key: key,
            searchEvent: searchEvent,
            searchCubit: searchCubit,
-           selectedSources: selectedSources,
          ),
          initialChildren: children,
        );
@@ -1577,7 +1592,6 @@ class SearchAggregateResultRoute
           key: args.key,
           searchEvent: args.searchEvent,
           searchCubit: args.searchCubit,
-          selectedSources: args.selectedSources,
         ),
       );
     },
@@ -1589,20 +1603,17 @@ class SearchAggregateResultRouteArgs {
     this.key,
     required this.searchEvent,
     this.searchCubit,
-    this.selectedSources = const {},
   });
 
   final _i49.Key? key;
 
-  final _i61.SearchEvent searchEvent;
+  final _i62.SearchEvent searchEvent;
 
-  final _i62.SearchCubit? searchCubit;
-
-  final Map<String, bool> selectedSources;
+  final _i63.SearchCubit? searchCubit;
 
   @override
   String toString() {
-    return 'SearchAggregateResultRouteArgs{key: $key, searchEvent: $searchEvent, searchCubit: $searchCubit, selectedSources: $selectedSources}';
+    return 'SearchAggregateResultRouteArgs{key: $key, searchEvent: $searchEvent, searchCubit: $searchCubit}';
   }
 
   @override
@@ -1611,19 +1622,12 @@ class SearchAggregateResultRouteArgs {
     if (other is! SearchAggregateResultRouteArgs) return false;
     return key == other.key &&
         searchEvent == other.searchEvent &&
-        searchCubit == other.searchCubit &&
-        const _i54.MapEquality<String, bool>().equals(
-          selectedSources,
-          other.selectedSources,
-        );
+        searchCubit == other.searchCubit;
   }
 
   @override
   int get hashCode =>
-      key.hashCode ^
-      searchEvent.hashCode ^
-      searchCubit.hashCode ^
-      const _i54.MapEquality<String, bool>().hash(selectedSources);
+      key.hashCode ^ searchEvent.hashCode ^ searchCubit.hashCode;
 }
 
 /// generated route for
@@ -1631,7 +1635,7 @@ class SearchAggregateResultRouteArgs {
 class SearchRoute extends _i48.PageRouteInfo<SearchRouteArgs> {
   SearchRoute({
     _i49.Key? key,
-    required _i62.SearchStates searchState,
+    required _i63.SearchStates searchState,
     bool aggregateMode = true,
     List<_i48.PageRouteInfo>? children,
   }) : super(
@@ -1668,7 +1672,7 @@ class SearchRouteArgs {
 
   final _i49.Key? key;
 
-  final _i62.SearchStates searchState;
+  final _i63.SearchStates searchState;
 
   final bool aggregateMode;
 
@@ -1696,8 +1700,8 @@ class SearchRouteArgs {
 class SearchResultRoute extends _i48.PageRouteInfo<SearchResultRouteArgs> {
   SearchResultRoute({
     _i49.Key? key,
-    required _i63.SearchEvent searchEvent,
-    _i62.SearchCubit? searchCubit,
+    required _i64.SearchEvent searchEvent,
+    _i63.SearchCubit? searchCubit,
     List<_i48.PageRouteInfo>? children,
   }) : super(
          SearchResultRoute.name,
@@ -1735,9 +1739,9 @@ class SearchResultRouteArgs {
 
   final _i49.Key? key;
 
-  final _i63.SearchEvent searchEvent;
+  final _i64.SearchEvent searchEvent;
 
-  final _i62.SearchCubit? searchCubit;
+  final _i63.SearchCubit? searchCubit;
 
   @override
   String toString() {
@@ -1780,7 +1784,7 @@ class SourceSettingsHubRoute
     extends _i48.PageRouteInfo<SourceSettingsHubRouteArgs> {
   SourceSettingsHubRoute({
     _i49.Key? key,
-    List<_i64.SourceMenuAction> actions = const [],
+    List<_i65.SourceMenuAction> actions = const [],
     String source = '',
     List<_i48.PageRouteInfo>? children,
   }) : super(
@@ -1819,7 +1823,7 @@ class SourceSettingsHubRouteArgs {
 
   final _i49.Key? key;
 
-  final List<_i64.SourceMenuAction> actions;
+  final List<_i65.SourceMenuAction> actions;
 
   final String source;
 
@@ -1833,7 +1837,7 @@ class SourceSettingsHubRouteArgs {
     if (identical(this, other)) return true;
     if (other is! SourceSettingsHubRouteArgs) return false;
     return key == other.key &&
-        const _i54.ListEquality<_i64.SourceMenuAction>().equals(
+        const _i55.ListEquality<_i65.SourceMenuAction>().equals(
           actions,
           other.actions,
         ) &&
@@ -1843,7 +1847,7 @@ class SourceSettingsHubRouteArgs {
   @override
   int get hashCode =>
       key.hashCode ^
-      const _i54.ListEquality<_i64.SourceMenuAction>().hash(actions) ^
+      const _i55.ListEquality<_i65.SourceMenuAction>().hash(actions) ^
       source.hashCode;
 }
 
@@ -1851,10 +1855,10 @@ class SourceSettingsHubRouteArgs {
 /// [_i41.SourceShellPage]
 class SourceShellRoute extends _i48.PageRouteInfo<SourceShellRouteArgs> {
   SourceShellRoute({
-    _i49.Key? key,
+    _i57.Key? key,
     required String source,
     required String sourceName,
-    required List<_i65.SourceShellSection> sections,
+    required List<_i66.SourceShellSection> sections,
     String initialSectionId = '',
     List<_i48.PageRouteInfo>? children,
   }) : super(
@@ -1895,13 +1899,13 @@ class SourceShellRouteArgs {
     this.initialSectionId = '',
   });
 
-  final _i49.Key? key;
+  final _i57.Key? key;
 
   final String source;
 
   final String sourceName;
 
-  final List<_i65.SourceShellSection> sections;
+  final List<_i66.SourceShellSection> sections;
 
   final String initialSectionId;
 
@@ -1917,7 +1921,7 @@ class SourceShellRouteArgs {
     return key == other.key &&
         source == other.source &&
         sourceName == other.sourceName &&
-        const _i54.ListEquality<_i65.SourceShellSection>().equals(
+        const _i55.ListEquality<_i66.SourceShellSection>().equals(
           sections,
           other.sections,
         ) &&
@@ -1929,7 +1933,7 @@ class SourceShellRouteArgs {
       key.hashCode ^
       source.hashCode ^
       sourceName.hashCode ^
-      const _i54.ListEquality<_i65.SourceShellSection>().hash(sections) ^
+      const _i55.ListEquality<_i66.SourceShellSection>().hash(sections) ^
       initialSectionId.hashCode;
 }
 
@@ -1969,7 +1973,7 @@ class SwitchStyleSettingRoute extends _i48.PageRouteInfo<void> {
 /// [_i44.SyncSettingPage]
 class SyncSettingRoute extends _i48.PageRouteInfo<SyncSettingRouteArgs> {
   SyncSettingRoute({
-    _i56.Key? key,
+    _i57.Key? key,
     _i44.SyncArchiveActions archiveActions = const _i44.SyncArchiveActions(),
     List<_i48.PageRouteInfo>? children,
   }) : super(
@@ -2000,7 +2004,7 @@ class SyncSettingRouteArgs {
     this.archiveActions = const _i44.SyncArchiveActions(),
   });
 
-  final _i56.Key? key;
+  final _i57.Key? key;
 
   final _i44.SyncArchiveActions archiveActions;
 
@@ -2093,10 +2097,10 @@ class WebViewRouteArgs {
     if (identical(this, other)) return true;
     if (other is! WebViewRouteArgs) return false;
     return key == other.key &&
-        const _i54.ListEquality<String>().equals(info, other.info);
+        const _i55.ListEquality<String>().equals(info, other.info);
   }
 
   @override
   int get hashCode =>
-      key.hashCode ^ const _i54.ListEquality<String>().hash(info);
+      key.hashCode ^ const _i55.ListEquality<String>().hash(info);
 }

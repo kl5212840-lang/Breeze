@@ -18,12 +18,28 @@ class SourceBackButton extends StatelessWidget {
   final String? tooltip;
   final bool bare;
 
+  /// Preserve the normal AppBar dismissal policy when only its material changes.
+  static Widget? nativeLeading(BuildContext context) {
+    if (!usesSystemSourceChrome(context)) return null;
+    final route = ModalRoute.of(context);
+    if (route?.impliesAppBarDismissal != true) return null;
+    if (route is PageRoute<dynamic> && route.fullscreenDialog) {
+      return SourceChromeIconButton(
+        tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
+        icon: Icons.close_rounded,
+        symbol: 'xmark',
+        onPressed: () => Navigator.of(context).maybePop(),
+      );
+    }
+    return const SourceBackButton();
+  }
+
   @override
   Widget build(BuildContext context) => SourceChromeIconButton(
     tooltip: tooltip ?? t.common.back,
     icon: bare ? Icons.arrow_back_ios_new_rounded : Icons.arrow_back,
     symbol: 'chevron.left',
-    bare: bare,
+    bare: bare && !usesSystemSourceChrome(context),
     onPressed: onPressed ?? () => Navigator.of(context).maybePop(),
   );
 }

@@ -98,6 +98,38 @@ void main() {
   });
 
   test(
+    'a paced detail skipped while hidden is read when demand returns',
+    () async {
+      final service = JmCollectionMetadata();
+      final account = JmCollectionSnapshots.instance.accountScope(source)!;
+      final calls = <String>[];
+      final rows = [row('first'), row('second')];
+      var active = true;
+      void start() => service.start(
+        account: account,
+        generation: 0,
+        rows: rows,
+        current: () => true,
+        active: () => active,
+        read: (id) async {
+          calls.add(id);
+          return detail(id);
+        },
+        onBatch: (_) {},
+      );
+      start();
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      active = false;
+      await service.settle();
+      expect(calls, ['first']);
+      active = true;
+      start();
+      await service.settle();
+      expect(calls, ['first', 'second']);
+    },
+  );
+
+  test(
     'two-request bounded enrichment persists real tags, keeps missing unknown and reuses progress after memory loss',
     () async {
       final service = JmCollectionMetadata();

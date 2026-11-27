@@ -12,9 +12,12 @@ class PluginAccountAuthentication {
     this.label = '',
     String avatarUrl = '',
     this.origin = '',
+    this.loginIdentity = '',
     this.publicSummary = const {},
   }) : _requestAvatarUrl = avatarUrl;
   final String serverIdentity, label, origin;
+  // Legacy sources may prove the submitted login without returning a user ID.
+  final String loginIdentity;
   // A signed image URL belongs only to this in-memory authenticated receipt.
   final String _requestAvatarUrl;
 
@@ -43,6 +46,7 @@ class PluginAccountAuthentication {
         label: label,
         avatarUrl: _requestAvatarUrl,
         origin: value,
+        loginIdentity: loginIdentity,
         publicSummary: publicSummary,
       );
   Map<String, dynamic> toUserInfo() => {
@@ -53,7 +57,7 @@ class PluginAccountAuthentication {
       ...?(publicSummary['avatar'] is Map
           ? Map<String, dynamic>.from(publicSummary['avatar'] as Map)
           : null),
-      'id': serverIdentity,
+      if (serverIdentity.isNotEmpty) 'id': serverIdentity,
       if (avatarUrl.isNotEmpty) 'url': avatarUrl,
     },
     'lines':
@@ -65,10 +69,22 @@ class PluginAccountAuthentication {
       ...?(publicSummary['extern'] is Map
           ? Map<String, dynamic>.from(publicSummary['extern'] as Map)
           : null),
-      'accountId': serverIdentity,
-      'uid': serverIdentity,
+      if (serverIdentity.isNotEmpty) ...{
+        'accountId': serverIdentity,
+        'uid': serverIdentity,
+      },
     },
   };
+  bool matchesProfile(PluginAccountProfile profile) => serverIdentity.isEmpty
+      ? profile.kind != 'web' &&
+            profile.serverIdentity.isEmpty &&
+            loginIdentity.isNotEmpty &&
+            loginIdentity == profile.identity
+      : profile.serverIdentity == serverIdentity &&
+            (profile.kind != 'web' ||
+                origin.isEmpty ||
+                profile.origin == origin);
+
   @override
   String toString() => 'PluginAccountAuthentication(private)';
 }
@@ -77,6 +93,10 @@ class PluginAccountAuthenticationRejected implements Exception {
   const PluginAccountAuthenticationRejected();
   @override
   String toString() => 'Account authentication rejected';
+}
+
+class PluginAccountIdentityUnavailable extends StateError {
+  PluginAccountIdentityUnavailable() : super('Account identity unavailable');
 }
 
 class _ConfirmedIdentity {
@@ -184,10 +204,18 @@ abstract final class PluginAccountIdentities {
   }) {
     _observe();
     source = canonicalQjsSource(source);
-    if (proof.serverIdentity.isEmpty ||
-        pluginSessionWriteFence.isChanging(source) ||
-        pluginSessionWriteFence.generation(source) != generation)
+    if (pluginSessionWriteFence.isChanging(source) ||
+        pluginSessionWriteFence.generation(source) != generation) {
       return false;
+    }
+    if (proof.serverIdentity.isEmpty) {
+      final config = readHostPluginConfiguration(source);
+      if (proof.loginIdentity.isEmpty ||
+          pluginAccountBundleIdentity(config) != proof.loginIdentity ||
+          legacyPluginAccountSession(config) == null) {
+        return false;
+      }
+    }
     final installation = LocalPluginInstallationState.instance;
     if (installation.isInstalling(source) || installation.isRemoved(source))
       return false;
@@ -203,6 +231,7 @@ abstract final class PluginAccountIdentities {
         old.generation != generation ||
         old.configuration != next.configuration ||
         old.proof.serverIdentity != proof.serverIdentity ||
+        old.proof.loginIdentity != proof.loginIdentity ||
         old.proof.label != proof.label ||
         old.proof.requestAvatarUrl != proof.requestAvatarUrl ||
         accountProfileDigest(old.proof.publicSummary) !=

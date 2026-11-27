@@ -17,6 +17,13 @@ subprojects {
 }
 subprojects {
     buildDir = file("${rootProject.buildDir}/${project.name}")
+    // FrameExtractor needs a MediaSource.Factory for the player's HTTP headers.
+    // Keep video_player and the preview decoder on the same Media3 ABI.
+    configurations.configureEach {
+        resolutionStrategy.eachDependency {
+            if (requested.group == "androidx.media3") useVersion("1.10.1")
+        }
+    }
 }
 subprojects {
     evaluationDependsOn(":app")

@@ -6,7 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `build_client`, `delete_raw`, `directory_request_path`, `download_file_with_retry`, `ensure_directory`, `get_raw`, `is_directory_entry`, `list_raw`, `list_rsp`, `mkcol_raw`, `normalize_any_managed_path`, `normalize_managed_href`, `normalize_remote_path`, `path_depth`, `start_request`, `strip_to_managed_root`, `strip_xml_ns`, `upload_bytes`
+// These functions are ignored because they are not marked as `pub`: `build_client`, `delete_raw`, `directory_request_path`, `download_file_with_retry`, `ensure_directory`, `get_raw`, `is_directory_entry`, `list_raw`, `list_rsp`, `mkcol_raw`, `normalize_any_managed_path`, `normalize_managed_href`, `normalize_remote_path`, `path_depth`, `read_bounded_response`, `start_request`, `strip_to_managed_root`, `strip_xml_ns`, `upload_bytes`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `WebDavClient`, `WebDavStatusError`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`, `fmt`
 
@@ -94,6 +94,7 @@ Future<Uint8List> webdavDownloadFile({
   required String legacyDataRootName,
   required String legacySettingsRootName,
   required String remotePath,
+  required int maxBytes,
 }) => RustLib.instance.api.crateApiWebdavWebdavDownloadFile(
   host: host,
   username: username,
@@ -102,6 +103,7 @@ Future<Uint8List> webdavDownloadFile({
   legacyDataRootName: legacyDataRootName,
   legacySettingsRootName: legacySettingsRootName,
   remotePath: remotePath,
+  maxBytes: maxBytes,
 );
 
 Future<void> webdavUploadBytes({

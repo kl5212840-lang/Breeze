@@ -1,3 +1,6 @@
+import 'package:zephyr/page/bookshelf/widgets/filter_scroll_rail.dart';
+import 'package:zephyr/page/bookshelf/widgets/filter_sheet_detents.dart';
+import 'package:zephyr/widgets/native_material_surface.dart';
 import 'package:zephyr/page/search/widget/search_field_decoration.dart';
 import 'dart:math' as math;
 
@@ -34,6 +37,7 @@ class _PluginListFilterDialogState extends State<PluginListFilterDialog> {
   final _expanded = <String>{};
   final _queries = <String, TextEditingController>{};
   final _scrolls = <String, ScrollController>{};
+  final _fieldScroll = ScrollController();
   int _resetVersion = 0;
 
   @override
@@ -54,6 +58,7 @@ class _PluginListFilterDialogState extends State<PluginListFilterDialog> {
     for (final controller in _queries.values) {
       controller.dispose();
     }
+    _fieldScroll.dispose();
     for (final controller in _scrolls.values) {
       controller.dispose();
     }
@@ -81,7 +86,10 @@ class _PluginListFilterDialogState extends State<PluginListFilterDialog> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      FilterSheetDetents(builder: _buildPanel);
+
+  Widget _buildPanel(BuildContext context, Widget handle) {
     final fields = [
       ...widget.scheme.fields.where((field) => field.options.length <= 12),
       ...widget.scheme.fields.where((field) => field.options.length > 12),
@@ -93,19 +101,27 @@ class _PluginListFilterDialogState extends State<PluginListFilterDialog> {
         final available = constraints.hasBoundedHeight
             ? constraints.maxHeight
             : screenHeight;
-        final height = math.max(
+        final availableHeight = math.max(0.0, available - inset);
+        final expanded = FilterSheetDetents.expandedHeight(
+          context,
+          availableHeight,
+        );
+        final compact = math.max(
           0.0,
           math.min(available, screenHeight * .88) - inset,
         );
+        final height = FilterSheetDetents.heightOf(
+          context,
+          compact: compact,
+          expanded: expanded,
+        );
         return Padding(
           padding: EdgeInsets.only(bottom: inset),
-          child: Material(
-            color: Theme.of(context).colorScheme.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-            // Keep the rounded surface paint outside native search ancestry.
-            clipBehavior: usesSystemSearchSurface(context)
-                ? Clip.none
-                : Clip.antiAlias,
+          child: NativeMaterialSurface(
+            radius: 20,
+            androidGlass: true,
+            topOnly: true,
+            readableContent: true,
             child: ConstrainedBox(
               constraints: BoxConstraints(maxHeight: height),
               child: SafeArea(
@@ -114,6 +130,7 @@ class _PluginListFilterDialogState extends State<PluginListFilterDialog> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    handle,
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
                       child: Row(
@@ -140,13 +157,19 @@ class _PluginListFilterDialogState extends State<PluginListFilterDialog> {
                     ),
                     const Divider(height: 1),
                     Flexible(
-                      child: ListView(
-                        key: const ValueKey('plugin-filter-fields'),
-                        shrinkWrap: true,
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-                        children: fields
-                            .map((field) => _buildField(context, field))
-                            .toList(),
+                      child: FilterScrollRail(
+                        controller: _fieldScroll,
+                        child: ListView(
+                          key: const ValueKey('plugin-filter-fields'),
+                          controller: _fieldScroll,
+                          primary: false,
+                          keyboardDismissBehavior:
+                              ScrollViewKeyboardDismissBehavior.manual,
+                          padding: const EdgeInsets.fromLTRB(16, 16, 4, 4),
+                          children: fields
+                              .map((field) => _buildField(context, field))
+                              .toList(),
+                        ),
                       ),
                     ),
                     const Divider(height: 1),
@@ -302,6 +325,7 @@ class _PluginListFilterDialogState extends State<PluginListFilterDialog> {
               child: TextField(
                 key: ValueKey('filter-search-$id'),
                 controller: controller,
+                textInputAction: TextInputAction.done,
                 onChanged: (_) => setState(() {}),
                 decoration: searchFieldDecoration(
                   context,
@@ -419,7 +443,7 @@ class _PluginListFilterDialogState extends State<PluginListFilterDialog> {
       constraints: BoxConstraints(
         maxHeight: (MediaQuery.sizeOf(context).height * .3).clamp(144.0, 280.0),
       ),
-      child: Scrollbar(
+      child: FilterScrollRail(
         controller: controller,
         child: SingleChildScrollView(
           controller: controller,

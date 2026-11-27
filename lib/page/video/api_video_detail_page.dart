@@ -7,6 +7,7 @@ import 'package:zephyr/page/video/omo_network.dart';
 import 'package:zephyr/page/video/video_network_scope.dart';
 import 'package:zephyr/network/source_network_policy.dart';
 import 'package:zephyr/network/playback_trace.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'dart:async';
 
 import 'package:auto_route/auto_route.dart';
@@ -39,6 +40,8 @@ import 'package:zephyr/page/video/api_video_library_page.dart';
 import 'package:zephyr/page/video/video_browse_theme.dart';
 import 'package:zephyr/page/video/video_page_route.dart';
 import 'package:zephyr/page/video/video_thumbnail.dart';
+import 'package:zephyr/page/video/video_download_resolution.dart';
+import 'package:zephyr/page/video/video_line_resolution_measurements.dart';
 import 'package:zephyr/page/video/video_cover_overlay.dart';
 import 'package:zephyr/page/video/omofun_site_client.dart';
 import 'package:zephyr/page/video/omofun_account_page.dart'
@@ -88,13 +91,16 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
   Uri? _currentWatch;
   Uri? _initialProgressWatch;
   Uri? _pendingWatch;
+  VideoDownloadResolutionOwner? _initialResolutionOwner;
   VideoEpisodeSequence? _initialEpisodeSequence;
-  Completer<void>? _initialPickerGate;
+  bool _initialPickerOpen = false;
+  ModalRoute<dynamic>? _initialPickerRoute;
+  final _playerKey = GlobalKey<NativeVideoPageState>();
   final _detailScroll = ScrollController();
   final _expandedCreditRoles = <String>{};
   final _candidateItems = <Uri, ApiVideoItem>{};
   ApiVideoItem? _playbackItem;
-  bool _failed = false, _expanded = false, _saving = false;
+  bool _failed = false, _saving = false;
   bool _episodeDownloadOpen = false;
   bool _detailsLoading = true, _detailsFailed = false, _preparing = false;
   bool _openingInitialLink = false;
@@ -107,7 +113,17 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
   bool _commentTab = false, _commentsMounted = false;
   int _epoch = 0, _libraryEpoch = 0;
   final _lineChanges = ValueNotifier<int>(0);
-  final _lineAttempts = <Uri, ({Duration elapsed, bool success})>{};
+  final _lineMeasurements = VideoLineResolutionMeasurements.shared;
+  String? _timingRoute;
+  int _timingRouteEpoch = 0;
+  Timer? _lineProbeTimer;
+  NativePlaybackSession? _probePlaybackSession;
+  int _lineProbeEpoch = 0;
+  VideoDownloadResolutionOwner? _lineProbeOwner;
+  static const _lineProbeBatchLimit = 2;
+  final _probeBatches = <Uri, int>{};
+  StreamSubscription<String>? _probeNetworkSubscription;
+  final _lineAttempts = <Uri, VideoLineResolutionSample>{};
   final _resolvingLines = <Uri>{};
   final _resolutionErrors = <Uri, String>{};
   final _resolutionRequests = <Uri, int>{};
@@ -144,6 +160,16 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
       _repository = original;
     }
     WidgetsBinding.instance.addObserver(this);
+    _lineMeasurements.addListener(_lineMeasurementChanged);
+    unawaited(_lineMeasurements.load());
+    unawaited(_readTimingRoute());
+    _probeNetworkSubscription = SourceNetworkPolicies.changes.listen((source) {
+      if (source != _repository.source) return;
+      _timingRouteEpoch++;
+      _timingRoute = null;
+      _stopLineProbes();
+      _lineMeasurementChanged();
+    });
     _store.addListener(_readLibrary);
     _initialLibraryRead = _readLibrary();
     _load();
@@ -151,6 +177,10 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
 
   @override
   void dispose() {
+    _stopInitialResolution();
+    _stopLineProbes();
+    unawaited(_probeNetworkSubscription?.cancel());
+    _lineMeasurements.removeListener(_lineMeasurementChanged);
     unawaited(
       _ownedNetwork?.then<void>(
             (value) async => value?.close(),
@@ -171,14 +201,17 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
     _store.removeListener(_readLibrary);
     _detailScroll.dispose();
     _lineChanges.dispose();
-    _initialPickerGate?.complete();
-    _initialPickerGate = null;
     _actionNoticeTimer?.cancel();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
+      _stopLineProbes();
+    }
     if ((state == AppLifecycleState.paused ||
             state == AppLifecycleState.hidden) &&
         _preparing) {
@@ -186,8 +219,246 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
     }
   }
 
+  void _lineMeasurementChanged() {
+    if (!mounted) return;
+    _lineChanges.value++;
+    setState(() {});
+  }
+
+  Future<void> _readTimingRoute() async {
+    final epoch = _timingRouteEpoch;
+    try {
+      final source = _repository.source;
+      var route = 'source-direct';
+      if (SourceNetworkPolicies.supports(source)) {
+        final network = await SourceNetworkPolicies.resolve(source);
+        final mode = (await SourceNetworkPolicies.read(source)).mode;
+        route = '${mode.name}:${network.runtimeName}';
+      }
+      if (!mounted || epoch != _timingRouteEpoch) return;
+      _timingRoute = route;
+      for (final entry in _lineAttempts.entries) {
+        _recordLineTiming(entry.key, entry.value);
+      }
+      _lineMeasurementChanged();
+      _scheduleLineProbes();
+    } catch (_) {
+      // Measurements are omitted when the route cannot be authenticated.
+    }
+  }
+
+  String? _lineTimingKey(Uri target) {
+    final route = _timingRoute;
+    final line = target.queryParameters['line'];
+    final episode = target.queryParameters['episode'];
+    if (route == null || line == null || episode == null) return null;
+    return VideoLineResolutionMeasurements.key(
+      source: _repository.source,
+      work: _item.id,
+      episode: episode,
+      line: line,
+      route: route,
+    );
+  }
+
+  void _recordLineTiming(Uri target, VideoLineResolutionSample value) {
+    final key = _lineTimingKey(target);
+    if (key != null && _item.lines.length > 1) {
+      unawaited(_lineMeasurements.record(key, value));
+    }
+  }
+
+  void _setLineProbeActivity(NativePlaybackSession session, bool playing) {
+    if (!playing) {
+      if (identical(_probePlaybackSession, session)) _stopLineProbes();
+      return;
+    }
+    if (!mounted || session.watchUrl != _currentWatch) return;
+    if (!identical(_probePlaybackSession, session)) {
+      _stopLineProbes();
+      _probePlaybackSession = session;
+    }
+    _scheduleLineProbes();
+  }
+
+  bool _canProbeLines(NativePlaybackSession session, int epoch) =>
+      mounted &&
+      epoch == _lineProbeEpoch &&
+      identical(_probePlaybackSession, session) &&
+      _currentWatch == session.watchUrl &&
+      _timingRoute != null &&
+      widget.initialLocalSession == null &&
+      !_preparing &&
+      !_episodeDownloadOpen &&
+      _resolvingLines.isEmpty &&
+      _repository.cancellableDownloadTransport &&
+      (ModalRoute.of(context)?.isCurrent != false ||
+          _initialPickerOpen && _initialPickerRoute?.isCurrent == true);
+
+  void _scheduleLineProbes() {
+    final session = _probePlaybackSession;
+    final epoch = _lineProbeEpoch;
+    if (session == null ||
+        !_canProbeLines(session, epoch) ||
+        _item.lines.length < 2 ||
+        (_probeBatches[session.watchUrl] ?? 0) >= _lineProbeBatchLimit ||
+        _lineProbeOwner != null ||
+        _lineProbeTimer != null) {
+      return;
+    }
+    _lineProbeTimer = Timer(const Duration(milliseconds: 900), () {
+      _lineProbeTimer = null;
+      if (_canProbeLines(session, epoch)) {
+        unawaited(_probeLineResolutions(session, epoch));
+      }
+    });
+  }
+
+  void _stopLineProbes() {
+    _lineProbeEpoch++;
+    _probePlaybackSession = null;
+    _lineProbeTimer?.cancel();
+    _lineProbeTimer = null;
+    final owner = _lineProbeOwner;
+    // The foreground starts immediately. Any delayed cancellation belongs
+    // only to the passive resolver's independently tracked task group.
+    if (owner != null) unawaited(owner.stop().catchError((Object _) {}));
+  }
+
+  Future<void> _probeLineResolutions(
+    NativePlaybackSession session,
+    int epoch,
+  ) async {
+    final watch = session.watchUrl;
+    // Episode switches keep the initial session rendered by the child, while
+    // the detail route tracks the committed watch identity independently.
+    final lineId = watch.queryParameters['line'];
+    final episodeId = watch.queryParameters['episode'];
+    final selected = _item.lines
+        .where((line) => line.id == lineId)
+        .expand((line) => line.episodes)
+        .where((entry) => entry.id == episodeId)
+        .firstOrNull;
+    if (selected == null) return;
+    var attempted = 0;
+    final item = _item;
+    final source = _repository.source;
+    final generation = pluginSessionWriteFence.generation(source);
+    bool current() =>
+        _canProbeLines(session, epoch) &&
+        pluginSessionWriteFence.generation(source) == generation;
+    // Load the measurement store before dispatch so eligible sample writes
+    // can publish immediately after the activity check.
+    await _lineMeasurements.load();
+    if (!current()) return;
+    final batches = _probeBatches[watch] ?? 0;
+    if (batches >= _lineProbeBatchLimit) return;
+    _probeBatches[watch] = batches + 1;
+    if (_probeBatches.length > 24) {
+      _probeBatches.remove(_probeBatches.keys.first);
+    }
+    for (final line in item.lines) {
+      if (!current() || attempted >= 3) break;
+      if (line.id == lineId) continue;
+      final target = item.matchingEpisode(line, selected);
+      if (target == null) continue;
+      final key = _lineTimingKey(target.watchUrl);
+      if (key == null || _lineMeasurements.read(key) != null) continue;
+      final owner = _lineProbeOwner = VideoDownloadResolutionOwner(
+        _repository.source,
+        passive: true,
+      );
+      attempted++;
+      final timer = Stopwatch()..start();
+      try {
+        final result = await Future.any([
+          owner.run(
+            () => _repository.session(
+              item.id,
+              lineId: line.id,
+              episodeId: target.id,
+              refresh: true,
+              snapshot: item,
+            ),
+          ),
+          owner.stopped.then<Never>(
+            (_) => throw const VideoResolutionCancelled(),
+          ),
+        ]).timeout(const Duration(seconds: 8));
+        owner.check();
+        if (result.session.watchUrl != target.watchUrl) {
+          throw const FormatException('Wrong episode returned');
+        }
+        if (current()) {
+          unawaited(
+            _lineMeasurements.record(key, (
+              elapsed: timer.elapsed,
+              outcome: VideoLineResolutionOutcome.resolved,
+            )),
+          );
+        }
+      } on VideoResolutionCancelled {
+        // A browser-bound or superseded check supplies no sample.
+      } on TimeoutException {
+        if (current() && !owner.cancelled) {
+          unawaited(
+            _lineMeasurements.record(key, (
+              elapsed: timer.elapsed,
+              outcome: VideoLineResolutionOutcome.timedOut,
+            )),
+          );
+        }
+        try {
+          await Future.wait([
+            owner.stop(),
+            owner.stopped,
+          ]).timeout(const Duration(seconds: 2));
+        } catch (_) {
+          // No replacement batch may use this watch's transport slot.
+          _probeBatches[watch] = _lineProbeBatchLimit;
+          return;
+        }
+      } catch (error) {
+        if (current() && !owner.cancelled) {
+          unawaited(
+            _lineMeasurements.record(key, (
+              elapsed: timer.elapsed,
+              outcome: _failedLineOutcome(error),
+            )),
+          );
+        }
+      } finally {
+        owner.close();
+        if (identical(_lineProbeOwner, owner)) _lineProbeOwner = null;
+      }
+    }
+    if (epoch == _lineProbeEpoch) {
+      _probeBatches[watch] = _lineProbeBatchLimit;
+    } else {
+      _scheduleLineProbes();
+    }
+  }
+
+  VideoLineResolutionOutcome _failedLineOutcome(Object error) {
+    final cause = error is ApiVideoStageFailure ? error.cause : error;
+    return cause is TimeoutException
+        ? VideoLineResolutionOutcome.timedOut
+        : VideoLineResolutionOutcome.failed;
+  }
+
+  void _stopInitialResolution() {
+    final owner = _initialResolutionOwner;
+    _initialResolutionOwner = null;
+    if (owner != null) {
+      unawaited(
+        owner.stop().catchError((Object _) {}).whenComplete(owner.close),
+      );
+    }
+  }
+
   void _cancelInitial() {
     _epoch++;
+    _stopInitialResolution();
     setState(() {
       _preparing = false;
       _resolvingLines.clear();
@@ -435,6 +706,7 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
       }
     }
     final clock = Stopwatch()..start();
+    _stopLineProbes();
     final pageEpoch = _epoch, requestEpoch = ++_resolutionEpoch;
     final lineIndex =
         _item.lines.indexWhere(
@@ -475,8 +747,12 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
       if (current()) {
         setState(() {
           _resolutionErrors.remove(target);
-          _lineAttempts[target] = (elapsed: clock.elapsed, success: true);
+          _lineAttempts[target] = (
+            elapsed: clock.elapsed,
+            outcome: VideoLineResolutionOutcome.resolved,
+          );
         });
+        _recordLineTiming(target, _lineAttempts[target]!);
       }
       if (widget.initialLocalSession != null) {
         final session = value.session;
@@ -505,8 +781,12 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
       if (current()) {
         setState(() {
           _resolutionErrors[target] = apiResolutionErrorSummary(error);
-          _lineAttempts[target] = (elapsed: clock.elapsed, success: false);
+          _lineAttempts[target] = (
+            elapsed: clock.elapsed,
+            outcome: _failedLineOutcome(error),
+          );
         });
+        _recordLineTiming(target, _lineAttempts[target]!);
       }
       rethrow;
     } finally {
@@ -528,6 +808,7 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
   Future<void> _prepareInitial(Uri target, {bool automatic = true}) async {
     _historyEpisodeUnavailable = false;
     final epoch = ++_epoch;
+    _stopInitialResolution();
     _clearActionNotice();
     setState(() {
       _pendingWatch = target;
@@ -537,7 +818,8 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
       _initialAttempt = 0;
       _failed = false;
     });
-    final deadline = DateTime.now().add(const Duration(seconds: 45));
+    const preparationBudget = Duration(seconds: 45);
+    final deadline = DateTime.now().add(preparationBudget);
     final selectedLine = _item.lines
         .where((line) => line.id == target.queryParameters['line'])
         .firstOrNull;
@@ -554,6 +836,12 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
             episode.watchUrl,
     };
     _initialTotal = targets.length;
+    // OmoFun's watch, direct probe and parser can succeed after 25 seconds.
+    // A sole attempt can use the full budget without delaying another line.
+    final attemptBudget =
+        _repository.source == omoNetworkSource && targets.length == 1
+        ? preparationBudget
+        : const Duration(seconds: 25);
     // Normal resolution already verifies any direct media supplied by the
     // source. Reserve explicit raw recovery for an actual playback failure.
     for (final candidate in targets) {
@@ -571,18 +859,25 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
             '';
       });
       final attemptClock = Stopwatch()..start();
+      final owner = _repository.cancellableDownloadTransport
+          ? VideoDownloadResolutionOwner(_repository.source)
+          : null;
+      _initialResolutionOwner = owner;
       try {
         final remaining = deadline.difference(DateTime.now());
-        final playback = await _resolve(candidate).timeout(
-          remaining < const Duration(seconds: 25)
-              ? remaining
-              : const Duration(seconds: 25),
+        final resolution = owner == null
+            ? _resolve(candidate)
+            : owner.run(() => _resolve(candidate));
+        final playback = await resolution.timeout(
+          remaining < attemptBudget ? remaining : attemptBudget,
         );
-        // Keep recovery running while a picker is open, but do not replace
-        // its underlying page until the user has dismissed or made a choice.
-        final picker = _initialPickerGate;
-        if (picker != null) await picker.future;
-        if (!mounted || epoch != _epoch) return;
+        // The selection sheet is a separate route. It can stay open over
+        // the player while this verified session starts preparing media.
+        if (!mounted ||
+            epoch != _epoch ||
+            ModalRoute.of(context)?.isActive == false) {
+          return;
+        }
         setState(() {
           _playbackItem = playback.item;
           _initialSession = playback.session;
@@ -593,17 +888,24 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
         return;
       } catch (error) {
         if (mounted && epoch == _epoch && error is TimeoutException) {
+          _stopInitialResolution();
           setState(() {
             _resolutionRequests[candidate] = ++_resolutionEpoch;
             _resolvingLines.remove(candidate);
             _resolutionErrors[candidate] = 'timeout';
             _lineAttempts[candidate] = (
               elapsed: attemptClock.elapsed,
-              success: false,
+              outcome: VideoLineResolutionOutcome.timedOut,
             );
           });
+          _recordLineTiming(candidate, _lineAttempts[candidate]!);
         }
         // Only read operations are tried on another reliable same-episode line.
+      } finally {
+        if (identical(_initialResolutionOwner, owner)) {
+          _initialResolutionOwner = null;
+          owner?.close();
+        }
       }
     }
     if (mounted && epoch == _epoch) {
@@ -730,7 +1032,7 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
             _pendingWatch ??
             episodes.first.watchUrl,
         lineLabels: {for (final line in item.lines) line.id: line.label},
-        onEnqueue: (episodes) =>
+        onEnqueue: (episodes, {quality}) =>
             ApiVideoEpisodeDownloads.enqueue(_repository, item, episodes),
         onRetry: (episode, row) =>
             ApiVideoEpisodeDownloads.retry(_repository, item, episode, row),
@@ -871,12 +1173,28 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
 
   String _lineDetail(Uri? target) {
     if (_resolvingLines.contains(target)) return t.videoSource.lineResolving;
-    final result = _lineAttempts[target];
-    if (result == null) return t.videoSource.lineUntested;
-    final seconds = (result.elapsed.inMilliseconds / 1000).toStringAsFixed(1);
-    return result.success
-        ? t.videoSource.lineResolved(seconds: seconds)
-        : t.videoSource.lineResolveFailed(seconds: seconds);
+    return _lineTimingText(target) ?? t.videoSource.lineUntested;
+  }
+
+  String? _lineTimingText(Uri? target) {
+    if (target == null || _item.lines.length < 2) return null;
+    final key = _lineTimingKey(target);
+    if (key == null) return null;
+    final result = _lineMeasurements.read(key);
+    if (result == null) return null;
+    final millis = result.elapsed.inMilliseconds;
+    final seconds = (millis / 1000).toStringAsFixed(millis < 1000 ? 3 : 1);
+    return switch (result.outcome) {
+      VideoLineResolutionOutcome.resolved => t.videoSource.lineResolved(
+        seconds: seconds,
+      ),
+      VideoLineResolutionOutcome.failed => t.videoSource.lineResolveFailed(
+        seconds: seconds,
+      ),
+      VideoLineResolutionOutcome.timedOut => t.videoSource.lineResolveTimedOut(
+        seconds: seconds,
+      ),
+    };
   }
 
   List<NativeVideoResourceLine> _resourceLines(NativePlaybackSession session) {
@@ -890,7 +1208,7 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
         label: line.label,
         current: line.id == session.watchUrl.queryParameters['line'],
         resolving: _resolvingLines.contains(target?.watchUrl),
-        detail: current == null ? '' : _lineDetail(target?.watchUrl),
+        detail: _lineTimingText(target?.watchUrl) ?? '',
         target: _cardFor(target),
       );
     }).toList();
@@ -994,6 +1312,23 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
     }
   }
 
+  void _selectInitialPickerTarget(BuildContext sheet, Uri target) {
+    // Claim a new initial attempt in the tap itself. Waiting for the modal
+    // result would let the previous request commit in the meantime.
+    if (_initialSession == null &&
+        ModalRoute.of(context)?.isActive != false &&
+        !{
+          AppLifecycleState.paused,
+          AppLifecycleState.hidden,
+          AppLifecycleState.detached,
+        }.contains(WidgetsBinding.instance.lifecycleState)) {
+      unawaited(_prepareInitial(target, automatic: false));
+      Navigator.of(sheet).pop();
+      return;
+    }
+    Navigator.of(sheet).pop(target);
+  }
+
   Future<void> _initialSelection(
     BuildContext appearance, {
     bool linesOnly = false,
@@ -1015,8 +1350,8 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
           _item.episodeCards(selectedLine.id),
         ) ??
         VideoEpisodeSequence(_item.episodeCards(selectedLine.id));
-    if (sequence.items.isEmpty || _initialPickerGate != null) return;
-    final gate = _initialPickerGate = Completer<void>();
+    if (sequence.items.isEmpty || _initialPickerOpen) return;
+    _initialPickerOpen = true;
     Uri? target;
     try {
       target = await showVideoSelectionPanel<Uri>(
@@ -1026,72 +1361,99 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
             : VideoPanelPurpose.episodes,
         systemStyle: AppInterfaceStyleScope.usesSystem(appearance),
         title: linesOnly ? t.videoPlayback.source : t.videoPlayback.episodes,
-        builder: (sheet) => ValueListenableBuilder<int>(
-          valueListenable: _lineChanges,
-          builder: (_, _, _) => StatefulBuilder(
-            builder: (_, update) => linesOnly
-                ? ListView(
-                    shrinkWrap: true,
-                    padding: const EdgeInsets.only(bottom: 16),
-                    children: [
-                      for (final line in _item.lines)
-                        Builder(
-                          builder: (_) {
-                            final episode = current == null
-                                ? null
-                                : _item.matchingEpisode(line, current);
-                            return ListTile(
-                              key: ValueKey('api-initial.line.${line.id}'),
-                              title: Text(line.label),
-                              selected:
-                                  _pendingWatch?.queryParameters['line'] ==
-                                  line.id,
-                              trailing:
-                                  _pendingWatch?.queryParameters['line'] ==
-                                      line.id
-                                  ? const Icon(Icons.check_rounded)
-                                  : null,
-                              subtitle: Text(
-                                episode == null
-                                    ? t.videoPlayback.episodeMissingOnLine
-                                    : _lineDetail(episode.watchUrl),
-                              ),
-                              subtitleTextStyle: Theme.of(
-                                sheet,
-                              ).textTheme.bodySmall,
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 2,
-                              ),
-                              onTap: episode == null
+        builder: (sheet) {
+          _initialPickerRoute = ModalRoute.of(sheet);
+          return ValueListenableBuilder<int>(
+            valueListenable: _lineChanges,
+            builder: (_, _, _) => StatefulBuilder(
+              builder: (_, update) => linesOnly
+                  ? ListView(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.only(bottom: 16),
+                      children: [
+                        for (final line in _item.lines)
+                          Builder(
+                            builder: (_) {
+                              final episode = current == null
                                   ? null
-                                  : () => Navigator.of(
-                                      sheet,
-                                    ).pop(episode.watchUrl),
-                            );
-                          },
-                        ),
-                    ],
-                  )
-                : VideoEpisodePicker(
-                    sequence: sequence,
-                    current: _pendingWatch ?? sequence.items.first.watchUrl,
-                    onChanged: (next) {
-                      update(() => sequence = next);
-                      _initialEpisodeSequence = next;
-                    },
-                    onSelected: (card) =>
-                        Navigator.of(sheet).pop(card.watchUrl),
-                  ),
-          ),
-        ),
+                                  : _item.matchingEpisode(line, current);
+                              final active =
+                                  episode != null &&
+                                  episode.watchUrl == _currentWatch;
+                              final pending =
+                                  episode != null &&
+                                  _resolvingLines.contains(episode.watchUrl);
+                              return ListTile(
+                                key: ValueKey('api-initial.line.${line.id}'),
+                                title: Text(line.label),
+                                selected: active,
+                                trailing: active
+                                    ? const Icon(Icons.check_rounded)
+                                    : null,
+                                subtitle: Text(
+                                  episode == null
+                                      ? t.videoPlayback.episodeMissingOnLine
+                                      : _lineDetail(episode.watchUrl),
+                                ),
+                                subtitleTextStyle: Theme.of(
+                                  sheet,
+                                ).textTheme.bodySmall,
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 2,
+                                ),
+                                onTap: episode == null || active || pending
+                                    ? null
+                                    : () => _selectInitialPickerTarget(
+                                        sheet,
+                                        episode.watchUrl,
+                                      ),
+                              );
+                            },
+                          ),
+                      ],
+                    )
+                  : VideoEpisodePicker(
+                      sequence: sequence,
+                      current: _pendingWatch ?? sequence.items.first.watchUrl,
+                      onChanged: (next) {
+                        update(() => sequence = next);
+                        _initialEpisodeSequence = next;
+                      },
+                      onSelected: (card) =>
+                          _selectInitialPickerTarget(sheet, card.watchUrl),
+                    ),
+            ),
+          );
+        },
       );
-      if (mounted && target != null) {
-        unawaited(_prepareInitial(target, automatic: false));
+      if (!mounted ||
+          target == null ||
+          ModalRoute.of(context)?.isActive == false ||
+          {
+            AppLifecycleState.paused,
+            AppLifecycleState.hidden,
+            AppLifecycleState.detached,
+          }.contains(WidgetsBinding.instance.lifecycleState)) {
+        return;
       }
+      if (_initialSession == null) {
+        unawaited(_prepareInitial(target, automatic: false));
+        return;
+      }
+      final card = _item
+          .episodeCards(target.queryParameters['line'] ?? '')
+          .where((card) => card.watchUrl == target)
+          .firstOrNull;
+      if (card == null) return;
+      // The resolver may commit in the same frame as the picker returns.
+      if (_playerKey.currentState == null) {
+        await WidgetsBinding.instance.endOfFrame;
+      }
+      if (mounted) await _playerKey.currentState?.selectEpisodeFromHost(card);
     } finally {
-      if (identical(_initialPickerGate, gate)) _initialPickerGate = null;
-      if (!gate.isCompleted) gate.complete();
+      _initialPickerOpen = false;
+      _initialPickerRoute = null;
     }
   }
 
@@ -1379,7 +1741,7 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
       );
     }
     return NativeVideoPage(
-      key: ValueKey('api-player.${_item.id}'),
+      key: _playerKey,
       initialControlsVisible: _preparingControlsVisible,
       session: session,
       initialEpisodeSequence: _initialEpisodeSequence,
@@ -1390,6 +1752,15 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
           : (source) =>
                 _repository.networkContext!.player(source.url, source.headers),
       source: _repository.source,
+      allowSeekThumbnails: _repository.source == omoNetworkSource
+          ? (current) {
+              final watch = current.watchUrl;
+              final lineId = watch.queryParameters['line'];
+              return !_playbackDetails(watch).lines.any(
+                (line) => line.id == lineId && line.label.trim() == '精品',
+              );
+            }
+          : null,
       downloadAdapter: VideoPlaybackDownloadAdapter.new,
       onDownloadEpisodes: _hasEpisodeDownloads(_item)
           ? (current) => _downloadEpisodes(context, current)
@@ -1413,6 +1784,7 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
             : const {};
       },
       onOpenWebsite: _website,
+      onResolverProbeActivity: _setLineProbeActivity,
       onPlaybackError: (error) {
         _playbackTrace.add('player_error', error);
         _clearActionNotice();
@@ -2194,32 +2566,13 @@ class _ApiVideoDetailPageState extends State<ApiVideoDetailPage>
         const SizedBox(height: 20),
         Text(t.videoLibrary.synopsis, style: theme.textTheme.titleMedium),
         const SizedBox(height: 8),
-        VideoSizeTransition(
-          alignment: AlignmentDirectional.topStart,
-          child: Text(
-            _item.description.isEmpty
-                ? (_detailsLoading
-                      ? t.common.loading
-                      : t.videoLibrary.noSynopsis)
-                : _item.description,
-            maxLines: _expanded ? null : 5,
-            overflow: _expanded ? TextOverflow.visible : TextOverflow.ellipsis,
-            style: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
-          ),
+        VideoExpandableDescription(
+          text: _item.description.isEmpty
+              ? (_detailsLoading ? t.common.loading : t.videoLibrary.noSynopsis)
+              : _item.description,
+          previewLines: 5,
+          style: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
         ),
-        if (_item.description.length > 140)
-          Align(
-            alignment: AlignmentDirectional.centerStart,
-            child: TextButton.icon(
-              onPressed: () => setState(() => _expanded = !_expanded),
-              icon: VideoDisclosureIndicator(expanded: _expanded, size: 18),
-              label: Text(
-                _expanded
-                    ? t.videoPlayback.collapseDescription
-                    : t.videoPlayback.expandDescription,
-              ),
-            ),
-          ),
         const SizedBox(height: 12),
         if (_item.alternateTitle.isNotEmpty &&
             _item.alternateTitle != _item.title)

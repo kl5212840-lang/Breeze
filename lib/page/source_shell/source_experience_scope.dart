@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/widgets/app_interface_style.dart';
 import 'package:zephyr/widgets/breeze_control_colors.dart';
+import 'package:zephyr/widgets/breeze_overlay_theme.dart';
 import 'package:zephyr/network/http/plugin/qjs_network_route.dart';
 import 'package:zephyr/page/source_shell/source_experience_preferences.dart';
 
@@ -101,62 +102,65 @@ ThemeData sourceOriginalPinkTheme(ThemeData base) {
             : const Color(0xFFE0E0E0),
       );
   final card = dark ? container : surface;
-  return base.copyWith(
-    colorScheme: colors,
-    primaryColor: colors.primary,
-    scaffoldBackgroundColor: scaffold,
-    canvasColor: surface,
-    cardColor: card,
-    cardTheme: base.cardTheme.copyWith(color: card),
-    appBarTheme: base.appBarTheme.copyWith(
-      backgroundColor: dark ? const Color(0xFF35232B) : bikaOriginalBrandColor,
-      foregroundColor: dark ? const Color(0xFFFFE3ED) : const Color(0xFF3B1727),
-    ),
-    dialogTheme: base.dialogTheme.copyWith(backgroundColor: card),
-    bottomSheetTheme: base.bottomSheetTheme.copyWith(
-      backgroundColor: surface,
-      modalBackgroundColor: surface,
-    ),
-    chipTheme: base.chipTheme.copyWith(
-      backgroundColor: surface,
-      selectedColor: colors.primaryContainer,
-      secondarySelectedColor: colors.secondaryContainer,
-      labelStyle: (base.chipTheme.labelStyle ?? base.textTheme.labelLarge)
-          ?.copyWith(color: colors.onSurface),
-      secondaryLabelStyle:
-          (base.chipTheme.secondaryLabelStyle ?? base.textTheme.labelLarge)
-              ?.copyWith(color: colors.onSecondaryContainer),
-      side: base.chipTheme.side?.copyWith(color: colors.outlineVariant),
-    ),
-    navigationBarTheme: base.navigationBarTheme.copyWith(
-      backgroundColor: scaffold,
-      indicatorColor: dark ? const Color(0xFF35232B) : const Color(0xFFF8DCE7),
-      iconTheme: WidgetStateProperty.resolveWith(
-        (states) =>
-            (base.navigationBarTheme.iconTheme?.resolve(states) ??
-                    const IconThemeData())
-                .copyWith(
-                  color: states.contains(WidgetState.selected)
-                      ? accent
-                      : inactive,
-                ),
+  return BreezeOverlayTheme.apply(
+    base.copyWith(
+      colorScheme: colors,
+      primaryColor: colors.primary,
+      scaffoldBackgroundColor: scaffold,
+      canvasColor: surface,
+      cardColor: card,
+      cardTheme: base.cardTheme.copyWith(color: card),
+      appBarTheme: base.appBarTheme.copyWith(
+        backgroundColor: dark
+            ? const Color(0xFF35232B)
+            : bikaOriginalBrandColor,
+        foregroundColor: dark
+            ? const Color(0xFFFFE3ED)
+            : const Color(0xFF3B1727),
       ),
-      labelTextStyle: WidgetStateProperty.resolveWith(
-        (states) =>
-            (base.navigationBarTheme.labelTextStyle?.resolve(states) ??
-                    base.textTheme.labelMedium ??
-                    const TextStyle())
-                .copyWith(
-                  color: states.contains(WidgetState.selected)
-                      ? accent
-                      : inactive,
-                ),
+      chipTheme: base.chipTheme.copyWith(
+        backgroundColor: surface,
+        selectedColor: colors.primaryContainer,
+        secondarySelectedColor: colors.secondaryContainer,
+        labelStyle: (base.chipTheme.labelStyle ?? base.textTheme.labelLarge)
+            ?.copyWith(color: colors.onSurface),
+        secondaryLabelStyle:
+            (base.chipTheme.secondaryLabelStyle ?? base.textTheme.labelLarge)
+                ?.copyWith(color: colors.onSecondaryContainer),
+        side: base.chipTheme.side?.copyWith(color: colors.outlineVariant),
       ),
-    ),
-    bottomNavigationBarTheme: base.bottomNavigationBarTheme.copyWith(
-      backgroundColor: scaffold,
-      selectedItemColor: accent,
-      unselectedItemColor: inactive,
+      navigationBarTheme: base.navigationBarTheme.copyWith(
+        backgroundColor: scaffold,
+        indicatorColor: dark
+            ? const Color(0xFF35232B)
+            : const Color(0xFFF8DCE7),
+        iconTheme: WidgetStateProperty.resolveWith(
+          (states) =>
+              (base.navigationBarTheme.iconTheme?.resolve(states) ??
+                      const IconThemeData())
+                  .copyWith(
+                    color: states.contains(WidgetState.selected)
+                        ? accent
+                        : inactive,
+                  ),
+        ),
+        labelTextStyle: WidgetStateProperty.resolveWith(
+          (states) =>
+              (base.navigationBarTheme.labelTextStyle?.resolve(states) ??
+                      base.textTheme.labelMedium ??
+                      const TextStyle())
+                  .copyWith(
+                    color: states.contains(WidgetState.selected)
+                        ? accent
+                        : inactive,
+                  ),
+        ),
+      ),
+      bottomNavigationBarTheme: base.bottomNavigationBarTheme.copyWith(
+        backgroundColor: scaffold,
+        selectedItemColor: accent,
+        unselectedItemColor: inactive,
+      ),
     ),
   );
 }

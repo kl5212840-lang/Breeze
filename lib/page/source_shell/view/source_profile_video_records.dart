@@ -3,7 +3,7 @@ import 'package:zephyr/page/bookshelf/cubit/search_status.dart';
 import 'package:zephyr/page/bookshelf/models/shelf_page_mode.dart';
 import 'package:zephyr/page/bookshelf/widgets/video_bookshelf_pane.dart';
 import 'package:zephyr/page/bookshelf/service/video_bookshelf_index.dart';
-import 'package:zephyr/page/source_shell/source_back_button.dart';
+import 'package:zephyr/page/source_shell/view/source_profile_records_view.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/source_shell/models/source_video_module.dart';
@@ -34,10 +34,14 @@ class SourceProfileVideoRecords extends StatefulWidget {
 class _SourceProfileVideoRecordsState extends State<SourceProfileVideoRecords> {
   String? _selected;
   int _epoch = 0;
-  final _rows = <ShelfPageMode, List<VideoBookshelfRow>>{};
+  final _rows =
+      <
+        String,
+        Map<ShelfPageMode, ({List<VideoBookshelfRow> items, int count})>
+      >{};
   final _loading = <ShelfPageMode>{};
   final _failed = <ShelfPageMode>{};
-  Map<String, Map<String, dynamic>> _resources = {};
+  final _resources = <String, Map<String, Map<String, dynamic>>>{};
   SourceVideoModule? get _module =>
       widget.modules.where((value) => value.id == _selected).firstOrNull ??
       widget.modules.firstOrNull;
@@ -56,12 +60,12 @@ class _SourceProfileVideoRecordsState extends State<SourceProfileVideoRecords> {
     String identity(List<SourceVideoModule> modules) => modules
         .map(
           (module) =>
-              '${module.source}|${module.id}|${module.capabilities.itemNamespace}|${module.catalogFn}|${module.detailFn}|${module.playbackFn}',
+              '${module.source}|${module.id}|${module.home.origin}|${module.capabilities.itemNamespace}|${module.catalogFn}|${module.detailFn}|${module.playbackFn}',
         )
         .join('\n');
     if (identity(oldWidget.modules) != identity(widget.modules)) {
       _rows.clear();
-      _resources = {};
+      _resources.clear();
       _read();
     }
   }
@@ -183,16 +187,20 @@ class _SourceProfileVideoRecordsState extends State<SourceProfileVideoRecords> {
             SearchStatusState(sources: [module.source]),
             declared: declared,
           );
+          final items = rows.take(4).toList();
+          final resourceIds = items.map((row) => row.localResourceId).toSet();
           final resources = mode == ShelfPageMode.download
               ? {
                   for (final row in await VideoLocalResources.read())
-                    '${row['resourceId']}': row,
+                    if (resourceIds.contains(row['resourceId']))
+                      '${row['resourceId']}': row,
                 }
               : null;
           if (!mounted || epoch != _epoch) return;
           setState(() {
-            _rows[mode] = rows;
-            if (resources != null) _resources = resources;
+            final snapshots = _rows.putIfAbsent(module.id, () => {});
+            snapshots[mode] = (items: items, count: rows.length);
+            if (resources != null) _resources[module.id] = resources;
             _loading.remove(mode);
           });
         } catch (_) {
@@ -234,26 +242,26 @@ class _SourceProfileVideoRecordsState extends State<SourceProfileVideoRecords> {
         builder: (_) {
           final live = VideoBookshelfPaneDataSource.live;
           return Scaffold(
-            appBar: AppBar(
-              leading: const SourceBackButton(),
-              title: Text(module.title),
-            ),
-            body: VideoBookshelfPane(
-              mode: mode,
-              search: SearchStatusState(sources: [module.source]),
-              dataSource: VideoBookshelfPaneDataSource(
-                load: (mode, search) =>
-                    _load(module, mode, search, declared: declared),
-                sourceNames: () async => {module.source: module.title},
-                open: (context, row) => row.localResourceId != null
-                    ? openLocalVideo(context, row.localResourceId!)
-                    : _open(module, mode.name, row: row, origin: context),
-                remove: live.remove,
-                // Profile records project local snapshots. Fresh source reads
-                // belong to an explicit video open, not preview/hover enrichment.
-                enrich: (row) async => row.item,
-                store: live.store,
-                changes: live.changes,
+            body: SafeArea(
+              bottom: false,
+              child: VideoBookshelfPane(
+                mode: mode,
+                collectionPageTitle: sourceProfileRecordLabel(mode),
+                search: SearchStatusState(sources: [module.source]),
+                dataSource: VideoBookshelfPaneDataSource(
+                  load: (mode, search) =>
+                      _load(module, mode, search, declared: declared),
+                  sourceNames: () async => {module.source: module.title},
+                  open: (context, row) => row.localResourceId != null
+                      ? openLocalVideo(context, row.localResourceId!)
+                      : _open(module, mode.name, row: row, origin: context),
+                  remove: live.remove,
+                  // Profile records project local snapshots. Fresh source reads
+                  // belong to an explicit video open, not preview/hover enrichment.
+                  enrich: (row) async => row.item,
+                  store: live.store,
+                  changes: live.changes,
+                ),
               ),
             ),
           );
@@ -264,7 +272,8 @@ class _SourceProfileVideoRecordsState extends State<SourceProfileVideoRecords> {
 
   Widget _preview(SourceVideoModule module, ShelfPageMode mode) {
     final section = mode.name;
-    final rows = _rows[mode] ?? const <VideoBookshelfRow>[];
+    final snapshot = _rows[module.id]?[mode];
+    final rows = snapshot?.items ?? const <VideoBookshelfRow>[];
     void viewAll() => unawaited(_records(module, mode));
     return KeyedSubtree(
       key: ValueKey('profile-video-$section'),
@@ -282,15 +291,12 @@ class _SourceProfileVideoRecordsState extends State<SourceProfileVideoRecords> {
           ShelfPageMode.history => Icons.history,
           ShelfPageMode.download => Icons.download_outlined,
         },
-        countLabel: _loading.contains(mode) || _failed.contains(mode)
-            ? null
-            : '${rows.length}',
-        loading: _loading.contains(mode),
+        countLabel: snapshot == null ? null : '${snapshot.count}',
+        loading: snapshot == null && _loading.contains(mode),
         failed: _failed.contains(mode),
         onRetry: _read,
         onViewAll: viewAll,
         items: rows
-            .take(4)
             .map(
               (row) => SourceProfileVideoPreviewItem(
                 id: row.key,
@@ -302,7 +308,7 @@ class _SourceProfileVideoRecordsState extends State<SourceProfileVideoRecords> {
                     ? ApiVideoPoster(item: row.item, source: row.source)
                     : DownloadVideoTaskCover(
                         row:
-                            _resources[row.localResourceId] ??
+                            _resources[module.id]?[row.localResourceId] ??
                             {
                               'resourceId': row.localResourceId,
                               'source': row.source,
@@ -368,7 +374,6 @@ class _SourceProfileVideoRecordsState extends State<SourceProfileVideoRecords> {
                         if (_selected == value) return;
                         setState(() {
                           _selected = value;
-                          _rows.clear();
                           _failed.clear();
                         });
                         _read();

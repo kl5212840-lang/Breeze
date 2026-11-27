@@ -3,6 +3,7 @@ import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 typedef AppliedFilter = ({
   String id,
@@ -20,6 +21,7 @@ class AppliedFilterBar extends StatefulWidget {
     this.clearKey = const ValueKey('applied-filter.clear-all'),
     this.contextChips = const [],
     this.clearWhenEmpty = false,
+    this.compact = false,
   });
 
   final List<AppliedFilter> entries;
@@ -28,6 +30,7 @@ class AppliedFilterBar extends StatefulWidget {
   final Key clearKey;
   final List<Widget> contextChips;
   final bool clearWhenEmpty;
+  final bool compact;
 
   static final _confirmations = <ModalRoute<dynamic>, DialogRoute<void>>{};
 
@@ -59,18 +62,20 @@ class _AppliedFilterBarState extends State<AppliedFilterBar> {
         from: context,
         to: Navigator.of(context, rootNavigator: true).context,
       ),
-      builder: (dialog) => AlertDialog(
+      builder: (dialog) => ShortAlert(
         title: Text(
           LocaleSettings.currentLocale.languageCode == 'zh'
               ? '清除全部筛选？'
               : 'Clear all filters?',
         ),
         actions: [
-          TextButton(
+          ShortAlertAction(
             onPressed: () => Navigator.pop(dialog),
             child: Text(t.common.cancel),
           ),
-          FilledButton(
+          ShortAlertAction(
+            destructive: true,
+            filled: true,
             onPressed: () {
               // Publish the new conditions before the underlying page resumes.
               if (mounted &&
@@ -104,121 +109,162 @@ class _AppliedFilterBarState extends State<AppliedFilterBar> {
         widget.contextChips.isEmpty &&
         !widget.clearWhenEmpty)
       return const SizedBox.shrink();
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final actionExtent = CollectionToolbarMetrics.actionExtentOf(context);
     final height = (MediaQuery.textScalerOf(context).scale(14) * 1.5 + 22)
         .clamp(actionExtent, double.infinity);
+    final chipCount = widget.entries.length + widget.contextChips.length;
+    final fitSingleChip = widget.compact && chipCount == 1;
+    final clear = widget.entries.isNotEmpty || widget.clearWhenEmpty
+        ? SizedBox.square(
+            dimension: actionExtent,
+            child: IconButton(
+              key: widget.clearKey,
+              tooltip: t.videoFilters.clearFilters,
+              onPressed: _confirmClear,
+              icon: Icon(Icons.close_rounded, size: widget.compact ? 18 : 20),
+            ),
+          )
+        : null;
     return Semantics(
       label: t.videoFilters.active,
       child: Padding(
         padding: EdgeInsetsDirectional.only(
-          start: (widget.inset - 8).clamp(0.0, widget.inset),
+          start: widget.compact
+              ? (widget.inset - (clear == null ? 0 : 10)).clamp(
+                  0.0,
+                  widget.inset,
+                )
+              : (widget.inset - 8).clamp(0.0, widget.inset),
+          end: widget.compact ? widget.inset : 0,
         ),
         child: SizedBox(
           height: height,
           child: Row(
-            spacing: 6,
+            spacing: 2,
             children: [
-              if (widget.entries.isNotEmpty || widget.clearWhenEmpty)
-                IconButton(
-                  key: widget.clearKey,
-                  tooltip: t.videoFilters.clearFilters,
-                  onPressed: _confirmClear,
-                  icon: const Icon(Icons.close_rounded, size: 20),
-                ),
-              Expanded(
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  padding: EdgeInsetsDirectional.only(end: widget.inset),
-                  itemCount: widget.entries.length + widget.contextChips.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 8),
-                  itemBuilder: (context, index) {
-                    if (index >= widget.entries.length) {
+              ?clear,
+              if (chipCount > 0)
+                Flexible(
+                  fit: fitSingleChip ? FlexFit.loose : FlexFit.tight,
+                  child: ListView.separated(
+                    shrinkWrap: fitSingleChip,
+                    scrollDirection: Axis.horizontal,
+                    padding: EdgeInsetsDirectional.only(
+                      end: widget.compact ? 0 : widget.inset,
+                    ),
+                    itemCount: chipCount,
+                    separatorBuilder: (_, _) => const SizedBox(width: 8),
+                    itemBuilder: (context, index) {
+                      if (index >= widget.entries.length) {
+                        return Center(
+                          child: widget
+                              .contextChips[index - widget.entries.length],
+                        );
+                      }
+                      final entry = widget.entries[index];
+                      final revealed = _revealed == entry.id;
                       return Center(
-                        child:
-                            widget.contextChips[index - widget.entries.length],
-                      );
-                    }
-                    final entry = widget.entries[index];
-                    final revealed = _revealed == entry.id;
-                    return Center(
-                      key: ValueKey(entry.id),
-                      child: Semantics(
-                        customSemanticsActions: {
-                          CustomSemanticsAction(
-                            label: t.videoFilters.removeFilter,
-                          ): entry.remove,
-                        },
-                        child: GestureDetector(
-                          onLongPress: () {
-                            if (_revealed == entry.id) return;
-                            HapticFeedback.selectionClick();
-                            setState(() => _revealed = entry.id);
+                        key: ValueKey(entry.id),
+                        child: Semantics(
+                          customSemanticsActions: {
+                            CustomSemanticsAction(
+                              label: t.videoFilters.removeFilter,
+                            ): entry.remove,
                           },
-                          child: SizedBox(
-                            height: height,
-                            child: Stack(
-                              alignment: AlignmentDirectional.centerEnd,
-                              children: [
-                                ConstrainedBox(
-                                  constraints: BoxConstraints(
-                                    minWidth: actionExtent,
-                                  ),
-                                  child: ActionChip(
-                                    label: Text(entry.label),
-                                    onPressed: revealed
-                                        ? () => setState(() => _revealed = null)
-                                        : entry.edit ??
-                                              () => setState(
-                                                () => _revealed = null,
-                                              ),
-                                  ),
-                                ),
-                                if (revealed)
-                                  PositionedDirectional(
-                                    end: 0,
-                                    top: (height - actionExtent) / 2,
-                                    width: actionExtent,
-                                    height: actionExtent,
-                                    child: IconButton(
-                                      key: ValueKey(
-                                        'applied-filter.remove.${entry.id}',
+                          child: GestureDetector(
+                            onLongPress: () {
+                              if (_revealed == entry.id) return;
+                              HapticFeedback.selectionClick();
+                              setState(() => _revealed = entry.id);
+                            },
+                            child: SizedBox(
+                              height: height,
+                              child: Stack(
+                                alignment: AlignmentDirectional.centerEnd,
+                                children: [
+                                  ConstrainedBox(
+                                    constraints: BoxConstraints(
+                                      minWidth: actionExtent,
+                                    ),
+                                    child: ActionChip(
+                                      label: Text(
+                                        entry.label,
+                                        maxLines: widget.compact ? 1 : null,
+                                        overflow: widget.compact
+                                            ? TextOverflow.ellipsis
+                                            : null,
                                       ),
-                                      tooltip: t.videoFilters.removeFilter,
-                                      alignment: AlignmentDirectional.centerEnd,
-                                      padding: const EdgeInsetsDirectional.only(
-                                        end: 3,
-                                      ),
-                                      onPressed: () {
-                                        setState(() => _revealed = null);
-                                        entry.remove();
-                                      },
-                                      icon: DecoratedBox(
-                                        decoration: BoxDecoration(
-                                          borderRadius: BorderRadius.circular(
-                                            8,
-                                          ),
-                                          color: colors.surfaceContainerHigh,
+                                      labelStyle: widget.compact
+                                          ? theme.textTheme.labelMedium
+                                                ?.copyWith(
+                                                  color:
+                                                      colors.onSurfaceVariant,
+                                                )
+                                          : null,
+                                      backgroundColor: widget.compact
+                                          ? colors.surfaceContainerLow
+                                          : null,
+                                      side: widget.compact
+                                          ? BorderSide.none
+                                          : null,
+                                      onPressed: revealed
+                                          ? () =>
+                                                setState(() => _revealed = null)
+                                          : entry.edit ??
+                                                () => setState(
+                                                  () => _revealed = null,
+                                                ),
+                                    ),
+                                  ),
+                                  if (revealed)
+                                    PositionedDirectional(
+                                      end: 0,
+                                      top: (height - actionExtent) / 2,
+                                      width: actionExtent,
+                                      height: actionExtent,
+                                      child: IconButton(
+                                        key: ValueKey(
+                                          'applied-filter.remove.${entry.id}',
                                         ),
-                                        child: const Padding(
-                                          padding: EdgeInsets.all(5),
-                                          child: Icon(
-                                            Icons.close_rounded,
-                                            size: 16,
+                                        tooltip: t.videoFilters.removeFilter,
+                                        alignment:
+                                            AlignmentDirectional.centerEnd,
+                                        padding:
+                                            const EdgeInsetsDirectional.only(
+                                              end: 3,
+                                            ),
+                                        onPressed: () {
+                                          setState(() => _revealed = null);
+                                          entry.remove();
+                                        },
+                                        icon: DecoratedBox(
+                                          decoration: BoxDecoration(
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                            color: colors.surfaceContainerHigh,
+                                          ),
+                                          child: const Padding(
+                                            padding: EdgeInsets.all(5),
+                                            child: Icon(
+                                              Icons.close_rounded,
+                                              size: 16,
+                                            ),
                                           ),
                                         ),
                                       ),
                                     ),
-                                  ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
-              ),
             ],
           ),
         ),

@@ -1,7 +1,9 @@
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_community_page.dart';
 import 'package:zephyr/page/video/video_site_operations.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 class VideoPlaylistEditor extends StatefulWidget {
   const VideoPlaylistEditor({
@@ -46,22 +48,13 @@ class _VideoPlaylistEditorState extends State<VideoPlaylistEditor> {
       return;
     }
     if (delete) {
-      final accepted = await showAdaptiveDialog<bool>(
+      final accepted = await confirmShortAlert(
         context: context,
-        builder: (context) => AlertDialog.adaptive(
-          title: Text(t.videoCommunity.deletePlaylist),
-          content: Text(t.videoCommunity.deletePlaylistPrompt),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: Text(t.common.cancel),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: Text(t.common.delete),
-            ),
-          ],
-        ),
+        title: Text(t.videoCommunity.deletePlaylist),
+        content: Text(t.videoCommunity.deletePlaylistPrompt),
+        confirmLabel: t.common.delete,
+        destructive: true,
+        adaptiveRoute: true,
       );
       if (accepted != true || !mounted) return;
     }
@@ -159,6 +152,7 @@ class _VideoPlaylistEditorState extends State<VideoPlaylistEditor> {
     canPop: !_busy,
     child: Scaffold(
       appBar: AppBar(
+        leading: SourceBackButton.nativeLeading(context),
         title: Text(
           widget.create
               ? t.videoCommunity.createPlaylist

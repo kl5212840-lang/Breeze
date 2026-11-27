@@ -121,8 +121,13 @@ void main() {
     });
 
     test('进详情把线上总数记为已确认基线并清掉红点', () {
+      final previouslyDetected = DateTime.utc(2026, 1, 1);
       final updated = resolveFollowSyncFromDetail(
-        follow: _follow(last: 10, detected: 12, hasUpdate: true),
+        follow: _follow(
+          last: 10,
+          detected: 12,
+          hasUpdate: true,
+        ).copyWith(lastChapterUpdateAt: previouslyDetected),
         onlineChapterCount: 12,
         onlineLatestTitle: '第12话',
         now: DateTime.utc(2026, 1, 2),
@@ -132,6 +137,7 @@ void main() {
       expect(updated.detectedChapterTitle, '第12话');
       expect(updated.hasUpdate, isFalse);
       expect(updated.lastCheckFailed, isFalse);
+      expect(updated.lastChapterUpdateAt, previouslyDetected);
     });
 
     test('确认后未读口径归零：顶部不再计数、卡片不再标红', () {
@@ -149,6 +155,39 @@ void main() {
       expect(state.updateCount, 0);
       expect(state.unreadChapterCount(updated), 0);
     });
+  });
+
+  test('recent updates and recent checks use different clocks', () {
+    final first = DateTime.utc(2026, 1, 1);
+    final updated = _follow(
+      uniqueKey: 'src:updated',
+    ).copyWith(lastChapterUpdateAt: first.add(const Duration(days: 2)));
+    final earlier = _follow(uniqueKey: 'src:earlier').copyWith(
+      lastChapterUpdateAt: first,
+      updateTime: first.add(const Duration(days: 3)),
+    );
+    final legacy = _follow(
+      uniqueKey: 'src:legacy-unread',
+      detected: 11,
+      hasUpdate: true,
+    );
+    final checked = _follow(
+      uniqueKey: 'src:checked',
+    ).copyWith(updateTime: first.add(const Duration(days: 4)));
+    final state = ComicFollowState(
+      items: [checked, legacy, earlier, updated],
+      sort: ComicFollowSort.recentUpdate,
+    );
+    expect(state.visibleItems, [updated, earlier, legacy, checked]);
+    expect(state.copyWith(sort: ComicFollowSort.update).visibleItems, [
+      checked,
+      earlier,
+      legacy,
+      updated,
+    ]);
+    expect(state.copyWith(filter: ComicFollowFilter.unread).visibleItems, [
+      legacy,
+    ]);
   });
 
   group('未读口径', () {

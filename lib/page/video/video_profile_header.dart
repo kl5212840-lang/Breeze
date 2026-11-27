@@ -72,6 +72,7 @@ class VideoProfileHeader extends StatelessWidget {
               PluginAccountAvatarButton(
                 key: const ValueKey('video-profile.account-avatar'),
                 size: compact ? 52 : 64,
+                hasAccount: hasIdentity,
                 label: t.videoSiteAccount.title,
                 onPressed: signedIn ? onAccountSettings : null,
                 child: hasIdentity && avatar.isNotEmpty

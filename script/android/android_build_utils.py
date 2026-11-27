@@ -21,6 +21,8 @@ def android_sdk_root() -> Path:
 
     if sys.platform == "win32":
         candidate = Path.home() / "AppData" / "Local" / "Android" / "Sdk"
+    elif sys.platform == "darwin":
+        candidate = Path.home() / "Library" / "Android" / "sdk"
     else:
         candidate = Path.home() / "Android" / "Sdk"
 

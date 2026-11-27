@@ -339,29 +339,17 @@ final class HlsAssetDownloadPresenter: NSObject, AVAssetDownloadDelegate {
     case "openOffline": openOffline(args, result: result)
     case "acquirePlayback":
       guard let (resource, asset, generation) = binding(args) else { result(false); return }
-      perform({ value in
-        guard let url = value as? URL else { result(value); return }
-        // Refuse a partial or damaged package before video_player can inspect
-        // it. The existing native hold protects this main-queue cache check.
+      perform(result, phase: "acquirePlayback") { store in
+        let url = try store.hold(resourceID: resource, assetID: asset, generation: generation)
+        // Keep the package and its offline-playability check on the store queue.
         guard AVURLAsset(url: url).assetCache?.isPlayableOffline == true else {
-          self.io.async {
-            self.store?.release(resourceID: resource, assetID: asset, generation: generation)
-            DispatchQueue.main.async {
-              result(FlutterError(code: "unavailable", message: "Offline video is unavailable", details: nil))
-            }
-          }
-          return
+          store.release(resourceID: resource, assetID: asset, generation: generation)
+          throw HlsAssetStore.StoreError.missingPackage
         }
         let token = UUID().uuidString.lowercased()
-        self.io.async {
-          self.playbackLeases[token] = (resource, asset, generation)
-          DispatchQueue.main.async {
-            // Only this response contains a path, never an index/descriptor.
-            result(["leaseId": token, "fileURL": url.absoluteString])
-          }
-        }
-      }, phase: "acquirePlayback") { store in
-        try store.hold(resourceID: resource, assetID: asset, generation: generation)
+        self.playbackLeases[token] = (resource, asset, generation)
+        // Only this response contains a path, never an index/descriptor.
+        return ["leaseId": token, "fileURL": url.absoluteString]
       }
     case "releasePlayback":
       guard let token = args["leaseId"] as? String,

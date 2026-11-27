@@ -271,30 +271,33 @@ class ComicListCubit extends Cubit<ComicListState> {
     return null;
   }
 
-  Future<void> loadFilter() async {
+  Future<void> loadFilter({bool refresh = false}) async {
     if (state.currentFrom.isEmpty) {
       return;
     }
-    await _loadFilter(state.currentFrom);
+    await _loadFilter(state.currentFrom, refresh: refresh);
   }
 
   Future<void>? _filterLoad;
+  int _filterRevision = 0;
 
-  Future<void> _loadFilter(String from) {
+  Future<void> _loadFilter(String from, {bool refresh = false}) {
     final pending = _filterLoad;
-    if (pending != null) return pending;
-    final task = _readFilter(from);
+    if (!refresh && pending != null) return pending;
+    _filterRevision++;
+    final task = _readFilter(from, refresh: refresh);
     _filterLoad = task;
     return task.whenComplete(() {
       if (identical(_filterLoad, task)) _filterLoad = null;
     });
   }
 
-  Future<void> _readFilter(String from) async {
+  Future<void> _readFilter(String from, {required bool refresh}) async {
     final epoch = _requestEpoch;
     final generation = pluginSessionWriteFence.generation(from);
+    final filterRevision = _filterRevision;
     final filterRequest = state.scene?.filter;
-    if (filterRequest == null || state.filterLoading) {
+    if (filterRequest == null || (state.filterLoading && !refresh)) {
       return;
     }
 
@@ -309,6 +312,7 @@ class ComicListCubit extends Cubit<ComicListState> {
           core: filterRequest.core,
           extern: filterRequest.extern,
           taskGroupKey: group,
+          refresh: refresh,
         ),
       );
       final envelope = UnifiedPluginEnvelope.fromMap(response);
@@ -316,15 +320,28 @@ class ComicListCubit extends Cubit<ComicListState> {
 
       if (isClosed ||
           epoch != _requestEpoch ||
+          filterRevision != _filterRevision ||
           generation != pluginSessionWriteFence.generation(from)) {
         return;
       }
 
+      if (state.scene?.cloudFavoriteFolderManagement == true &&
+          envelope.data['folderListVerified'] == false &&
+          (state.hasResolvedFilter || refresh)) {
+        emit(
+          state.copyWith(
+            filterLoading: false,
+            filterError: t.common.refreshRetained,
+          ),
+        );
+        return;
+      }
       _recovery.succeeded();
       _applyFilterBundle(bundle, state.filterSelections);
     } catch (e) {
       if (isClosed ||
           epoch != _requestEpoch ||
+          filterRevision != _filterRevision ||
           generation != pluginSessionWriteFence.generation(from)) {
         return;
       }
@@ -340,6 +357,91 @@ class ComicListCubit extends Cubit<ComicListState> {
         ),
       );
     }
+  }
+
+  /// The folder write receipt contains a server-read list. Apply it to the
+  /// active schema so a slower read from before the write cannot undo it.
+  void applyConfirmedJmFolderChange(
+    Object? rows, {
+    required String id,
+    String? name,
+  }) {
+    final previous = state.filterBundle;
+    if (previous == null || state.scene?.cloudFavoriteFolderManagement != true)
+      return;
+    final scheme = previous.scheme;
+    final folders = <String, String>{};
+    if (rows == null) {
+      // Older plugins return just the verified change.
+      for (final field in scheme.fields.where(
+        (field) => field.key == 'folderId',
+      )) {
+        for (final option in field.options) {
+          if (option.value.isNotEmpty && option.value != '0')
+            folders[option.value] = option.label;
+        }
+      }
+      if (name == null) {
+        folders.remove(id);
+      } else {
+        folders[id] = name;
+      }
+    } else if (rows is List) {
+      for (final row in rows) {
+        if (row case {'id': final String fid, 'name': final String label}
+            when fid.isNotEmpty &&
+                fid != '0' &&
+                label.isNotEmpty &&
+                !folders.containsKey(fid)) {
+          folders[fid] = label;
+        } else {
+          throw const FormatException();
+        }
+      }
+      if (folders[id] != name) throw const FormatException();
+    } else {
+      throw const FormatException();
+    }
+    final fields = [
+      for (final field in scheme.fields)
+        if (field.key != 'folderId')
+          field
+        else
+          PluginChoiceField(
+            key: field.key,
+            label: field.label,
+            kind: field.kind,
+            semantic: field.semantic,
+            options: [
+              for (final option in field.options)
+                if (option.value.isEmpty || option.value == '0') option,
+              for (final entry in folders.entries)
+                PluginChoiceOption(
+                  label: entry.value,
+                  value: entry.key,
+                  result:
+                      field.findOptionByValue(entry.key)?.result ??
+                      {
+                        'extern': {'folderId': entry.key},
+                      },
+                  children: const [],
+                ),
+            ],
+          ),
+    ];
+    _filterRevision++;
+    _filterLoad = null;
+    _applyFilterBundle(
+      ListFilterBundle(
+        scheme: PluginListFilterSchema(
+          title: scheme.title,
+          fields: fields,
+          wrapOptions: scheme.wrapOptions,
+        ),
+        defaultSelections: previous.defaultSelections,
+      ),
+      state.filterSelections,
+    );
   }
 
   void applyFilterSelections(Map<String, String> selections) {

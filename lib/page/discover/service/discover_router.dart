@@ -300,15 +300,25 @@ class DiscoverRouter {
       initialUrl = declared.single.url;
     }
     final initialQuery = apiVideoText(payload['initialQuery'], 100);
+    final nativeSearch = payload['nativeSearch'] == true;
+    final openSearch = payload['openSearch'] == true;
     var keywordScope = parseKeywordSearchScope(payload['initialKeywordScope']);
-    if (initialQuery.isNotEmpty && payload['nativeSearch'] == true) {
+    if (nativeSearch && (openSearch || initialQuery.isNotEmpty)) {
+      keywordScope ??= await readVideoKeywordScope(source);
+      if (!context.mounted) return;
+    }
+    if (initialQuery.isNotEmpty && nativeSearch) {
       initialUrl = VideoSearchFilters(query: initialQuery).toUri(homeUrl);
       unawaited(
-        VideoSearchHistory.add(source, initialQuery).catchError((Object _) {}),
+        VideoSearchHistory.add(
+          source,
+          initialQuery,
+          scope: keywordScope,
+        ).catchError((Object _) {}),
       );
     }
-    if (payload['openSearch'] == true) {
-      if (payload['nativeSearch'] != true) return;
+    if (openSearch) {
+      if (!nativeSearch) return;
       final result = await _readVideoSearch(
         context,
         VideoSearchPage(
@@ -317,12 +327,17 @@ class DiscoverRouter {
           authorEnabled: schema != null,
           initialScope: keywordScope ?? KeywordSearchScope.all,
           onSubmitScope: (value) => keywordScope = value,
+          showScopeSelection: false,
         ),
       );
       if (result == null || !context.mounted) return;
       initialUrl = result.toUri(homeUrl);
       unawaited(
-        VideoSearchHistory.add(source, result.query).catchError((Object _) {
+        VideoSearchHistory.add(
+          source,
+          result.query,
+          scope: result.author ? null : keywordScope,
+        ).catchError((Object _) {
           if (context.mounted) showErrorToast(t.videoSearch.historyWriteFailed);
         }),
       );
@@ -420,13 +435,23 @@ class DiscoverRouter {
     var query = nativeSearch ? apiVideoText(payload['initialQuery'], 100) : '';
     var filters = VideoSearchFilters(query: query);
     var keywordScope = parseKeywordSearchScope(payload['initialKeywordScope']);
+    if (nativeSearch &&
+        capabilities.usesRemoteKeywordScope &&
+        (openSearch || query.isNotEmpty)) {
+      keywordScope ??= await readVideoKeywordScope(source);
+      if (!context.mounted) return;
+    }
     final searchTask =
         capabilities.search == 'full' &&
         !capabilities.browserCatalog &&
         (openSearch || query.isNotEmpty);
     if (query.isNotEmpty) {
       unawaited(
-        VideoSearchHistory.add(source, query).catchError((Object _) {}),
+        VideoSearchHistory.add(
+          source,
+          query,
+          scope: capabilities.usesRemoteKeywordScope ? keywordScope : null,
+        ).catchError((Object _) {}),
       );
     }
     if (openSearch && !searchTask) {
@@ -438,6 +463,7 @@ class DiscoverRouter {
           authorEnabled: false,
           initialScope: keywordScope ?? KeywordSearchScope.all,
           onSubmitScope: (value) => keywordScope = value,
+          showScopeSelection: !capabilities.usesRemoteKeywordScope,
           scopeHint: capabilities.search == 'website'
               ? t.videoLibrary.officialSearchHint
               : null,
@@ -455,7 +481,11 @@ class DiscoverRouter {
       query = result.query;
       filters = result;
       unawaited(
-        VideoSearchHistory.add(source, query).catchError((Object _) {}),
+        VideoSearchHistory.add(
+          source,
+          query,
+          scope: capabilities.usesRemoteKeywordScope ? keywordScope : null,
+        ).catchError((Object _) {}),
       );
     }
     if (!context.mounted) return;

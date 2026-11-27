@@ -28,6 +28,7 @@ const shelfFacetDimensions = [
   'area',
   'language',
   'author',
+  'team',
   'quality',
   'duration',
 ];

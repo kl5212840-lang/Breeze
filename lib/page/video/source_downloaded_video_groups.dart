@@ -23,6 +23,7 @@ import 'package:zephyr/page/video/video_local_playback.dart';
 import 'package:zephyr/page/video/video_page_route.dart';
 import 'package:zephyr/service/download/download_byte_amount.dart';
 import 'package:zephyr/widgets/toast.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 List<DownloadCenterItem> sourceVideoDownloadItems(
   Iterable<Map<String, dynamic>> rows,
@@ -171,23 +172,12 @@ Future<void> deleteSourceDownloadedItems(
     final description = chinese
         ? '删除这 $count 项下载记录及对应的应用内文件？已导出的副本、收藏和历史会保留。'
         : 'Delete ${count == 1 ? 'this download' : 'these $count downloads'} and any associated in-app files? Exported copies, favorites, and history are kept.';
-    final confirmed = await showDialog<bool>(
+    final confirmed = await confirmShortAlert(
       context: context,
-      builder: (dialog) => AlertDialog(
-        scrollable: true,
-        title: Text(t.common.delete),
-        content: Text('$shown\n$description'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialog, false),
-            child: Text(t.common.cancel),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialog, true),
-            child: Text(t.common.delete),
-          ),
-        ],
-      ),
+      title: Text(t.common.delete),
+      content: Text('$shown\n$description'),
+      confirmLabel: t.common.delete,
+      destructive: true,
     );
     if (confirmed != true || !context.mounted) return;
     var failed = false;

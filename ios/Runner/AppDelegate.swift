@@ -1,5 +1,7 @@
 import Flutter
 import UIKit
+import AVFAudio
+import MediaPlayer
 import Darwin
 import WebKit
 import Security
@@ -267,13 +269,151 @@ private final class AppIconSettings {
   }
 }
 
+private final class VideoDeviceControls {
+  func register(with messenger: FlutterBinaryMessenger) {
+    FlutterMethodChannel(name: "zephyr/video_screen_brightness", binaryMessenger: messenger)
+      .setMethodCallHandler { [weak self] call, result in
+        guard let self else { result(FlutterMethodNotImplemented); return }
+        self.handle(call, result: result)
+      }
+  }
+
+  private var activeWindow: UIWindow? {
+    UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }
+      .filter { $0.activationState == .foregroundActive && $0.session.role == .windowApplication }
+      .flatMap { $0.windows }
+      .first { $0.isKeyWindow }
+  }
+
+  private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    switch call.method {
+    case "get", "set":
+#if targetEnvironment(simulator)
+      result(unsupported())
+#else
+      guard let window = activeWindow, let screen = window.windowScene?.screen else {
+        result(unavailable())
+        return
+      }
+      if call.method == "get" {
+        result(Double(screen.brightness))
+        return
+      }
+      guard let level = requestedLevel(call) else { result(invalidArguments()); return }
+      screen.brightness = CGFloat(level)
+      result(Double(screen.brightness))
+#endif
+    case "getVolume", "setVolume":
+#if targetEnvironment(simulator)
+      result(unsupported())
+#else
+      guard let window = activeWindow else { result(unavailable()); return }
+      let session = AVAudioSession.sharedInstance()
+      if call.method == "getVolume" {
+        // An initialized but paused player may not have activated audio yet.
+        try? session.setActive(true)
+        attachVolumeView(to: window)
+        result(Double(session.outputVolume))
+        return
+      }
+      guard let level = requestedLevel(call) else { result(invalidArguments()); return }
+      attachVolumeView(to: window)
+      DispatchQueue.main.async {
+        guard self.activeWindow === window else { result(self.unavailable()); return }
+        self.applyVolume(
+          level, before: Double(session.outputVolume), in: window, session: session, result: result)
+      }
+#endif
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  private func requestedLevel(_ call: FlutterMethodCall) -> Double? {
+    guard let level = call.arguments as? Double, level.isFinite else { return nil }
+    return min(1, max(0, level))
+  }
+
+  private func unavailable() -> FlutterError {
+    FlutterError(code: "unavailable", message: nil, details: nil)
+  }
+
+  private func unsupported() -> FlutterError {
+    FlutterError(code: "unsupported", message: nil, details: nil)
+  }
+
+  private func invalidArguments() -> FlutterError {
+    FlutterError(code: "invalid_arguments", message: nil, details: nil)
+  }
+
+#if !targetEnvironment(simulator)
+  private lazy var volumeView: MPVolumeView = {
+    let view = MPVolumeView(frame: CGRect(x: -200, y: -50, width: 160, height: 44))
+    view.isUserInteractionEnabled = false
+    view.accessibilityElementsHidden = true
+    return view
+  }()
+  private var detachVolumeView: DispatchWorkItem?
+
+  private func attachVolumeView(to window: UIWindow) {
+    if volumeView.window !== window {
+      window.insertSubview(volumeView, at: 0)
+      volumeView.layoutIfNeeded()
+    }
+    detachVolumeView?.cancel()
+    let detach = DispatchWorkItem { [weak self] in self?.volumeView.removeFromSuperview() }
+    detachVolumeView = detach
+    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(650), execute: detach)
+  }
+
+  private func applyVolume(
+    _ level: Double, before: Double, in window: UIWindow, session: AVAudioSession,
+    result: @escaping FlutterResult
+  ) {
+    guard let slider = volumeView.subviews.compactMap({ $0 as? UISlider })
+      .first(where: { $0.isEnabled && !$0.isHidden }) else {
+      result(unavailable())
+      return
+    }
+    // MPVolumeView supplies the user-facing system slider. Request its value
+    // for the active gesture and use audio-session readback as the source of truth.
+    slider.value = Float(level)
+    reportVolume(level, before: before, in: window, session: session, result: result)
+  }
+
+  private func reportVolume(
+    _ level: Double, before: Double, in window: UIWindow, session: AVAudioSession,
+    remaining: Int = 4, result: @escaping FlutterResult
+  ) {
+    guard activeWindow === window else { result(unavailable()); return }
+    let actual = Double(session.outputVolume)
+    // The route may quantize a small move to the same step. That reading is
+    // still valid, and the next finger movement can request a larger change.
+    if remaining == 0 || abs(actual - level) < 0.0001
+      || (actual - before) * (level - before) > 0
+    {
+      result(actual)
+    } else {
+      DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(16)) {
+        self.reportVolume(
+          level, before: before, in: window, session: session,
+          remaining: remaining - 1, result: result)
+      }
+    }
+  }
+#endif
+}
+
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private let memoryChannelName = "memory_monitor"
   private var memoryChannel: FlutterMethodChannel?
   private var videoBrowserChannel: FlutterMethodChannel?
+  private let videoDeviceControls = VideoDeviceControls()
   private var videoSharePresenter: VideoSharePresenter?
   private var videoDownloadPresenter: VideoDownloadPresenter?
+  private var videoSeekPreviewPresenter: VideoSeekPreviewPresenter?
   private lazy var hlsAssetDownloadPresenter = HlsAssetDownloadPresenter()
   private lazy var backgroundFileTransfer = BackgroundFileTransfer()
   private var routingConfigExporter: RoutingConfigExporter?
@@ -312,6 +452,7 @@ private final class AppIconSettings {
       appIconSettings.register(with: registrar.messenger())
     }
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "breeze_video_ui") {
+      videoDeviceControls.register(with: registrar.messenger())
       FlutterMethodChannel(name: "breeze.interface.symbols", binaryMessenger: registrar.messenger())
         .setMethodCallHandler { call, result in
           guard call.method == "image" else { result(FlutterMethodNotImplemented); return }
@@ -345,6 +486,7 @@ private final class AppIconSettings {
       OmoNetwork.shared.register(registrar.messenger())
       videoSharePresenter = VideoSharePresenter(messenger: registrar.messenger())
       videoDownloadPresenter = VideoDownloadPresenter(messenger: registrar.messenger())
+      videoSeekPreviewPresenter = VideoSeekPreviewPresenter(messenger: registrar.messenger())
       hlsAssetDownloadPresenter.attach(messenger: registrar.messenger())
       backgroundFileTransfer.attach(registrar.messenger())
       routingConfigExporter = RoutingConfigExporter(messenger: registrar.messenger())

@@ -71,6 +71,8 @@ class _ProfileApi extends RustLibApi {
   String? profileAuthFailure;
   String? requiredCopyEndpoint;
   int profileReads = 0;
+  int jmVerificationReads = 0;
+  bool jmVerificationUnavailable = false;
   final cloudArguments = <Map<String, dynamic>>[];
   String slogan = '真实简介';
   bool updateBioSucceeds = true;
@@ -162,6 +164,18 @@ class _ProfileApi extends RustLibApi {
                   ? sourceCheckinDate(DateTime.now())
                   : null,
             },
+          },
+        };
+      case 'getUserProfileDetails':
+        jmVerificationReads++;
+        if (jmVerificationUnavailable) {
+          throw StateError('fixture JM route unavailable');
+        }
+        response = {
+          'data': {
+            'accountId': accountName,
+            'nickname': accountName,
+            'profileDataSource': 'serverUserEdit',
           },
         };
       case 'updateBio':
@@ -257,6 +271,8 @@ void main() {
     api.profileAuthFailure = null;
     api.requiredCopyEndpoint = null;
     api.profileReads = 0;
+    api.jmVerificationReads = 0;
+    api.jmVerificationUnavailable = false;
     api.cloudArguments.clear();
     api.slogan = '真实简介';
     api.updateBioSucceeds = true;
@@ -448,6 +464,78 @@ void main() {
       await savePluginConfigValue(source, key, api.requiredCopyEndpoint);
       await tester.pumpAndSettle();
       expect(api.profileReads, 2);
+    },
+  );
+
+  testWidgets(
+    'retained and reopened JM profiles verify the saved JWT after API changes',
+    (tester) async {
+      const source = PluginAccountAuthenticationService.jm;
+      final activity = ValueNotifier(true);
+      addTearDown(activity.dispose);
+      final generation = pluginSessionWriteFence.generation(source);
+      final previous = PluginAccountAuthentication(
+        serverIdentity: api.accountName,
+      );
+      PluginAccountIdentities.confirm(source, previous, generation: generation);
+      await mount(
+        tester,
+        'jm',
+        'breeze',
+        Brightness.light,
+        source: source,
+        readActivity: activity,
+        expectCover: false,
+        expectCloud: false,
+      );
+      expect(api.jmVerificationReads, 0);
+
+      activity.value = false;
+      await tester.pumpAndSettle();
+      final endpoint = beginPluginEndpointUpdate(source)!;
+      finishPluginEndpointUpdate(
+        source,
+        endpoint,
+        refreshSettings: true,
+        refreshProfile: true,
+      );
+      await tester.pumpAndSettle();
+      expect(api.jmVerificationReads, 0);
+
+      api.jmVerificationUnavailable = true;
+      activity.value = true;
+      await tester.pumpAndSettle();
+      expect(api.jmVerificationReads, 1);
+      expect(PluginAccountIdentities.current(source), same(previous));
+
+      api.jmVerificationUnavailable = false;
+      await tester
+          .widget<RefreshIndicator>(find.byType(RefreshIndicator))
+          .onRefresh();
+      await tester.pumpAndSettle();
+      expect(api.jmVerificationReads, 2);
+      expect(PluginAccountIdentities.current(source)?.label, api.accountName);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      final nextEndpoint = beginPluginEndpointUpdate(source)!;
+      finishPluginEndpointUpdate(
+        source,
+        nextEndpoint,
+        refreshSettings: true,
+        refreshProfile: true,
+      );
+      await mount(
+        tester,
+        'jm',
+        'breeze',
+        Brightness.light,
+        source: source,
+        expectCover: false,
+        expectCloud: false,
+      );
+      expect(api.jmVerificationReads, 3);
+      expect(pluginSessionWriteFence.generation(source), generation);
     },
   );
 

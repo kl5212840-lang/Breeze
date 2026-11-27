@@ -20,6 +20,8 @@ class SourceShellSection {
        profileAvatarFunction = '',
        profileBioFunction = '',
        profileKind = '',
+       jmAccountCollections = false,
+       jmSiteWatchHistory = false,
        profileCheckinFunction = '',
        profileNotificationsFunction = '',
        profileCheckinStatusFunction = '',
@@ -50,6 +52,8 @@ class SourceShellSection {
        profileAvatarFunction = '',
        profileBioFunction = '',
        profileKind = '',
+       jmAccountCollections = false,
+       jmSiteWatchHistory = false,
        profileCheckinFunction = '',
        profileNotificationsFunction = '',
        profileCheckinStatusFunction = '',
@@ -73,6 +77,8 @@ class SourceShellSection {
        profileAvatarFunction = '',
        profileBioFunction = '',
        profileKind = '',
+       jmAccountCollections = false,
+       jmSiteWatchHistory = false,
        profileCheckinFunction = '',
        profileNotificationsFunction = '',
        profileCheckinStatusFunction = '',
@@ -88,6 +94,8 @@ class SourceShellSection {
     this.profileAvatarFunction = '',
     this.profileBioFunction = '',
     this.profileKind = '',
+    this.jmAccountCollections = false,
+    this.jmSiteWatchHistory = false,
     this.profileVideoRecords = false,
     this.profileCheckinFunction = '',
     this.profileNotificationsFunction = '',
@@ -118,6 +126,8 @@ class SourceShellSection {
       profileAvatarFunction = '',
       profileBioFunction = '',
       profileKind = '',
+      jmAccountCollections = false,
+      jmSiteWatchHistory = false,
       profileCheckinFunction = '',
       profileNotificationsFunction = '',
       profileCheckinStatusFunction = '',
@@ -139,6 +149,8 @@ class SourceShellSection {
       profileAvatarFunction = '',
       profileBioFunction = '',
       profileKind = '',
+      jmAccountCollections = false,
+      jmSiteWatchHistory = false,
       profileCheckinFunction = '',
       profileNotificationsFunction = '',
       profileCheckinStatusFunction = '',
@@ -160,6 +172,8 @@ class SourceShellSection {
   final String profileAvatarFunction;
   final String profileBioFunction;
   final String profileKind;
+  final bool jmAccountCollections;
+  final bool jmSiteWatchHistory;
   final String profileCheckinFunction;
   final String profileNotificationsFunction;
   final String profileCheckinStatusFunction;
@@ -324,6 +338,8 @@ class SourceShellSection {
           profileBioFunction:
               experience['profileBioFunction']?.toString().trim() ?? '',
           profileKind: experience['profileKind']?.toString().trim() ?? '',
+          jmAccountCollections: experience['jmAccountCollections'] == true,
+          jmSiteWatchHistory: experience['jmSiteWatchHistory'] == true,
           profileCheckinFunction:
               experience['profileCheckinFunction']?.toString().trim() ?? '',
           profileNotificationsFunction:

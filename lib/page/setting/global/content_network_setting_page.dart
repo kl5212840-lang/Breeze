@@ -63,7 +63,6 @@ class ContentNetworkSettingPage extends StatelessWidget {
             type: state.proxySetting.type,
             currentProxy: state.proxySetting.address,
             title: t.routingRules.internalProxy,
-            subtitle: t.routingRules.internalHint,
           ),
           // _updateAccelerate(state, cubit),
         ],

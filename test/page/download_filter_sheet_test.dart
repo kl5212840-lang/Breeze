@@ -101,7 +101,7 @@ void main() {
         const ValueKey('download-filter-option-duration-hour'),
       );
       final before = tester.getRect(short);
-      expect(before.top, lessThan(tester.getRect(hour).top));
+      expect(tester.getRect(hour).top, lessThan(before.top));
       expect(find.text(t.download.durationShort), findsOneWidget);
       expect(
         find.byKey(const ValueKey('download-filter-unknown')),
@@ -110,7 +110,7 @@ void main() {
       await tester.tap(short);
       await tester.pumpAndSettle();
       expect(tester.getRect(short), before);
-      expect(tester.getRect(short).top, lessThan(tester.getRect(hour).top));
+      expect(tester.getRect(hour).top, lessThan(tester.getRect(short).top));
       expect(
         find.text(t.bookshelf.facets.resultTitle(count: 2)),
         findsOneWidget,

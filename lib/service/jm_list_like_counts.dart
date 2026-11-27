@@ -115,3 +115,32 @@ Map<String, int> readJmListLikeCounts(Object? raw, Set<String> visibleIds) {
   }
   return counts;
 }
+
+/// JM search can return normalized items without the original page envelope.
+/// The per-item original field confirms the value, including an actual zero.
+Map<String, int> readJmSearchLikeCounts(Map<String, dynamic> response) {
+  final data = asJsonMap(response['data']);
+  final items = asJsonList(data['items'] ?? response['items']);
+  final counts = <String, int>{};
+  final seen = <String>{};
+  for (final item in items.whereType<Map>()) {
+    final id = item['id']?.toString() ?? '';
+    if (id.isEmpty) continue;
+    if (!seen.add(id)) {
+      counts.remove(id);
+      continue;
+    }
+    final original = asJsonMap(item['raw']);
+    final availability = asJsonMap(
+      asJsonMap(item['extern'])['metricAvailability'],
+    );
+    if (availability['totalLikes'] != true ||
+        original['id']?.toString() != id) {
+      continue;
+    }
+    if (parsePublicComicCount(original['likes']) case final count?) {
+      counts[id] = count;
+    }
+  }
+  return counts;
+}

@@ -202,28 +202,72 @@ abstract final class DownloadCenterResources {
               row['fileInvalid'] == true));
 
   static DownloadVideoRead? _videoRead;
+  static (int, int, int)? _videoReadInputs;
   static int _videoRevision = 0;
   static bool _videoReadFresh = false;
+  static final _startupClock = Stopwatch()..start();
+  static ({DownloadVideoRead read, (int, int, int) inputs, Duration expires})?
+  _startupVideos;
+
+  static (int, int, int) get _videoInputs => (
+    VideoLocalResources.changes.value,
+    VideoExportRecords.changes.value,
+    VideoDownloadedDetails.changes.value,
+  );
+
+  static void preloadVideoInventory() {
+    final inputs = _videoInputs;
+    final read = readVideoPhases();
+    _startupVideos = (
+      read: read,
+      inputs: inputs,
+      expires: _startupClock.elapsed + const Duration(seconds: 15),
+    );
+  }
+
   static Future<List<Map<String, dynamic>>> readVideos({
     bool waitForStorage = false,
     bool fresh = false,
     bool afterCurrentRead = false,
-  }) {
+  }) async {
     final read = readVideoPhases(
       fresh: fresh,
       afterRevision: afterCurrentRead ? _videoRead?.revision : null,
-    ).enriched;
-    return waitForStorage ? read : read.timeout(const Duration(seconds: 8));
+    );
+    if (waitForStorage) return read.enriched;
+    final verified = await read.verified;
+    // A display-only fallback may lag the checked file inventory.
+    try {
+      return await read.enriched.timeout(
+        const Duration(seconds: 8),
+        onTimeout: () => verified,
+      );
+    } catch (_) {
+      return verified;
+    }
   }
 
   static DownloadVideoRead readVideoPhases({
     int? afterRevision,
     bool fresh = false,
+    bool useStartupRead = false,
   }) {
+    if (_startupVideos case final prepared? when useStartupRead) {
+      _startupVideos = null;
+      if (!fresh &&
+          afterRevision == null &&
+          prepared.read.revision == _videoRevision &&
+          prepared.inputs == _videoInputs &&
+          prepared.expires > _startupClock.elapsed) {
+        return prepared.read;
+      }
+      afterRevision ??= prepared.read.revision;
+    }
     // Keep the in-flight read until it actually finishes. A caller deadline
     // cannot cancel native work or remove a read from the storage queue.
     final current = _videoRead;
     if (current != null &&
+        _videoReadInputs == _videoInputs &&
         current.revision != afterRevision &&
         (!fresh || _videoReadFresh)) {
       return current;
@@ -234,6 +278,7 @@ abstract final class DownloadCenterResources {
   }
 
   static DownloadVideoRead _startVideoRead({required bool fresh}) {
+    final inputs = _videoInputs;
     final checkedMp4 = Completer<List<Map<String, dynamic>>>();
     final verified =
         _readVerifiedVideos(
@@ -258,6 +303,7 @@ abstract final class DownloadCenterResources {
       ),
     );
     _videoRead = read;
+    _videoReadInputs = inputs;
     _videoReadFresh = fresh;
     void release() {
       if (identical(_videoRead, read)) _videoRead = null;

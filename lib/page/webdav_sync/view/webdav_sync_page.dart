@@ -1,3 +1,4 @@
+import 'package:zephyr/page/source_shell/source_back_button.dart';
 import 'dart:async';
 
 import 'package:auto_route/auto_route.dart';
@@ -15,6 +16,7 @@ import 'package:zephyr/widgets/dialog.dart';
 import 'package:zephyr/util/event/event.dart';
 import 'package:zephyr/widgets/toast.dart';
 import 'package:zephyr/widgets/breeze_switch.dart';
+import 'package:zephyr/widgets/short_alert.dart';
 
 @RoutePage()
 class WebDavSyncPage extends StatefulWidget {
@@ -168,7 +170,10 @@ class _WebDavSyncPageState extends State<WebDavSyncPage> {
         : t.webdavSync.serviceTitle(service: syncServiceType.label);
 
     return Scaffold(
-      appBar: AppBar(title: Text(title)),
+      appBar: AppBar(
+        leading: SourceBackButton.nativeLeading(context),
+        title: Text(title),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: ListView(
@@ -368,16 +373,16 @@ class _WebDavSyncPageState extends State<WebDavSyncPage> {
       final confirmed = await showDialog<bool>(
         context: context,
         useRootNavigator: true,
-        builder: (dialogContext) => AlertDialog(
-          scrollable: true,
+        builder: (dialogContext) => ShortAlert(
           title: Text(t.webdavSync.deleteConfigTitle),
           content: Text(t.webdavSync.deleteConfigPrompt),
           actions: [
-            TextButton(
+            ShortAlertAction(
               onPressed: () => Navigator.of(dialogContext).pop(false),
               child: Text(t.common.cancel),
             ),
-            TextButton(
+            ShortAlertAction(
+              destructive: true,
               onPressed: () => Navigator.of(dialogContext).pop(true),
               child: Text(t.webdavSync.deleteConfig),
             ),

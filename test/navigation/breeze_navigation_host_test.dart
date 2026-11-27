@@ -98,7 +98,12 @@ void main() {
       expect(find.text('kept draft'), findsOneWidget);
       style.value = 'system';
       await tester.pumpAndSettle();
-      expect(tester.widget<NavigationRail>(rail).indicatorColor, isNull);
+      final system = tester.widget<NavigationRail>(rail);
+      expect(system.indicatorColor, colors.secondaryContainer);
+      expect(
+        system.indicatorColor!.computeLuminance(),
+        greaterThan(system.backgroundColor!.computeLuminance()),
+      );
       expect(find.text('kept draft'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
@@ -154,6 +159,10 @@ void main() {
       await tester.pumpAndSettle();
 
       final selector = find.byType(BreezeSectionSelector<String>);
+      expect(
+        tester.widget<BreezeSectionSelector<String>>(selector).flatTrack,
+        isTrue,
+      );
       final plate = find.descendant(
         of: selector,
         matching: find.byKey(const ValueKey('breeze.selection.plate')),

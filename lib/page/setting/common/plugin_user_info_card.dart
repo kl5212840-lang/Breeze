@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
+import 'package:zephyr/page/account/plugin_account_avatar_frame.dart';
 import 'package:zephyr/page/setting/common/plugin_account_avatar.dart';
 
 /// Hide only a technical ID line proven to repeat the response's identity.
@@ -85,7 +86,16 @@ class PluginUserInfoCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          _buildAvatar(),
+          PluginAccountAvatarFrame(
+            size: 64,
+            hasAccount:
+                verified ||
+                accountIdentity.isNotEmpty ||
+                avatarIdentity.isNotEmpty ||
+                avatarUrl.trim().isNotEmpty ||
+                avatarPath.trim().isNotEmpty,
+            child: _buildAvatar(),
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(

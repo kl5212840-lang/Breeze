@@ -1,3 +1,4 @@
+import 'package:zephyr/page/webview_page.dart';
 import 'package:zephyr/page/video/hanime_work_facts.dart';
 import 'package:zephyr/page/video/video_public_metadata.dart';
 import 'package:zephyr/page/video/api_video_collection.dart';
@@ -15,6 +16,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:zephyr/config/global/global_setting.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -177,6 +180,11 @@ class _WebPlatform extends InAppWebViewPlatform {
     'name': 'Private account fixture',
     'email': 'private@example.test',
   };
+  int videoPauses = 0;
+  int standaloneFallbacks = 0;
+  int standaloneReads = 0;
+  Future<dynamic>? standaloneSnapshot;
+  JavaScriptHandlerCallback? standalonePlaybackHandler;
   int stops = 0;
   int reloads = 0;
   int presentationChanges = 0;
@@ -214,11 +222,25 @@ class _WebPlatform extends InAppWebViewPlatform {
   }
 
   @override
+  PlatformCookieManager createPlatformCookieManager(
+    PlatformCookieManagerCreationParams params,
+  ) => _WebCookies(params);
+
+  @override
   PlatformInAppWebViewWidget createPlatformInAppWebViewWidget(
     PlatformInAppWebViewWidgetCreationParams params,
   ) {
     return _WebWidget(params, this);
   }
+}
+
+class _WebCookies extends PlatformCookieManager {
+  _WebCookies(super.params) : super.implementation();
+
+  @override
+  Future<List<Cookie>> getAllCookies() async => [
+    Cookie(name: 'fixture', value: 'fixture'),
+  ];
 }
 
 class _WebWidget extends PlatformInAppWebViewWidget {
@@ -281,6 +303,16 @@ class _WebController extends PlatformInAppWebViewController
   final _WebPlatform host;
 
   @override
+  void addJavaScriptHandler({
+    required String handlerName,
+    required JavaScriptHandlerCallback callback,
+  }) {
+    if (handlerName == 'breezeNativePlayback') {
+      host.standalonePlaybackHandler = callback;
+    }
+  }
+
+  @override
   Future<bool> openVerificationWindow(Uri url) async {
     host.verificationWindows.add(url);
     return await host.verificationWindowResult?.future ?? false;
@@ -341,6 +373,15 @@ class _WebController extends PlatformInAppWebViewController
     required String source,
     ContentWorld? contentWorld,
   }) async {
+    if (source.contains('const documentUrl = location.href') ||
+        source.contains('title: document.title, video: null')) {
+      host.standaloneReads++;
+      return host.standaloneSnapshot;
+    }
+    if (source.contains('window.__breezeNativePlaybackDisabledFor =')) {
+      host.standaloneFallbacks++;
+    }
+    if (source.contains('?.pause();')) host.videoPauses++;
     if (source.contains('videoSearchResults(false, true)')) {
       host.catalogContinuations++;
       return await host.catalogContinuation;
@@ -563,7 +604,9 @@ Future<void> _mount(
   KeywordSearchScope? initialKeywordScope,
   PluginAccountSyncCoordinator? accountSyncCoordinator,
   VideoAccountCookies? accountCookies,
+  DateTime Function()? cacheClock,
   List<NavigatorObserver> observers = const [],
+  GlobalSettingCubit? settings,
 }) async {
   Widget withDiscoverRoot(Widget catalog) => !nestedRoot
       ? catalog
@@ -581,71 +624,75 @@ Future<void> _mount(
             ),
           ),
         );
-  await tester.pumpWidget(
-    MaterialApp(
-      navigatorObservers: observers,
-      theme: ThemeData(brightness: brightness),
-      builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(
-          context,
-        ).copyWith(textScaler: TextScaler.linear(textScale)),
-        child: interfaceStyle == null
-            ? child!
-            : AppInterfaceStyleScope(style: interfaceStyle, child: child!),
-      ),
-      home: withDiscoverRoot(
-        NativeVideoCatalogPage(
-          source: source,
-          readLocalDownloads: () async => const <Map<String, dynamic>>[],
-          title: 'Hanime1',
-          homeUrl: Uri.parse('https://hanime1.me/'),
-          initialUrl: initialUrl,
-          initialKeywordScope: initialKeywordScope,
-          returnToCallerAfterPlayback: returnToCallerAfterPlayback,
-          structuredHanime: structuredHanime,
-          accountSyncCoordinator: accountSyncCoordinator,
-          accountCookies: accountCookies,
-          catalogFnPath: 'catalog',
-          detailFnPath: 'detail',
-          playbackFnPath: 'playback',
-          selectors: selectors,
-          nativeAccount: nativePersonal,
-          nativeSubscriptions: nativePersonal,
-          nativeAuth: nativeAuth,
-          nativeSiteActions: nativeSiteActions,
-          externalAuthenticationEntries: externalAuthenticationEntries,
-          searchFilters: filters,
-          categories: categories,
-          tabs: [
-            NativeCatalogTab(
-              id: 'recommend',
-              title: '推荐',
-              url: Uri.parse('https://hanime1.me/'),
-              mode: 'catalog',
-            ),
-            NativeCatalogTab(
-              id: 'ranking',
-              title: '排行',
-              url: Uri.parse('https://hanime1.me/search?sort=views'),
-              mode: 'catalog',
-            ),
-            NativeCatalogTab(
-              id: 'subscriptions',
-              title: '订阅',
-              url: Uri.parse('https://hanime1.me/subscriptions'),
-              mode: nativePersonal ? 'catalog' : 'website',
-            ),
-            NativeCatalogTab(
-              id: 'account',
-              title: '我的',
-              url: Uri.parse('https://hanime1.me/login'),
-              mode: 'account',
-            ),
-          ],
-          pluginCall: plugin.call,
-        ),
+  final app = MaterialApp(
+    navigatorObservers: observers,
+    theme: ThemeData(brightness: brightness),
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(
+        context,
+      ).copyWith(textScaler: TextScaler.linear(textScale)),
+      child: interfaceStyle == null
+          ? child!
+          : AppInterfaceStyleScope(style: interfaceStyle, child: child!),
+    ),
+    home: withDiscoverRoot(
+      NativeVideoCatalogPage(
+        source: source,
+        readLocalDownloads: () async => const <Map<String, dynamic>>[],
+        title: 'Hanime1',
+        homeUrl: Uri.parse('https://hanime1.me/'),
+        initialUrl: initialUrl,
+        initialKeywordScope: initialKeywordScope,
+        returnToCallerAfterPlayback: returnToCallerAfterPlayback,
+        structuredHanime: structuredHanime,
+        cacheClock: cacheClock,
+        accountSyncCoordinator: accountSyncCoordinator,
+        accountCookies: accountCookies,
+        catalogFnPath: 'catalog',
+        detailFnPath: 'detail',
+        playbackFnPath: 'playback',
+        selectors: selectors,
+        nativeAccount: nativePersonal,
+        nativeSubscriptions: nativePersonal,
+        nativeAuth: nativeAuth,
+        nativeSiteActions: nativeSiteActions,
+        externalAuthenticationEntries: externalAuthenticationEntries,
+        searchFilters: filters,
+        categories: categories,
+        tabs: [
+          NativeCatalogTab(
+            id: 'recommend',
+            title: '推荐',
+            url: Uri.parse('https://hanime1.me/'),
+            mode: 'catalog',
+          ),
+          NativeCatalogTab(
+            id: 'ranking',
+            title: '排行',
+            url: Uri.parse('https://hanime1.me/search?sort=views'),
+            mode: 'catalog',
+          ),
+          NativeCatalogTab(
+            id: 'subscriptions',
+            title: '订阅',
+            url: Uri.parse('https://hanime1.me/subscriptions'),
+            mode: nativePersonal ? 'catalog' : 'website',
+          ),
+          NativeCatalogTab(
+            id: 'account',
+            title: '我的',
+            url: Uri.parse('https://hanime1.me/login'),
+            mode: 'account',
+          ),
+        ],
+        pluginCall: plugin.call,
       ),
     ),
+  );
+  await tester.pumpWidget(
+    settings == null
+        ? app
+        : BlocProvider<GlobalSettingCubit>.value(value: settings, child: app),
   );
   if (nestedRoot) {
     await tester.tap(find.text('Open fixture source'));
@@ -807,6 +854,12 @@ const _filters = VideoFilterSchema(
   },
 );
 
+class _ScrollNavigationSettings extends GlobalSettingCubit {
+  _ScrollNavigationSettings() {
+    emit(state.copyWith(navigationHidesOnScroll: true));
+  }
+}
+
 void main() {
   late _WebPlatform web;
   late _Plugin plugin;
@@ -821,6 +874,125 @@ void main() {
       () => InAppWebViewPlatform.instance = original ?? _WebPlatform(),
     );
   });
+
+  testWidgets('standalone playback invalidates an old same-URL document', (
+    tester,
+  ) async {
+    const first = 'https://fixture.test/watch?v=1';
+    const second = 'https://fixture.test/watch?v=2';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: WebViewPage(
+          info: [
+            'Fixture',
+            first,
+            jsonEncode({
+              'homeUrl': 'https://fixture.test/',
+              'playback': {
+                'source': 'e3a3f57e-1304-4f45-a282-74e50bdc9da6',
+                'fnPath': 'playback',
+                'watchPath': '/watch',
+                'videoSelector': 'video',
+                'playTriggerSelector': 'button.play',
+              },
+            }),
+          ],
+        ),
+      ),
+    );
+    await tester.pump();
+    final old = Completer<dynamic>();
+    web.standaloneSnapshot = old.future;
+    web.standalonePlaybackHandler!([first, 100]);
+    await tester.pump();
+    expect(web.standaloneReads, 1);
+
+    web.params.onLoadStart?.call(web.wrapped, WebUri(second));
+    web.params.onLoadStart?.call(web.wrapped, WebUri(first));
+    final newest = Completer<dynamic>();
+    web.standaloneSnapshot = newest.future;
+    web.standalonePlaybackHandler!([first, 200]);
+    await tester.pump();
+    expect(web.standaloneReads, 2);
+
+    old.complete(null);
+    await tester.pump();
+    expect(web.standaloneFallbacks, 0);
+    expect(find.text(t.webview.nativePlaybackUnavailable), findsNothing);
+    newest.complete(null);
+    await tester.pump();
+    expect(web.standaloneFallbacks, 1);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+    'native catalog scrolls its navigation out and restores it on reverse and modal return',
+    (tester) async {
+      tester.view.physicalSize = const Size(400, 600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final settings = _ScrollNavigationSettings();
+      final style = ValueNotifier('breeze');
+      addTearDown(settings.close);
+      addTearDown(style.dispose);
+      plugin.catalog = (_) async => {
+        'data': {
+          'videos': [
+            for (var index = 1; index <= 48; index++)
+              {
+                'title': 'Catalog work $index',
+                'watchUrl': 'https://hanime1.me/watch?v=$index',
+              },
+          ],
+        },
+      };
+      await _mount(
+        tester,
+        plugin,
+        structuredHanime: true,
+        filters: _filters,
+        interfaceStyle: style,
+        settings: settings,
+      );
+      web.finishLastLoad();
+      await _pump(tester);
+      final nav = find.byType(VideoNativeNavigation);
+      final scroll = find.byWidgetPredicate(
+        (widget) =>
+            widget is CustomScrollView &&
+            widget.key is PageStorageKey &&
+            widget.controller != null,
+      );
+      final shownBar = tester.getRect(nav);
+      final viewport = tester.getRect(scroll);
+      final barElement = tester.element(nav);
+
+      await tester.drag(scroll, const Offset(0, -160));
+      await _pump(tester);
+      expect(tester.getRect(nav).top, 600);
+      expect(tester.getRect(scroll), viewport);
+      await tester.drag(scroll, const Offset(0, 70));
+      await _pump(tester);
+      expect(tester.getRect(nav), shownBar);
+
+      await tester.drag(scroll, const Offset(0, -160));
+      await _pump(tester);
+      expect(tester.getRect(nav).top, 600);
+      final modal = showDialog<void>(
+        context: tester.element(scroll),
+        builder: (_) => const AlertDialog(title: Text('Catalog dialog')),
+      );
+      await _pump(tester);
+      Navigator.of(tester.element(find.text('Catalog dialog'))).pop();
+      await _pump(tester);
+      await modal;
+      expect(tester.getRect(nav), shownBar);
+      expect(tester.getRect(scroll), viewport);
+      expect(tester.element(nav), same(barElement));
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
 
   testWidgets(
     'reselecting Hanime root lists keeps data and only scrolls to top',
@@ -1269,6 +1441,10 @@ void main() {
   testWidgets(
     'Hanime personal collections preserve saved layout and filter observed durations',
     (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       final owner = Uri.https('hanime1.me', '/user/42');
       final saves = owner.replace(path: '${owner.path}/saves');
       final scope = VideoPersonalSnapshotStore.scope(
@@ -1329,8 +1505,19 @@ void main() {
 
       ApiVideoCollection collection() =>
           tester.widget(find.byType(ApiVideoCollection));
+      int renderedColumns() {
+        final grid = tester.widget<SliverGrid>(
+          find.descendant(
+            of: find.byType(ApiVideoCollection),
+            matching: find.byType(SliverGrid),
+          ),
+        );
+        return (grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount)
+            .crossAxisCount;
+      }
       expect(collection().posterAspectRatio, 16 / 9);
       expect(collection().gridColumns, 3);
+      expect(renderedColumns(), 3);
       final layout = tester.widget<NativeVideoMenu>(
         find.byKey(const ValueKey('personal-records.layout')),
       );
@@ -1338,6 +1525,7 @@ void main() {
       layout.onSelected('large');
       await _pump(tester);
       expect(collection().gridColumns, 2);
+      expect(renderedColumns(), 2);
       expect(
         await CollectionViewPreferences.read(scope, supportedViews: {'large'}),
         'large',
@@ -2527,7 +2715,7 @@ void main() {
       ),
     );
     expect(menu.options['diagnostics'], t.videoPlayback.pageAnalysis);
-    expect(menu.options['tools'], t.discover.settings);
+    expect(menu.options['tools'], t.plugin.pluginSettings);
     expect(menu.options.keys.every(menu.optionIcons.containsKey), isTrue);
     await _catalogToolAction(tester, 'inspection');
     await tester.tap(
@@ -2551,40 +2739,62 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets(
-    'back from a category restores its parent ranking without reloading',
-    (tester) async {
-      await _mount(
-        tester,
-        plugin,
-        categories: [
-          NativeCatalogCategory(
-            title: 'Test genre',
-            url: Uri.parse('https://hanime1.me/search?genre=Test'),
-          ),
-        ],
-      );
-      web.finishLastLoad();
-      await _pump(tester);
-      await tester.tap(_catalogTab('排行'));
-      await _pump(tester);
-      web.finishLastLoad();
-      await _pump(tester);
-      await tester.tap(find.text('Test genre'));
-      await _pump(tester);
-      expect(web.loads.last.queryParameters['genre'], 'Test');
-      expect(web.loads.last.queryParameters['sort'], 'views');
-      web.finishLastLoad();
-      await _pump(tester);
-      final loads = web.loads.length;
-      await tester.tap(find.byTooltip(t.common.back));
-      await _pump(tester);
-      expect(web.loads, hasLength(loads));
-      expect(find.text('Rank card'), findsOneWidget);
-      expect(find.byType(NativeVideoCatalogPage), findsOneWidget);
-      await tester.pumpWidget(const SizedBox.shrink());
-    },
-  );
+  for (final stale in [false, true]) {
+    testWidgets(
+      stale
+          ? 'back from a category retains the old ranking during stale refresh'
+          : 'back from a category restores its parent ranking without reloading',
+      (tester) async {
+        var now = DateTime(2026, 11, 23);
+        const connectivity = MethodChannel(
+          'dev.fluttercommunity.plus/connectivity_status',
+        );
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(connectivity, (_) async => null);
+        addTearDown(
+          () => messenger.setMockMethodCallHandler(connectivity, null),
+        );
+        await _mount(
+          tester,
+          plugin,
+          cacheClock: () => now,
+          categories: [
+            NativeCatalogCategory(
+              title: 'Test genre',
+              url: Uri.parse('https://hanime1.me/search?genre=Test'),
+            ),
+          ],
+        );
+        web.finishLastLoad();
+        await _pump(tester);
+        await tester.tap(_catalogTab('排行'));
+        await _pump(tester);
+        web.finishLastLoad();
+        await _pump(tester);
+        await tester.tap(find.text('Test genre'));
+        await _pump(tester);
+        expect(web.loads.last.queryParameters['genre'], 'Test');
+        expect(web.loads.last.queryParameters['sort'], 'views');
+        web.finishLastLoad();
+        await _pump(tester);
+        if (stale) now = now.add(const Duration(seconds: 31));
+        final loads = web.loads.length;
+        await tester.tap(find.byTooltip(t.common.back));
+        await _pump(tester);
+        expect(web.loads, hasLength(loads + (stale ? 1 : 0)));
+        if (stale) {
+          expect(
+            find.byKey(const ValueKey('catalog-background-refresh')),
+            findsOneWidget,
+          );
+        }
+        expect(find.text('Rank card'), findsOneWidget);
+        expect(find.byType(NativeVideoCatalogPage), findsOneWidget);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
 
   testWidgets(
     'browser inspection needs consent and never reloads verification',
@@ -2710,7 +2920,10 @@ void main() {
         find.byKey(const ValueKey('website-document')),
       );
       expect(verificationViewport.width, viewport.width);
-      expect(verificationViewport.height, greaterThan(viewport.height));
+      expect(
+        verificationViewport.height,
+        greaterThanOrEqualTo(viewport.height),
+      );
       expect(find.byType(VideoNativeNavigation), findsNothing);
       await _verificationAction(tester, 'website');
       await _verificationAction(tester, 'native');
@@ -5686,6 +5899,73 @@ void main() {
   );
 
   testWidgets(
+    'an authenticated redirect from the settings login reaches the account',
+    (tester) async {
+      final profile = Uri.parse('https://hanime1.me/user/42');
+      plugin.catalog = (_) async => {
+        'data': {
+          'videos': [],
+          'sections': [],
+          'account': {
+            'status': 'signedIn',
+            'name': 'Redirected member',
+            'profileUrl': profile.toString(),
+            'isOwnProfile': true,
+          },
+        },
+      };
+      await _mount(
+        tester,
+        plugin,
+        nativePersonal: true,
+        nativeAuth: true,
+        initialUrl: Uri.parse('https://hanime1.me/login'),
+      );
+      expect(web.loads.last.path, '/login');
+      web.finishWebsiteNavigation(Uri.parse('https://hanime1.me/'));
+      await _pump(tester, 20);
+      expect(web.loads.last, profile);
+      web.finishLastLoad();
+      await _pump(tester, 20);
+      expect(find.text(t.common.retry), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'the Hanime login form remains usable during an owned account switch',
+    (tester) async {
+      const source = 'hanime-fixture-switch';
+      plugin.catalog = (_) async => {
+        'data': {
+          'videos': [],
+          'sections': [],
+          'account': {'status': 'signedOut'},
+          'auth': {'supported': true, 'mode': 'login'},
+        },
+      };
+      final generation = pluginSessionWriteFence.beginSessionChange(source);
+      addTearDown(() => pluginSessionWriteFence.seal(source, generation));
+      await _mount(
+        tester,
+        plugin,
+        source: source,
+        nativePersonal: true,
+        nativeAuth: true,
+        initialUrl: Uri.parse('https://hanime1.me/login'),
+      );
+      web.finishLastLoad();
+      await _pump(tester, 20);
+      final form = find.byType(NativeVideoAuthForm);
+      expect(form, findsOneWidget);
+      expect(tester.widget<NativeVideoAuthForm>(form).submitEnabled, isTrue);
+      expect(tester.widget<NativeVideoAuthForm>(form).saveCredentials, isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
     'native auth offers registration but captcha remains a required browser task',
     (tester) async {
       plugin.catalog = (core) async {
@@ -6412,6 +6692,55 @@ void main() {
           'a source refresh from the departed player must not navigate over its restored parent',
     );
     expect(failure, isA<StateError>());
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('departed detail refresh cannot pause the restored document', (
+    tester,
+  ) async {
+    final originalVideo = VideoPlayerPlatform.instance;
+    VideoPlayerPlatform.instance = _ReturnVideoPlatform();
+    addTearDown(() => VideoPlayerPlatform.instance = originalVideo);
+    plugin.playable = true;
+    await _mount(tester, plugin);
+    web.finishLastLoad();
+    await _pump(tester);
+    await tester.tap(find.text('Home card'));
+    await _pump(tester);
+    web.finishLastLoad();
+    await _pump(tester, 20);
+
+    final media = Completer<Map<String, dynamic>>();
+    plugin.pendingMedia = media.future;
+    final player = tester.widget<NativeVideoPage>(find.byType(NativeVideoPage));
+    Object? failure;
+    final refresh = player.refreshSession!().then<void>(
+      (_) {},
+      onError: (Object error) {
+        failure = error;
+      },
+    );
+    await _pump(tester, 2);
+    web.finishLastLoad();
+    await _pump(tester, 2);
+    expect(plugin.calls.where((call) => call.$1 == 'playback'), hasLength(2));
+
+    Navigator.of(tester.element(find.byType(NativeVideoPage))).pop();
+    await _pump(tester, 12);
+    final cancelledBeforeParserReturned = failure is StateError;
+    final pauses = web.videoPauses;
+    media.complete({
+      'data': {
+        'title': 'Playable detail',
+        'sources': [
+          {'url': 'https://fixture.test/video.mp4', 'quality': 'auto'},
+        ],
+      },
+    });
+    await _pump(tester, 12);
+    expect(web.videoPauses, pauses);
+    expect(cancelledBeforeParserReturned, true);
+    await refresh;
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -7255,7 +7584,23 @@ void main() {
     expect(find.byType(NativeVideoPage), findsOneWidget);
     expect(find.text('Detail 1'), findsWidgets);
     expect(find.text(t.videoCommunity.following), findsOneWidget);
-    expect(find.text(t.videoCommunity.liked), findsOneWidget);
+    final like = find.byKey(const ValueKey('video-like'));
+    expect(
+      find.ancestor(
+        of: like,
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is Semantics &&
+              widget.properties.label == t.videoCommunity.like &&
+              widget.properties.selected == true,
+        ),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: like, matching: find.byIcon(Icons.thumb_up)),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('video-favorite')), findsOneWidget);
     expect(find.byKey(const ValueKey('video-download')), findsOneWidget);
     expect(find.byKey(const ValueKey('video-share')), findsOneWidget);

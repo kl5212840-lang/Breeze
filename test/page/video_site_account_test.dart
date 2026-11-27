@@ -21,6 +21,7 @@ void main() {
         jsonEncode({
           'accountRead': videoAccountReadScript(page),
           'profileLink': videoSiteProfileLinkScript,
+          'freshIdentity': videoSiteFreshAccountScript(page),
           'profileSubmit': videoAccountSubmitScript(
             page: page,
             operation: 'profile',
@@ -64,7 +65,7 @@ void main() {
       final exitCode = await process.exitCode;
       expect(exitCode, 0, reason: await errors);
       final result = jsonDecode(await output) as Map;
-      expect(result['structuralChecks'], 21);
+      expect(result['structuralChecks'], 24);
       expect(result['networkRequests'], 0);
       expect(result['realWritesVerified'], isFalse);
     },

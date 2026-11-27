@@ -14,6 +14,7 @@ class YearFilterPicker extends StatefulWidget {
     required this.selected,
     required this.onSelected,
     this.enabled = true,
+    this.showAllShortcut = true,
     this.favorite,
     this.favoriteValues = const [],
   });
@@ -22,6 +23,7 @@ class YearFilterPicker extends StatefulWidget {
   final Map<String, String> options;
   final ValueChanged<String> onSelected;
   final bool enabled;
+  final bool showAllShortcut;
   final Widget Function(String)? favorite;
   final List<String> favoriteValues;
 
@@ -117,7 +119,7 @@ class _YearFilterPickerState extends State<YearFilterPicker> {
               child: Text(widget.label, style: theme.textTheme.titleSmall),
             ),
             if (widget.favorite case final favorite?) favorite(widget.selected),
-            if (widget.options.containsKey(''))
+            if (widget.showAllShortcut && widget.options.containsKey(''))
               TextButton(
                 key: ValueKey('${widget.keyPrefix}.all'),
                 style: TextButton.styleFrom(minimumSize: const Size(44, 44)),

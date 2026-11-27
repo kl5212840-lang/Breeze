@@ -70,7 +70,7 @@ typedef _ProgressMembership = ({
 });
 
 class _Measurement {
-  const _Measurement(
+  _Measurement(
     this.version,
     this.result, {
     this.base,
@@ -82,6 +82,7 @@ class _Measurement {
   final String? base;
   final List<_ProgressMembership>? membership;
   final Map<String, (String, int)>? committedFiles;
+  DownloadResourceSize? completed;
 }
 
 /// On-demand, read-only measurements. No directory walks, decoding, migrations,
@@ -155,15 +156,27 @@ class DownloadResourceMetrics {
         committedFiles: committedFiles,
       ),
     );
-    _savedCache[resource.key] = _Measurement(
+    final measurement = _Measurement(
       resource.metricsVersion,
       future,
       committedFiles: committedFiles,
+    );
+    _savedCache[resource.key] = measurement;
+    unawaited(
+      future.then<void>(
+        (size) => measurement.completed = size,
+        onError: (Object _) {},
+      ),
     );
     while (_savedCache.length > maximumCacheEntries) {
       _savedCache.remove(_savedCache.keys.first);
     }
     return future;
+  }
+
+  DownloadResourceSize? cachedComic(DownloadComicResource resource) {
+    final entry = _savedCache[resource.key];
+    return entry?.version == resource.metricsVersion ? entry?.completed : null;
   }
 
   /// Include only indexed, already-written task paths. The expected image

@@ -7,6 +7,8 @@ import 'package:zephyr/plugin/plugin_registry_service.dart';
 import 'package:zephyr/type/pipe.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
+import 'package:zephyr/widgets/task_dialog.dart';
+import 'package:zephyr/widgets/year_filter_picker.dart';
 
 class AdvancedSearchDialog extends StatefulWidget {
   final SearchStates initialState;
@@ -33,9 +35,8 @@ class _AdvancedSearchDialogState extends State<AdvancedSearchDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(t.search.advancedSearchOptions),
-      scrollable: true,
+    return TaskDialog(
+      title: t.search.advancedSearchOptions,
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -150,6 +151,7 @@ class PluginAdvancedSearchScheme {
 
 class PluginAdvancedSearchDialog extends StatefulWidget {
   const PluginAdvancedSearchDialog({
+    super.key,
     required this.initialSort,
     required this.scheme,
   });
@@ -175,43 +177,124 @@ class _PluginAdvancedSearchDialogState
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(t.search.advancedSearchOptions),
-      scrollable: true,
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: widget.scheme.fields
-            .map((field) => _buildField(context, field))
-            .toList(),
-      ),
+    final fields = widget.scheme.fields;
+    final dateFields = fields
+        .where(
+          (field) =>
+              field['optionLayout'] == 'menu' &&
+              (field['key'] == 'y' || field['key'] == 'm'),
+        )
+        .toList();
+    final otherFields = fields.where((field) => !dateFields.contains(field));
+    final content = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (dateFields.isNotEmpty) _buildDateFields(context, dateFields),
+        for (final field in otherFields) _buildField(context, field),
+      ],
+    );
+    return TaskDialog(
+      title: dateFields.isNotEmpty && otherFields.isEmpty
+          ? t.search.jmDateFilter
+          : t.search.advancedSearchOptions,
+      content: content,
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: Text(t.common.cancel),
         ),
-        FilledButton(
-          onPressed: () {
-            final nextExtern = <String, dynamic>{};
-            for (final field in widget.scheme.fields) {
-              final key = field['key']?.toString() ?? '';
-              final kind = field['kind']?.toString() ?? '';
-              if (key.isEmpty) continue;
-              if (kind == 'choice') {
-                nextExtern[key] = _values[key];
-              } else if (kind == 'multiChoice') {
-                nextExtern[key] = _multiValues(key);
-              } else if (kind == 'switch') {
-                nextExtern[key] = _switchValue(key);
-              } else if (kind == 'text') {
-                nextExtern[key] = _textValue(key);
+        FilledButton(onPressed: _apply, child: Text(t.common.apply)),
+      ],
+    );
+  }
+
+  void _apply() {
+    final nextExtern = <String, dynamic>{};
+    for (final field in widget.scheme.fields) {
+      final key = field['key']?.toString() ?? '';
+      final kind = field['kind']?.toString() ?? '';
+      if (key.isEmpty) continue;
+      if (kind == 'choice') {
+        final parent = field['requiresOption'];
+        nextExtern[key] =
+            parent is String && (_values[parent]?.toString() ?? '').isEmpty
+            ? ''
+            : _values[key];
+      } else if (kind == 'multiChoice') {
+        nextExtern[key] = _multiValues(key);
+      } else if (kind == 'switch') {
+        nextExtern[key] = _switchValue(key);
+      } else if (kind == 'text') {
+        nextExtern[key] = _textValue(key);
+      }
+    }
+    Navigator.of(context).pop(nextExtern);
+  }
+
+  Widget _buildDateFields(
+    BuildContext context,
+    List<Map<String, dynamic>> fields,
+  ) {
+    return LayoutBuilder(
+      builder: (context, limits) {
+        final wheels = [for (final field in fields) _buildDateWheel(field)];
+        final stack =
+            limits.maxWidth < MediaQuery.textScalerOf(context).scale(170);
+        return stack
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                spacing: 12,
+                children: wheels,
+              )
+            : Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                spacing: 12,
+                children: [for (final wheel in wheels) Expanded(child: wheel)],
+              );
+      },
+    );
+  }
+
+  Widget _buildDateWheel(Map<String, dynamic> field) {
+    final key = field['key'] as String;
+    final label = field['label']?.toString() ?? '';
+    final parent = field['requiresOption'];
+    final enabled =
+        parent is! String || (_values[parent]?.toString() ?? '').isNotEmpty;
+    final choices = {
+      for (final row
+          in (field['options'] as List? ?? const []).whereType<Map>())
+        row['value']?.toString() ?? '': row,
+    };
+    if (choices.isEmpty) return const SizedBox.shrink();
+    return Semantics(
+      enabled: enabled,
+      child: Opacity(
+        opacity: enabled ? 1 : .45,
+        child: YearFilterPicker(
+          key: ValueKey('advanced-search.$key'),
+          keyPrefix: 'advanced-search.$key',
+          label: label,
+          options: {
+            for (final option in choices.entries)
+              option.key: option.value['label']?.toString() ?? option.key,
+          },
+          selected: enabled ? _values[key]?.toString() ?? '' : '',
+          enabled: enabled,
+          showAllShortcut: false,
+          onSelected: (value) => setState(() {
+            _values[key] = choices[value]?['value'];
+            if (value.isEmpty) {
+              for (final dependent in widget.scheme.fields) {
+                if (dependent['requiresOption'] == key) {
+                  _values[dependent['key']] = '';
+                }
               }
             }
-            Navigator.of(context).pop(nextExtern);
-          },
-          child: Text(t.common.apply),
+          }),
         ),
-      ],
+      ),
     );
   }
 
@@ -310,7 +393,6 @@ class _PluginAdvancedSearchDialogState
     }
 
     final current = _values[key]?.toString() ?? '';
-
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Column(

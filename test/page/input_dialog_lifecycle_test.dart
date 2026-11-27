@@ -131,6 +131,7 @@ void main() {
     );
     expect(tester.getSize(find.byType(ListView)).height, lessThan(160));
     await tester.tap(find.text('Second'));
+    await tester.pump();
     await tester.tap(find.text(t.common.ok));
     await tester.pumpAndSettle();
     expect(result, {'two'});
@@ -194,6 +195,7 @@ void main() {
                   }),
             (value) => result = value,
           );
+          expect(find.byType(Dialog), findsOneWidget);
           await tester.enterText(find.byType(TextField).first, 'Edited name');
           await tester.pump();
           if (barrier) {
@@ -207,12 +209,44 @@ void main() {
           await tester.pump(const Duration(milliseconds: 40));
           expect(tester.takeException(), isNull);
           await tester.pumpAndSettle();
-          expect(find.byType(AlertDialog), findsNothing);
+          expect(find.byType(Dialog), findsNothing);
           expect(tester.takeException(), isNull);
         },
       );
     }
   }
+
+  testWidgets('setting keeps input and save above a landscape keyboard', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(600, 320);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetViewInsets);
+    Object? result;
+    await _open(
+      tester,
+      (context) => showPluginSettingInputDialog(
+        context,
+        title: 'Setting',
+        initialValue: 'Original',
+        obscure: false,
+      ),
+      (value) => result = value,
+      textScale: 2,
+    );
+    await tester.enterText(find.byType(TextField), 'Changed');
+    tester.view.viewInsets = const FakeViewPadding(bottom: 130);
+    await tester.pumpAndSettle();
+    final save = find.widgetWithText(FilledButton, t.common.save);
+    expect(tester.getRect(save).bottom, lessThanOrEqualTo(190));
+    expect(save.hitTestable(), findsOneWidget);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+    expect(result, 'Changed');
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('setting saves edited value after animated close', (
     tester,

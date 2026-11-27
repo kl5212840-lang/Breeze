@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data' show BytesBuilder;
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:zephyr/network/source_network_policy.dart';
@@ -9,6 +10,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/page/video/omo_network.dart';
+import 'package:zephyr/page/video/video_download_resolution.dart';
+import 'package:zephyr/page/video/video_seek_preview_controller.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -349,7 +352,7 @@ segment.mp4?s=secret
   );
 
   test(
-    'real loopback relay covers nested HLS, key and Range; disposing cancels and expires URLs',
+    'loopback reuses verified VOD segments without sharing keys or byte ranges',
     () async {
       final savedOverrides = HttpOverrides.current;
       HttpOverrides.global = null;
@@ -371,11 +374,12 @@ segment.mp4?s=secret
         starts.add(args);
         expect(args['siteCookies'], isFalse);
         final url = Uri.parse(args['url'] as String);
-        final playlist = url.path.endsWith('.m3u8');
-        final body = url.path.endsWith('master.m3u8')
+        final master = url.path.endsWith('/master');
+        final playlist = master || url.path.endsWith('.m3u8');
+        final body = master
             ? '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=10\nvariant.m3u8\n'
             : url.path.endsWith('variant.m3u8')
-            ? '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="key.bin"\n#EXTINF:1,\nseg.mp4\n'
+            ? '#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="key.bin"\n#EXTINF:1,\nseg.mp4\n#EXTINF:1,\nprivate.mp4\n#EXT-X-ENDLIST\n'
             : '12345678';
         chunks[args['request'] as String] = [
           Uint8List.fromList(utf8.encode(body)),
@@ -390,13 +394,14 @@ segment.mp4?s=secret
                 : 'video/mp4',
             'content-length': '${utf8.encode(body).length}',
             if (range != null) 'content-range': 'bytes 0-7/80',
+            if (url.path.endsWith('private.mp4')) 'cache-control': 'no-store',
           },
         };
       });
       final context = OmoNetworkContext('visit');
       await context.prepare();
       final controller = context.player(
-        Uri.parse('https://cdn.example/master.m3u8?secret=1'),
+        Uri.parse('https://cdn.example/master?secret=1'),
         {'Referer': 'https://www.omofuna.com/'},
       );
       final client = HttpClient()..findProxy = (_) => 'DIRECT';
@@ -418,6 +423,8 @@ segment.mp4?s=secret
         expect(root.host, '127.0.0.1');
         expect(root.toString(), isNot(contains('secret')));
         final master = await get(root);
+        expect(await get(root), master);
+        expect(controller.formatHint?.name, 'hls');
         final head = await (await client.headUrl(root)).close();
         expect(head.contentLength, utf8.encode(master).length);
         await head.drain<void>();
@@ -425,25 +432,38 @@ segment.mp4?s=secret
             .split('\n')
             .firstWhere((line) => line.startsWith('/'));
         final variant = await get(root.resolve(variantPath));
+        expect(await get(root.resolve(variantPath)), variant);
         final key = RegExp('URI="([^"]+)"').firstMatch(variant)![1]!;
         await get(root.resolve(key));
-        final segment = variant
+        await get(root.resolve(key));
+        final segments = variant
             .split('\n')
-            .firstWhere((line) => line.startsWith('/'));
-        expect(await get(root.resolve(segment), range: true), '12345678');
+            .where((line) => line.startsWith('/'))
+            .toList();
+        final segment = root.resolve(segments.first);
+        expect(await get(segment, range: true), '12345678');
+        expect(await get(segment, range: true), '12345678');
+        expect(await get(segment), '12345678');
+        await get(root.resolve(segments.last));
+        await get(root.resolve(segments.last));
         expect(starts.every((args) => args['context'] == 'visit'), isTrue);
         expect(starts.map((args) => Uri.parse(args['url'] as String).host), [
+          'cdn.example', // The multivariant playlist is fetched on each GET.
           'cdn.example',
-          'cdn.example',
+          'cdn.example', // HEAD still verifies the current playlist.
+          'final.example', // The VOD playlist itself is reusable.
+          'final.example', // Encryption keys are requested each time.
           'final.example',
-          'final.example',
+          'final.example', // The same segment and Range use the prior response.
+          'final.example', // A whole segment has a distinct cache key.
+          'final.example', // no-store applies to media segments as well.
           'final.example',
         ]);
         expect(
           starts.last['headers'],
           containsPair('Referer', 'https://www.omofuna.com/'),
         );
-        expect(cancelled, hasLength(5));
+        expect(cancelled, hasLength(10));
         await controller.dispose();
         final expired = await (await client.getUrl(root)).close();
         expect(expired.statusCode, 404);
@@ -455,6 +475,411 @@ segment.mp4?s=secret
       }
     },
   );
+
+  test(
+    'loopback replays only fresh exact ranges within a progressive lease',
+    () async {
+      final savedOverrides = HttpOverrides.current;
+      HttpOverrides.global = null;
+      final chunks = <String, Uint8List>{};
+      final ranges = <String>[];
+      var tag = '"first"';
+      var total = 32;
+      var cacheControl = 'max-age=15';
+      var mime = 'video/mp4';
+      var malformed = false;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        final args = call.arguments as Map;
+        if (call.method == 'close') return null;
+        final id = args['request'] as String;
+        if (call.method == 'read' || call.method == 'cancel') {
+          final chunk = chunks.remove(id);
+          return call.method == 'read' ? chunk : null;
+        }
+        final range = (args['headers'] as Map)['Range'] as String;
+        ranges.add(range);
+        final bounds = range.substring(6).split('-');
+        final start = int.parse(bounds.first);
+        final end = int.tryParse(bounds.last) ?? total - 1;
+        chunks[id] = Uint8List.fromList(
+          List.filled(end - start + 1, ranges.length),
+        );
+        return {
+          'status': 206,
+          'url': 'https://final.example/progressive',
+          'headers': {
+            'content-type': mime,
+            'content-length': '${end - start + 1}',
+            'content-range':
+                'bytes ${malformed ? start + 1 : start}-$end/$total',
+            'cache-control': cacheControl,
+            'etag': tag,
+          },
+        };
+      });
+      final context = OmoNetworkContext('progressive');
+      await context.prepare();
+      final url = Uri.parse('https://cdn.example/progressive?token=test');
+      final first = context.player(url, {});
+      final second = context.player(url, {});
+      final firstRoute = Uri.parse(first.dataSource);
+      final secondRoute = Uri.parse(second.dataSource);
+      final client = HttpClient()..findProxy = (_) => 'DIRECT';
+
+      Future<(int, String?, List<int>)> get(
+        Uri route,
+        String range, {
+        bool bypass = false,
+      }) async {
+        final request = await client.getUrl(route);
+        request.headers.set('range', range);
+        if (bypass) request.headers.set('cache-control', 'no-cache');
+        final response = await request.close();
+        final contentRange = response.headers.value('content-range');
+        final body = await response.expand((chunk) => chunk).toList();
+        return (response.statusCode, contentRange, body);
+      }
+
+      try {
+        expect(firstRoute.path, endsWith('.bin'));
+        final initial = await get(firstRoute, 'bytes=0-3');
+        expect((initial.$1, initial.$2), (206, 'bytes 0-3/32'));
+        expect(initial.$3, [1, 1, 1, 1]);
+        expect((await get(firstRoute, 'bytes=0-3')).$3, [1, 1, 1, 1]);
+        expect(ranges, ['bytes=0-3']);
+        expect((await get(secondRoute, 'bytes=0-3')).$3.first, 2);
+        expect((await get(firstRoute, 'bytes=28-')).$2, 'bytes 28-31/32');
+        expect((await get(firstRoute, 'bytes=28-')).$3.first, 3);
+        expect(ranges, hasLength(3));
+        expect((await get(firstRoute, 'bytes=0-3', bypass: true)).$3.first, 4);
+        expect((await get(firstRoute, 'bytes=0-3')).$3.first, 1);
+
+        tag = '"replacement"';
+        total = 33;
+        expect((await get(firstRoute, 'bytes=4-7')).$3.first, 5);
+        expect((await get(firstRoute, 'bytes=0-3')).$3.first, 6);
+        expect((await get(secondRoute, 'bytes=0-3')).$3.first, 2);
+
+        cacheControl = 'no-store';
+        await get(firstRoute, 'bytes=8-11');
+        await get(firstRoute, 'bytes=8-11');
+        expect(ranges, hasLength(8));
+        cacheControl = 'max-age=0';
+        await get(firstRoute, 'bytes=12-15');
+        await get(firstRoute, 'bytes=12-15');
+        expect(ranges, hasLength(10));
+
+        cacheControl = 'max-age=15';
+        malformed = true;
+        await get(firstRoute, 'bytes=16-19');
+        await get(firstRoute, 'bytes=16-19');
+        malformed = false;
+        mime = 'application/octet-stream';
+        await get(firstRoute, 'bytes=20-23');
+        await get(firstRoute, 'bytes=20-23');
+        expect(ranges, hasLength(14));
+
+        await first.dispose();
+        expect((await get(firstRoute, 'bytes=0-3')).$1, 404);
+        expect((await get(secondRoute, 'bytes=0-3')).$3.first, 2);
+        expect(ranges, hasLength(14));
+      } finally {
+        client.close(force: true);
+        await second.dispose();
+        await context.close();
+        HttpOverrides.global = savedOverrides;
+      }
+    },
+  );
+
+  test('seek windows replay only complete TS from the active rendition', () async {
+    final savedOverrides = HttpOverrides.current;
+    HttpOverrides.global = null;
+    final bodies = <String, Uint8List>{};
+    final starts = <Uri>[];
+    Uint8List ts(String name) => Uint8List.fromList([
+      for (var packet = 0; packet < 3; packet++) ...[
+        0x47,
+        ...List.filled(187, name.codeUnits.fold(0, (a, b) => (a + b) % 256)),
+      ],
+    ]);
+    final bulk = List.generate(35, (n) => 'bulk$n.ts');
+    String vod(List<String> names, {String extra = ''}) =>
+        '#EXTM3U\n$extra#EXT-X-TARGETDURATION:6\n'
+        '${names.indexed.map((entry) => '#EXTINF:${entry.$1 == 1 ? 6 : 4},\n${entry.$2}\n').join()}'
+        '#EXT-X-ENDLIST\n';
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      final args = call.arguments as Map;
+      if (call.method == 'close') return null;
+      final id = args['request'] as String;
+      if (call.method == 'cancel') {
+        bodies.remove(id);
+        return null;
+      }
+      if (call.method == 'read') return bodies.remove(id);
+      final url = Uri.parse(args['url'] as String);
+      starts.add(url);
+      final name = url.pathSegments.last;
+      final text = switch (name) {
+        'master.m3u8' =>
+          '#EXTM3U\n#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=5,URI="storybook?token=hidden"\n'
+              '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="A",URI="audio.m3u8"\n'
+              '#EXT-X-STREAM-INF:BANDWIDTH=10\na.m3u8\n'
+              '#EXT-X-STREAM-INF:BANDWIDTH=20\nb.m3u8\n',
+        'storybook' => vod(['poster.ts'], extra: '#EXT-X-I-FRAMES-ONLY\n'),
+        'audio.m3u8' => vod(['audio-only.ts']),
+        'a.m3u8' => vod([
+          'first.ts',
+          'second.ts',
+          'private.ts',
+          'partial.ts',
+          ...bulk,
+        ]),
+        'b.m3u8' => vod(['first-b.ts', 'second-b.ts']),
+        'encrypted.m3u8' => vod([
+          'encrypted.ts',
+        ], extra: '#EXT-X-KEY:METHOD=AES-128,URI="key"\n'),
+        'range.m3u8' => vod(['range.ts'], extra: '#EXT-X-BYTERANGE:564@0\n'),
+        'discontinuous.m3u8' => vod([
+          'discontinuous.ts',
+        ], extra: '#EXT-X-DISCONTINUITY\n'),
+        'live.m3u8' => '#EXTM3U\n#EXTINF:4,\nlive.ts\n',
+        _ => null,
+      };
+      final data = text == null ? ts(name) : utf8.encode(text);
+      final partial = name == 'partial.ts';
+      final ranged = (args['headers'] as Map)['Range'] != null;
+      bodies[id] = data;
+      return {
+        'status': partial || ranged ? 206 : 200,
+        'url': url.toString(),
+        'headers': {
+          'content-type': text == null
+              ? 'video/mp2t'
+              : 'application/vnd.apple.mpegurl',
+          'content-length': '${data.length}',
+          if (partial || ranged)
+            'content-range':
+                'bytes 0-${data.length - 1}/${partial ? data.length * 2 : data.length}',
+          if (name == 'private.ts') 'cache-control': 'no-store',
+        },
+      };
+    });
+    final context = OmoNetworkContext('seek-window');
+    final client = HttpClient()..findProxy = (_) => 'DIRECT';
+    Future<(int, Uint8List, HttpHeaders)> get(
+      Uri url, {
+      String? range,
+      bool head = false,
+    }) async {
+      final request = await client.openUrl(head ? 'HEAD' : 'GET', url);
+      if (range != null) request.headers.set('Range', range);
+      final response = await request.close();
+      final data = await response.fold(
+        BytesBuilder(),
+        (all, part) => all..add(part),
+      );
+      return (response.statusCode, data.takeBytes(), response.headers);
+    }
+
+    List<Uri> children(Uri base, Uint8List body) => [
+      for (final line in const LineSplitter().convert(utf8.decode(body)))
+        if (line.startsWith('/')) base.resolve(line),
+    ];
+    try {
+      await context.prepare();
+      final player = context.player(
+        Uri.parse('https://cdn.example/master.m3u8'),
+        {},
+      );
+      final root = Uri.parse(player.dataSource);
+      expect(omoIFrameSeekTrack(player), isNull);
+      final master = (await get(root)).$2;
+      final variants = children(root, master);
+      final iframe = omoIFrameSeekTrack(player)!;
+      expect(iframe.host, '127.0.0.1');
+      expect(iframe.path, endsWith('.m3u8'));
+      expect(iframe.hasQuery, isFalse);
+      expect(starts, hasLength(1));
+      final a = children(root, (await get(variants.first)).$2);
+      final b = children(root, (await get(variants.last)).$2);
+      final audioPath = RegExp(
+        r'#EXT-X-MEDIA:[^\n]*URI="([^"]+)"',
+      ).firstMatch(utf8.decode(master))![1]!;
+      final audioPlaylist = root.resolve(audioPath);
+      final audio = children(
+        audioPlaylist,
+        (await get(audioPlaylist)).$2,
+      ).single;
+      expect((await get(audio)).$2, ts('audio-only.ts'));
+      expect(omoCachedSeekWindow(player, Duration.zero), isNull);
+      await get(b[1]);
+      expect(
+        omoCachedSeekWindow(player, const Duration(seconds: 5)),
+        isNotNull,
+      );
+      await get(a[0]);
+      expect(omoCachedSeekWindow(player, const Duration(seconds: 5)), isNull);
+      await get(a[1], range: 'bytes=0-');
+      await get(a[2]);
+      await get(a[3], range: 'bytes=0-563');
+      expect((await get(audio)).$2, ts('audio-only.ts'));
+      expect(
+        omoCachedSeekWindow(player, const Duration(seconds: 5)),
+        isNotNull,
+      );
+      expect(omoCachedSeekWindow(player, const Duration(seconds: 10)), isNull);
+      expect(omoCachedSeekWindow(player, const Duration(seconds: 14)), isNull);
+
+      final startCount = starts.length;
+      final first = omoCachedSeekWindow(
+        player,
+        const Duration(milliseconds: 1500),
+      )!;
+      final second = omoCachedSeekWindow(
+        player,
+        const Duration(milliseconds: 6500),
+      )!;
+      expect(first.position, const Duration(milliseconds: 1500));
+      expect(second.position, const Duration(milliseconds: 2500));
+      expect(first.url, isNot(second.url));
+      expect(
+        omoCachedSeekWindow(player, const Duration(seconds: 4))!.position,
+        Duration.zero,
+      );
+      final firstManifest = await get(first.url);
+      final secondManifest = await get(second.url);
+      expect(firstManifest.$1, HttpStatus.ok);
+      expect(utf8.decode(secondManifest.$2), contains('#EXTINF:6.0,'));
+      final firstUri = children(first.url, firstManifest.$2).single;
+      final secondUri = children(second.url, secondManifest.$2).single;
+      expect((await get(firstUri)).$2, ts('first.ts'));
+      expect((await get(secondUri)).$2, ts('second.ts'));
+      final ranged = await get(secondUri, range: 'bytes=2-11');
+      expect(ranged.$1, HttpStatus.partialContent);
+      expect(ranged.$2, ts('second.ts').sublist(2, 12));
+      expect(
+        (await get(secondUri, head: true)).$3.value('content-length'),
+        '564',
+      );
+      expect(
+        (await get(secondUri, range: 'bytes=600-')).$1,
+        HttpStatus.requestedRangeNotSatisfiable,
+      );
+      expect(
+        (await get(root.resolve('/seek-preview/123.m3u8'))).$1,
+        HttpStatus.notFound,
+      );
+      expect(starts, hasLength(startCount));
+      final framePlaylist = await get(iframe);
+      final frame = children(iframe, framePlaylist.$2).single;
+      expect((await get(frame)).$2, ts('poster.ts'));
+      expect(starts.skip(startCount).map((url) => url.path), [
+        '/storybook',
+        '/poster.ts',
+      ]);
+      expect((await get(firstUri)).$1, HttpStatus.ok);
+
+      const previewChannel = MethodChannel('breeze.video.seek-preview');
+      final preview = VideoSeekPreviewController();
+      final previousPlatform = debugDefaultTargetPlatformOverride;
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      final previewRequests = <Map<Object?, Object?>>[];
+      var rejectCached = false;
+      messenger.setMockMethodCallHandler(previewChannel, (call) async {
+        if (call.method != 'frame') return null;
+        final arguments = (call.arguments as Map).cast<Object?, Object?>();
+        previewRequests.add(arguments);
+        if (rejectCached && arguments['cachedWindow'] == true) return null;
+        return Uint8List.fromList([1]);
+      });
+      player.value = player.value.copyWith(
+        isInitialized: true,
+        duration: const Duration(seconds: 24),
+      );
+
+      Future<void> scrub(int seconds) async {
+        final shown = Completer<void>();
+        void observe() {
+          if (preview.frame != null) shown.complete();
+        }
+
+        preview.addListener(observe);
+        try {
+          preview.update(player, Duration(seconds: seconds));
+          await shown.future.timeout(const Duration(seconds: 2));
+        } finally {
+          preview.removeListener(observe);
+          preview.endScrub();
+        }
+      }
+
+      try {
+        final beforePreview = starts.length;
+        await scrub(6);
+        expect(previewRequests.single['cachedWindow'], isTrue);
+        expect(previewRequests.single['milliseconds'], 2000);
+        expect(previewRequests.single['url'], second.url.toString());
+        rejectCached = true;
+        await scrub(1);
+        expect(previewRequests[1]['cachedWindow'], isTrue);
+        expect(previewRequests[2]['url'], player.dataSource);
+        expect(previewRequests[2]['milliseconds'], 1000);
+        await scrub(11);
+        expect(previewRequests[3]['keyframeTrack'], isTrue);
+        expect(previewRequests[3]['url'], player.dataSource);
+        expect(starts, hasLength(beforePreview));
+      } finally {
+        preview.dispose();
+        messenger.setMockMethodCallHandler(previewChannel, null);
+        debugDefaultTargetPlatformOverride = previousPlatform;
+      }
+
+      for (final source in ['encrypted', 'range', 'discontinuous', 'live']) {
+        final other = context.player(
+          Uri.parse('https://cdn.example/$source.m3u8'),
+          {},
+        );
+        final url = Uri.parse(other.dataSource);
+        final segments = children(url, (await get(url)).$2);
+        await get(segments.single);
+        expect(
+          omoCachedSeekWindow(other, Duration.zero),
+          isNull,
+          reason: source,
+        );
+        await other.dispose();
+      }
+      final otherLease = context.player(
+        Uri.parse('https://cdn.example/a.m3u8'),
+        {},
+      );
+      await get(Uri.parse(otherLease.dataSource));
+      expect(omoCachedSeekWindow(otherLease, Duration.zero), isNull);
+      await otherLease.dispose();
+
+      for (final segment in a.skip(4)) {
+        await get(segment);
+      }
+      final afterEviction = starts.length;
+      expect((await get(firstUri)).$1, HttpStatus.notFound);
+      expect(omoCachedSeekWindow(player, Duration.zero), isNull);
+      expect(starts, hasLength(afterEviction));
+      await get(variants.first);
+      await get(a.first);
+      final retired = omoCachedSeekWindow(player, Duration.zero)!.url;
+      final beforeDispose = starts.length;
+      await player.dispose();
+      expect(omoIFrameSeekTrack(player), isNull);
+      expect((await get(retired)).$1, HttpStatus.notFound);
+      expect(omoCachedSeekWindow(player, Duration.zero), isNull);
+      expect(starts, hasLength(beforeDispose));
+    } finally {
+      client.close(force: true);
+      await context.close();
+      HttpOverrides.global = savedOverrides;
+    }
+  });
 
   test(
     'disposing one loopback lease cancels its request before response headers',
@@ -676,6 +1101,106 @@ segment.mp4?s=secret
     await context.close();
     await tester.pump(const Duration(seconds: 4));
   });
+
+  test(
+    'passive bridge cancellation only retires its native requests',
+    () async {
+      final context = OmoNetworkContext('shared-playback-visit');
+      final probe = VideoDownloadResolutionOwner(
+        omoNetworkSource,
+        passive: true,
+      );
+      final newer = VideoDownloadResolutionOwner(
+        omoNetworkSource,
+        passive: true,
+      );
+      final alias = context.passiveBridgeToken(probe);
+      final newerAlias = context.passiveBridgeToken(newer);
+      final byPath = <String, String>{};
+      final starts = <String, Completer<Map<String, dynamic>>>{};
+      final cancelled = <String>[];
+      final reads = <String>{};
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        final args = call.arguments as Map;
+        expect(args['context'], context.token);
+        final id = args['request'] as String?;
+        switch (call.method) {
+          case 'start':
+            final uri = Uri.parse(args['url'] as String);
+            byPath[uri.path] = id!;
+            final pending = starts[uri.path] =
+                Completer<Map<String, dynamic>>();
+            return pending.future;
+          case 'read':
+            reads.add(id!);
+            return null;
+          case 'cancel':
+            cancelled.add(id!);
+        }
+        return null;
+      });
+
+      String input(String token, String path) => jsonEncode([
+        'bundle:$omoNetworkSource',
+        {
+          'context': token,
+          'request': 'reused-js-id',
+          'url': 'https://site.example/$path',
+          'responseMode': 'poll-v1',
+        },
+      ]);
+
+      Future<void> finish(String path) async {
+        starts['/$path']!.complete({
+          'status': 200,
+          'url': 'https://site.example/$path',
+          'headers': <String, String>{},
+        });
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      try {
+        await OmoNetworkContext.bridgeFetch(input(context.token, 'play'));
+        await OmoNetworkContext.bridgeFetch(input(alias, 'probe'));
+        await OmoNetworkContext.bridgeFetch(input(newerAlias, 'newer'));
+        expect(byPath.values.toSet(), hasLength(3));
+
+        await probe.stop();
+        await probe.stopped;
+        expect(cancelled, [byPath['/probe']]);
+        await expectLater(
+          OmoNetworkContext.bridgeFetch(input(alias, 'late-probe')),
+          throwsStateError,
+        );
+        await finish('probe');
+        expect(reads, isNot(contains(byPath['/probe'])));
+        expect(byPath, isNot(contains('/late-probe')));
+
+        await finish('play');
+        final playback = await OmoNetworkContext.bridgeFetch(
+          input(context.token, 'play'),
+          poll: true,
+        );
+        expect(jsonDecode(playback)['status'], 200);
+        expect(reads, contains(byPath['/play']));
+        expect(cancelled, isNot(contains(byPath['/newer'])));
+
+        newer.close();
+        await Future<void>.delayed(Duration.zero);
+        expect(cancelled, contains(byPath['/newer']));
+        await expectLater(
+          OmoNetworkContext.bridgeFetch(input(newerAlias, 'late-newer')),
+          throwsStateError,
+        );
+        await finish('newer');
+        expect(reads, isNot(contains(byPath['/newer'])));
+      } finally {
+        probe.close();
+        newer.close();
+        await context.close();
+      }
+    },
+  );
 
   test(
     'parser bridge rejects another runtime and never falls back on proxy errors',

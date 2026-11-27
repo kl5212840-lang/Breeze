@@ -1,3 +1,4 @@
+import 'package:zephyr/widgets/collection_results_row.dart';
 import 'package:zephyr/page/video/video_native_navigation.dart';
 import 'package:zephyr/page/video/omofun_favorites_page.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
@@ -1830,24 +1831,18 @@ class _OmoPrivateIndexPageState extends State<OmoPrivateIndexPage> {
             ],
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  t.videoLibrary.results(count: visible.length),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
-              SourceChoiceMenu<String>(
-                value: _date,
-                label: _date.isEmpty ? t.common.all : _date,
-                tooltip: t.bookshelf.facets.title,
-                options: {'': t.common.all, for (final day in dates) day: day},
-                onChanged: (value) => setState(() => _date = value),
-              ),
-            ],
+        CollectionResultsRow(
+          countLabel: _loading && _history.isEmpty
+              ? t.common.loading
+              : _error != null && _history.isEmpty
+              ? ''
+              : t.videoLibrary.results(count: visible.length),
+          extraAction: SourceChoiceMenu<String>(
+            value: _date,
+            label: _date.isEmpty ? t.common.all : _date,
+            tooltip: t.bookshelf.facets.title,
+            options: {'': t.common.all, for (final day in dates) day: day},
+            onChanged: (value) => setState(() => _date = value),
           ),
         ),
         if (_openError != null)
@@ -1871,8 +1866,11 @@ class _OmoPrivateIndexPageState extends State<OmoPrivateIndexPage> {
               loading: _loading && _history.isEmpty,
               header: Column(
                 children: [
-                  if (_loading && _history.isNotEmpty)
-                    const LinearProgressIndicator(),
+                  if (_history.isNotEmpty)
+                    SizedBox(
+                      height: 2,
+                      child: _loading ? const LinearProgressIndicator() : null,
+                    ),
                   if (_error != null && _history.isNotEmpty)
                     ListTile(
                       title: Text(omoSiteError(_error)),

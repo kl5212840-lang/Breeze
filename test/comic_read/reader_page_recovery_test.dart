@@ -6,6 +6,7 @@ import 'package:zephyr/main.dart' show eventBus;
 import 'package:zephyr/network/http/plugin/unauthorized_payload.dart';
 import 'package:zephyr/page/comic_read/bloc/page_bloc.dart';
 import 'package:zephyr/page/comic_read/model/normal_comic_ep_info.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/service/image_recovery.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/event/event.dart';
@@ -57,6 +58,29 @@ void main() {
       await hub.dispose();
     },
   );
+
+  testWidgets('chapter retry does not read under a replacement session', (
+    tester,
+  ) async {
+    final hub = ImageRecoveryHub(listenToPlatform: false);
+    var reads = 0;
+    final bloc = PageBloc(
+      recoveryHub: hub,
+      loadPage: (_) async {
+        reads++;
+        throw const SocketException('network unavailable');
+      },
+    );
+    bloc.add(open());
+    await tester.pump();
+    expect(bloc.state.status, PageStatus.initial);
+    pluginSessionWriteFence.advance('source');
+    await tester.pump(const Duration(milliseconds: 800));
+    expect(bloc.state.status, PageStatus.failure);
+    expect(reads, 1);
+    await tester.runAsync(bloc.close);
+    await hub.dispose();
+  });
 
   testWidgets('an expired chapter session prompts once and waits for login', (
     tester,

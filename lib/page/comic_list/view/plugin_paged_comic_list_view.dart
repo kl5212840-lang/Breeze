@@ -1,4 +1,8 @@
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
+import 'package:zephyr/page/comic_list/view/jm_cloud_folder_controls.dart';
 import 'package:zephyr/widgets/applied_filter_bar.dart';
+import 'package:zephyr/widgets/collection_results_row.dart';
+import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
 import 'package:zephyr/widgets/read_recovery_scope.dart';
 import 'package:zephyr/widgets/pull_refresh_feedback.dart';
 import 'package:auto_route/auto_route.dart';
@@ -18,11 +22,14 @@ import 'package:zephyr/page/search_result/view/source_search_detail_list.dart';
 import 'package:zephyr/page/search_result/view/source_list_categories.dart';
 import 'package:zephyr/page/search_result/view/source_list_filter_bar.dart';
 import 'package:zephyr/page/search_result/view/source_loaded_result_filter.dart';
+import 'package:zephyr/page/search_result/widgets/filtered_result_pages.dart';
+import 'package:zephyr/page/search_result/widgets/source_page_jump.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/widgets/source_page_divider.dart';
 import 'package:zephyr/page/source_shell/source_list_block_preferences.dart';
 import 'package:zephyr/page/source_shell/source_experience_preferences.dart';
 import 'package:zephyr/type/enum.dart';
 import 'package:zephyr/util/error_filter.dart';
-import 'package:zephyr/util/text/chinese_convert.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/comic_simplify_entry_mapper.dart';
 import 'package:zephyr/widgets/comic_simplify_entry/jm_cover_like_badge.dart';
 import 'package:zephyr/service/jm_list_like_counts.dart';
@@ -47,6 +54,7 @@ class PluginPagedComicListView extends StatelessWidget {
     this.collectionTargetName,
     this.rankingLayout = false,
     this.cloudFavorite = false,
+    this.flatCollectionControls = false,
     this.detailedView = false,
     this.blockedCategories = const {},
     this.requestPage,
@@ -54,8 +62,10 @@ class PluginPagedComicListView extends StatelessWidget {
     this.publicLoadedFacets = false,
     this.loadedSearchController,
     this.loadedSearchFocusNode,
+    this.loadedSearchScope,
     this.loadedSearchExpanded = true,
     this.loadedChromeBuilder,
+    this.pageViewAction,
     this.focusedFacets = false,
     this.tabReselectEnabled = false,
   });
@@ -69,14 +79,16 @@ class PluginPagedComicListView extends StatelessWidget {
   final String? collectionTargetId;
   final String? collectionTargetName;
   final bool rankingLayout;
-  final bool cloudFavorite;
+  final bool cloudFavorite, flatCollectionControls;
   final bool detailedView;
   final Set<String> blockedCategories;
   final PluginPageRequest? requestPage;
   final bool localResultTools, focusedFacets, publicLoadedFacets;
   final bool tabReselectEnabled;
+  final Widget? pageViewAction;
   final TextEditingController? loadedSearchController;
   final FocusNode? loadedSearchFocusNode;
+  final KeywordSearchScope? loadedSearchScope;
   final bool loadedSearchExpanded;
   final Widget Function(BuildContext, SourceLoadedResultChrome)?
   loadedChromeBuilder;
@@ -90,7 +102,10 @@ class PluginPagedComicListView extends StatelessWidget {
         coreBuilder: coreBuilder,
         externBuilder: externBuilder,
         requestPage: requestPage,
-        privateCollection: cloudFavorite,
+        privateCollection:
+            cloudFavorite ||
+            pluginId == JmListLikeCounts.source &&
+                fnPath == 'getSiteWatchHistory',
         jmSnapshotCache: cloudFavorite,
       )..loadInitial(),
       child: Builder(
@@ -108,8 +123,10 @@ class PluginPagedComicListView extends StatelessWidget {
             publicLoadedFacets: publicLoadedFacets,
             loadedSearchController: loadedSearchController,
             loadedSearchFocusNode: loadedSearchFocusNode,
+            loadedSearchScope: loadedSearchScope,
             loadedSearchExpanded: loadedSearchExpanded,
             loadedChromeBuilder: loadedChromeBuilder,
+            pageViewAction: pageViewAction,
             focusedFacets: focusedFacets,
             shrinkWrap: shrinkWrap,
             physics: physics,
@@ -117,6 +134,7 @@ class PluginPagedComicListView extends StatelessWidget {
             collectionTargetName: collectionTargetName,
             rankingLayout: rankingLayout,
             cloudFavorite: cloudFavorite,
+            flatCollectionControls: flatCollectionControls,
             detailedView: detailedView,
             blockedCategories: blockedCategories,
           ),
@@ -138,8 +156,10 @@ class _PluginPagedComicListBody extends StatefulWidget {
     required this.publicLoadedFacets,
     this.loadedSearchController,
     this.loadedSearchFocusNode,
+    this.loadedSearchScope,
     this.loadedSearchExpanded = true,
     this.loadedChromeBuilder,
+    this.pageViewAction,
     this.focusedFacets = false,
     required this.shrinkWrap,
     required this.physics,
@@ -147,15 +167,18 @@ class _PluginPagedComicListBody extends StatefulWidget {
     this.collectionTargetName,
     required this.rankingLayout,
     required this.cloudFavorite,
+    required this.flatCollectionControls,
     required this.detailedView,
     required this.blockedCategories,
   });
 
   final bool shrinkWrap, tabReselectEnabled;
+  final Widget? pageViewAction;
   final String pluginId, fnPath;
   final bool localResultTools, focusedFacets, publicLoadedFacets;
   final TextEditingController? loadedSearchController;
   final FocusNode? loadedSearchFocusNode;
+  final KeywordSearchScope? loadedSearchScope;
   final bool loadedSearchExpanded;
   final Widget Function(BuildContext, SourceLoadedResultChrome)?
   loadedChromeBuilder;
@@ -163,7 +186,7 @@ class _PluginPagedComicListBody extends StatefulWidget {
   final String? collectionTargetId;
   final String? collectionTargetName;
   final bool rankingLayout;
-  final bool cloudFavorite;
+  final bool cloudFavorite, flatCollectionControls;
   final bool detailedView;
   final Set<String> blockedCategories;
 
@@ -177,15 +200,133 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
   late final SourceListScrollPositions _scrollPositions;
   ScrollController get scrollController => _scrollPositions.controller;
   final _refreshIndicator = GlobalKey<RefreshIndicatorState>();
+  final _resultItems = GlobalKey();
+  final _visiblePage = ValueNotifier<int?>(null);
+  List<int?> _visibleResultPages = const [];
+  int _visibleNumberedRange = 1;
+  bool _pageUpdateQueued = false;
+  bool _jumpOpen = false;
 
   bool _collectionFillQueued = false;
   bool _collectionIndexRequested = false;
+  bool _filteredPaging = false;
+  static const _maxCollectionFillPages = 16;
+  static const _collectionFillBudget = Duration(seconds: 22);
+  int _collectionFillPages = 0;
+  Stopwatch? _collectionFillElapsed;
+  Duration get _collectionFillRemaining =>
+      _collectionFillBudget -
+      (_collectionFillElapsed?.elapsed ?? Duration.zero);
+  bool get _collectionFillPaused =>
+      _collectionFillPages >= _maxCollectionFillPages ||
+      _collectionFillRemaining <= Duration.zero;
   bool _wasVisible = false;
   bool _visibilityCheckQueued = false;
   (String, int)? _collectionScope;
 
   bool get _isBikaFavorite =>
       widget.cloudFavorite && isBikaExperienceSource(widget.pluginId);
+  bool get _supportsPageChrome => !widget.shrinkWrap && !widget.rankingLayout;
+
+  Widget _sourcePageJump(PluginPagedComicListCubit cubit) => ListenableBuilder(
+    listenable: Listenable.merge([_visiblePage, cubit.sourcePageCountChanges]),
+    builder: (context, _) {
+      if (cubit.state.status == PluginPagedComicListStatus.initial ||
+          cubit.state.status == PluginPagedComicListStatus.failure) {
+        return const SizedBox.shrink();
+      }
+      final count = cubit.sourcePageCount;
+      final visible = _visiblePage.value;
+      final page = visible != null && (count == null || visible <= count)
+          ? visible
+          : cubit.firstVerifiedSourcePage;
+      if (page == null || count != null && page > count) {
+        return const SizedBox.shrink();
+      }
+      if (count == null) {
+        final theme = Theme.of(context);
+        return Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: Text(
+            t.searchResult.pageOnly(page: page),
+            key: const ValueKey('plugin-list.page-progress'),
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        );
+      }
+      return Align(
+        alignment: AlignmentDirectional.centerStart,
+        widthFactor: 1,
+        child: SourcePageJumpButton(
+          key: const ValueKey('plugin-list.page-progress'),
+          maxLines: 2,
+          label: t.searchResult.pageProgress(page: page, pages: count),
+          onPressed: _jumpOpen
+              ? null
+              : () => unawaited(_jumpToSourcePage(cubit, page, count)),
+        ),
+      );
+    },
+  );
+
+  Future<void> _jumpToSourcePage(
+    PluginPagedComicListCubit cubit,
+    int currentPage,
+    int totalPages,
+  ) async {
+    if (_jumpOpen) return;
+    final source = widget.pluginId;
+    final generation = pluginSessionWriteFence.generation(source);
+    final revision = cubit.privateDataRevision;
+    bool current() =>
+        mounted &&
+        !cubit.isClosed &&
+        identical(cubit, context.read<PluginPagedComicListCubit>()) &&
+        !pluginSessionWriteFence.isChanging(source) &&
+        generation == pluginSessionWriteFence.generation(source) &&
+        revision == cubit.privateDataRevision;
+    setState(() => _jumpOpen = true);
+    try {
+      final target = await showSourcePageJumpDialog(
+        context,
+        page: currentPage,
+        totalPages: totalPages,
+      );
+      if (!mounted || target == null || !current()) return;
+      final count = cubit.sourcePageCount;
+      if (count == null) return;
+      if (target < 1 || target > count) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(t.searchResult.pageOutOfRange(pages: count))),
+        );
+        return;
+      }
+      if (await cubit.jumpToSourcePage(target) && current()) {
+        _visiblePage.value = null;
+        _scrollPositions.reset(afterLayout: true);
+      }
+    } finally {
+      if (mounted) setState(() => _jumpOpen = false);
+    }
+  }
+
+  void _scheduleSourcePageUpdate() {
+    if (!_supportsPageChrome || _pageUpdateQueued) return;
+    _pageUpdateQueued = true;
+    WidgetsBinding.instance.ensureVisualUpdate();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pageUpdateQueued = false;
+      if (mounted) {
+        _visiblePage.value = topVisibleSourcePage(
+          _resultItems,
+          _visibleResultPages,
+        );
+      }
+    });
+  }
 
   void _toggleBikaCategory(
     String category,
@@ -193,22 +334,8 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
     ValueChanged<Set<String>> change,
   ) {
     final next = {...blocked};
-    final isBlocking = next.add(category);
-    if (!isBlocking) next.remove(category);
+    if (!next.add(category)) next.remove(category);
     change(next);
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    messenger?.hideCurrentSnackBar();
-    messenger?.showSnackBar(
-      SnackBar(
-        content: Text(
-          isBlocking
-              ? '已屏蔽「${convertChineseForDisplay(category)}」· 再点恢复'
-              : '已恢复「${convertChineseForDisplay(category)}」',
-        ),
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 2),
-      ),
-    );
   }
 
   List<String> _bikaFavoriteCategories(List<UnifiedComicListItem> entries) {
@@ -228,9 +355,23 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
 
   void _setCompleteIndexDemand(bool needed) {
     if (!mounted || !widget.cloudFavorite) return;
+    if (needed && !_collectionIndexRequested) _restartCollectionFill();
     _collectionIndexRequested = needed;
     if (needed)
       _fillCollection(context.read<PluginPagedComicListCubit>().state);
+  }
+
+  void _restartCollectionFill() {
+    _collectionFillPages = 0;
+    _collectionFillElapsed = Stopwatch();
+  }
+
+  Future<void> _loadMore({bool retry = false}) {
+    if (_collectionIndexRequested && _collectionFillPaused) {
+      _restartCollectionFill();
+    }
+    final cubit = context.read<PluginPagedComicListCubit>();
+    return retry ? cubit.retryLoadMore() : cubit.loadMore();
   }
 
   void _checkVisibleCollection() {
@@ -245,6 +386,9 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
     final becameVisible = visible && !_wasVisible;
     _wasVisible = visible;
     if (!becameVisible || _visibilityCheckQueued) return;
+    if (_collectionIndexRequested && _collectionFillPaused) {
+      _restartCollectionFill();
+    }
     _visibilityCheckQueued = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _visibilityCheckQueued = false;
@@ -268,6 +412,7 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
         !widget.cloudFavorite ||
         !widget.localResultTools ||
         _collectionFillQueued ||
+        _collectionFillPaused ||
         state.hasReachedMax ||
         state.status != PluginPagedComicListStatus.success)
       return;
@@ -276,21 +421,28 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
     if (lifecycle != null && lifecycle != AppLifecycleState.resumed) return;
     _collectionFillQueued = true;
     final scope = _collectionScope;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final cubit = mounted ? context.read<PluginPagedComicListCubit>() : null;
+      if (cubit?.refreshing ?? false) await cubit!.waitForRefresh();
       _collectionFillQueued = false;
-      if (!mounted) return;
+      if (!mounted || cubit == null || cubit.isClosed) return;
       if (scope != _collectionScope) {
-        _fillCollection(context.read<PluginPagedComicListCubit>().state);
+        _fillCollection(cubit.state);
         return;
       }
       if (!_collectionIndexRequested ||
+          _collectionFillPaused ||
           !ReadRecoveryScope.activeOf(context) ||
           !TickerMode.of(context) ||
-          ModalRoute.of(context)?.isCurrent == false)
+          ModalRoute.of(context)?.isCurrent == false ||
+          cubit.state.status != PluginPagedComicListStatus.success ||
+          cubit.state.hasReachedMax) {
         return;
-      // Full local search/facets need an index. Only explicit filtering (or
-      // restored active filters) opts in; normal browsing remains paginated.
-      unawaited(context.read<PluginPagedComicListCubit>().loadMore());
+      }
+      // Search and filters use the confirmed rows while this window fills.
+      _collectionFillElapsed?.start();
+      _collectionFillPages++;
+      await cubit.loadMore(readBudget: _collectionFillRemaining);
     });
   }
 
@@ -334,6 +486,7 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
 
   @override
   void dispose() {
+    _visiblePage.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _scrollPositions.removeListener(_onScroll);
     _scrollPositions.dispose();
@@ -388,8 +541,16 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
       onRefresh: () => _refreshFromPull(cubit),
       child: BlocConsumer<PluginPagedComicListCubit, PluginPagedComicListState>(
         listenWhen: (_, state) =>
-            state.status == PluginPagedComicListStatus.initial,
-        listener: (_, _) => _scrollPositions.reset(),
+            state.status == PluginPagedComicListStatus.initial ||
+            _supportsPageChrome &&
+                cubit.numberedRangeStart != _visibleNumberedRange,
+        listener: (_, state) {
+          _visibleNumberedRange = cubit.numberedRangeStart;
+          _visiblePage.value = null;
+          _scrollPositions.reset(
+            afterLayout: state.status != PluginPagedComicListStatus.initial,
+          );
+        },
         builder: (context, state) {
           final cubit = context.read<PluginPagedComicListCubit>();
           final account = widget.cloudFavorite
@@ -403,6 +564,7 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
           if (_collectionScope != scope) {
             _collectionScope = scope;
             _collectionIndexRequested = false;
+            _restartCollectionFill();
           }
           final lifecycle = WidgetsBinding.instance.lifecycleState;
           cubit.setMetadataActive(
@@ -413,7 +575,11 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
           );
           _checkVisibleCollection();
           _fillCollection(state);
-          Widget content([List<UnifiedComicListItem>? visible]) {
+          Widget content(
+            BuildContext scopeContext, [
+            List<UnifiedComicListItem>? visible,
+          ]) {
+            _filteredPaging = false;
             switch (state.status) {
               case PluginPagedComicListStatus.initial:
                 return _statusView(
@@ -430,75 +596,141 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
               case PluginPagedComicListStatus.loadingMore:
               case PluginPagedComicListStatus.loadingMoreFailure:
               case PluginPagedComicListStatus.success:
-                return _buildContent(context, state, filteredEntries: visible);
+                final demand = SourceLoadedResultFilter.demandOf(scopeContext);
+                if (widget.publicLoadedFacets &&
+                    !widget.shrinkWrap &&
+                    demand?.filtering == true &&
+                    visible != null) {
+                  _filteredPaging = true;
+                  return FilteredResultPages(
+                    key: ValueKey((
+                      scope,
+                      demand!.criteria,
+                      cubit.numberedRangeStart,
+                    )),
+                    matches: visible,
+                    controller: scrollController,
+                    page: state.page,
+                    firstPage: cubit.numberedRangeStart,
+                    ready:
+                        state.status == PluginPagedComicListStatus.success &&
+                        !cubit.refreshing,
+                    complete: state.hasReachedMax,
+                    failed:
+                        state.status ==
+                        PluginPagedComicListStatus.loadingMoreFailure,
+                    paused:
+                        demand.editing ||
+                        !ReadRecoveryScope.activeOf(scopeContext),
+                    batchSize: widget.detailedView ? 5 : 9,
+                    loadMore: () {
+                      if (cubit.refreshing ||
+                          cubit.state.status !=
+                              PluginPagedComicListStatus.success) {
+                        return false;
+                      }
+                      unawaited(_loadMore());
+                      return cubit.state.status ==
+                          PluginPagedComicListStatus.loadingMore;
+                    },
+                    builder: (shown, progress) => _buildContent(
+                      scopeContext,
+                      state,
+                      filteredEntries: shown,
+                      progress: progress,
+                    ),
+                  );
+                }
+                return _buildContent(
+                  scopeContext,
+                  state,
+                  filteredEntries: visible,
+                );
             }
           }
 
+          final usesLoadedTools =
+              widget.publicLoadedFacets ||
+              (widget.cloudFavorite && widget.localResultTools);
+          final usesEmbeddedPages =
+              usesLoadedTools && widget.loadedChromeBuilder != null;
           Widget loaded(
             Set<String> blocked, [
             ValueChanged<Set<String>>? change,
-          ]) => SourceLoadedResultFilter(
-            compactControls: true,
-            searchController: widget.loadedSearchController,
-            searchFocusNode: widget.loadedSearchFocusNode,
-            searchExpanded: widget.loadedSearchExpanded,
-            chromeBuilder: widget.loadedChromeBuilder,
-            focusedFacets: widget.focusedFacets,
-            publicBrowseFacets: widget.publicLoadedFacets,
-            filterScopeLabel: widget.publicLoadedFacets
-                ? t.sourceShell.collectionLoadedCount(count: state.list.length)
-                : null,
-            requireCompleteFacets: false,
-            key: ValueKey(scope),
-            entries: state.list,
-            blockedCategories: {...widget.blockedCategories, ...blocked},
-            scope: preferenceScope,
-            complete: state.hasReachedMax,
-            knownTotal: widget.focusedFacets ? state.knownTotal : null,
-            loadingMore: state.status == PluginPagedComicListStatus.loadingMore,
-            onChanged: () => _scrollPositions.reset(afterLayout: true),
-            onCompleteIndexDemandChanged: widget.cloudFavorite
-                ? _setCompleteIndexDemand
-                : null,
-            onLoadMore:
-                state.status == PluginPagedComicListStatus.initial ||
-                    state.status == PluginPagedComicListStatus.failure
-                ? null
-                : state.status == PluginPagedComicListStatus.loadingMoreFailure
-                ? cubit.retryLoadMore
-                : cubit.loadMore,
-            builder: (context, visible, controls) => Column(
-              mainAxisSize: widget.shrinkWrap
-                  ? MainAxisSize.min
-                  : MainAxisSize.max,
-              children: [
-                if (change != null)
-                  SourceListFilterBar(
-                    categories: _bikaFavoriteCategories(state.list),
-                    blockedCategories: blocked,
-                    onCategoryTap: (category) =>
-                        _toggleBikaCategory(category, blocked, change),
-                    onClearBlockedCategories: () => change({}),
-                    sortValue: '',
-                    sortOptions: const {},
-                    onSortChanged: (_) {},
-                    detailedView: widget.detailedView,
-                    onViewChanged: (_) {},
-                    categoriesOnly: true,
-                  ),
-                controls,
-                if (widget.shrinkWrap)
-                  content(visible)
-                else
-                  Expanded(child: content(visible)),
-              ],
+          ]) => ListenableBuilder(
+            listenable: cubit.sourcePageCountChanges,
+            builder: (_, _) => SourceLoadedResultFilter(
+              compactControls: true,
+              flatCollectionControls:
+                  widget.cloudFavorite || widget.flatCollectionControls,
+              searchController: widget.loadedSearchController,
+              searchFocusNode: widget.loadedSearchFocusNode,
+              searchScope: widget.loadedSearchScope,
+              searchExpanded: widget.loadedSearchExpanded,
+              chromeBuilder: widget.loadedChromeBuilder,
+              pageNavigation:
+                  _supportsPageChrome && cubit.hasVerifiedSourcePages
+                  ? _sourcePageJump(cubit)
+                  : null,
+              focusedFacets: widget.focusedFacets,
+              publicBrowseFacets: widget.publicLoadedFacets,
+              filterScopeLabel: widget.publicLoadedFacets ? '' : null,
+              requireCompleteFacets: false,
+              key: ValueKey(scope),
+              entries: state.list,
+              blockedCategories: {...widget.blockedCategories, ...blocked},
+              scope: preferenceScope,
+              complete: state.hasReachedMax && cubit.numberedRangeStart == 1,
+              knownTotal: widget.focusedFacets ? state.knownTotal : null,
+              loadingMore:
+                  state.status == PluginPagedComicListStatus.loadingMore,
+              onChanged: () => _scrollPositions.reset(afterLayout: true),
+              onCompleteIndexDemandChanged: widget.cloudFavorite
+                  ? _setCompleteIndexDemand
+                  : null,
+              onLoadMore:
+                  state.hasReachedMax ||
+                      state.status == PluginPagedComicListStatus.initial ||
+                      state.status == PluginPagedComicListStatus.failure ||
+                      (widget.publicLoadedFacets &&
+                          state.status ==
+                              PluginPagedComicListStatus.loadingMoreFailure)
+                  ? null
+                  : state.status ==
+                        PluginPagedComicListStatus.loadingMoreFailure
+                  ? () => _loadMore(retry: true)
+                  : _loadMore,
+              builder: (context, visible, controls) => Column(
+                mainAxisSize: widget.shrinkWrap
+                    ? MainAxisSize.min
+                    : MainAxisSize.max,
+                children: [
+                  if (change != null)
+                    SourceListFilterBar(
+                      categories: _bikaFavoriteCategories(state.list),
+                      blockedCategories: blocked,
+                      onCategoryTap: (category) =>
+                          _toggleBikaCategory(category, blocked, change),
+                      onClearBlockedCategories: () => change({}),
+                      sortValue: '',
+                      sortOptions: const {},
+                      onSortChanged: (_) {},
+                      detailedView: widget.detailedView,
+                      onViewChanged: (_) {},
+                      categoriesOnly: true,
+                    ),
+                  controls,
+                  if (widget.shrinkWrap)
+                    content(context, visible)
+                  else
+                    Expanded(child: content(context, visible)),
+                ],
+              ),
             ),
           );
 
-          final body =
-              !widget.publicLoadedFacets &&
-                  (!widget.cloudFavorite || !widget.localResultTools)
-              ? content()
+          final body = !usesLoadedTools
+              ? content(context)
               : _isBikaFavorite
               ? SourceCategoryBlockScope(
                   key: ValueKey(scope),
@@ -512,6 +744,17 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
                 ? MainAxisSize.min
                 : MainAxisSize.max,
             children: [
+              if (widget.pageViewAction != null)
+                CollectionResultsRow(
+                  countLabel: '',
+                  scope: _supportsPageChrome ? _sourcePageJump(cubit) : null,
+                  viewAction: widget.pageViewAction,
+                )
+              else if (_supportsPageChrome && !usesEmbeddedPages)
+                Padding(
+                  padding: CollectionToolbarMetrics.contentPaddingOf(context),
+                  child: _sourcePageJump(cubit),
+                ),
               if (cubit.refreshError != null)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -529,7 +772,16 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
                         key: const ValueKey('plugin-list.refresh-retry'),
                         onPressed: cubit.refreshing
                             ? null
-                            : () => _refreshIndicator.currentState?.show(),
+                            : () {
+                                final target = cubit.failedPageJump;
+                                if (target == null) {
+                                  _refreshIndicator.currentState?.show();
+                                } else {
+                                  unawaited(
+                                    _retrySourcePageJump(cubit, target),
+                                  );
+                                }
+                              },
                         icon: const Icon(Icons.refresh),
                         label: Text(t.common.retry),
                       ),
@@ -569,6 +821,16 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
     );
   }
 
+  Future<void> _retrySourcePageJump(
+    PluginPagedComicListCubit cubit,
+    int target,
+  ) async {
+    if (await cubit.jumpToSourcePage(target) && mounted) {
+      _visiblePage.value = null;
+      _scrollPositions.reset(afterLayout: true);
+    }
+  }
+
   Widget _statusView(Widget child) => CustomScrollView(
     physics: widget.physics ?? const AlwaysScrollableScrollPhysics(),
     shrinkWrap: widget.shrinkWrap,
@@ -586,8 +848,11 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
     BuildContext context,
     PluginPagedComicListState state, {
     List<UnifiedComicListItem>? filteredEntries,
+    FilteredPageProgress? progress,
   }) {
-    if (state.list.isEmpty &&
+    if (progress == null &&
+        state.list.isEmpty &&
+        state.hasReachedMax &&
         state.status == PluginPagedComicListStatus.success) {
       return CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
@@ -613,9 +878,8 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
         isLoadingMore: state.status == PluginPagedComicListStatus.loadingMore,
         loadMoreFailed:
             state.status == PluginPagedComicListStatus.loadingMoreFailure,
-        onRetryLoadMore: () =>
-            context.read<PluginPagedComicListCubit>().retryLoadMore(),
-        onLoadMore: () => context.read<PluginPagedComicListCubit>().loadMore(),
+        onRetryLoadMore: () => _loadMore(retry: true),
+        onLoadMore: _loadMore,
       );
     }
 
@@ -632,6 +896,14 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
                   )
                   .toList());
 
+    if (_supportsPageChrome) {
+      final cubit = context.read<PluginPagedComicListCubit>();
+      _visibleResultPages = visibleEntries.map(cubit.reportedPageOf).toList();
+      _scheduleSourcePageUpdate();
+    }
+
+    final automatic = progress != null;
+
     if ((widget.cloudFavorite || widget.publicLoadedFacets) &&
         visibleEntries.isEmpty) {
       return CustomScrollView(
@@ -644,29 +916,45 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    widget.publicLoadedFacets
-                        ? t.videoLibrary.noLoadedMatches
-                        : t.videoLibrary.localCatalogNoMatches,
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Text(
+                      progress?.emptyMessage ??
+                          (automatic
+                              ? userFacingErrorMessage(state.result)
+                              : widget.publicLoadedFacets
+                              ? t.videoLibrary.noLoadedMatches
+                              : t.videoLibrary.localCatalogNoMatches),
+                      textAlign: TextAlign.center,
+                    ),
                   ),
-                  if (!widget.focusedFacets &&
+                  if (!automatic &&
+                      !widget.focusedFacets &&
                       state.status == PluginPagedComicListStatus.loadingMore)
                     const Padding(
                       padding: EdgeInsets.all(12),
                       child: CircularProgressIndicator(),
                     )
-                  else if (!state.hasReachedMax &&
+                  else if (automatic &&
+                      state.status ==
+                          PluginPagedComicListStatus.loadingMoreFailure)
+                    TextButton(
+                      onPressed: () => _loadMore(retry: true),
+                      child: Text(t.oldHome.loadMoreFailed),
+                    )
+                  else if (!automatic &&
+                      !state.hasReachedMax &&
                       (!widget.focusedFacets ||
+                          _collectionFillPaused ||
                           state.status ==
                               PluginPagedComicListStatus.loadingMoreFailure))
                     TextButton(
                       onPressed: () {
-                        final cubit = context.read<PluginPagedComicListCubit>();
                         if (state.status ==
                             PluginPagedComicListStatus.loadingMoreFailure) {
-                          cubit.retryLoadMore();
+                          _loadMore(retry: true);
                         } else {
-                          cubit.loadMore();
+                          _loadMore();
                         }
                       },
                       child: Text(t.oldHome.loadMore),
@@ -679,21 +967,31 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
       );
     }
 
+    final selection = JmCloudSelection.maybeOf(context);
     if (widget.detailedView) {
       return SourceSearchDetailList(
         collectionLayout: widget.cloudFavorite,
-        quietPaging: widget.focusedFacets,
+        quietPaging: automatic || widget.focusedFacets,
+        pageBreaks: widget.cloudFavorite && !_isBikaFavorite
+            ? const {}
+            : sourcePageBreaks(
+                visibleEntries,
+                context.read<PluginPagedComicListCubit>().reportedPageOf,
+              ),
         entries: visibleEntries,
+        entryBuilder: selection == null
+            ? null
+            : (entry, tile) => selection.row(entry.id, entry.title, tile),
         controller: scrollController,
+        itemsSliverKey: _supportsPageChrome ? _resultItems : null,
         physics: widget.physics ?? const AlwaysScrollableScrollPhysics(),
         shrinkWrap: widget.shrinkWrap,
         hasReachedMax: state.hasReachedMax,
         isLoadingMore: state.status == PluginPagedComicListStatus.loadingMore,
         loadMoreFailed:
             state.status == PluginPagedComicListStatus.loadingMoreFailure,
-        onRetryLoadMore: () =>
-            context.read<PluginPagedComicListCubit>().retryLoadMore(),
-        onLoadMore: () => context.read<PluginPagedComicListCubit>().loadMore(),
+        onRetryLoadMore: () => _loadMore(retry: true),
+        onLoadMore: _loadMore,
         onReturned: widget.cloudFavorite
             ? () {
                 if (context.mounted) {
@@ -715,21 +1013,33 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
 
     return PluginComicGridSliver(
       collectionLayout: widget.cloudFavorite,
-      quietPaging: widget.focusedFacets,
+      quietPaging: automatic || widget.focusedFacets,
       controller: scrollController,
+      itemsSliverKey: _supportsPageChrome ? _resultItems : null,
       entries: list,
       hasReachedMax: state.hasReachedMax,
       isLoadingMore: state.status == PluginPagedComicListStatus.loadingMore,
       loadMoreFailed:
           state.status == PluginPagedComicListStatus.loadingMoreFailure,
-      onRetryLoadMore: () =>
-          context.read<PluginPagedComicListCubit>().retryLoadMore(),
-      onLoadMore: () => context.read<PluginPagedComicListCubit>().loadMore(),
+      onRetryLoadMore: () => _loadMore(retry: true),
+      onLoadMore: _loadMore,
       shrinkWrap: widget.shrinkWrap,
       physics: widget.physics ?? const AlwaysScrollableScrollPhysics(),
       collectionTargetId: widget.collectionTargetId,
       collectionTargetName: widget.collectionTargetName,
-      onEntryTap: widget.cloudFavorite
+      selectionMode: selection != null,
+      isEntrySelected: selection == null
+          ? null
+          : (entry) => selection.ids.contains(entry.id),
+      onEntryLongPress: selection == null
+          ? null
+          : (entry, _) => selection.toggle(entry.id),
+      onEntrySecondaryTapDown: selection == null
+          ? null
+          : (entry, _) => selection.toggle(entry.id),
+      onEntryTap: selection != null
+          ? (entry) => selection.toggle(entry.id)
+          : widget.cloudFavorite
           ? (info) async {
               await context.pushRoute(
                 ComicInfoRoute(
@@ -754,8 +1064,13 @@ class _PluginPagedComicListBodyState extends State<_PluginPagedComicListBody>
   }
 
   void _onScroll() {
-    if (_scrollPositions.isChanging || !mounted) return;
-    if (_isBottom) {
+    _scheduleSourcePageUpdate();
+    if (_scrollPositions.isChanging ||
+        !mounted ||
+        _collectionIndexRequested && _collectionFillPaused) {
+      return;
+    }
+    if (!_filteredPaging && _isBottom) {
       context.read<PluginPagedComicListCubit>().loadMore();
     }
   }

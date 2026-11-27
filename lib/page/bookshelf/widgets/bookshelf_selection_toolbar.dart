@@ -57,6 +57,7 @@ class BookshelfSelectionToolbar extends StatelessWidget {
     this.keyPrefix = 'shelf-selection',
     this.padding = const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
     this.privacyAction,
+    this.inTitleBar = false,
   });
   final int selectedCount;
   final bool allSelected;
@@ -64,6 +65,7 @@ class BookshelfSelectionToolbar extends StatelessWidget {
   final String keyPrefix;
   final EdgeInsetsGeometry padding;
   final Widget? privacyAction;
+  final bool inTitleBar;
 
   @override
   Widget build(BuildContext context) => VideoControlAppearance(
@@ -72,6 +74,7 @@ class BookshelfSelectionToolbar extends StatelessWidget {
       padding: padding,
       child: LayoutBuilder(
         builder: (context, constraints) {
+          final flat = !inTitleBar || !usesNativeSourceChrome(context);
           final compact =
               constraints.maxWidth < (privacyAction == null ? 350 : 400) ||
               MediaQuery.textScalerOf(context).scale(14) > 20;
@@ -86,18 +89,19 @@ class BookshelfSelectionToolbar extends StatelessWidget {
                   key: ValueKey('$keyPrefix.cancel'),
                   child: MediaQuery.textScalerOf(context).scale(14) > 20
                       ? NativeVideoIconButton(
+                          pageChrome: inTitleBar,
                           icon: Icons.close,
                           symbol: 'xmark',
                           tooltip: t.common.cancel,
                           light: false,
-                          bare: true,
+                          bare: flat,
                           onPressed: onCancel,
                         )
                       : NativeVideoTextButton(
                           label: t.common.cancel,
                           tooltip: t.common.cancel,
                           light: false,
-                          bare: true,
+                          bare: flat,
                           maxWidth: compact ? 88 : 120,
                           onPressed: onCancel,
                         ),
@@ -116,13 +120,14 @@ class BookshelfSelectionToolbar extends StatelessWidget {
                   key: ValueKey('$keyPrefix.select-all'),
                   child: compact
                       ? NativeVideoIconButton(
+                          pageChrome: inTitleBar,
                           icon: allSelected ? Icons.deselect : Icons.select_all,
                           symbol: allSelected
                               ? 'checkmark.square.fill'
                               : 'square.dashed',
                           tooltip: allLabel,
                           light: false,
-                          bare: true,
+                          bare: flat,
                           onPressed: onToggleAll,
                         )
                       : SizedBox(
@@ -133,7 +138,7 @@ class BookshelfSelectionToolbar extends StatelessWidget {
                               label: allLabel,
                               tooltip: allLabel,
                               light: false,
-                              bare: true,
+                              bare: flat,
                               maxWidth: 112,
                               onPressed: onToggleAll,
                             ),

@@ -5,7 +5,9 @@ import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/video/video_search_filters.dart';
 import 'package:zephyr/page/video/video_search_history.dart';
 import 'package:zephyr/page/video/video_search_page.dart';
-import 'package:zephyr/page/search/widget/search_field_surface.dart';
+import 'package:zephyr/page/search/widget/search_field_decoration.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
+import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
@@ -33,8 +35,9 @@ void main() {
 
   Future<void> mount(
     WidgetTester tester,
-    ValueChanged<VideoSearchFilters?> done,
-  ) async {
+    ValueChanged<VideoSearchFilters?> done, {
+    VideoSearchPage? page,
+  }) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Builder(
@@ -44,15 +47,17 @@ void main() {
               onPressed: () async => done(
                 await Navigator.of(context).push<VideoSearchFilters>(
                   MaterialPageRoute(
-                    builder: (_) => const VideoSearchPage(
-                      source: 'one',
-                      initial: VideoSearchFilters(
-                        query: 'Old',
-                        sort: 'views',
-                        tags: ['HD'],
-                        page: 5,
-                      ),
-                    ),
+                    builder: (_) =>
+                        page ??
+                        const VideoSearchPage(
+                          source: 'one',
+                          initial: VideoSearchFilters(
+                            query: 'Old',
+                            sort: 'views',
+                            tags: ['HD'],
+                            page: 5,
+                          ),
+                        ),
                   ),
                 ),
               ),
@@ -65,13 +70,41 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('a known recent word keeps its explicit video scope', (
+    tester,
+  ) async {
+    await VideoSearchHistory.add(
+      'one',
+      'Known word',
+      scope: KeywordSearchScope.title,
+    );
+    KeywordSearchScope? scope;
+    VideoSearchFilters? result;
+    await mount(
+      tester,
+      (value) => result = value,
+      page: VideoSearchPage(
+        source: 'one',
+        initial: const VideoSearchFilters(),
+        authorEnabled: false,
+        showScopeSelection: false,
+        onSubmitScope: (value) => scope = value,
+      ),
+    );
+    expect(find.byType(KeywordScopeMenu), findsNothing);
+    await tester.tap(find.text('Known word'));
+    await tester.pumpAndSettle();
+    expect(result?.query, 'Known word');
+    expect(scope, KeywordSearchScope.title);
+  });
+
   testWidgets(
     'search is focused once, clears inline and submits author mode with existing filters',
     (tester) async {
       VideoSearchFilters? result;
       await mount(tester, (value) => result = value);
       final input = find.byKey(const ValueKey('video-search.input'));
-      final submit = find.byKey(const ValueKey('video-search.submit'));
+      final submit = find.byType(SearchFieldSubmitButton);
       expect(tester.testTextInput.isVisible, isTrue);
       expect(find.byIcon(Icons.search_rounded), findsOneWidget);
       expect(
@@ -81,7 +114,11 @@ void main() {
       await tester.tap(find.byTooltip(t.videoSearch.clearQuery));
       await tester.pump();
       expect(tester.widget<TextField>(input).controller!.text, isEmpty);
-      expect(tester.widget<VideoSearchSubmitButton>(submit).onPressed, isNull);
+      final submitButton = find.descendant(
+        of: submit,
+        matching: find.byType(IconButton),
+      );
+      expect(tester.widget<IconButton>(submitButton).onPressed, isNull);
       await tester.enterText(input, 'Creator');
       await tester.tap(find.widgetWithText(ChoiceChip, t.videoFilters.authors));
       await tester.testTextInput.receiveAction(TextInputAction.search);
@@ -130,13 +167,13 @@ void main() {
       final initialField = tester.getRect(field);
       final initialRow = tester.getRect(filterRow);
       final back = tester.getRect(find.byTooltip(t.videoSearch.cancel));
-      final submit = tester.getRect(
-        find.byKey(const ValueKey('video-search.submit')),
-      );
+      final submit = tester.getRect(find.byType(SearchFieldSubmitButton));
       expect(back.left, closeTo(initialBar.left + 16, .5));
       expect(initialField.left - back.right, greaterThanOrEqualTo(8));
-      expect(submit.left - initialField.right, greaterThanOrEqualTo(8));
-      expect(initialBar.right - submit.right, greaterThanOrEqualTo(16));
+      expect(submit.left, closeTo(initialField.left, .5));
+      expect(submit.right, lessThan(initialField.right));
+      expect(submit.width, greaterThanOrEqualTo(44));
+      expect(initialBar.right - initialField.right, closeTo(16, .5));
       expect(initialField.width, greaterThan(150));
       expect(back.center.dy, closeTo(initialField.center.dy, .5));
       expect(submit.center.dy, closeTo(initialField.center.dy, .5));

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -12,6 +13,7 @@ import 'package:zephyr/config/global/global_setting.dart';
 import 'package:zephyr/main.dart';
 import 'package:zephyr/object_box/model.dart';
 import 'package:zephyr/page/setting/data_backup/method.dart';
+import 'package:zephyr/service/backup_security/private_backup_workspace.dart';
 import 'package:zephyr/service/local_appearance_images.dart';
 import 'package:zephyr/service/local_import_recovery.dart';
 import 'package:zephyr/service/offline_backup_merge.dart'
@@ -24,6 +26,7 @@ import '../test_helper.dart';
 class _PackApi extends RustLibApi {
   final files = <String, List<int>>{};
   String? downloadArgument;
+  late String dataArgument;
   @override
   Future<void> crateApiDataBackupCreateDataBackupZip({
     required String zipPath,
@@ -31,6 +34,7 @@ class _PackApi extends RustLibApi {
     String? downloadDir,
   }) async {
     files.clear();
+    dataArgument = dataDir;
     downloadArgument = downloadDir;
     Future<void> capture(String root, String prefix) async {
       await for (final entry in Directory(
@@ -82,6 +86,7 @@ void main() {
       localeFollowsSystem: false,
       retryDownloadUntilSuccess: false,
       comicDownloadConcurrency: 4,
+      readSetting: ReadSettingState(showSystemStatusBar: true),
       videoDownloadConcurrency: 3,
       downloadWifiOnly: true,
       downloadCompletionNotice: 'episode',
@@ -191,6 +196,42 @@ void main() {
     );
   });
 
+  test(
+    'save cancellation removes the staged backup after the picker closes',
+    () async {
+      final stageReady = Completer<File>();
+      final pickerResult = Completer<bool>();
+      final export = withPrivateBackupWorkspace((workspace) async {
+        final archive = await File(
+          p.join(workspace.path, 'synthetic.zip'),
+        ).writeAsString('fixture');
+        stageReady.complete(archive);
+        return pickerResult.future;
+      });
+      final archive = await stageReady.future;
+      expect(await archive.exists(), isTrue);
+      pickerResult.complete(false);
+      expect(await export, isFalse);
+      expect(await archive.parent.exists(), isFalse);
+    },
+  );
+
+  test('startup clears current and legacy export drafts', () async {
+    final cache = await getCachePath();
+    final workspace = await createPrivateBackupWorkspace();
+    final legacyRoot = Directory(p.join(cache, 'breeze_backup'));
+    final legacy = Directory(p.join(legacyRoot.path, '1795339200000'));
+    await legacy.create(recursive: true);
+    final otherFile = await File(
+      p.join(legacyRoot.path, 'saved.zip'),
+    ).writeAsString('fixture');
+    await File(p.join(legacy.path, 'objectbox.json')).writeAsString('fixture');
+    await cleanupInterruptedPrivateBackupWork();
+    expect(await workspace.exists(), isFalse);
+    expect(await legacy.exists(), isFalse);
+    expect(await otherFile.exists(), isTrue);
+  });
+
   for (final include in [false, true]) {
     test(
       'public export includeDownloads=$include emits portable JSON bytes and preserves account and folder identities',
@@ -223,6 +264,11 @@ void main() {
         );
         expect(api.files.containsKey('downloads/fixture.txt'), include);
         expect(api.downloadArgument != null, include);
+        expect(
+          p.dirname(api.dataArgument),
+          p.join(await getCachePath(), 'backup-private-v1'),
+        );
+        expect(await Directory(api.dataArgument).exists(), isFalse);
         final chapterArchive = ChapterProgressArchive.decode(
           api.files[ChapterProgressArchive.filename]!,
         );
@@ -232,6 +278,16 @@ void main() {
         );
         final database =
             jsonDecode(utf8.decode(api.files['objectbox.json']!)) as Map;
+        final settings =
+            jsonDecode(utf8.decode(api.files['sync-settings.json']!)) as Map;
+        expect(
+          settings['blocks']['library']['data']['comicDownloadConcurrency'],
+          4,
+        );
+        expect(
+          settings['blocks']['reader']['data']['showSystemStatusBar'],
+          isTrue,
+        );
         expect(database['downloadTask'], isEmpty);
         expect((database['pluginConfig'] as List).single['config'], account);
         expect(
@@ -298,6 +354,8 @@ void main() {
             switchStyle: BreezeSwitchStyle.classic,
             locale: const Locale('zh', 'CN'),
             localeFollowsSystem: true,
+            comicDownloadConcurrency: 2,
+            readSetting: const ReadSettingState(),
             eInkSetting: const EInkSettingState(
               detectionHandled: false,
               autoRefreshEveryNTurns: 2,
@@ -351,6 +409,7 @@ void main() {
           expect(restored.localeFollowsSystem, isFalse);
           expect(restored.retryDownloadUntilSuccess, isFalse);
           expect(restored.comicDownloadConcurrency, 4);
+          expect(restored.readSetting.showSystemStatusBar, isTrue);
           expect(restored.videoDownloadConcurrency, 3);
           expect(restored.downloadWifiOnly, isTrue);
           expect(restored.downloadCompletionNotice, 'episode');

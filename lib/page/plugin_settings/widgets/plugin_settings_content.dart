@@ -1,6 +1,17 @@
+import 'package:zephyr/page/setting/global/search_scope_settings_page.dart';
+import 'package:flutter/foundation.dart';
+import 'package:zephyr/main.dart';
+import 'package:zephyr/object_box/model.dart';
+import 'package:zephyr/object_box/objectbox.g.dart';
+import 'package:zephyr/page/source_shell/bika_content_block_rules.dart';
+import 'package:zephyr/plugin/bridge/plugin_config_bridge.dart';
+import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
+import 'package:zephyr/service/local_plugin_installation_state.dart';
 import 'package:zephyr/service/plugin_account_profiles.dart';
 import 'package:zephyr/config/router/router.gr.dart';
 import 'package:zephyr/page/setting/common/setting_page_route.dart';
+import 'package:zephyr/page/source_shell/source_category_settings_scope.dart';
+import 'package:zephyr/page/source_shell/source_experience_preferences.dart';
 import 'package:zephyr/page/setting/global/global_setting.dart';
 import 'package:zephyr/page/source_shell/bika_access_lines.dart';
 import 'package:zephyr/page/source_shell/widgets/bika_network_settings.dart';
@@ -11,6 +22,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/page/source_shell/source_diagnostic_tools_tile.dart';
 import 'package:zephyr/page/plugin_settings/cubit/plugin_settings_cubit.dart';
+import 'package:zephyr/page/plugin_settings/widgets/bika_block_rules_dialog.dart';
 import 'package:zephyr/page/plugin_settings/widgets/plugin_settings_sections.dart';
 import 'package:zephyr/page/setting/common/plugin_user_info_card.dart';
 import 'package:zephyr/page/setting/common/setting_ui.dart';
@@ -30,6 +42,8 @@ import 'package:zephyr/page/setting/cache/plugin_cache_settings_tile.dart';
 import 'package:zephyr/widgets/breeze_switch.dart';
 
 enum PluginSettingsScope { all, preferences, management }
+
+enum _PluginRouteStatus { unknown, available, unavailable }
 
 String pluginSettingsFieldIdentity(Map<String, dynamic> field) {
   final key = field['key']?.toString().trim() ?? '';
@@ -203,6 +217,21 @@ class PluginSettingsContent extends StatelessWidget {
         BikaImageQualitySetting(
           source: from,
           enabled: !deleted && !lifecycleBusy,
+        ),
+      if (!deleted &&
+          PluginRegistryService.I.getByUuid(pluginUuid ?? from)?.isActive ==
+              true &&
+          searchScopeSettingsOptions(
+            pluginUuid ?? from,
+            PluginRegistryService.I.getCachedPluginInfo(pluginUuid ?? from),
+          ).isNotEmpty)
+        settingCategoryTile(
+          icon: Icons.search_rounded,
+          symbol: 'magnifyingglass',
+          title: t.search.title,
+          subtitle: t.search.defaultScope,
+          onTap: () =>
+              openSearchScopeSettings(context, source: pluginUuid ?? from),
         ),
       if (state.isVideoSource)
         TouchHoverIntent(
@@ -446,6 +475,9 @@ class PluginSettingsContent extends StatelessWidget {
       }
     }
     sections.addAll(_buildSettingSections(context));
+    if (isBikaExperienceSource(from)) {
+      sections.add(_buildBikaBlockSection(context));
+    }
     final actionsSection = _buildActionsSection(context);
     if (actionsSection != null) {
       sections.add(actionsSection);
@@ -657,6 +689,8 @@ class PluginSettingsContent extends StatelessWidget {
     PluginRegistryService.I.getCachedPluginInfo(from),
   );
   bool _visibleField(Map<String, dynamic> field) =>
+      !(isBikaExperienceSource(from) &&
+          field['key'] == bikaSearchBlockedCategoriesKey) &&
       !isInternalPluginMaintenanceFunction(field['fnPath']) &&
       !(_bikaLines &&
           const {'network.apiBase', 'network.proxy'}.contains(field['key'])) &&
@@ -725,18 +759,125 @@ class PluginSettingsContent extends StatelessWidget {
         _buildSettingSection(context, section),
   ];
 
+  Widget _buildBikaBlockSection(BuildContext context) {
+    final category = state.sections
+        .expand((section) => asJsonList(section['fields']).map(asJsonMap))
+        .where((field) => field['key'] == bikaSearchBlockedCategoriesKey)
+        .firstOrNull;
+    return StreamBuilder<List<Type>>(
+      stream: objectbox.store.entityChanges.where(
+        (types) => types.contains(PluginConfig),
+      ),
+      builder: (context, _) {
+        final config = readHostPluginConfiguration(from);
+        return PluginSettingsSectionCard(
+          title: t.searchResult.bikaContentBlocking,
+          footer: t.searchResult.bikaContentBlockingScope,
+          colorScheme: colorScheme,
+          children: [
+            if (category != null)
+              _buildField(
+                context,
+                category,
+                stableChoiceLayout: false,
+                bikaConfig: config,
+              ),
+            for (final field in BikaContentBlockField.values)
+              _buildField(
+                context,
+                {'key': field.configKey, 'kind': 'bikaBlockRules'},
+                stableChoiceLayout: false,
+                bikaConfig: config,
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  bool Function() _currentBikaBlockOwner() {
+    final owner = pluginUuid ?? from;
+    final installation = LocalPluginInstallationState.instance;
+    final epoch = installation.installationEpoch(owner);
+    final session = pluginSessionWriteFence.generation(bikaPlusSourceId);
+    return () =>
+        installation.installationEpoch(owner) == epoch &&
+        !pluginSessionWriteFence.isChanging(bikaPlusSourceId) &&
+        pluginSessionWriteFence.generation(bikaPlusSourceId) == session;
+  }
+
+  void _showBikaBlockConflict(BuildContext context) =>
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(t.comicList.loadedFiltersChanged)),
+      );
+
+  Widget _buildBikaBlockField(
+    BuildContext context,
+    Map<String, dynamic> field,
+    Object? value,
+    bool enabled,
+  ) {
+    final key = field['key'] as String;
+    final ruleField = BikaContentBlockField.values.singleWhere(
+      (ruleField) => ruleField.configKey == key,
+    );
+    final label = switch (ruleField) {
+      BikaContentBlockField.title => t.searchResult.bikaBlockedTitles,
+      BikaContentBlockField.tag => t.searchResult.bikaBlockedTags,
+      BikaContentBlockField.author => t.searchResult.bikaBlockedAuthors,
+    };
+    final current = bikaContentBlockValues(value);
+    return PluginSettingsFieldRow(
+      title: label,
+      subtitle: '',
+      currentValue: current.isEmpty
+          ? t.settings.notSet
+          : t.searchResult.bikaBlockRulesCount(count: current.length),
+      trailing: const Icon(Icons.chevron_right_rounded, size: 18),
+      onTap: !enabled
+          ? null
+          : () async {
+              final currentOwner = _currentBikaBlockOwner();
+              final next = await showBikaBlockRulesDialog(
+                context,
+                title: label,
+                initial: current,
+              );
+              if (next == null || !context.mounted || !currentOwner()) {
+                return;
+              }
+              if (listEquals(current, next)) return;
+              if (!listEquals(
+                current,
+                bikaContentBlockValues(readHostPluginConfiguration(from)[key]),
+              )) {
+                _showBikaBlockConflict(context);
+                return;
+              }
+              await onCommitField(field, next);
+            },
+    );
+  }
+
   Widget _buildSettingSection(
     BuildContext context,
     Map<String, dynamic> section,
   ) {
     final action = _sectionHeaderAction(section);
-    var title = section['title']?.toString() ?? '';
+    final headerFunction = asJsonMap(section['headerAction'])['fnPath'];
+    final hasSpeedTest =
+        _legacyJmNetwork(section) ||
+        const {
+          'testLineSpeeds',
+          'measureEndpointSpeeds',
+        }.contains(headerFunction);
+    var title = isBikaExperienceSource(from) && section['id'] == 'shield'
+        ? t.settings.categoryGridScope
+        : section['title']?.toString() ?? '';
     var footer = section['footer'] is String
         ? section['footer'] as String
         : null;
-    if (action != null &&
-        _legacyJmNetwork(section) &&
-        title.startsWith('网络线路（')) {
+    if (_legacyJmNetwork(section) && title.startsWith('网络线路（')) {
       final measuredAt = RegExp(
         r'^网络线路（测于 ([0-9]{2}:[0-9]{2})）$',
       ).firstMatch(title)?.group(1);
@@ -746,12 +887,24 @@ class PluginSettingsContent extends StatelessWidget {
     final stableNetworkChoices =
         from == PluginAccountAuthenticationService.copy &&
         section['id'] == 'network';
+    final staleRouteResults =
+        (stableNetworkChoices ||
+            from == PluginAccountAuthenticationService.jm &&
+                section['id'] == 'network') &&
+        footer?.contains('旧结果') == true;
+    if (stableNetworkChoices) {
+      footer = RegExp(
+        r'上次测速\s+(?:\d{1,2}-\d{1,2}\s+)?\d{2}:\d{2}',
+      ).stringMatch(footer ?? '');
+    }
     return PluginSettingsSectionCard(
       title: title,
       headerTrailing: action == null ? null : _sectionHeaderButton(action),
-      footer: footer,
+      footer: staleRouteResults ? null : footer,
       colorScheme: colorScheme,
-      details: _settingDescriptions(section),
+      details: hasSpeedTest || stableNetworkChoices
+          ? const {}
+          : _settingDescriptions(section),
       children: asJsonList(section['fields'])
           .map(asJsonMap)
           .where(_visibleField)
@@ -760,6 +913,7 @@ class PluginSettingsContent extends StatelessWidget {
               context,
               field,
               stableChoiceLayout: stableNetworkChoices,
+              staleRouteResults: staleRouteResults,
             ),
           )
           .toList(),
@@ -768,9 +922,25 @@ class PluginSettingsContent extends StatelessWidget {
 
   Map<String, String> _settingDescriptions(Map<String, dynamic> section) {
     final details = <String, String>{};
+    String? routeDescription;
+    var hasSpeedMode = false;
     for (final item in asJsonList(section['fields'])) {
       final field = asJsonMap(item);
-      if (isInternalPluginMaintenanceFunction(field['fnPath'])) continue;
+      if (!_visibleField(field)) continue;
+      final options = _normalizeOptions(field['options']);
+      final hasAutomaticMode = options.any(
+        (option) => option.value == 'auto' || option.value == 'auto-speed',
+      );
+      if (_isNetworkRoute(field['key']) ||
+          (section['id'] == 'network' && hasAutomaticMode)) {
+        hasSpeedMode |= options.any((option) => option.value == 'auto-speed');
+        routeDescription = hasSpeedMode
+            ? from == PluginAccountAuthenticationService.copy
+                  ? t.plugin.copyAutoRouteModesDescription
+                  : t.plugin.autoRouteModesDescription
+            : t.plugin.autoRouteDescription;
+        continue;
+      }
       final label =
           field['label']?.toString() ?? field['key']?.toString() ?? '';
       final description = _supportingText(field['description'], [label]);
@@ -780,7 +950,7 @@ class PluginSettingsContent extends StatelessWidget {
           ? description
           : '$previous\n$description';
     }
-    return details;
+    return {if (routeDescription != null) '': routeDescription, ...details};
   }
 
   Widget? _buildActionsSection(BuildContext context) {
@@ -808,11 +978,19 @@ class PluginSettingsContent extends StatelessWidget {
     BuildContext context,
     Map<String, dynamic> field, {
     required bool stableChoiceLayout,
+    bool staleRouteResults = false,
+    Map<String, dynamic>? bikaConfig,
   }) {
     final key = field['key']?.toString() ?? '';
     final kind = field['kind']?.toString() ?? 'text';
-    final label = field['label']?.toString() ?? key;
-    final value = state.values[key];
+    final label = switch ((isBikaExperienceSource(from), key)) {
+      (true, bikaSearchBlockedCategoriesKey) =>
+        t.searchResult.bikaBlockedCategories,
+      (true, 'home.blockedCategories') =>
+        t.searchResult.bikaHiddenHomeCategories,
+      _ => field['label']?.toString() ?? key,
+    };
+    final value = bikaConfig == null ? state.values[key] : bikaConfig[key];
     final identity = pluginSettingsFieldIdentity(field);
     final pending = pendingFields.contains(identity);
     final enabled =
@@ -822,10 +1000,19 @@ class PluginSettingsContent extends StatelessWidget {
         !(jmEndpointBusy && field['fnPath'] == 'onNetworkChanged');
     final error = fieldErrors[identity];
     final Widget row;
-    if (kind == 'switch') {
+    if (kind == 'bikaBlockRules') {
+      row = _buildBikaBlockField(context, field, value, enabled);
+    } else if (kind == 'switch') {
       row = _buildSwitchField(field, label, value, enabled);
     } else if (kind == 'select' || kind == 'choice') {
-      row = _buildSelectField(field, label, value, enabled, stableChoiceLayout);
+      row = _buildSelectField(
+        field,
+        label,
+        value,
+        enabled,
+        stableChoiceLayout,
+        staleRouteResults,
+      );
     } else if (kind == 'multiChoice') {
       row = _buildMultiChoiceField(context, field, label, value, enabled);
     } else {
@@ -883,44 +1070,125 @@ class PluginSettingsContent extends StatelessWidget {
     );
   }
 
+  bool _isNetworkRoute(Object? key) =>
+      (from == PluginAccountAuthenticationService.copy &&
+          key == 'api.domain') ||
+      (from == PluginAccountAuthenticationService.jm &&
+          (key == 'network.apiBase' || key == 'network.imageBase'));
+
+  _PluginRouteStatus? _legacyRouteStatus(String text) {
+    final lower = text.toLowerCase();
+    if (RegExp(r'旧|未测|not tested|untested|\bstale\b').hasMatch(lower)) {
+      return _PluginRouteStatus.unknown;
+    }
+    if (RegExp(
+      r'\bhttp\b|未通过|未响应|无响应|无法|不可用|失败|超时|timeout|failed|unavailable',
+    ).hasMatch(lower)) {
+      return _PluginRouteStatus.unavailable;
+    }
+    if (RegExp(r'\b\d+\s*ms\b|^通过$|^可用$|^available$').hasMatch(lower)) {
+      return _PluginRouteStatus.available;
+    }
+    return null;
+  }
+
+  ({String name, String detail, bool available, bool unavailable})
+  _routeOptionDisplay(Map<String, dynamic> option, {required bool stale}) {
+    final metadata = asJsonMap(option['routeOption']);
+    final explicitTitle = metadata['title']?.toString().trim() ?? '';
+    final title = explicitTitle.isNotEmpty
+        ? explicitTitle
+        : option['label']?.toString().trim() ?? '';
+    final parenthesized = RegExp(r'^(.+?)（([^（）]+)）$').firstMatch(title);
+    final pieces = parenthesized == null
+        ? title.split(' · ')
+        : [parenthesized.group(1)!, parenthesized.group(2)!];
+    final suffix = pieces.skip(1).join(' · ');
+    final legacyStatus = _legacyRouteStatus(suffix);
+    final status = stale
+        ? _PluginRouteStatus.unknown
+        : switch (metadata['status']) {
+            'unknown' => _PluginRouteStatus.unknown,
+            'available' => _PluginRouteStatus.available,
+            'unavailable' => _PluginRouteStatus.unavailable,
+            _ => legacyStatus,
+          };
+    final latency = metadata['latencyMs'] is num
+        ? metadata['latencyMs'] as num
+        : int.tryParse(
+            RegExp(r'\b(\d+)\s*ms\b').firstMatch(suffix)?.group(1) ?? '',
+          );
+    final detail = switch (status) {
+      _PluginRouteStatus.unknown => t.plugin.routeUnknown,
+      _PluginRouteStatus.available when latency != null && latency >= 0 =>
+        '$latency ms',
+      _PluginRouteStatus.available => t.plugin.routeAvailable,
+      _PluginRouteStatus.unavailable => t.plugin.routeUnavailable,
+      null => '',
+    };
+    final readOnly = metadata['readOnly'] == true || suffix.contains('仅阅读');
+    return (
+      name: explicitTitle.isNotEmpty || legacyStatus != null || readOnly
+          ? pieces.first
+          : title,
+      detail: [
+        if (detail.isNotEmpty) detail,
+        if (readOnly) t.plugin.routeReadOnly,
+      ].join(' · '),
+      available: status == _PluginRouteStatus.available,
+      unavailable: status == _PluginRouteStatus.unavailable,
+    );
+  }
+
   Widget _buildSelectField(
     Map<String, dynamic> field,
     String label,
     dynamic value,
     bool enabled,
     bool stableChoiceLayout,
+    bool staleRouteResults,
   ) {
     final options = _normalizeOptions(field['options']);
     final key = field['key'];
-    final isCopyRoute =
-        from == PluginAccountAuthenticationService.copy && key == 'api.domain';
-    final isJmRoute =
-        from == PluginAccountAuthenticationService.jm &&
-        (key == 'network.apiBase' || key == 'network.imageBase');
     final compactTitles = <dynamic, String>{};
     final routeDetails = <dynamic, String>{};
     final copyText = <dynamic, String>{};
     final badges = <dynamic, String>{};
-    if (isCopyRoute || isJmRoute) {
-      final automatic = isCopyRoute ? value == 'auto' : value == '';
+    if (_isNetworkRoute(key)) {
+      final autoValue = key == 'api.domain' ? 'auto' : '';
+      final hasSpeedMode = options.any(
+        (option) => option.value == 'auto-speed',
+      );
+      final automatic = value == autoValue || value == 'auto-speed';
+      final showAutoResult = hasSpeedMode && automatic && !staleRouteResults;
+      final showCopySummary = key == 'api.domain' && showAutoResult;
+      var readOnlyAvailable = false;
+      var fullRouteAvailable = false;
+      String? activeRouteName;
       for (final raw in asJsonList(field['options'])) {
         final option = asJsonMap(raw);
         final metadata = asJsonMap(option['routeOption']);
         final itemValue = option['value'];
-        if (itemValue is! String || itemValue.isEmpty || itemValue == 'auto') {
+        if (itemValue is! String) continue;
+        if (itemValue == autoValue) {
+          compactTitles[itemValue] = hasSpeedMode
+              ? t.plugin.routeAutomaticAvailable
+              : t.plugin.routeAutomatic;
           continue;
         }
-        final title = metadata['title'];
-        if (title is String && title.trim().isNotEmpty) {
-          final trimmed = title.trim();
-          // Both route plugins already separate the name from the speed result.
-          // Titles from older bundles without this separator still work.
-          final separator = trimmed.lastIndexOf(' · ');
-          if (separator > 0) {
-            compactTitles[itemValue] = trimmed.substring(0, separator);
-            routeDetails[itemValue] = trimmed.substring(separator + 3);
+        if (itemValue == 'auto-speed') {
+          compactTitles[itemValue] = t.plugin.routeAutomaticSpeed;
+          continue;
+        }
+        final display = _routeOptionDisplay(option, stale: staleRouteResults);
+        if (display.name.isNotEmpty) compactTitles[itemValue] = display.name;
+        if (display.detail.isNotEmpty) routeDetails[itemValue] = display.detail;
+        final measuredAvailable = showAutoResult && display.available;
+        if (showCopySummary && measuredAvailable) {
+          if (metadata['readOnly'] == true) {
+            readOnlyAvailable = true;
           } else {
-            compactTitles[itemValue] = trimmed;
+            fullRouteAvailable = true;
           }
         }
         final domain = metadata['domain'];
@@ -930,9 +1198,23 @@ class PluginSettingsContent extends StatelessWidget {
             copyText[itemValue] = domain;
           }
         }
-        if (automatic && badges.isEmpty && metadata['inUse'] == true) {
+        if (automatic &&
+            badges.isEmpty &&
+            !display.unavailable &&
+            metadata['inUse'] == true) {
           badges[itemValue] = t.plugin.routeOptionInUse;
+          if (measuredAvailable && display.name.isNotEmpty) {
+            activeRouteName = display.name;
+          }
         }
+      }
+      if (activeRouteName != null) {
+        routeDetails[value] = activeRouteName;
+      } else if (showCopySummary &&
+          value == autoValue &&
+          readOnlyAvailable &&
+          !fullRouteAvailable) {
+        routeDetails[value] = t.plugin.copyOnlyReadOnlyRoutesAvailable;
       }
     }
 
@@ -976,6 +1258,12 @@ class PluginSettingsContent extends StatelessWidget {
   ) {
     final options = _normalizeOptions(field['options']);
     final current = _asStringList(value);
+    final bikaSearchBlock =
+        isBikaExperienceSource(from) &&
+        field['key'] == bikaSearchBlockedCategoriesKey;
+    final optionValues = options
+        .map((option) => option.value.toString())
+        .toSet();
     return PluginSettingsFieldRow(
       title: label,
       subtitle: '',
@@ -986,21 +1274,46 @@ class PluginSettingsContent extends StatelessWidget {
       onTap: !enabled
           ? null
           : () async {
+              final currentOwner = bikaSearchBlock
+                  ? _currentBikaBlockOwner()
+                  : null;
               final picked = await showMultiChoiceListDialog(
                 context,
                 title: label,
-                options: options
-                    .map(
-                      (item) => MultiChoiceDialogOption(
-                        label: item.label,
-                        value: item.value.toString(),
-                      ),
-                    )
-                    .toList(),
+                options: [
+                  for (final item in options)
+                    MultiChoiceDialogOption(
+                      label: item.label,
+                      value: item.value.toString(),
+                    ),
+                  if (bikaSearchBlock)
+                    for (final category in current)
+                      if (!optionValues.contains(category))
+                        MultiChoiceDialogOption(
+                          label: category,
+                          value: category,
+                        ),
+                ],
                 initialSelected: current,
                 confirmText: t.common.save,
               );
-              if (picked == null || !context.mounted) return;
+              if (picked == null ||
+                  !context.mounted ||
+                  currentOwner?.call() == false) {
+                return;
+              }
+              if (bikaSearchBlock &&
+                  !setEquals(
+                    current.toSet(),
+                    _asStringList(
+                      readHostPluginConfiguration(
+                        from,
+                      )[bikaSearchBlockedCategoriesKey],
+                    ).toSet(),
+                  )) {
+                _showBikaBlockConflict(context);
+                return;
+              }
               await onCommitField(field, picked.toList());
             },
     );

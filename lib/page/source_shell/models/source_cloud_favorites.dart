@@ -1,5 +1,6 @@
 import 'package:zephyr/page/comic_list/cubit/plugin_paged_comic_list_state.dart';
 import 'package:zephyr/page/comic_list/cubit/jm_collection_snapshots.dart';
+import 'package:zephyr/page/search/method/keyword_search_scope.dart';
 import 'package:zephyr/plugin/bridge/plugin_session_write_fence.dart';
 import 'package:zephyr/network/http/plugin/unified_comic_plugin.dart';
 import 'package:zephyr/network/http/plugin/unified_plugin_envelope.dart';
@@ -36,11 +37,22 @@ class SourceCloudFavoriteQuery {
         : jmProfile
         ? const {'source': 'cloudFavorite', 'order': 'mr', 'folderId': ''}
         : const {'source': 'cloudFavorite', 'sort': 'dd'};
-    key = JmCollectionSnapshots.instance.key(source, function, core, extern);
+    final snapshots = JmCollectionSnapshots.instance;
+    key = snapshots.key(source, function, core, extern);
+    // Copy's profile leaves ordering implicit. Its collection scene expresses
+    // the same default explicitly when applying the sort bundle.
+    equivalentListKey =
+        source == copyComicSourceId && function == 'getCloudFavoriteData'
+        ? snapshots.key(source, function, core, {
+            ...extern,
+            'ordering': '-datetime_modifier',
+          })
+        : null;
   }
   final Map<String, dynamic> core = const {'page': 1};
   late final Map<String, dynamic> extern;
   late final String function, key;
+  late final String? equivalentListKey;
 }
 
 class SourceCloudFavoriteReadSuperseded implements Exception {
@@ -88,6 +100,7 @@ Future<SourceCloudFavoritePreview> loadSourceCloudFavoritePreview(
   );
   final observed = await snapshots.observePreview(
     key: query.key,
+    equivalentListKey: query.equivalentListKey,
     source: source,
     generation: generation,
     expectedRevision: revision,

@@ -69,6 +69,11 @@ struct VideoSiteAccountCookiePolicy {
   private func declaredOmoAccount(_ name: String) -> Bool {
     declaredOmoOrigin && ["user_id", "user_name", "user_check"].contains(name)
   }
+  private func declaredHanimeAccount(_ name: String, path: String) -> Bool {
+    source == "1e600cff-8ebe-4517-8aa4-6678aec46424" && host == "hanime1.me" && path == "/" &&
+      (name == "hanime1_session" ||
+        name.range(of: "^remember_web_[a-f0-9]{40}$", options: .regularExpression) != nil)
+  }
   private func acceptsDomain(_ value: String, name: String) -> Bool {
     domain(value) == host || declaredOmoAccount(name) && host == "www.omofuna.com" && domain(value) == "omofuna.com"
   }
@@ -80,7 +85,8 @@ struct VideoSiteAccountCookiePolicy {
       !cookie.value.isEmpty, cookie.value.utf16.count <= 4096,
       cookie.value.rangeOfCharacter(from: .controlCharacters) == nil,
       acceptsDomain(cookie.domain, name: cookie.name),
-      declaredOmoAccount(cookie.name) || cookie.isHTTPOnly && cookie.isSecure,
+      declaredOmoAccount(cookie.name) || cookie.isHTTPOnly &&
+        (cookie.isSecure || declaredHanimeAccount(cookie.name, path: cookie.path)),
       cookie.path.hasPrefix("/"), cookie.path.utf16.count <= 256,
       cookie.path.rangeOfCharacter(from: .controlCharacters) == nil,
       cookie.expiresDate == nil || cookie.expiresDate! > now else { return nil }
@@ -102,9 +108,9 @@ struct VideoSiteAccountCookiePolicy {
       value.rangeOfCharacter(from: .controlCharacters) == nil,
       let rawDomain = raw["domain"] as? String, acceptsDomain(rawDomain, name: name),
       let httpOnly = raw["httpOnly"] as? Bool, let secure = raw["secure"] as? Bool,
-      declaredOmoAccount(name) || httpOnly && secure,
       let path = raw["path"] as? String, path.hasPrefix("/"), path.utf16.count <= 256,
       path.rangeOfCharacter(from: .controlCharacters) == nil,
+      declaredOmoAccount(name) || httpOnly && (secure || declaredHanimeAccount(name, path: path)),
       existingDomain == nil || domain(existingDomain!) == domain(rawDomain) else { throw Failure.rejected }
     var properties: [HTTPCookiePropertyKey: Any] = [.name: name, .value: value,
       .domain: existingDomain ?? rawDomain, .path: path]

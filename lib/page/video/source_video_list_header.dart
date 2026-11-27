@@ -2,6 +2,7 @@ import 'package:zephyr/widgets/collection_cover_settings.dart';
 import 'dart:async';
 
 import 'package:zephyr/page/search/widget/keyword_scope_menu.dart';
+import 'package:zephyr/page/search/widget/search_field_surface.dart';
 import 'package:zephyr/page/search/widget/search_toolbar_scope.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zephyr/i18n/strings.g.dart';
@@ -10,6 +11,7 @@ import 'package:zephyr/page/source_shell/source_native_controls.dart';
 import 'package:zephyr/widgets/collection_cover_privacy.dart';
 import 'package:zephyr/widgets/collection_command_icons.dart';
 import 'package:zephyr/widgets/collection_toolbar_metrics.dart';
+import 'package:zephyr/widgets/collection_results_row.dart';
 
 const sourceVideoCollectionInset = CollectionToolbarMetrics.sourceContentInset;
 
@@ -100,7 +102,7 @@ class SourceVideoListHeader extends StatelessWidget {
                 if (leading != null && searchExtent == null) leading!,
                 Expanded(
                   child: searching && searchField != null
-                      ? searchField!
+                      ? AndroidSearchExpansion(child: searchField!)
                       : Text(
                           title,
                           maxLines: 1,
@@ -198,95 +200,88 @@ class SourceVideoResultsToolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) => VideoControlAppearance(
     systemControls: usesNativeSourceChrome(context),
-    child: Padding(
-      padding: CollectionToolbarMetrics.contentPaddingOf(
-        context,
-        inset: horizontalInset,
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          const gap = CollectionToolbarMetrics.searchControlGap;
-          final actionExtent = CollectionToolbarMetrics.actionExtentOf(context);
-          final scale = MediaQuery.textScalerOf(context);
-          final sortWidth = (94 * scale.scale(1)).clamp(
-            94.0,
-            (MediaQuery.sizeOf(context).width * .42).clamp(94.0, 144.0),
-          );
-          final actions = [?filter, ?gridView, ?layout].length;
-          final sortHasLabel =
-              showSortValue &&
-              constraints.maxWidth >=
-                  sortWidth +
-                      gap +
-                      actions * (actionExtent + gap) +
-                      scale.scale(56);
-          final sortValue = sortOptions[sort];
-          final sortTooltip = sortValue == null
-              ? t.videoLibrary.sort
-              : '${t.videoLibrary.sort} · $sortValue';
-          return Row(
-            spacing: gap,
-            children: [
-              Expanded(
-                child:
-                    leading ??
-                    Text(
-                      count,
-                      key: ValueKey('$keyPrefix.count'),
-                      style: Theme.of(context).textTheme.bodySmall,
-                      maxLines: showSortValue ? 2 : null,
-                      overflow: showSortValue ? TextOverflow.ellipsis : null,
-                    ),
-              ),
-              if (sortOptions.length > 1)
-                if (onSort case final choose?)
-                  NativeVideoMenu(
-                    key: ValueKey('$keyPrefix.sort'),
-                    label: sortHasLabel ? sortValue ?? t.videoLibrary.sort : '',
-                    tooltip: sortTooltip,
-                    selected: sort,
-                    options: sortOptions,
-                    width: sortHasLabel
-                        ? sortWidth
-                        : CollectionToolbarMetrics.actionExtent,
-                    hostPresentation: true,
-                    compactTextChoice: sortHasLabel,
-                    icon: sortHasLabel
-                        ? null
-                        : CollectionCommandIcons.sort.icon,
-                    symbol: sortHasLabel
-                        ? ''
-                        : CollectionCommandIcons.sort.symbol,
-                    onSelected: (value) {
-                      if (value != sort && sortOptions.containsKey(value)) {
-                        choose(value);
-                      }
-                    },
-                  )
-                else
-                  SourceChromeIconButton(
-                    key: ValueKey('$keyPrefix.sort'),
-                    tooltip: sortTooltip,
-                    onPressed: null,
-                    icon: CollectionCommandIcons.sort.icon,
-                    symbol: CollectionCommandIcons.sort.symbol,
-                  ),
-              ?filter,
-              if (gridView case final grid?)
-                SourceChromeIconButton(
-                  key: ValueKey('$keyPrefix.view'),
-                  tooltip: grid
-                      ? t.videoLibrary.detailList
-                      : t.videoLibrary.grid,
-                  onPressed: onToggleView,
-                  icon: CollectionCommandIcons.toggleTarget(grid).icon,
-                  symbol: CollectionCommandIcons.toggleTarget(grid).symbol,
-                ),
-              ?layout,
-            ],
-          );
-        },
-      ),
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        const gap = CollectionToolbarMetrics.searchControlGap;
+        final padding = CollectionToolbarMetrics.contentPaddingOf(
+          context,
+          inset: horizontalInset,
+        );
+        final actionExtent = CollectionToolbarMetrics.actionExtentOf(context);
+        final scale = MediaQuery.textScalerOf(context);
+        final sortWidth = (94 * scale.scale(1)).clamp(
+          94.0,
+          (MediaQuery.sizeOf(context).width * .42).clamp(94.0, 144.0),
+        );
+        final actions = [?filter, ?gridView, ?layout].length;
+        final sortHasLabel =
+            showSortValue &&
+            onSort != null &&
+            constraints.maxWidth - padding.horizontal >=
+                sortWidth +
+                    gap +
+                    actions * (actionExtent + gap) +
+                    scale.scale(56);
+        final sortValue = sortOptions[sort];
+        final sortTooltip = sortValue == null
+            ? t.videoLibrary.sort
+            : '${t.videoLibrary.sort} · $sortValue';
+        final choose = onSort;
+        final sortAction = sortOptions.length < 2
+            ? null
+            : choose != null
+            ? NativeVideoMenu(
+                key: ValueKey('$keyPrefix.sort'),
+                label: sortHasLabel ? sortValue ?? t.videoLibrary.sort : '',
+                tooltip: sortTooltip,
+                selected: sort,
+                options: sortOptions,
+                width: sortHasLabel
+                    ? sortWidth
+                    : CollectionToolbarMetrics.actionExtent,
+                hostPresentation: true,
+                compactTextChoice: sortHasLabel,
+                bare: true,
+                icon: sortHasLabel ? null : CollectionCommandIcons.sort.icon,
+                symbol: sortHasLabel ? '' : CollectionCommandIcons.sort.symbol,
+                onSelected: (value) {
+                  if (value != sort && sortOptions.containsKey(value)) {
+                    choose(value);
+                  }
+                },
+              )
+            : SourceChromeIconButton(
+                key: ValueKey('$keyPrefix.sort'),
+                tooltip: sortTooltip,
+                onPressed: null,
+                bare: true,
+                icon: CollectionCommandIcons.sort.icon,
+                symbol: CollectionCommandIcons.sort.symbol,
+              );
+        final grid = gridView;
+        final viewAction = grid == null
+            ? null
+            : SourceChromeIconButton(
+                key: ValueKey('$keyPrefix.view'),
+                tooltip: grid ? t.videoLibrary.detailList : t.videoLibrary.grid,
+                onPressed: onToggleView,
+                bare: true,
+                icon: CollectionCommandIcons.toggleTarget(grid).icon,
+                symbol: CollectionCommandIcons.toggleTarget(grid).symbol,
+              );
+        final countKey = ValueKey('$keyPrefix.count');
+        return CollectionResultsRow(
+          countLabel: leading == null ? count : '',
+          countKey: countKey,
+          scope: leading,
+          sortAction: sortAction,
+          sortWidth: sortHasLabel ? sortWidth : null,
+          filterButton: filter,
+          viewAction: viewAction,
+          extraAction: layout,
+          horizontalInset: horizontalInset,
+        );
+      },
     ),
   );
 }

@@ -663,7 +663,9 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
         _selectRecords(ShelfPageMode.values.byName(value).index);
       },
     );
-    Widget sources() => BlocBuilder<BookshelfSearchCubit, BookshelfSearchState>(
+    Widget sources({
+      double? startInset,
+    }) => BlocBuilder<BookshelfSearchCubit, BookshelfSearchState>(
       bloc: _activeSearch,
       builder: (context, state) {
         final medium = _sourceMedium, mode = _mode, cubit = _activeSearch;
@@ -671,7 +673,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
           systemControls: usesNativeSourceChrome(context),
           child: BookshelfSourceNavigation(
             horizontalInset: CollectionToolbarMetrics.sourceContentInset,
-            scrollStartInset: 4,
+            scrollStartInset: startInset,
             showManage: true,
             classicChips: true,
             scrollSafeChips: true,
@@ -753,7 +755,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
                     const SizedBox(width: leadingPadding),
                     SizedBox(width: recordWidth, child: records),
                     const SizedBox(width: 8),
-                    Expanded(child: sources()),
+                    Expanded(child: sources(startInset: 2)),
                   ],
                 )
               else ...[
@@ -801,7 +803,11 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
       builder: (context, field) {
         final slots = _header.slots;
         final theme = Theme.of(context);
-        final subtitle = slots?.subtitle ?? '';
+        final pane = (_showVideos, _mode);
+        final subtitle = _header.subtitleFor(pane, (
+          _activeSearch.state.stateOf(_mode),
+          _keywordScope(_showVideos, _mode),
+        ));
         final extent = CollectionToolbarMetrics.actionExtentOf(context);
         return Row(
           spacing: CollectionToolbarMetrics.searchControlGap,
@@ -843,11 +849,17 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
                 width: extent,
                 child: _scopeLocked || slots?.more == null
                     ? null
-                    : KeyedSubtree(
-                        // A menu must retire when its scope changes. Otherwise
-                        // a late choice could act on the new pane or directory.
-                        key: ValueKey((_header.generation, slots?.identity)),
-                        child: slots!.more!,
+                    : IgnorePointer(
+                        ignoring: !_header.hasCurrentSlots,
+                        child: KeyedSubtree(
+                          // Keep the trigger painted until its replacement
+                          // arrives and retire the old menu with its scope.
+                          key: ValueKey((
+                            _header.slotsGeneration,
+                            slots?.identity,
+                          )),
+                          child: slots!.more!,
+                        ),
                       ),
               ),
           ],
@@ -872,20 +884,24 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
-    if (subtitle.isEmpty) return title;
+    final stacked = MediaQuery.textScalerOf(context).scale(14) > 20;
+    if (!stacked && subtitle.isEmpty) return title;
     final count = Text(
-      subtitle,
+      subtitle.isEmpty ? '\u00a0' : subtitle,
       style: theme.textTheme.bodySmall?.copyWith(
         color: theme.colorScheme.onSurfaceVariant,
       ),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
-    if (MediaQuery.textScalerOf(context).scale(14) > 20) {
+    if (stacked) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
-        children: [title, count],
+        children: [
+          title,
+          ExcludeSemantics(excluding: subtitle.isEmpty, child: count),
+        ],
       );
     }
     return Row(
@@ -931,12 +947,18 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
                     )
                   else
                     for (final control in slots.controls)
-                      SizedBox(width: extent, child: control),
+                      SizedBox(
+                        width: extent,
+                        child: IgnorePointer(
+                          ignoring: !_header.hasCurrentSlots,
+                          child: control,
+                        ),
+                      ),
                 ],
               ),
             ),
           ),
-          selection: slots?.selection,
+          selection: _header.hasCurrentSlots ? slots?.selection : null,
         );
       },
     );
@@ -990,6 +1012,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
             video: video,
             header: _header,
             headerGeneration: generation,
+            headerQuery: (state.stateOf(mode), _keywordScope(video, mode)),
             canUseHeader: stillCurrent,
             sort: state.stateOf(mode).sort,
             onSort: _scopeLocked
@@ -1024,6 +1047,7 @@ class _BookshelfPageContentState extends State<_BookshelfPageContent> {
               closeKey: const ValueKey('bookshelf.search'),
               query: state.stateOf(mode).keyword,
               inline: true,
+              animateExpansion: true,
               focusNode: _searchFocusNode,
               leadingControlWidth: KeywordScopeMenu.leadingWidth(context),
               leadingControl: _searchScopeMenu(),

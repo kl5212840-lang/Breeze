@@ -122,6 +122,88 @@ void main() {
     },
   );
 
+  test('landscape gestures opt in and preserve the chosen sides', () async {
+    SharedPreferences.setMockInitialValues({});
+    var preferences = await VideoPlaybackPreferences.read();
+    expect(preferences.landscapeAdjustments, isFalse);
+    expect(preferences.reverseLandscapeAdjustments, isFalse);
+
+    await VideoPlaybackPreferences.restore({
+      'landscapeAdjustments': true,
+      'reverseLandscapeAdjustments': true,
+    }, updatedAt: 1234);
+    preferences = await VideoPlaybackPreferences.read();
+    expect(preferences.landscapeAdjustments, isTrue);
+    expect(preferences.reverseLandscapeAdjustments, isTrue);
+    expect(await VideoPlaybackPreferences.modifiedAt(), 1234);
+
+    await VideoPlaybackPreferences.save('landscapeAdjustments', false);
+    await VideoPlaybackPreferences.restore({
+      'fullscreenOrientation': 'portrait',
+      'reverseLandscapeAdjustments': 'invalid',
+    }, updatedAt: 2345);
+    preferences = await VideoPlaybackPreferences.read();
+    expect(preferences.landscapeAdjustments, isFalse);
+    expect(preferences.reverseLandscapeAdjustments, isTrue);
+    expect(preferences.fullscreenOrientation, 'portrait');
+  });
+
+  test(
+    'picture size persists and accepts legacy cover writes and restores',
+    () async {
+      const key = VideoPictureSize.preferenceKey;
+      SharedPreferences.setMockInitialValues({
+        '${VideoPlaybackPreferences.prefix}cover': true,
+      });
+      expect(
+        (await VideoPlaybackPreferences.read()).pictureSize,
+        VideoPictureSize.fill,
+      );
+
+      expect((await VideoPlaybackPreferences.read()).usesLegacyCover, isTrue);
+      await VideoPlaybackPreferences.save('autoplay', false);
+      expect(
+        (await VideoPlaybackPreferences.read()).toValues(),
+        isNot(contains(key)),
+      );
+
+      for (final size in VideoPictureSize.values) {
+        await VideoPlaybackPreferences.save(key, size.name);
+        final preferences = await VideoPlaybackPreferences.read();
+        expect(preferences.pictureSize, size);
+        expect(preferences.usesLegacyCover, isFalse);
+        expect(preferences.toValues()['cover'], size == VideoPictureSize.fill);
+      }
+      await VideoPlaybackPreferences.save('cover', true);
+      expect(
+        (await VideoPlaybackPreferences.read()).pictureSize,
+        VideoPictureSize.fill,
+      );
+      expect((await VideoPlaybackPreferences.read()).usesLegacyCover, isTrue);
+      await VideoPlaybackPreferences.restore({'cover': false}, updatedAt: 10);
+      expect(
+        (await VideoPlaybackPreferences.read()).pictureSize,
+        VideoPictureSize.fit,
+      );
+      await VideoPlaybackPreferences.restore({
+        'cover': true,
+        key: 'standard',
+      }, updatedAt: 11);
+      expect(
+        (await VideoPlaybackPreferences.read()).pictureSize,
+        VideoPictureSize.standard,
+      );
+      await VideoPlaybackPreferences.restore({
+        key: 'unsupported',
+      }, updatedAt: 12);
+      expect(
+        (await VideoPlaybackPreferences.read()).pictureSize,
+        VideoPictureSize.standard,
+      );
+      expect(await VideoPlaybackPreferences.modifiedAt(), 11);
+    },
+  );
+
   test('unsupported settings cannot create unsafe playback values', () {
     final preferences = VideoPlaybackPreferences.fromValues({
       'defaultSpeed': 'bad',

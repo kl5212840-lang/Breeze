@@ -23,6 +23,7 @@ class NativeCompositionCapture {
     'breeze.video.library',
     'breeze.video.local',
     'breeze.video.local-history',
+    'breeze.source.comic.records',
     'breeze.video.catalog-content',
     'breeze.video.omo-detail',
     'breeze.video.bika-detail',

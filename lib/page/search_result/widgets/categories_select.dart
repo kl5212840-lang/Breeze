@@ -1,7 +1,7 @@
 import 'package:auto_route/auto_route.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:zephyr/widgets/task_dialog.dart';
 import 'package:zephyr/type/pipe.dart';
-import 'package:zephyr/util/context/context_extensions.dart';
 import 'package:zephyr/i18n/strings.g.dart';
 import 'package:zephyr/util/text/chinese_convert.dart';
 
@@ -14,14 +14,19 @@ Future<Map<String, bool>?> showCategoryDialog(
   return showDialog<Map<String, bool>>(
     context: context,
     builder: (BuildContext context) {
-      return AlertDialog(
-        title: Text(t.search.selectCategory),
+      return TaskDialog(
+        title: t.search.selectCategory,
+        scrollBody: false,
         content: StatefulBuilder(
           builder: (BuildContext context, StateSetter setState) {
-            return SizedBox(
-              width: context.screenWidth * 0.8,
-              height: context.screenHeight * 0.6,
+            return ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.sizeOf(context).height * .6,
+              ),
               child: ListView(
+                primary: false,
+                shrinkWrap: true,
+                padding: EdgeInsets.zero,
                 children: [
                   for (final entry in tempMap.entries)
                     CheckboxListTile(

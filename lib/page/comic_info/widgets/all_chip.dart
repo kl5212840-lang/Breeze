@@ -68,76 +68,82 @@ class _AllChipWidgetState extends State<AllChipWidget> {
           ),
         )
         .toList();
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(height: runSpacings),
-        Row(
+    final contentWidth =
+        labels.fold<double>(
+          0,
+          (width, label) => width + _chipWidth(context, label),
+        ) +
+        (chips.length - 1).clamp(0, chips.length) * 8;
+    final rail = LayoutBuilder(
+      builder: (context, constraints) {
+        final overflowing = contentWidth > constraints.maxWidth + 0.5;
+        final expanded = overflowing && _expanded;
+        return Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _LabelChip(label: processedTitle),
-            const SizedBox(width: 10),
             Expanded(
               child: LayoutBuilder(
-                builder: (context, constraints) {
-                  // Measure the full rail before reserving the disclosure. A
-                  // disclosure must not create the overflow that justifies it.
-                  final contentWidth =
-                      labels.fold<double>(
-                        0,
-                        (width, label) => width + _chipWidth(context, label),
-                      ) +
-                      (chips.length - 1).clamp(0, chips.length) * 8;
-                  final overflowing = contentWidth > constraints.maxWidth + 0.5;
-                  final expanded = overflowing && _expanded;
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: LayoutBuilder(
-                          builder: (context, rail) => overflowing && !expanded
-                              ? SizedBox(
-                                  height: rowHeight,
-                                  child: ListView.separated(
-                                    scrollDirection: Axis.horizontal,
-                                    itemCount: chips.length,
-                                    separatorBuilder: (_, _) =>
-                                        const SizedBox(width: 8),
-                                    itemBuilder: (_, index) =>
-                                        Center(child: chips[index]),
-                                  ),
-                                )
-                              : Wrap(
-                                  spacing: 8,
-                                  runSpacing: runSpacings,
-                                  children: [
-                                    for (final chip in chips)
-                                      ConstrainedBox(
-                                        constraints: BoxConstraints(
-                                          maxWidth: rail.maxWidth,
-                                        ),
-                                        child: chip,
-                                      ),
-                                  ],
-                                ),
+                builder: (context, available) => overflowing && !expanded
+                    ? SizedBox(
+                        height: rowHeight,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: chips.length,
+                          separatorBuilder: (_, _) => const SizedBox(width: 8),
+                          itemBuilder: (_, index) =>
+                              Center(child: chips[index]),
                         ),
+                      )
+                    : Wrap(
+                        spacing: 8,
+                        runSpacing: runSpacings,
+                        children: [
+                          for (final chip in chips)
+                            ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: available.maxWidth,
+                              ),
+                              child: chip,
+                            ),
+                        ],
                       ),
-                      if (overflowing)
-                        TextButton(
-                          key: const ValueKey('comic-metadata.expand'),
-                          onPressed: () =>
-                              setState(() => _expanded = !expanded),
-                          child: Text(expanded ? '收起' : '展开'),
-                        ),
-                    ],
-                  );
-                },
               ),
             ),
+            if (overflowing)
+              ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: constraints.maxWidth / 2),
+                child: TextButton(
+                  key: const ValueKey('comic-metadata.expand'),
+                  onPressed: () => setState(() => _expanded = !expanded),
+                  child: Text(expanded ? t.comicInfo.collapse : '展开'),
+                ),
+              ),
           ],
-        ),
-      ],
+        );
+      },
+    );
+    final heading = _LabelChip(label: processedTitle);
+    return Padding(
+      padding: const EdgeInsets.only(top: runSpacings),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          if (_chipWidth(context, processedTitle) + 130 >
+              constraints.maxWidth) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [heading, rail],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              heading,
+              const SizedBox(width: 10),
+              Expanded(child: rail),
+            ],
+          );
+        },
+      ),
     );
   }
 
