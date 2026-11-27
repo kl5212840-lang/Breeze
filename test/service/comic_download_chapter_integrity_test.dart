@@ -2162,7 +2162,7 @@ void main() {
   });
 
   test(
-    'deleting a just-paused chapter waits and removes saved pages',
+    'deleting a just-paused chapter waits and removes every started page',
     () async {
       const deadline = Duration(seconds: 5);
       final queue = DownloadQueueManager.instance;
@@ -2183,16 +2183,9 @@ void main() {
           'docs': [saved, held],
         },
       };
-      final file = File(
-        await DownloadAssetStore(
-          from: _payload.from,
-          path: saved['path'] as String,
-          cartoonId: _payload.comicId,
-          chapterId: _payload.chapterRef.chapterId,
-          storageChapterId: _payload.chapterRef.storageChapterId,
-          pictureType: PictureType.page,
-        ).canonicalDownloadPath(),
-      );
+      final savedPath = saved['path'] as String;
+      final heldPath = held['path'] as String;
+      final file = File(await storedPage(savedPath).canonicalDownloadPath());
       final taskId = box.put(
         DownloadTask()
           ..comicId = _payload.comicId
@@ -2202,14 +2195,18 @@ void main() {
       queue.watchTasks();
       try {
         await imageEntered.future.timeout(deadline);
+        await const DownloadTaskRepository().flushTaskWrites(_payload.taskKey);
+        // Put the held page on disk before its progress can reach the database.
+        final uncheckpointed = await seedPage(heldPath, _png);
         final active = box.get(taskId)!;
-        expect(active.taskInfo!.imagePaths, isEmpty);
+        expect(active.taskInfo!.imagePaths, [savedPath]);
         expect(file.existsSync(), isTrue);
         expect(queue.pauseTasks([active]), 1);
         final paused = box.get(taskId)!.taskInfo!;
         expect(paused.phaseCode, 'userPaused');
-        expect(paused.imagePaths, [saved['path'], held['path']]);
+        expect(paused.imagePaths, [savedPath, heldPath]);
         expect(file.existsSync(), isTrue);
+        expect(uncheckpointed.existsSync(), isTrue);
         await cancellationEntered.future.timeout(deadline);
 
         final token = bindChapterDownloadRemoval(
@@ -2229,6 +2226,7 @@ void main() {
         expect(settledBeforeWorkerRelease, isFalse);
         expect(box.get(taskId), isNull);
         expect(file.existsSync(), isFalse);
+        expect(uncheckpointed.existsSync(), isFalse);
         expect(api.imageRequests, [savedUrl, heldUrl]);
       } finally {
         queue.stopWatchingTasks();
